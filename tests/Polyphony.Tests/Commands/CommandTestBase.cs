@@ -53,6 +53,36 @@ public abstract class CommandTestBase : IDisposable
     }
 
     /// <summary>
+    /// Executes an asynchronous command while capturing stdout.
+    /// Uses a lock to prevent parallel test interference with <see cref="Console.Out"/>.
+    /// </summary>
+    protected static async Task<(int ExitCode, string Output)> CaptureConsoleAsync(Func<Task<int>> action)
+    {
+        // Acquire the lock synchronously, then run the async action inside it.
+        // Safe because command methods are CPU-bound once the walker completes.
+        Monitor.Enter(ConsoleLock);
+        try
+        {
+            using var writer = new StringWriter();
+            var original = Console.Out;
+            Console.SetOut(writer);
+            try
+            {
+                var exitCode = await action();
+                return (exitCode, writer.ToString().Trim());
+            }
+            finally
+            {
+                Console.SetOut(original);
+            }
+        }
+        finally
+        {
+            Monitor.Exit(ConsoleLock);
+        }
+    }
+
+    /// <summary>
     /// Seeds work items into the in-memory SQLite database.
     /// </summary>
     protected async Task SeedAsync(params WorkItem[] items)

@@ -1,12 +1,13 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Routing;
 
 namespace Polyphony.Commands;
 
 /// <summary>
 /// Outputs the work item hierarchy with role annotations.
 /// </summary>
-public sealed class HierarchyCommand
+public sealed class HierarchyCommand(HierarchyWalker walker)
 {
     /// <summary>
     /// Output the work item hierarchy with role annotations.
@@ -15,20 +16,34 @@ public sealed class HierarchyCommand
     /// <param name="depth">Maximum depth to traverse</param>
     /// <param name="config">Path to .conductor/process-config.yaml</param>
     [Command("hierarchy")]
-    public int Hierarchy(int workItem, int depth = 3, string config = ".conductor/process-config.yaml")
+    public async Task<int> Hierarchy(int workItem, int depth = 3, string config = ".conductor/process-config.yaml", CancellationToken ct = default)
     {
-        // TODO: Phase 1 implementation
-        var result = new HierarchyResult
-        {
-            WorkItemId = workItem,
-            Title = "Not yet implemented",
-            Type = "Unknown",
-            Capabilities = [],
-            State = "Unknown",
-            Children = null
-        };
+        var result = await walker.WalkAsync(workItem, depth, ct);
 
-        Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.HierarchyResult));
+        if (result is null)
+        {
+            Console.WriteLine($$"""{"error":"Work item {{workItem}} not found","work_item_id":{{workItem}}}""");
+            return ExitCodes.CacheError;
+        }
+
+        var normalized = EnsureChildrenArrays(result);
+        Console.WriteLine(JsonSerializer.Serialize(normalized, PolyphonyJsonContext.Default.HierarchyResult));
         return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Recursively replaces null Children with empty arrays so the JSON output
+    /// always contains a "children" field per node.
+    /// </summary>
+    private static HierarchyResult EnsureChildrenArrays(HierarchyResult node)
+    {
+        var children = node.Children ?? [];
+        var normalized = new HierarchyResult[children.Length];
+        for (var i = 0; i < children.Length; i++)
+        {
+            normalized[i] = EnsureChildrenArrays(children[i]);
+        }
+
+        return node with { Children = normalized };
     }
 }
