@@ -29,6 +29,6 @@ public sealed class HierarchyCommand
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.HierarchyResult));
-        return 0;
+        return ExitCodes.Success;
     }
 }

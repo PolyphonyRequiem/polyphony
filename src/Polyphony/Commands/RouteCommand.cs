@@ -32,6 +32,6 @@ public sealed class RouteCommand
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.RouteResult));
-        return 0;
+        return ExitCodes.Success;
     }
 }
