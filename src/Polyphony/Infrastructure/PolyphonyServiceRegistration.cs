@@ -38,6 +38,7 @@ public static class PolyphonyServiceRegistration
 
         // Routing services
         services.AddSingleton<HierarchyWalker>();
+        services.AddSingleton<TransitionValidator>();
 
         return services;
     }
