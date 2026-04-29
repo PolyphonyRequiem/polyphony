@@ -1,0 +1,38 @@
+# Polyphony — SDLC routing engine for type-agnostic workflows
+# This profile describes the Polyphony project for conductor SDLC workflows.
+
+project:
+  name: Polyphony
+  description: >
+    AOT-compiled .NET 10 CLI that routes work items through SDLC phases
+    based on per-repo process configuration. Reads .conductor/process-config.yaml
+    to determine hierarchy roles, state transitions, and branch strategy.
+  repository: PolyphonyRequiem/polyphony
+
+tech_stack:
+  language: C# 14
+  framework: .NET 10 (AOT, trimmed)
+  cli_framework: ConsoleAppFramework v5 (source-generated)
+  serialization: System.Text.Json (source-generated context)
+  config_parsing: YamlDotNet
+  testing: xUnit + Shouldly + NSubstitute
+
+build:
+  restore: dotnet restore
+  build: dotnet build --no-restore
+  test: dotnet test --no-restore
+  publish: dotnet publish src/Polyphony -c Release -o artifacts
+
+conventions:
+  - Sealed classes and sealed records by default
+  - Primary constructors for DI
+  - Source-generated JSON only (no reflection)
+  - AOT-safe code paths (no dynamic loading)
+  - All public APIs return structured result types
+
+estimation:
+  unit: hours
+  confidence_default: medium
+
+mcp_servers:
+  - twig-mcp
