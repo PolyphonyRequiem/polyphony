@@ -1,7 +1,20 @@
 using ConsoleAppFramework;
 using Polyphony.Commands;
+using Polyphony.Infrastructure;
+using Twig.Infrastructure.Config;
 
-var app = ConsoleApp.Create();
+SQLitePCL.Batteries.Init();
+
+var app = ConsoleApp.Create()
+    .ConfigureServices(services =>
+    {
+        var twigDir = WorkspaceDiscovery.FindTwigDir()
+            ?? Path.Combine(Directory.GetCurrentDirectory(), ".twig");
+        var configPath = Path.Combine(Directory.GetCurrentDirectory(), ".conductor", "process-config.yaml");
+
+        services.AddPolyphonyServices(configPath, twigDir);
+    });
+
 app.Add<RouteCommand>();
 app.Add<ValidateCommand>();
 app.Add<HierarchyCommand>();
