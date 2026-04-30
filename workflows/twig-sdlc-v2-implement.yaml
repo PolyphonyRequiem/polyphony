@@ -1,0 +1,232 @@
+# twig-sdlc-v2-implement — Implementation orchestration sub-workflow.
+#
+# Invoked by the apex workflow (twig-sdlc-v2-full.yaml) when
+# phase=ready_for_implementation or phase=in_progress. Runs a lightweight
+# preflight, loads the work tree for PG structure, and dispatches each
+# pending PG in parallel via for_each to implement-pg.yaml.
+#
+# Invariants:
+#   Pre:  work_item_id exists in ADO; phase is ready_for_implementation or in_progress.
+#   Post: All PGs implemented and merged; ready for feature PR or close-out.
+
+workflow:
+  name: twig-sdlc-v2-implement
+  description: >-
+    Implementation orchestration entry point. Validates prerequisites with a
+    lightweight preflight, loads the work tree to discover PG structure and
+    completion status, then dispatches pending PGs in parallel via for_each.
+  version: "1.0.0"
+  entry_point: preflight_lite
+
+  input:
+    work_item_id:
+      type: number
+      required: true
+      description: ADO work item ID (any implementable type at any level)
+    intent:
+      type: string
+      required: false
+      default: resume
+      description: "new | redo | resume"
+
+tools:
+  - twig
+  - gh
+  - filesystem
+
+output:
+  all_pgs_merged: "{{ pg_execution_group.failed_count == 0 }}"
+  completed_pgs: "{{ load_work_tree.output.completed_pgs }}"
+
+agents:
+  # ── Lightweight preflight ──────────────────────────────────────────────
+  #
+  # Quick 3-check validation (twig CLI, polyphony CLI, git repo) before
+  # implementation begins. Cheaper than full preflight since the apex
+  # workflow already ran the comprehensive preflight-check.ps1.
+  #
+  # Invariants:
+  #   Pre:  work_item_id is a valid integer.
+  #   Post: output.ready is true/false; output contains check details.
+  - name: preflight_lite
+    type: script
+    description: Quick 3-check validation before implementation begins
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/preflight-lite.ps1"
+    routes:
+      - to: load_work_tree
+        when: "{{ preflight_lite.output.ready == true }}"
+      - to: preflight_lite_gate
+        when: "{{ preflight_lite.output.ready == false }}"
+
+  # ── Preflight lite gate (human decision point) ─────────────────────────
+  #
+  # Fires only when preflight_lite.output.ready == false. Presents the
+  # user with a Jinja2 Markdown summary of failed checks and remediation
+  # steps, then offers retry or abort (P6, P13).
+  #
+  # Invariants:
+  #   Pre:  preflight_lite has run and output.ready == false.
+  #   Post: User has chosen retry (loop) or abort (end).
+  - name: preflight_lite_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Preflight Lite Check Failed
+
+      {{ preflight_lite.output.summary }}
+
+      ### Checks
+
+      | # | Check | Status | Detail |
+      |---|-------|--------|--------|
+      {% for check in preflight_lite.output.checks %}
+      | {{ loop.index }} | `{{ check.name }}` | {{ "✅" if check.passed else "❌" }} | {{ check.detail }} |
+      {% endfor %}
+
+      ---
+
+      One or more required checks failed. Please fix the issues above and retry.
+
+      Choose an action:
+      - **Retry** — fix the issues above and re-run preflight checks
+      - **Abort** — cancel the implementation workflow
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: preflight_lite
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Load work tree ─────────────────────────────────────────────────────
+  #
+  # Loads the full work item hierarchy and produces PG-grouped JSON with
+  # completion status via load-work-tree.ps1. Outputs pr_groups (with
+  # task_ids, branch names, completion flags), completed_pgs, pending_pgs,
+  # and next_pg for downstream routing.
+  #
+  # Invariants:
+  #   Pre:  preflight_lite.output.ready == true.
+  #   Post: output contains work_tree, pr_groups, completed_pgs, pending_pgs.
+  - name: load_work_tree
+    type: script
+    description: Load work item hierarchy and PG structure with completion status
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/load-work-tree.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: pg_dispatcher
+        when: "{{ load_work_tree.output.pending_pgs | length > 0 }}"
+      - to: $end
+        when: "{{ load_work_tree.output.pending_pgs | length == 0 }}"
+
+  # ── PG dispatcher ──────────────────────────────────────────────────────
+  #
+  # Transforms load_work_tree output into the structured array needed by
+  # for_each. Extracts pending PGs with their pg_number, work_item_ids,
+  # branch_name, and feature_branch for parallel dispatch.
+  #
+  # Invariants:
+  #   Pre:  load_work_tree has run; pending_pgs is non-empty.
+  #   Post: output.pgs is an array of PG descriptors for for_each dispatch.
+  - name: pg_dispatcher
+    type: script
+    description: Prepare pending PGs for parallel dispatch to implement-pg
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $tree = '{{ load_work_tree.output | tojson }}' | ConvertFrom-Json;
+        $featureBranch = git rev-parse --abbrev-ref HEAD 2>$null;
+        if (-not $featureBranch) { $featureBranch = 'main' }
+        $pgs = @();
+        foreach ($pg in $tree.pr_groups) {
+          if (-not $pg.completed) {
+            $num = [int]($pg.name -replace '^PG-(\d+).*', '$1');
+            $pgs += [ordered]@{
+              number = $num;
+              name = $pg.name;
+              work_item_ids = @($pg.task_ids);
+              branch_name = $pg.branch_name_suggestion;
+              feature_branch = $featureBranch;
+            }
+          }
+        }
+        [ordered]@{ pgs = $pgs; pg_count = $pgs.Count } | ConvertTo-Json -Depth 5
+    routes:
+      - to: pg_execution_group
+
+  # ── PG execution group (for_each) ──────────────────────────────────────
+  #
+  # Parallel PG execution: spawns one implement-pg.yaml sub-workflow per
+  # pending PG from the pg_dispatcher output. Each PG operates on its own
+  # branch independently. Merge conflicts are resolved by the implementing
+  # agent via rebase.
+  #
+  # Invariants:
+  #   Pre:  pg_dispatcher.output.pgs is a non-empty array of PG descriptors.
+  #   Post: Each PG has been implemented, PR'd, and merged (or failed).
+  - name: pg_execution_group
+    for_each:
+      source: "{{ pg_dispatcher.output.pgs }}"
+      as: pg
+      max_concurrent: 3
+      failure_mode: fail_fast
+      agent:
+        name: implement_pg
+        type: workflow
+        workflow: ./implement-pg.yaml
+        input_mapping:
+          work_item_id: "{{ workflow.input.work_item_id }}"
+          pg_number: "{{ pg.number }}"
+          work_item_ids: "{{ pg.work_item_ids }}"
+          branch_name: "{{ pg.branch_name }}"
+          feature_branch: "{{ pg.feature_branch }}"
+    routes:
+      - to: pg_summary_gate
+        when: "{{ pg_execution_group.failed_count > 0 }}"
+      - to: $end
+        when: "{{ pg_execution_group.failed_count == 0 }}"
+
+  # ── PG summary gate (human decision point) ─────────────────────────────
+  #
+  # Fires only when one or more PG sub-workflows failed. Surfaces failures
+  # to the user so they can decide whether to retry failed PGs or abort.
+  #
+  # Invariants:
+  #   Pre:  pg_execution_group has completed with at least one failure.
+  #   Post: User has acknowledged the partial failure; workflow ends or retries.
+  - name: pg_summary_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ PG Execution Partial Failure
+
+      Implementation for work item **{{ workflow.input.work_item_id }}** completed with errors.
+
+      - **Succeeded:** {{ pg_execution_group.succeeded_count }}
+      - **Failed:** {{ pg_execution_group.failed_count }}
+
+      Some PGs were not implemented successfully. Review the failures and
+      re-run the implementation workflow to retry failed PGs (state discovery
+      will skip already-completed PGs).
+
+      ---
+
+      Choose an action:
+      - **Retry** — re-run implementation (completed PGs will be skipped)
+      - **Abort** — stop the implementation workflow
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: load_work_tree
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
