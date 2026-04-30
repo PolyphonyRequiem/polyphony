@@ -80,8 +80,8 @@ try {
                     $matched = $true
                 }
             }
-            # Legacy table metadata: | **Issue** | #<id>
-            if (-not $matched -and $content -match '\|\s*\*{0,2}Issue\*{0,2}\s*\|\s*#(\d+)') {
+            # Legacy table metadata: | **<any label>** | #<id>
+            if (-not $matched -and $content -match '\|\s*\*{0,2}[^|*]+\*{0,2}\s*\|\s*#(\d+)') {
                 if ([int]$Matches[1] -eq $WorkItemId) {
                     $matched = $true
                 }
