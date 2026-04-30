@@ -1,15 +1,15 @@
 {
-  "text": "\uEAB3  #2606 Rewrite RouteCommand with full routing logic and DI [Doing]",
-  "id": 2606,
-  "type": "Task",
-  "typeBadge": "\uEAB3 ",
-  "title": "Rewrite RouteCommand with full routing logic and DI",
-  "state": "Doing",
-  "stateCategory": "InProgress",
+  "text": "\uEB59  #2581 Phase 1: Polyphony Core Engine [Done]",
+  "id": 2581,
+  "type": "Epic",
+  "typeBadge": "\uEB59 ",
+  "title": "Phase 1: Polyphony Core Engine",
+  "state": "Done",
+  "stateCategory": "Completed",
   "isDirty": false,
-  "typeColor": "#A4880A",
+  "typeColor": "#E06C00",
   "typeTextColor": "#000000",
-  "stateColor": "#007acc",
+  "stateColor": "#339933",
   "branch": null,
-  "generatedAt": "2026-04-29T23:56:53.0059392Z"
+  "generatedAt": "2026-04-30T01:18:06.7889022Z"
 }
