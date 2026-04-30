@@ -36,13 +36,71 @@ try {
     # reading any state to prevent routing on stale data.
     twig sync --output json 2>$null | Out-Null
 
-    # ── Plan discovery stubs (#2633) ──────────────────────────────────────────
-    # Defaults for plan-related variables populated by task #2633.
-    $hasPlan               = $false
-    $planStatus            = 'none'
-    $planPath              = ''
-    $planSource            = 'none'
-    $errorMsg              = ''
+    # ── Plan discovery (#2633) ────────────────────────────────────────────────
+    # Priority chain: explicit override → artifact link (TODO #2059) → filesystem fallback.
+    $planStatus = 'none'
+    $planSource = 'none'
+    $errorMsg   = ''
+
+    # Priority 1: Explicit override — if -PlanPath provided and file exists
+    if ($PlanPath -and (Test-Path $PlanPath)) {
+        $planStatus = 'complete'
+        $planSource = 'explicit_override'
+        $PlanPath   = (Resolve-Path $PlanPath).Path
+    }
+    # Priority 2: Artifact link (TODO #2059 — skip to Priority 3)
+    # Priority 3: Filesystem fallback — scan docs/projects/*.plan.md
+    elseif (-not $PlanPath) {
+        $planFiles = @(Get-ChildItem -Path 'docs/projects/*.plan.md' -ErrorAction SilentlyContinue)
+        $matchedPaths = @()
+
+        foreach ($file in $planFiles) {
+            $content = Get-Content $file.FullName -Raw
+            $matched = $false
+
+            # YAML frontmatter: extract work_item_id
+            if ($content -match '(?s)^---\s*\n(.*?)\n---') {
+                $frontmatter = $Matches[1]
+                if ($frontmatter -match 'work_item_id:\s*(\d+)') {
+                    if ([int]$Matches[1] -eq $WorkItemId) {
+                        $matched = $true
+                    }
+                }
+            }
+
+            # Legacy table metadata: | **Work Item** | #<id>
+            if (-not $matched -and $content -match '\|\s*\*{0,2}Work\s*Item\*{0,2}\s*\|\s*#(\d+)') {
+                if ([int]$Matches[1] -eq $WorkItemId) {
+                    $matched = $true
+                }
+            }
+            # Legacy table metadata: | **Issue** | #<id>
+            if (-not $matched -and $content -match '\|\s*\*{0,2}Issue\*{0,2}\s*\|\s*#(\d+)') {
+                if ([int]$Matches[1] -eq $WorkItemId) {
+                    $matched = $true
+                }
+            }
+
+            if ($matched) {
+                $matchedPaths += $file.FullName
+            }
+        }
+
+        if ($matchedPaths.Count -eq 1) {
+            $planStatus = 'complete'
+            $planSource = 'filesystem_fallback'
+            $PlanPath   = $matchedPaths[0]
+        }
+        elseif ($matchedPaths.Count -gt 1) {
+            $planStatus = 'ambiguous'
+        }
+    }
+    else {
+        # PlanPath provided but file doesn't exist — no fallback
+        $PlanPath = ''
+    }
+
+    $hasPlan = $planStatus -in @('complete')
 
     # ── Set active work item (#2632) ──────────────────────────────────────────
     twig set $WorkItemId --output json 2>$null | Out-Null

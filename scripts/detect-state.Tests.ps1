@@ -366,6 +366,199 @@ Describe 'detect-state.ps1 — polyphony route integration (#2632)' {
         }
     }
 
+    Context 'Plan discovery — explicit override (#2633)' {
+
+        It 'Sets plan_status complete when -PlanPath file exists' {
+            Mock Test-Path { $true } -ParameterFilter { $Path -like '*my-plan.md' }
+            Mock Resolve-Path { [PSCustomObject]@{ Path = 'C:\plans\my-plan.md' } } -ParameterFilter { $Path -like '*my-plan.md' }
+
+            $result = & $script:ScriptPath -WorkItemId 42 -PlanPath 'C:\plans\my-plan.md' | ConvertFrom-Json
+            $result.plan_status | Should -Be 'complete'
+            $result.plan_source | Should -Be 'explicit_override'
+            $result.plan_path | Should -Be 'C:\plans\my-plan.md'
+            $result.has_plan | Should -BeTrue
+        }
+
+        It 'Returns plan_status none when -PlanPath file does not exist' {
+            Mock Test-Path { $false } -ParameterFilter { $Path -like '*missing.md' }
+
+            $result = & $script:ScriptPath -WorkItemId 42 -PlanPath 'C:\plans\missing.md' | ConvertFrom-Json
+            $result.plan_status | Should -Be 'none'
+            $result.plan_source | Should -Be 'none'
+            $result.plan_path | Should -Be ''
+            $result.has_plan | Should -BeFalse
+        }
+
+        It 'Does not scan filesystem when explicit PlanPath is provided' {
+            Mock Test-Path { $true } -ParameterFilter { $Path -like '*my-plan.md' }
+            Mock Resolve-Path { [PSCustomObject]@{ Path = 'C:\plans\my-plan.md' } } -ParameterFilter { $Path -like '*my-plan.md' }
+            Mock Get-ChildItem { throw 'Should not be called' } -ParameterFilter { $Path -like '*plan.md' }
+
+            { & $script:ScriptPath -WorkItemId 42 -PlanPath 'C:\plans\my-plan.md' | Out-Null } | Should -Not -Throw
+        }
+    }
+
+    Context 'Plan discovery — YAML frontmatter (#2633)' {
+
+        It 'Discovers plan via work_item_id in YAML frontmatter' {
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\test.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+
+            Mock Get-Content {
+                "---`nwork_item_id: 42`n---`n# Plan content"
+            }
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_status | Should -Be 'complete'
+            $result.plan_source | Should -Be 'filesystem_fallback'
+            $result.plan_path | Should -Be 'C:\repo\docs\projects\test.plan.md'
+            $result.has_plan | Should -BeTrue
+        }
+
+        It 'Does not match when work_item_id differs' {
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\other.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+
+            Mock Get-Content {
+                "---`nwork_item_id: 999`n---`n# Other plan"
+            }
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_status | Should -Be 'none'
+            $result.has_plan | Should -BeFalse
+        }
+    }
+
+    Context 'Plan discovery — legacy table metadata (#2633)' {
+
+        It 'Discovers plan via Work Item table row' {
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\legacy.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+
+            Mock Get-Content {
+                "# Plan`n| **Work Item** | #42 |`n| Status | Active |"
+            }
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_status | Should -Be 'complete'
+            $result.plan_source | Should -Be 'filesystem_fallback'
+            $result.plan_path | Should -Be 'C:\repo\docs\projects\legacy.plan.md'
+            $result.has_plan | Should -BeTrue
+        }
+
+        It 'Discovers plan via Issue table row' {
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\issue.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+
+            Mock Get-Content {
+                "# Plan`n| **Issue** | #42 |`n| Priority | High |"
+            }
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_status | Should -Be 'complete'
+            $result.plan_source | Should -Be 'filesystem_fallback'
+            $result.has_plan | Should -BeTrue
+        }
+
+        It 'Matches unbolded Work Item row' {
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\plain.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+
+            Mock Get-Content {
+                "# Plan`n| Work Item | #42 |`n| Status | Active |"
+            }
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_status | Should -Be 'complete'
+            $result.plan_source | Should -Be 'filesystem_fallback'
+        }
+    }
+
+    Context 'Plan discovery — ambiguous and missing (#2633)' {
+
+        It 'Sets plan_status ambiguous when multiple plan files match' {
+            Mock Get-ChildItem {
+                @(
+                    [PSCustomObject]@{ FullName = 'C:\repo\docs\projects\plan-a.plan.md' },
+                    [PSCustomObject]@{ FullName = 'C:\repo\docs\projects\plan-b.plan.md' }
+                )
+            } -ParameterFilter { $Path -like '*plan.md' }
+
+            Mock Get-Content {
+                "---`nwork_item_id: 42`n---`n# Plan"
+            }
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_status | Should -Be 'ambiguous'
+            $result.has_plan | Should -BeFalse
+            $result.plan_path | Should -Be ''
+        }
+
+        It 'Returns plan_status none when no plan files exist' {
+            Mock Get-ChildItem { @() } -ParameterFilter { $Path -like '*plan.md' }
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_status | Should -Be 'none'
+            $result.plan_source | Should -Be 'none'
+            $result.has_plan | Should -BeFalse
+        }
+
+        It 'Returns plan_status none when plan files exist but none match' {
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\other.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+
+            Mock Get-Content {
+                "# Plan with no metadata"
+            }
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_status | Should -Be 'none'
+            $result.has_plan | Should -BeFalse
+        }
+    }
+
+    Context 'Plan discovery — intent integration (#2633)' {
+
+        It 'Sets intent_conflict true for new intent when has_plan is true' {
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\test.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+
+            Mock Get-Content {
+                "---`nwork_item_id: 42`n---`n# Plan"
+            }
+
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'new' | ConvertFrom-Json
+            $result.has_plan | Should -BeTrue
+            $result.intent_conflict | Should -BeTrue
+        }
+
+        It 'Sets needs_cleanup true for redo intent when has_plan is true' {
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\test.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+
+            Mock Get-Content {
+                "---`nwork_item_id: 42`n---`n# Plan"
+            }
+
+            # Use a tree with no children so only hasPlan triggers
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Doing","title":"Test","children":[]}'
+            } -ParameterFilter { $args -contains 'tree' }
+
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'redo' | ConvertFrom-Json
+            $result.has_plan | Should -BeTrue
+            $result.needs_cleanup | Should -BeTrue
+        }
+    }
+
     Context 'Zero type name literals' {
 
         It 'Does not contain hardcoded type name literals' {
