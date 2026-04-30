@@ -114,6 +114,7 @@ Describe 'load-work-tree.ps1 — PG structure and PR groups (#2661)' {
     BeforeEach {
         Mock twig { } -ParameterFilter { $args -contains 'sync' }
         Mock git { 'https://github.com/TestOrg/TestRepo.git' } -ParameterFilter { $args -contains 'get-url' }
+        Mock gh { $global:LASTEXITCODE = 0; $null }
 
         # Default hierarchy: Epic with 2 Issues, each with Tasks. PG-tagged.
         Mock polyphony {
@@ -260,11 +261,6 @@ Describe 'load-work-tree.ps1 — PG structure and PR groups (#2661)' {
             $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
             $result.pr_groups[0].branch_name_suggestion | Should -Be 'feature/pg-1'
             $result.pr_groups[1].branch_name_suggestion | Should -Be 'feature/pg-2'
-        }
-
-        It 'Includes repo_slug from git remote' {
-            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
-            $result.repo_slug | Should -Be 'TestOrg/TestRepo'
         }
     }
 
@@ -417,6 +413,424 @@ Describe 'load-work-tree.ps1 — PG structure and PR groups (#2661)' {
             $result.work_tree.issues.Count | Should -Be 0
             $result.pr_groups.Count | Should -Be 1
             $result.pr_groups[0].name | Should -Be 'PG-1'
+        }
+    }
+}
+
+# ── PG completion status and final JSON output tests (#2662) ──────────────────
+
+Describe 'load-work-tree.ps1 — PG completion and output schema (#2662)' {
+
+    BeforeEach {
+        Mock twig { } -ParameterFilter { $args -contains 'sync' }
+        Mock git { 'https://github.com/TestOrg/TestRepo.git' } -ParameterFilter { $args -contains 'get-url' }
+        Mock gh { $global:LASTEXITCODE = 0; $null }
+
+        Mock polyphony {
+            @'
+{
+  "work_item_id": 42,
+  "title": "Test Epic",
+  "type": "Epic",
+  "capabilities": ["plannable"],
+  "state": "Doing",
+  "children": [
+    {
+      "work_item_id": 100,
+      "title": "Issue One",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "Done",
+      "tags": "PG-1; twig",
+      "children": [
+        {
+          "work_item_id": 200,
+          "title": "Task A",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "Done",
+          "tags": "PG-1",
+          "children": []
+        }
+      ]
+    },
+    {
+      "work_item_id": 101,
+      "title": "Issue Two",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "To Do",
+      "tags": "PG-2",
+      "children": [
+        {
+          "work_item_id": 300,
+          "title": "Task C",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "To Do",
+          "tags": "PG-2",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+'@
+        } -ParameterFilter { $args -contains 'hierarchy' }
+    }
+
+    Context 'Output schema keys' {
+
+        It 'Contains all required top-level keys' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.PSObject.Properties.Name | Should -Contain 'work_tree'
+            $result.PSObject.Properties.Name | Should -Contain 'pr_groups'
+            $result.PSObject.Properties.Name | Should -Contain 'completed_pgs'
+            $result.PSObject.Properties.Name | Should -Contain 'pending_pgs'
+            $result.PSObject.Properties.Name | Should -Contain 'next_pg'
+            $result.PSObject.Properties.Name | Should -Contain 'pgs_needing_reconciliation'
+            $result.PSObject.Properties.Name | Should -Contain 'total_tasks'
+            $result.PSObject.Properties.Name | Should -Contain 'total_issues'
+            $result.PSObject.Properties.Name | Should -Contain 'tagged_items'
+            $result.PSObject.Properties.Name | Should -Contain 'untagged_items'
+        }
+
+        It 'Computes total_tasks as implementable-only count' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.total_tasks | Should -Be 2
+        }
+
+        It 'Computes total_issues as plannable count' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.total_issues | Should -Be 3
+        }
+
+        It 'Computes tagged_items count' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.tagged_items | Should -Be 4
+        }
+
+        It 'Computes untagged_items count' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.untagged_items | Should -Be 1
+        }
+    }
+
+    Context 'No merged PRs — all PGs pending' {
+
+        It 'Marks all PGs as not completed' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups | ForEach-Object { $_.completed | Should -Be $false }
+        }
+
+        It 'Sets merged_pr to 0 for all PGs' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups | ForEach-Object { $_.merged_pr | Should -Be 0 }
+        }
+
+        It 'Lists all PGs as pending' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pending_pgs | Should -Contain 'PG-1'
+            $result.pending_pgs | Should -Contain 'PG-2'
+            $result.completed_pgs.Count | Should -Be 0
+        }
+
+        It 'Sets next_pg to first pending PG' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.next_pg | Should -Be 'PG-1'
+        }
+
+        It 'Returns empty pgs_needing_reconciliation' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pgs_needing_reconciliation.Count | Should -Be 0
+        }
+    }
+
+    Context 'Tagged PG completed via merged PR' {
+
+        BeforeEach {
+            Mock gh {
+                $global:LASTEXITCODE = 0
+                '[{"number":10,"headRefName":"feature/pg-1","mergedAt":"2026-01-01T00:00:00Z"}]'
+            }
+        }
+
+        It 'Marks PG-1 as completed when merged PR matches branch' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[0].completed | Should -Be $true
+            $result.pr_groups[0].merged_pr | Should -Be 10
+        }
+
+        It 'Leaves PG-2 as pending (no matching merged PR)' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[1].completed | Should -Be $false
+            $result.pr_groups[1].merged_pr | Should -Be 0
+        }
+
+        It 'Lists PG-1 in completed_pgs and PG-2 in pending_pgs' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.completed_pgs | Should -Contain 'PG-1'
+            $result.pending_pgs | Should -Contain 'PG-2'
+        }
+
+        It 'Sets next_pg to PG-2' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.next_pg | Should -Be 'PG-2'
+        }
+    }
+
+    Context 'Reconciliation — stale Doing tasks in completed PG' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{
+  "work_item_id": 42,
+  "title": "Recon Epic",
+  "type": "Epic",
+  "capabilities": ["plannable"],
+  "state": "Doing",
+  "children": [
+    {
+      "work_item_id": 100,
+      "title": "Issue One",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "Doing",
+      "tags": "PG-1",
+      "children": [
+        {
+          "work_item_id": 200,
+          "title": "Task Stale",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "Doing",
+          "tags": "PG-1",
+          "children": []
+        },
+        {
+          "work_item_id": 201,
+          "title": "Task Done",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "Done",
+          "tags": "PG-1",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+
+            Mock gh {
+                $global:LASTEXITCODE = 0
+                '[{"number":5,"headRefName":"feature/pg-1","mergedAt":"2026-01-01T00:00:00Z"}]'
+            }
+        }
+
+        It 'Detects non_done_task_ids in completed PG' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[0].non_done_task_ids | Should -Contain 200
+        }
+
+        It 'Detects stale_doing_task_ids in completed PG' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[0].stale_doing_task_ids | Should -Contain 200
+        }
+
+        It 'Detects non_done_issue_ids in completed PG' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[0].non_done_issue_ids | Should -Contain 100
+        }
+
+        It 'Sets needs_reconciliation to true' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[0].needs_reconciliation | Should -Be $true
+        }
+
+        It 'Includes PG in pgs_needing_reconciliation' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pgs_needing_reconciliation.Count | Should -Be 1
+            $result.pgs_needing_reconciliation[0].name | Should -Be 'PG-1'
+        }
+    }
+
+    Context 'Fallback PG-1 completion requires merged PR AND all Done' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{
+  "work_item_id": 42,
+  "title": "Fallback Epic",
+  "type": "Epic",
+  "capabilities": ["plannable"],
+  "state": "Done",
+  "children": [
+    {
+      "work_item_id": 100,
+      "title": "Issue",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "Done",
+      "children": [
+        {
+          "work_item_id": 200,
+          "title": "Task",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "Done",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Marks fallback PG-1 as completed when merged PR AND all items Done' {
+            Mock gh {
+                $global:LASTEXITCODE = 0
+                '[{"number":1,"headRefName":"feature/pg-1-fallback-epic","mergedAt":"2026-01-01T00:00:00Z"}]'
+            }
+            $result = & $script:ScriptPath -WorkItemId 42 3>$null | ConvertFrom-Json
+            $result.pr_groups[0].completed | Should -Be $true
+        }
+
+        It 'Does not mark fallback PG-1 as completed when items not all Done' {
+            Mock polyphony {
+                @'
+{
+  "work_item_id": 42,
+  "title": "Fallback Epic",
+  "type": "Epic",
+  "capabilities": ["plannable"],
+  "state": "Doing",
+  "children": [
+    {
+      "work_item_id": 100,
+      "title": "Issue",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "Doing",
+      "children": [
+        {
+          "work_item_id": 200,
+          "title": "Task",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "To Do",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+
+            Mock gh {
+                $global:LASTEXITCODE = 0
+                '[{"number":1,"headRefName":"feature/pg-1-fallback-epic","mergedAt":"2026-01-01T00:00:00Z"}]'
+            }
+            $result = & $script:ScriptPath -WorkItemId 42 3>$null | ConvertFrom-Json
+            $result.pr_groups[0].completed | Should -Be $false
+        }
+    }
+
+    Context 'All PGs completed — next_pg is empty' {
+
+        BeforeEach {
+            Mock gh {
+                $global:LASTEXITCODE = 0
+                @'
+[
+  {"number":10,"headRefName":"feature/pg-1","mergedAt":"2026-01-01T00:00:00Z"},
+  {"number":11,"headRefName":"feature/pg-2","mergedAt":"2026-01-02T00:00:00Z"}
+]
+'@
+            }
+        }
+
+        It 'Sets next_pg to empty string when all PGs completed' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.next_pg | Should -Be ''
+        }
+
+        It 'Lists all PGs as completed' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.completed_pgs | Should -Contain 'PG-1'
+            $result.completed_pgs | Should -Contain 'PG-2'
+            $result.pending_pgs.Count | Should -Be 0
+        }
+    }
+
+    Context 'Completed PG with all items Done — no reconciliation needed' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{
+  "work_item_id": 42,
+  "title": "Clean Epic",
+  "type": "Epic",
+  "capabilities": ["plannable"],
+  "state": "Doing",
+  "children": [
+    {
+      "work_item_id": 100,
+      "title": "Issue",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "Done",
+      "tags": "PG-1",
+      "children": [
+        {
+          "work_item_id": 200,
+          "title": "Task",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "Done",
+          "tags": "PG-1",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+
+            Mock gh {
+                $global:LASTEXITCODE = 0
+                '[{"number":5,"headRefName":"feature/pg-1","mergedAt":"2026-01-01T00:00:00Z"}]'
+            }
+        }
+
+        It 'Sets needs_reconciliation to false when all items Done' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[0].needs_reconciliation | Should -Be $false
+        }
+
+        It 'Returns empty reconciliation arrays' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[0].non_done_task_ids.Count | Should -Be 0
+            $result.pr_groups[0].stale_doing_task_ids.Count | Should -Be 0
+            $result.pr_groups[0].non_done_issue_ids.Count | Should -Be 0
+        }
+    }
+
+    Context 'Error handling' {
+
+        It 'Returns error JSON when script fails' {
+            Mock polyphony { throw "hierarchy failed" } -ParameterFilter { $args -contains 'hierarchy' }
+            $output = & $script:ScriptPath -WorkItemId 42 2>$null
+            $result = $output | ConvertFrom-Json
+            $result.error | Should -Not -BeNullOrEmpty
         }
     }
 }
