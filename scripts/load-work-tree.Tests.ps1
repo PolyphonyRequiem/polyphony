@@ -834,3 +834,523 @@ Describe 'load-work-tree.ps1 — PG completion and output schema (#2662)' {
         }
     }
 }
+
+# ── Output schema compatibility verification (#2640) ─────────────────────────
+
+Describe 'load-work-tree.ps1 — output schema compatibility (#2640)' {
+
+    BeforeEach {
+        Mock twig { } -ParameterFilter { $args -contains 'sync' }
+        Mock git { 'https://github.com/TestOrg/TestRepo.git' } -ParameterFilter { $args -contains 'get-url' }
+        Mock gh { $global:LASTEXITCODE = 0; $null }
+    }
+
+    Context 'Required schema keys — all 10 from reference' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{
+  "work_item_id": 42,
+  "title": "Schema Epic",
+  "type": "Epic",
+  "capabilities": ["plannable"],
+  "state": "Doing",
+  "children": [
+    {
+      "work_item_id": 100,
+      "title": "Issue One",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "Doing",
+      "tags": "PG-1",
+      "children": [
+        {
+          "work_item_id": 200,
+          "title": "Task A",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "To Do",
+          "tags": "PG-1",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Contains all 10 required top-level keys' {
+            $requiredKeys = @(
+                'work_tree', 'pr_groups', 'completed_pgs', 'pending_pgs',
+                'next_pg', 'pgs_needing_reconciliation',
+                'total_tasks', 'total_issues', 'tagged_items', 'untagged_items'
+            )
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present"
+            }
+        }
+
+        It 'Uses correct value types for each key' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+
+            # Object
+            $result.work_tree | Should -Not -BeNullOrEmpty
+            $result.work_tree.PSObject.Properties.Name | Should -Not -BeNullOrEmpty
+
+            # Arrays (empty JSON arrays may deserialize as $null in PowerShell)
+            $result.PSObject.Properties.Name | Should -Contain 'pr_groups'
+            $result.PSObject.Properties.Name | Should -Contain 'completed_pgs'
+            $result.PSObject.Properties.Name | Should -Contain 'pending_pgs'
+            $result.PSObject.Properties.Name | Should -Contain 'pgs_needing_reconciliation'
+
+            # String
+            $result.next_pg | Should -BeOfType [string]
+
+            # Integers
+            $result.total_tasks | Should -BeOfType [long]
+            $result.total_issues | Should -BeOfType [long]
+            $result.tagged_items | Should -BeOfType [long]
+            $result.untagged_items | Should -BeOfType [long]
+        }
+
+        It 'work_tree contains required sub-keys' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $wtKeys = $result.work_tree.PSObject.Properties.Name
+            $wtKeys | Should -Contain 'epic_id'
+            $wtKeys | Should -Contain 'epic_title'
+            $wtKeys | Should -Contain 'epic_type'
+            $wtKeys | Should -Contain 'issues'
+        }
+
+        It 'pr_groups entries contain required fields' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $pg = $result.pr_groups[0]
+            $pgKeys = $pg.PSObject.Properties.Name
+            $pgKeys | Should -Contain 'name'
+            $pgKeys | Should -Contain 'task_ids'
+            $pgKeys | Should -Contain 'issue_ids'
+            $pgKeys | Should -Contain 'branch_name_suggestion'
+            $pgKeys | Should -Contain 'completed'
+            $pgKeys | Should -Contain 'merged_pr'
+            $pgKeys | Should -Contain 'needs_reconciliation'
+            $pgKeys | Should -Contain 'non_done_task_ids'
+            $pgKeys | Should -Contain 'stale_doing_task_ids'
+            $pgKeys | Should -Contain 'non_done_issue_ids'
+        }
+    }
+
+    Context 'Scenario 1 — Epic root (3-tier hierarchy with PG tags)' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{
+  "work_item_id": 42,
+  "title": "Epic Root",
+  "type": "Epic",
+  "capabilities": ["plannable"],
+  "state": "Doing",
+  "children": [
+    {
+      "work_item_id": 100,
+      "title": "Issue Alpha",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "Doing",
+      "tags": "PG-1; twig",
+      "children": [
+        {
+          "work_item_id": 200,
+          "title": "Task X",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "Done",
+          "tags": "PG-1",
+          "children": []
+        },
+        {
+          "work_item_id": 201,
+          "title": "Task Y",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "To Do",
+          "tags": "PG-1",
+          "children": []
+        }
+      ]
+    },
+    {
+      "work_item_id": 101,
+      "title": "Issue Beta",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "To Do",
+      "tags": "PG-2",
+      "children": [
+        {
+          "work_item_id": 300,
+          "title": "Task Z",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "To Do",
+          "tags": "PG-2",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Sets work_tree.epic_id to root work_item_id' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.work_tree.epic_id | Should -Be 42
+        }
+
+        It 'Sets work_tree.epic_title to root title' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.work_tree.epic_title | Should -Be 'Epic Root'
+        }
+
+        It 'Sets work_tree.epic_type to root type' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.work_tree.epic_type | Should -Be 'Epic'
+        }
+
+        It 'Builds issues array from children' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.work_tree.issues.Count | Should -Be 2
+        }
+
+        It 'Issues contain nested tasks array' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.work_tree.issues[0].tasks.Count | Should -Be 2
+            $result.work_tree.issues[1].tasks.Count | Should -Be 1
+        }
+
+        It 'Creates two PR groups matching PG tags' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups.Count | Should -Be 2
+            $result.pr_groups[0].name | Should -Be 'PG-1'
+            $result.pr_groups[1].name | Should -Be 'PG-2'
+        }
+
+        It 'PG-1 task_ids contains implementable items' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[0].task_ids | Should -Contain 200
+            $result.pr_groups[0].task_ids | Should -Contain 201
+        }
+
+        It 'PG-1 issue_ids contains container items' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pr_groups[0].issue_ids | Should -Contain 100
+        }
+
+        It 'Computes correct total_tasks count' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.total_tasks | Should -Be 3
+        }
+
+        It 'Computes correct total_issues count' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.total_issues | Should -Be 3
+        }
+
+        It 'Computes correct tagged_items count' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.tagged_items | Should -Be 5
+        }
+
+        It 'Computes correct untagged_items count' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.untagged_items | Should -Be 1
+        }
+
+        It 'Lists all PGs in pending_pgs when no merges' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pending_pgs | Should -Contain 'PG-1'
+            $result.pending_pgs | Should -Contain 'PG-2'
+            $result.completed_pgs.Count | Should -Be 0
+        }
+
+        It 'Sets next_pg to first pending PG' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.next_pg | Should -Be 'PG-1'
+        }
+
+        It 'Returns empty pgs_needing_reconciliation' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.pgs_needing_reconciliation.Count | Should -Be 0
+        }
+    }
+
+    Context 'Scenario 2 — Issue root (2-tier hierarchy)' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{
+  "work_item_id": 500,
+  "title": "Issue Root",
+  "type": "Issue",
+  "capabilities": ["plannable"],
+  "state": "Doing",
+  "tags": "PG-1",
+  "children": [
+    {
+      "work_item_id": 501,
+      "title": "Task Under Issue",
+      "type": "Task",
+      "capabilities": ["implementable"],
+      "state": "To Do",
+      "tags": "PG-1",
+      "children": []
+    },
+    {
+      "work_item_id": 502,
+      "title": "Task Two Under Issue",
+      "type": "Task",
+      "capabilities": ["implementable"],
+      "state": "Done",
+      "tags": "PG-1",
+      "children": []
+    }
+  ]
+}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Sets work_tree.epic_id to issue root id' {
+            $result = & $script:ScriptPath -WorkItemId 500 | ConvertFrom-Json
+            $result.work_tree.epic_id | Should -Be 500
+        }
+
+        It 'Sets work_tree.epic_type to Issue' {
+            $result = & $script:ScriptPath -WorkItemId 500 | ConvertFrom-Json
+            $result.work_tree.epic_type | Should -Be 'Issue'
+        }
+
+        It 'Builds issues array from direct children' {
+            $result = & $script:ScriptPath -WorkItemId 500 | ConvertFrom-Json
+            $result.work_tree.issues.Count | Should -Be 2
+        }
+
+        It 'Contains all required top-level keys' {
+            $requiredKeys = @(
+                'work_tree', 'pr_groups', 'completed_pgs', 'pending_pgs',
+                'next_pg', 'pgs_needing_reconciliation',
+                'total_tasks', 'total_issues', 'tagged_items', 'untagged_items'
+            )
+            $result = & $script:ScriptPath -WorkItemId 500 | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present for Issue root"
+            }
+        }
+
+        It 'Produces valid pr_groups for 2-tier hierarchy' {
+            $result = & $script:ScriptPath -WorkItemId 500 | ConvertFrom-Json
+            $result.pr_groups.Count | Should -BeGreaterOrEqual 1
+            $result.pr_groups[0].name | Should -Be 'PG-1'
+        }
+    }
+
+    Context 'Scenario 3 — Task root (leaf, single item)' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{
+  "work_item_id": 999,
+  "title": "Leaf Task",
+  "type": "Task",
+  "capabilities": ["implementable"],
+  "state": "To Do",
+  "tags": "PG-1",
+  "children": []
+}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Sets work_tree.epic_id to task root id' {
+            $result = & $script:ScriptPath -WorkItemId 999 | ConvertFrom-Json
+            $result.work_tree.epic_id | Should -Be 999
+        }
+
+        It 'Sets work_tree.epic_type to Task' {
+            $result = & $script:ScriptPath -WorkItemId 999 | ConvertFrom-Json
+            $result.work_tree.epic_type | Should -Be 'Task'
+        }
+
+        It 'Builds empty issues array for leaf node' {
+            $result = & $script:ScriptPath -WorkItemId 999 | ConvertFrom-Json
+            $result.work_tree.issues.Count | Should -Be 0
+        }
+
+        It 'Contains all required top-level keys' {
+            $requiredKeys = @(
+                'work_tree', 'pr_groups', 'completed_pgs', 'pending_pgs',
+                'next_pg', 'pgs_needing_reconciliation',
+                'total_tasks', 'total_issues', 'tagged_items', 'untagged_items'
+            )
+            $result = & $script:ScriptPath -WorkItemId 999 | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present for Task root"
+            }
+        }
+
+        It 'Produces valid pr_groups for single leaf item' {
+            $result = & $script:ScriptPath -WorkItemId 999 | ConvertFrom-Json
+            $result.pr_groups.Count | Should -BeGreaterOrEqual 1
+        }
+
+        It 'Sets total_tasks for leaf task with implementable capability' {
+            $result = & $script:ScriptPath -WorkItemId 999 | ConvertFrom-Json
+            $result.total_tasks | Should -Be 1
+        }
+
+        It 'Sets total_issues to 0 for leaf task' {
+            $result = & $script:ScriptPath -WorkItemId 999 | ConvertFrom-Json
+            $result.total_issues | Should -Be 0
+        }
+    }
+
+    Context 'Scenario 4 — No PG tags (PG-1 fallback)' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{
+  "work_item_id": 42,
+  "title": "Untagged Epic",
+  "type": "Epic",
+  "capabilities": ["plannable"],
+  "state": "Doing",
+  "children": [
+    {
+      "work_item_id": 100,
+      "title": "Untagged Issue",
+      "type": "Issue",
+      "capabilities": ["plannable"],
+      "state": "Doing",
+      "children": [
+        {
+          "work_item_id": 200,
+          "title": "Untagged Task",
+          "type": "Task",
+          "capabilities": ["implementable"],
+          "state": "To Do",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Creates single PG-1 fallback group' {
+            $result = & $script:ScriptPath -WorkItemId 42 3>$null | ConvertFrom-Json
+            $result.pr_groups.Count | Should -Be 1
+            $result.pr_groups[0].name | Should -Be 'PG-1'
+        }
+
+        It 'Fallback PG-1 task_ids contains implementable-only items' {
+            $result = & $script:ScriptPath -WorkItemId 42 3>$null | ConvertFrom-Json
+            $result.pr_groups[0].task_ids | Should -Contain 200
+        }
+
+        It 'Fallback PG-1 issue_ids contains plannable items' {
+            $result = & $script:ScriptPath -WorkItemId 42 3>$null | ConvertFrom-Json
+            $result.pr_groups[0].issue_ids | Should -Contain 42
+            $result.pr_groups[0].issue_ids | Should -Contain 100
+        }
+
+        It 'Contains all required top-level keys in fallback mode' {
+            $requiredKeys = @(
+                'work_tree', 'pr_groups', 'completed_pgs', 'pending_pgs',
+                'next_pg', 'pgs_needing_reconciliation',
+                'total_tasks', 'total_issues', 'tagged_items', 'untagged_items'
+            )
+            $result = & $script:ScriptPath -WorkItemId 42 3>$null | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present in PG-1 fallback"
+            }
+        }
+
+        It 'Reports 0 tagged_items and correct untagged_items count' {
+            $result = & $script:ScriptPath -WorkItemId 42 3>$null | ConvertFrom-Json
+            $result.tagged_items | Should -Be 0
+            $result.untagged_items | Should -Be 3
+        }
+
+        It 'Fallback PG-1 has all pr_group fields' {
+            $result = & $script:ScriptPath -WorkItemId 42 3>$null | ConvertFrom-Json
+            $pg = $result.pr_groups[0]
+            $pgKeys = $pg.PSObject.Properties.Name
+            $pgKeys | Should -Contain 'name'
+            $pgKeys | Should -Contain 'task_ids'
+            $pgKeys | Should -Contain 'issue_ids'
+            $pgKeys | Should -Contain 'branch_name_suggestion'
+            $pgKeys | Should -Contain 'completed'
+            $pgKeys | Should -Contain 'merged_pr'
+            $pgKeys | Should -Contain 'needs_reconciliation'
+        }
+    }
+
+    Context 'P5 compliance — zero type name literals' {
+
+        It 'load-work-tree.ps1 contains no hardcoded type literals' {
+            $matches = Select-String "'Epic'|'Issue'|'Task'" $script:ScriptPath
+            $matches | Should -BeNullOrEmpty -Because 'capability-based classification must not use type name literals'
+        }
+
+        It 'pg-helpers.ps1 contains no hardcoded type literals' {
+            $matches = Select-String "'Epic'|'Issue'|'Task'" $script:HelpersPath
+            $matches | Should -BeNullOrEmpty -Because 'shared helper library must not use type name literals'
+        }
+    }
+
+    Context 'Error handler output format' {
+
+        It 'Error output contains error key' {
+            Mock polyphony { throw 'Simulated hierarchy failure' } -ParameterFilter { $args -contains 'hierarchy' }
+            $output = & $script:ScriptPath -WorkItemId 42 2>$null
+            $json = $output | ConvertFrom-Json
+            $json.PSObject.Properties.Name | Should -Contain 'error'
+        }
+
+        It 'Error output has non-empty error message' {
+            Mock polyphony { throw 'Simulated hierarchy failure' } -ParameterFilter { $args -contains 'hierarchy' }
+            $output = & $script:ScriptPath -WorkItemId 42 2>$null
+            $json = $output | ConvertFrom-Json
+            $json.error | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Error output is valid JSON' {
+            Mock polyphony { throw 'Simulated hierarchy failure' } -ParameterFilter { $args -contains 'hierarchy' }
+            $output = & $script:ScriptPath -WorkItemId 42 2>$null
+            { $output | ConvertFrom-Json } | Should -Not -Throw
+        }
+
+        It 'Error output sets non-zero exit code' {
+            Mock polyphony { throw 'Simulated hierarchy failure' } -ParameterFilter { $args -contains 'hierarchy' }
+            & $script:ScriptPath -WorkItemId 42 2>$null | Out-Null
+            $LASTEXITCODE | Should -Be 1
+        }
+    }
+}
