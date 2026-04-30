@@ -584,3 +584,399 @@ Describe 'detect-state.ps1 — polyphony route integration (#2632)' {
         }
     }
 }
+
+Describe 'detect-state.ps1 — output schema compatibility (#2635)' {
+
+    BeforeEach {
+        Mock twig { } -ParameterFilter { $args -contains 'sync' }
+        Mock twig { } -ParameterFilter { $args -contains 'set' }
+        Mock twig { } -ParameterFilter { $args -contains 'state' }
+
+        Mock polyphony {
+            '{"is_valid":false,"target_state":"","message":"Not valid"}'
+        } -ParameterFilter { $args -contains 'validate' }
+
+        Mock git { 'https://github.com/TestOrg/TestRepo.git' } -ParameterFilter { $args -contains 'get-url' }
+        Mock git { } -ParameterFilter { $args -contains 'ls-remote' }
+        Mock gh { '[]' }
+        Mock Get-ChildItem { @() } -ParameterFilter { $Path -like '*plan.md' }
+    }
+
+    Context 'Required schema keys — all 18 from reference' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"needs_planning","action":"plan","message":"Plan."}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Doing","title":"Test","children":[]}'
+            } -ParameterFilter { $args -contains 'tree' }
+        }
+
+        It 'Contains all 18 required keys' {
+            $requiredKeys = @(
+                'work_item_id', 'work_item_type', 'work_item_state', 'work_item_title',
+                'intent', 'phase', 'has_plan', 'plan_status', 'plan_path', 'plan_source',
+                'has_seeded_children', 'any_child_missing_tasks', 'seed_status',
+                'children_summary', 'implementation_status', 'intent_conflict',
+                'needs_cleanup', 'error'
+            )
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present"
+            }
+        }
+
+        It 'Uses correct value types for each key' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+
+            # Integer
+            $result.work_item_id | Should -BeOfType [long]
+
+            # Strings
+            $result.work_item_type | Should -BeOfType [string]
+            $result.work_item_state | Should -BeOfType [string]
+            $result.work_item_title | Should -BeOfType [string]
+            $result.intent | Should -BeOfType [string]
+            $result.phase | Should -BeOfType [string]
+            $result.plan_status | Should -BeOfType [string]
+            $result.plan_path | Should -BeOfType [string]
+            $result.plan_source | Should -BeOfType [string]
+            $result.seed_status | Should -BeOfType [string]
+            $result.children_summary | Should -BeOfType [string]
+            $result.implementation_status | Should -BeOfType [string]
+            $result.error | Should -BeOfType [string]
+
+            # Booleans
+            $result.has_plan | Should -BeOfType [bool]
+            $result.has_seeded_children | Should -BeOfType [bool]
+            $result.any_child_missing_tasks | Should -BeOfType [bool]
+            $result.intent_conflict | Should -BeOfType [bool]
+            $result.needs_cleanup | Should -BeOfType [bool]
+        }
+    }
+
+    Context 'Scenario 1 — New work item (no children, no plan, intent=new)' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"needs_planning","action":"plan","message":"Needs planning."}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"To Do","title":"New Epic","children":[]}'
+            } -ParameterFilter { $args -contains 'tree' }
+        }
+
+        It 'Returns phase needs_planning' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'new' | ConvertFrom-Json
+            $result.phase | Should -Be 'needs_planning'
+        }
+
+        It 'Returns has_plan false and plan_status none' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'new' | ConvertFrom-Json
+            $result.has_plan | Should -BeFalse
+            $result.plan_status | Should -Be 'none'
+        }
+
+        It 'Returns has_seeded_children false' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'new' | ConvertFrom-Json
+            $result.has_seeded_children | Should -BeFalse
+        }
+
+        It 'Returns intent_conflict false (no existing state)' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'new' | ConvertFrom-Json
+            $result.intent_conflict | Should -BeFalse
+        }
+
+        It 'Returns implementation_status not_started' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'new' | ConvertFrom-Json
+            $result.implementation_status | Should -Be 'not_started'
+        }
+    }
+
+    Context 'Scenario 2 — Work item with plan, no children (intent=resume)' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"needs_seeding","action":"seed","message":"Needs seeding."}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Doing","title":"Planned Epic","children":[]}'
+            } -ParameterFilter { $args -contains 'tree' }
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\test.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+            Mock Get-Content {
+                "---`nwork_item_id: 42`n---`n# Plan content"
+            }
+        }
+
+        It 'Returns phase needs_seeding' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'resume' | ConvertFrom-Json
+            $result.phase | Should -Be 'needs_seeding'
+        }
+
+        It 'Returns has_plan true with filesystem_fallback source' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'resume' | ConvertFrom-Json
+            $result.has_plan | Should -BeTrue
+            $result.plan_source | Should -Be 'filesystem_fallback'
+            $result.plan_status | Should -Be 'complete'
+        }
+
+        It 'Returns has_seeded_children false' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'resume' | ConvertFrom-Json
+            $result.has_seeded_children | Should -BeFalse
+        }
+    }
+
+    Context 'Scenario 3 — Work item with children in progress (intent=resume)' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"ready_for_implementation","action":"implement","message":"Ready.","workspace_hint":{"feature_branch":"feature/42-test"}}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Doing","title":"Active Epic","children":[{"id":100,"type":"Issue","state":"Doing","title":"Child 1","children":[{"id":200,"type":"Task","state":"To Do","title":"Task 1"}]},{"id":101,"type":"Issue","state":"To Do","title":"Child 2","children":[{"id":201,"type":"Task","state":"To Do","title":"Task 2"}]}]}'
+            } -ParameterFilter { $args -contains 'tree' }
+        }
+
+        It 'Returns phase ready_for_implementation' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'resume' | ConvertFrom-Json
+            $result.phase | Should -Be 'ready_for_implementation'
+        }
+
+        It 'Returns has_seeded_children true' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'resume' | ConvertFrom-Json
+            $result.has_seeded_children | Should -BeTrue
+        }
+
+        It 'Returns seed_status seeded when all children have tasks' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'resume' | ConvertFrom-Json
+            $result.seed_status | Should -Be 'seeded'
+            $result.any_child_missing_tasks | Should -BeFalse
+        }
+
+        It 'Returns children_summary with correct counts' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'resume' | ConvertFrom-Json
+            $summary = $result.children_summary | ConvertFrom-Json
+            $summary.total | Should -Be 2
+            $summary.doing | Should -Be 1
+            $summary.todo | Should -Be 1
+        }
+    }
+
+    Context 'Scenario 4 — Completed work item (all children Done)' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"done","action":"none","message":"Complete."}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Done","title":"Done Epic","children":[{"id":100,"type":"Issue","state":"Done","title":"C1","children":[{"id":200,"type":"Task","state":"Done","title":"T1"}]},{"id":101,"type":"Issue","state":"Done","title":"C2","children":[{"id":201,"type":"Task","state":"Done","title":"T2"}]}]}'
+            } -ParameterFilter { $args -contains 'tree' }
+        }
+
+        It 'Returns phase done' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.phase | Should -Be 'done'
+        }
+
+        It 'Returns implementation_status done' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.implementation_status | Should -Be 'done'
+        }
+
+        It 'Returns all children as done in summary' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $summary = $result.children_summary | ConvertFrom-Json
+            $summary.total | Should -Be 2
+            $summary.done | Should -Be 2
+            $summary.doing | Should -Be 0
+            $summary.todo | Should -Be 0
+        }
+    }
+
+    Context 'Scenario 5 — Intent conflict (intent=new with existing children)' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"ready_for_implementation","action":"implement","message":"Ready."}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Doing","title":"Existing Epic","children":[{"id":100,"type":"Issue","state":"Doing","title":"Child","children":[{"id":200,"type":"Task","state":"To Do","title":"Task"}]}]}'
+            } -ParameterFilter { $args -contains 'tree' }
+        }
+
+        It 'Returns intent_conflict true' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'new' | ConvertFrom-Json
+            $result.intent_conflict | Should -BeTrue
+        }
+
+        It 'Preserves phase from polyphony route' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'new' | ConvertFrom-Json
+            $result.phase | Should -Be 'ready_for_implementation'
+        }
+
+        It 'Returns needs_cleanup false (only intent_conflict is set)' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'new' | ConvertFrom-Json
+            $result.needs_cleanup | Should -BeFalse
+        }
+    }
+
+    Context 'Scenario 6 — Redo intent with existing plan' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"needs_planning","action":"plan","message":"Plan."}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Doing","title":"Redo Epic","children":[]}'
+            } -ParameterFilter { $args -contains 'tree' }
+            Mock Get-ChildItem {
+                @([PSCustomObject]@{ FullName = 'C:\repo\docs\projects\redo.plan.md' })
+            } -ParameterFilter { $Path -like '*plan.md' }
+            Mock Get-Content {
+                "---`nwork_item_id: 42`n---`n# Plan to redo"
+            }
+        }
+
+        It 'Returns needs_cleanup true' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'redo' | ConvertFrom-Json
+            $result.needs_cleanup | Should -BeTrue
+        }
+
+        It 'Returns has_plan true' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'redo' | ConvertFrom-Json
+            $result.has_plan | Should -BeTrue
+        }
+
+        It 'Returns intent_conflict false (redo sets cleanup, not conflict)' {
+            $result = & $script:ScriptPath -WorkItemId 42 -Intent 'redo' | ConvertFrom-Json
+            $result.intent_conflict | Should -BeFalse
+        }
+    }
+
+    Context 'Scenario 7 — Children missing tasks (issues with no grandchildren)' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"needs_task_decomposition","action":"seed","message":"Tasks needed."}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Doing","title":"Unseeded Epic","children":[{"id":100,"type":"Issue","state":"To Do","title":"Issue 1","children":[]},{"id":101,"type":"Issue","state":"To Do","title":"Issue 2","children":[]}]}'
+            } -ParameterFilter { $args -contains 'tree' }
+        }
+
+        It 'Returns phase needs_task_decomposition' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.phase | Should -Be 'needs_task_decomposition'
+        }
+
+        It 'Returns any_child_missing_tasks true' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.any_child_missing_tasks | Should -BeTrue
+        }
+
+        It 'Returns seed_status partial' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.seed_status | Should -Be 'partial'
+        }
+
+        It 'Returns has_seeded_children true (issues exist)' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.has_seeded_children | Should -BeTrue
+        }
+    }
+
+    Context 'Scenario 8 — Ambiguous plans (multiple plan files match)' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"needs_planning","action":"plan","message":"Plan."}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Doing","title":"Ambiguous Epic","children":[]}'
+            } -ParameterFilter { $args -contains 'tree' }
+            Mock Get-ChildItem {
+                @(
+                    [PSCustomObject]@{ FullName = 'C:\repo\docs\projects\plan-a.plan.md' },
+                    [PSCustomObject]@{ FullName = 'C:\repo\docs\projects\plan-b.plan.md' }
+                )
+            } -ParameterFilter { $Path -like '*plan.md' }
+            Mock Get-Content {
+                "---`nwork_item_id: 42`n---`n# Plan"
+            }
+        }
+
+        It 'Returns plan_status ambiguous' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_status | Should -Be 'ambiguous'
+        }
+
+        It 'Returns has_plan false' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.has_plan | Should -BeFalse
+        }
+
+        It 'Returns empty plan_path' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.plan_path | Should -Be ''
+        }
+    }
+
+    Context 'P5 compliance — zero type name literals' {
+
+        It 'Contains no hardcoded type literals (Epic, Issue, Task)' {
+            $matches = Select-String "'Epic'|'Issue'|'Task'" $script:ScriptPath
+            $matches | Should -BeNullOrEmpty -Because 'P5 requires zero type name literals in scripts/detect-state.ps1'
+        }
+    }
+
+    Context 'Error handler output format' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"needs_planning","action":"plan","message":"Plan."}'
+            } -ParameterFilter { $args -contains 'route' }
+            Mock twig {
+                '{"id":42,"type":"Epic","state":"Doing","title":"Test","children":[]}'
+            } -ParameterFilter { $args -contains 'tree' }
+        }
+
+        It 'Error output contains error, phase, and work_item_id keys' {
+            Mock polyphony { throw 'Simulated failure' } -ParameterFilter { $args -contains 'route' }
+
+            $result = & $script:ScriptPath -WorkItemId 42 2>$null
+            $json = $result | ConvertFrom-Json
+            $json.PSObject.Properties.Name | Should -Contain 'error'
+            $json.PSObject.Properties.Name | Should -Contain 'phase'
+            $json.PSObject.Properties.Name | Should -Contain 'work_item_id'
+        }
+
+        It 'Error output sets phase to error' {
+            Mock polyphony { throw 'Simulated failure' } -ParameterFilter { $args -contains 'route' }
+
+            $result = & $script:ScriptPath -WorkItemId 42 2>$null
+            $json = $result | ConvertFrom-Json
+            $json.phase | Should -Be 'error'
+        }
+
+        It 'Error output preserves work_item_id' {
+            Mock polyphony { throw 'Simulated failure' } -ParameterFilter { $args -contains 'route' }
+
+            $result = & $script:ScriptPath -WorkItemId 99 2>$null
+            $json = $result | ConvertFrom-Json
+            $json.work_item_id | Should -Be 99
+        }
+
+        It 'Error output sets non-zero exit code' {
+            Mock polyphony { throw 'Simulated failure' } -ParameterFilter { $args -contains 'route' }
+
+            & $script:ScriptPath -WorkItemId 42 2>$null | Out-Null
+            $LASTEXITCODE | Should -Be 1
+        }
+    }
+}
