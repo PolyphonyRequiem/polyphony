@@ -15,12 +15,14 @@ public sealed class WorkItemBuilder
     private string _state = "To Do";
     private int? _parentId;
     private readonly List<WorkItemBuilder> _children = [];
+    private readonly Dictionary<string, string?> _fields = [];
 
     public WorkItemBuilder WithId(int id) { _id = id; return this; }
     public WorkItemBuilder WithTitle(string title) { _title = title; return this; }
     public WorkItemBuilder WithType(string type) { _type = type; return this; }
     public WorkItemBuilder WithState(string state) { _state = state; return this; }
     public WorkItemBuilder WithParentId(int? parentId) { _parentId = parentId; return this; }
+    public WorkItemBuilder WithField(string name, string? value) { _fields[name] = value; return this; }
 
     /// <summary>
     /// Registers child builders whose items will have their ParentId set to this builder's Id.
@@ -50,6 +52,15 @@ public sealed class WorkItemBuilder
         // State has internal set — use the public ChangeState() then clear dirty via MarkSynced().
         item.ChangeState(_state);
         item.MarkSynced(1);
+
+        // Apply arbitrary fields after MarkSynced so they don't affect dirty state.
+        foreach (var kvp in _fields)
+        {
+            item.UpdateField(kvp.Key, kvp.Value);
+        }
+
+        if (_fields.Count > 0)
+            item.MarkSynced(1);
 
         return item;
     }

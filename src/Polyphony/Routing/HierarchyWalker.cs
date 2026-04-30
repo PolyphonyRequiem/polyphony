@@ -34,6 +34,7 @@ public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemReposi
     {
         var typeName = item.Type.Value;
         var capabilities = LookupCapabilities(typeName);
+        item.Fields.TryGetValue("System.Tags", out var tags);
 
         HierarchyResult[]? children = null;
 
@@ -60,6 +61,7 @@ public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemReposi
             Type = typeName,
             Capabilities = capabilities,
             State = item.State,
+            Tags = tags,
             Children = children,
         };
     }
