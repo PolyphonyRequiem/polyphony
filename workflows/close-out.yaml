@@ -28,11 +28,13 @@ workflow:
       default: ""
       description: Feature branch that was merged
 
-  output:
-    filed_count:
-      type: number
-      description: Number of observations filed as new work items
-      value: "{{ closeout_filer.output.filed_count | default(0) }}"
+tools:
+  - twig
+  - gh
+  - filesystem
+
+output:
+  filed_count: "{{ closeout_filer.output.filed_count | default(0) }}"
 
 agents:
   # ── Post-mortem analysis ───────────────────────────────────────────────

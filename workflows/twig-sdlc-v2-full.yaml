@@ -162,8 +162,8 @@ agents:
   - name: planning
     type: workflow
     description: Planning and seeding sub-workflow for plannable items
-    path: workflows/twig-sdlc-v2-planning.yaml
-    input:
+    workflow: workflows/twig-sdlc-v2-planning.yaml
+    input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
       intent: "{{ workflow.input.intent }}"
       user_plan_path: "{{ workflow.input.user_plan_path }}"
@@ -182,8 +182,8 @@ agents:
   - name: implementation
     type: workflow
     description: Implementation sub-workflow for implementable items
-    path: workflows/twig-sdlc-v2-implement.yaml
-    input:
+    workflow: workflows/twig-sdlc-v2-implement.yaml
+    input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
       intent: "{{ workflow.input.intent }}"
     routes:
@@ -201,8 +201,8 @@ agents:
   - name: close_out
     type: workflow
     description: Post-implementation close-out and observation filing
-    path: workflows/close-out.yaml
-    input:
+    workflow: workflows/close-out.yaml
+    input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
     routes:
       - to: $end
