@@ -71,13 +71,22 @@ Describe 'Group-ByPG' {
         $result['PG-1'].implementable_ids | Should -BeNullOrEmpty
     }
 
-    It 'Groups items with both capabilities into container_ids' {
+    It 'Groups items with both capabilities and no children into implementable_ids (issue-as-task)' {
         $items = @(
-            [pscustomobject]@{ work_item_id = 75; tags = 'PG-1'; capabilities = @('plannable', 'implementable') }
+            [pscustomobject]@{ work_item_id = 75; tags = 'PG-1'; capabilities = @('plannable', 'implementable'); children = @() }
+        )
+        $result = Group-ByPG -items $items
+        $result['PG-1'].implementable_ids | Should -Contain 75
+        $result['PG-1'].container_ids | Should -BeNullOrEmpty
+    }
+
+    It 'Groups items with both capabilities and children into container_ids' {
+        $child = [pscustomobject]@{ work_item_id = 76; tags = 'PG-1'; capabilities = @('implementable') }
+        $items = @(
+            [pscustomobject]@{ work_item_id = 75; tags = 'PG-1'; capabilities = @('plannable', 'implementable'); children = @($child) }
         )
         $result = Group-ByPG -items $items
         $result['PG-1'].container_ids | Should -Contain 75
-        $result['PG-1'].implementable_ids | Should -BeNullOrEmpty
     }
 
     It 'Skips items with no PG tag' {

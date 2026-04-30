@@ -23,7 +23,9 @@ function Group-ByPG($items) {
         }
         $isImplementable = $item.capabilities -contains 'implementable'
         $isContainer = $item.capabilities -contains 'plannable'
-        if ($isImplementable -and -not $isContainer) {
+        $hasChildren = $item.children -and $item.children.Count -gt 0
+        # Issue-as-task: plannable+implementable with no children → implementable
+        if ($isImplementable -and (-not $isContainer -or -not $hasChildren)) {
             $pgMap[$pgTag].implementable_ids += $item.work_item_id
         } else {
             $pgMap[$pgTag].container_ids += $item.work_item_id
