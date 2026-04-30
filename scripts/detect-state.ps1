@@ -29,8 +29,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/lib/ado-helpers.ps1"
 
 try {
+    # ── Derive ADO workspace from twig config (#2651) ────────────────────────
+    $_adoOrg = Get-AdoOrg
+    $_adoProject = Get-AdoProject
+    $_adoWorkspace = Get-AdoWorkspace
+
     # ── Step 0: Sync local cache from ADO ────────────────────────────────────
     # The local .twig SQLite cache may be stale. Force a refresh before
     # reading any state to prevent routing on stale data.
@@ -253,6 +259,9 @@ try {
         children_summary        = $childrenSummary
         implementation_status   = $implementationStatus
         workspace_hint          = $workspaceHint
+        ado_org                 = $_adoOrg
+        ado_project             = $_adoProject
+        ado_workspace           = $_adoWorkspace
         intent_conflict         = $intentConflict
         needs_cleanup           = $needsCleanup
         error                   = $errorMsg

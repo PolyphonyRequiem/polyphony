@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/resolve-gh-token.ps1"
 . "$PSScriptRoot/invoke-gh.ps1"
 . "$PSScriptRoot/lib/pg-helpers.ps1"
+. "$PSScriptRoot/lib/ado-helpers.ps1"
 
 try {
 $_ghRepo = ''
@@ -109,6 +110,7 @@ $taggedCount = @($allItems | Where-Object { Get-PGTag -Tags $_.tags }).Count
     total_tasks = @($allItems | Where-Object { $_.capabilities -contains 'implementable' -and $_.capabilities -notcontains 'plannable' }).Count
     total_issues = @($allItems | Where-Object { $_.capabilities -contains 'plannable' }).Count
     tagged_items = $taggedCount; untagged_items = ($allItems.Count - $taggedCount)
+    ado_org = Get-AdoOrg; ado_project = Get-AdoProject; ado_workspace = Get-AdoWorkspace
 } | ConvertTo-Json -Depth 5
 
 } catch {

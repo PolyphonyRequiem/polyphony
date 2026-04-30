@@ -15,6 +15,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/resolve-gh-token.ps1"
 . "$PSScriptRoot/invoke-gh.ps1"
 . "$PSScriptRoot/lib/pg-helpers.ps1"
+. "$PSScriptRoot/lib/ado-helpers.ps1"
 
 try {
     # ── Derive GitHub repo slug ───────────────────────────────────────────────
@@ -200,6 +201,7 @@ try {
             completed_pgs = @($completedPGs)
             remaining_pgs = @($remainingPGs)
             total_pgs     = $prGroups.Count
+            ado_workspace = Get-AdoWorkspace
         } | ConvertTo-Json -Depth 3
     } else {
         [ordered]@{
@@ -213,6 +215,7 @@ try {
             completed_pgs = @($completedPGs)
             remaining_pgs = @()
             total_pgs     = $prGroups.Count
+            ado_workspace = Get-AdoWorkspace
         } | ConvertTo-Json -Depth 3
     }
 } catch {
