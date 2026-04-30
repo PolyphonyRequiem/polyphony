@@ -9,12 +9,14 @@ BeforeAll {
     function global:polyphony { }
     function global:twig { }
     function global:git { }
+    function global:gh { }
 }
 
 AfterAll {
     Remove-Item Function:\polyphony -ErrorAction SilentlyContinue
     Remove-Item Function:\twig -ErrorAction SilentlyContinue
     Remove-Item Function:\git -ErrorAction SilentlyContinue
+    Remove-Item Function:\gh -ErrorAction SilentlyContinue
 }
 
 # ── pg-helpers.ps1 unit tests ─────────────────────────────────────────────────

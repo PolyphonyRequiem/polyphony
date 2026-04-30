@@ -13,6 +13,8 @@ param([Parameter(Mandatory)][int]$WorkItemId)
 $ErrorActionPreference = 'Stop'
 
 # ── Dot-sourced dependencies ─────────────────────────────────────────────────
+. "$PSScriptRoot/resolve-gh-token.ps1"
+. "$PSScriptRoot/invoke-gh.ps1"
 . "$PSScriptRoot/lib/pg-helpers.ps1"
 
 # ── Derive repo slug ─────────────────────────────────────────────────────────
