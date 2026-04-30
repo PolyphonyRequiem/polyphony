@@ -26,6 +26,16 @@ try {
     twig sync --output json 2>$null | Out-Null
     $hierarchy = (polyphony hierarchy --work-item $WorkItemId --depth 3 2>$null) | ConvertFrom-Json
 
+    # ── Route to get workspace_hint for branch naming ─────────────────────────
+    $workspaceHint = $null
+    try {
+        $routeJson = polyphony route --work-item $WorkItemId 2>$null
+        if ($routeJson) {
+            $routeResult = $routeJson | ConvertFrom-Json
+            $workspaceHint = $routeResult.workspace_hint
+        }
+    } catch { <# fall back to manual derivation #> }
+
     # ── Flatten hierarchy & classify by PG ────────────────────────────────────
     function Flatten-Hierarchy($node) {
         $items = @($node)
@@ -36,29 +46,42 @@ try {
     $pgMap = Group-ByPG -items $allItems
     $isFallback = $pgMap.Count -eq 0
 
-    # ── Build PG branch name helper ───────────────────────────────────────────
-    function New-BranchName([string]$slug) {
+    # ── Build PR groups ───────────────────────────────────────────────────────
+    # ── Resolve branch name from workspace_hint or manual fallback ───────────
+    function Resolve-PGBranch([string]$pgName) {
+        if ($workspaceHint -and $workspaceHint.pg_branch) {
+            $pgNum = if ($pgName -match 'PG-(\d+)') { $Matches[1] } else { '1' }
+            return $workspaceHint.pg_branch -replace '\{n\}', $pgNum
+        }
+        $slug = ($pgName -replace '[^a-zA-Z0-9]+', '-').ToLower()
         $b = "feature/$WorkItemId-$slug"
         if ($b.Length -gt 60) { $b = $b.Substring(0, 60) }
-        $b
+        return $b
     }
 
-    # ── Build PR groups ───────────────────────────────────────────────────────
+    function Resolve-FeatureBranch([string]$title) {
+        if ($workspaceHint -and $workspaceHint.feature_branch) {
+            return $workspaceHint.feature_branch
+        }
+        $slug = ($title -replace '[^a-zA-Z0-9]+', '-' -replace '-+$', '').ToLower()
+        if ($slug.Length -gt 40) { $slug = $slug.Substring(0, 40) -replace '-+$', '' }
+        $b = "feature/$WorkItemId-$slug"
+        if ($b.Length -gt 60) { $b = $b.Substring(0, 60) }
+        return $b
+    }
+
     $prGroups = @()
     if (-not $isFallback) {
         foreach ($pgName in ($pgMap.Keys | Sort-Object { [int]($_ -replace '^PG-(\d+).*', '$1') })) {
             $pg = $pgMap[$pgName]
-            $slug = ($pgName -replace '[^a-zA-Z0-9]+', '-').ToLower()
             $prGroups += [ordered]@{
                 name        = $pgName
                 task_ids    = @($pg.implementable_ids)
                 issue_ids   = @($pg.container_ids)
-                branch_name = New-BranchName $slug
+                branch_name = Resolve-PGBranch $pgName
             }
         }
     } else {
-        $slug = ($hierarchy.title -replace '[^a-zA-Z0-9]+', '-' -replace '-+$', '').ToLower()
-        if ($slug.Length -gt 40) { $slug = $slug.Substring(0, 40) -replace '-+$', '' }
         $prGroups += [ordered]@{
             name        = 'PG-1'
             task_ids    = @($allItems | Where-Object {
@@ -75,7 +98,7 @@ try {
                     ($_.children -and $_.children.Count -gt 0)
                 )
             } | ForEach-Object { $_.work_item_id })
-            branch_name = New-BranchName $slug
+            branch_name = Resolve-FeatureBranch $hierarchy.title
         }
     }
 

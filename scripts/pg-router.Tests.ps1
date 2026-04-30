@@ -33,6 +33,9 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
 {"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue One","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"PG-1; twig","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"Doing","tags":"PG-1","children":[]},{"work_item_id":201,"title":"Task B","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]}]},{"work_item_id":101,"title":"Issue Two","type":"Issue","capabilities":["plannable"],"state":"To Do","tags":"PG-2","children":[{"work_item_id":300,"title":"Task C","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-2","children":[]}]}]}
 '@
         } -ParameterFilter { $args -contains 'hierarchy' }
+        Mock polyphony {
+            '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":{"feature_branch":"feature/42-test-epic","pg_branch":"pg-{n}/42-test-epic"}}'
+        } -ParameterFilter { $args -contains 'route' }
         Mock gh { }
     }
 
@@ -44,9 +47,9 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
             $result.current_pg | Should -Be 'PG-1'
         }
 
-        It 'Uses WorkItemId prefix in branch_name' {
+        It 'Uses workspace_hint pg_branch with PG number in branch_name' {
             $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
-            $result.branch_name | Should -BeLike 'feature/42-*'
+            $result.branch_name | Should -Be 'pg-1/42-test-epic'
         }
 
         It 'Includes correct task_ids and issue_ids from capability classification' {
@@ -87,7 +90,7 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
 
         BeforeEach {
             Mock gh {
-                '[{"number":55,"headRefName":"feature/42-pg-1","url":"https://github.com/PolyphonyRequiem/twig/pull/55"}]'
+                '[{"number":55,"headRefName":"pg-1/42-test-epic","url":"https://github.com/PolyphonyRequiem/twig/pull/55"}]'
             } -ParameterFilter { $args -contains 'open' }
         }
 
@@ -103,7 +106,7 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
 
         BeforeEach {
             Mock gh {
-                '[{"number":10,"headRefName":"feature/42-pg-1","url":"https://github.com/PolyphonyRequiem/twig/pull/10"}]'
+                '[{"number":10,"headRefName":"pg-1/42-test-epic","url":"https://github.com/PolyphonyRequiem/twig/pull/10"}]'
             } -ParameterFilter { $args -contains 'merged' }
         }
 
@@ -137,7 +140,7 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
 '@
             } -ParameterFilter { $args -contains 'hierarchy' }
             Mock gh {
-                '[{"number":10,"headRefName":"feature/42-pg-1","url":"https://github.com/PolyphonyRequiem/twig/pull/10"},{"number":11,"headRefName":"feature/42-pg-2","url":"https://github.com/PolyphonyRequiem/twig/pull/11"}]'
+                '[{"number":10,"headRefName":"pg-1/42-test-epic","url":"https://github.com/PolyphonyRequiem/twig/pull/10"},{"number":11,"headRefName":"pg-2/42-test-epic","url":"https://github.com/PolyphonyRequiem/twig/pull/11"}]'
             } -ParameterFilter { $args -contains 'merged' }
         }
 
@@ -163,6 +166,9 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
             Mock polyphony {
                 '{"work_item_id":42,"title":"Untagged Feature","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Child One","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":200,"title":"Leaf","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"","children":[]}]}]}'
             } -ParameterFilter { $args -contains 'hierarchy' }
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":{"feature_branch":"feature/42-untagged-feature","pg_branch":"pg-{n}/42-untagged-feature"}}'
+            } -ParameterFilter { $args -contains 'route' }
         }
 
         It 'Falls back to single PG-1 when no PG tags found' {
@@ -178,9 +184,9 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
             $result.issue_ids | Should -Contain 100
         }
 
-        It 'Uses root title in branch name slug' {
+        It 'Uses workspace_hint feature_branch in fallback mode' {
             $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
-            $result.branch_name | Should -BeLike 'feature/42-*untagged*'
+            $result.branch_name | Should -Be 'feature/42-untagged-feature'
         }
     }
 
@@ -214,6 +220,9 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
             Mock polyphony {
                 '{"work_item_id":42,"title":"Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue A","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"PG-10","children":[]},{"work_item_id":101,"title":"Issue B","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"PG-2","children":[]},{"work_item_id":102,"title":"Issue C","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"PG-1","children":[]}]}'
             } -ParameterFilter { $args -contains 'hierarchy' }
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":{"feature_branch":"feature/42-epic","pg_branch":"pg-{n}/42-epic"}}'
+            } -ParameterFilter { $args -contains 'route' }
         }
 
         It 'Sorts PGs numerically (PG-1 before PG-2 before PG-10)' {
@@ -230,7 +239,7 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
         BeforeEach {
             # PG-2 has a merged PR but Issue 101 is still "To Do" — stale branch
             Mock gh {
-                '[{"number":10,"headRefName":"feature/42-pg-2","url":"https://github.com/PolyphonyRequiem/twig/pull/10"}]'
+                '[{"number":10,"headRefName":"pg-2/42-test-epic","url":"https://github.com/PolyphonyRequiem/twig/pull/10"}]'
             } -ParameterFilter { $args -contains 'merged' }
         }
 
@@ -251,7 +260,7 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
         BeforeEach {
             # PG-1 has a merged PR and Issue 100 is "Doing" (progressed) — valid completion
             Mock gh {
-                '[{"number":10,"headRefName":"feature/42-pg-1","url":"https://github.com/PolyphonyRequiem/twig/pull/10"}]'
+                '[{"number":10,"headRefName":"pg-1/42-test-epic","url":"https://github.com/PolyphonyRequiem/twig/pull/10"}]'
             } -ParameterFilter { $args -contains 'merged' }
         }
 
@@ -325,15 +334,18 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
         }
     }
 
-    Context 'No-tag fallback slug capping' {
+    Context 'No-tag fallback slug capping — manual fallback when no workspace_hint' {
 
         BeforeEach {
             Mock polyphony {
                 '{"work_item_id":42,"title":"This Is A Very Long Feature Title That Should Be Truncated At Forty Characters","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":200,"title":"Leaf","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"","children":[]}]}'
             } -ParameterFilter { $args -contains 'hierarchy' }
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":null}'
+            } -ParameterFilter { $args -contains 'route' }
         }
 
-        It 'Caps slug at 40 characters in branch name' {
+        It 'Caps slug at 40 characters in branch name when workspace_hint absent' {
             $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
             # branch_name = "feature/42-" (11 chars) + slug (≤40 chars)
             $slug = $result.branch_name -replace '^feature/42-', ''
@@ -347,6 +359,9 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
             Mock polyphony {
                 '{"work_item_id":42,"title":"Untagged","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Self-contained","type":"Issue","capabilities":["plannable","implementable"],"state":"To Do","tags":"","children":[]}]}'
             } -ParameterFilter { $args -contains 'hierarchy' }
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":{"feature_branch":"feature/42-untagged","pg_branch":"pg-{n}/42-untagged"}}'
+            } -ParameterFilter { $args -contains 'route' }
         }
 
         It 'Places issue-as-task items in task_ids in fallback mode' {
@@ -384,6 +399,9 @@ Describe 'pg-router.ps1 — output schema compatibility (#2663)' {
 {"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue One","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"PG-1; twig","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"Doing","tags":"PG-1","children":[]},{"work_item_id":201,"title":"Task B","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]}]},{"work_item_id":101,"title":"Issue Two","type":"Issue","capabilities":["plannable"],"state":"To Do","tags":"PG-2","children":[{"work_item_id":300,"title":"Task C","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-2","children":[]}]}]}
 '@
         } -ParameterFilter { $args -contains 'hierarchy' }
+        Mock polyphony {
+            '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":{"feature_branch":"feature/42-test-epic","pg_branch":"pg-{n}/42-test-epic"}}'
+        } -ParameterFilter { $args -contains 'route' }
         Mock gh { }
     }
 
@@ -432,7 +450,7 @@ Describe 'pg-router.ps1 — output schema compatibility (#2663)' {
 '@
             } -ParameterFilter { $args -contains 'hierarchy' }
             Mock gh {
-                '[{"number":10,"headRefName":"feature/42-pg-1","url":""},{"number":11,"headRefName":"feature/42-pg-2","url":""}]'
+                '[{"number":10,"headRefName":"pg-1/42-test-epic","url":""},{"number":11,"headRefName":"pg-2/42-test-epic","url":""}]'
             } -ParameterFilter { $args -contains 'merged' }
         }
 
@@ -464,6 +482,80 @@ Describe 'pg-router.ps1 — output schema compatibility (#2663)' {
             $result.issue_ids.Count | Should -BeGreaterThan 0
             $result.remaining_pgs.Count | Should -Be 2
             $result.total_pgs | Should -Be 2
+        }
+    }
+}
+
+# ── Workspace hint integration verification (#2666) ──────────────────────────
+
+Describe 'pg-router.ps1 — workspace_hint branch naming (#2666)' {
+
+    BeforeEach {
+        $global:LASTEXITCODE = 0
+        Mock twig { } -ParameterFilter { $args -contains 'sync' }
+        Mock git { 'https://github.com/PolyphonyRequiem/twig.git' } -ParameterFilter { $args -contains 'get-url' }
+        Mock git { @() } -ParameterFilter { $args -contains 'branch' }
+        Mock polyphony {
+            @'
+{"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue One","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"PG-1","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-1","children":[]}]},{"work_item_id":101,"title":"Issue Two","type":"Issue","capabilities":["plannable"],"state":"To Do","tags":"PG-2","children":[{"work_item_id":300,"title":"Task C","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-2","children":[]}]}]}
+'@
+        } -ParameterFilter { $args -contains 'hierarchy' }
+        Mock polyphony {
+            '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":{"feature_branch":"feature/42-test-epic","pg_branch":"pg-{n}/42-test-epic"}}'
+        } -ParameterFilter { $args -contains 'route' }
+        Mock gh { }
+    }
+
+    Context 'PG branch naming from workspace_hint' {
+
+        It 'Substitutes {n} with PG number for PG-1' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.branch_name | Should -Be 'pg-1/42-test-epic'
+        }
+
+        It 'Substitutes {n} with PG number for PG-2 when PG-1 is complete' {
+            Mock gh {
+                '[{"number":10,"headRefName":"pg-1/42-test-epic","url":""}]'
+            } -ParameterFilter { $args -contains 'merged' }
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.current_pg | Should -Be 'PG-2'
+            $result.branch_name | Should -Be 'pg-2/42-test-epic'
+        }
+    }
+
+    Context 'Manual fallback when workspace_hint is null' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":null}'
+            } -ParameterFilter { $args -contains 'route' }
+        }
+
+        It 'Falls back to manual slug derivation' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.branch_name | Should -BeLike 'feature/42-pg-1*'
+        }
+    }
+
+    Context 'Manual fallback when polyphony route fails' {
+
+        BeforeEach {
+            Mock polyphony { throw 'route failed' } -ParameterFilter { $args -contains 'route' }
+        }
+
+        It 'Falls back to manual slug derivation when route throws' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.branch_name | Should -BeLike 'feature/42-pg-1*'
+        }
+    }
+
+    Context 'Type literal audit' {
+
+        It 'Contains zero type-name string literals in pg-router.ps1' {
+            $content = Get-Content $script:ScriptPath -Raw
+            $content | Should -Not -Match "'Epic'"
+            $content | Should -Not -Match "'Issue'"
+            $content | Should -Not -Match "'Task'"
         }
     }
 }

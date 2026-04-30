@@ -25,6 +25,16 @@ try {
     twig sync --output json 2>$null | Out-Null
     $hierarchy = (polyphony hierarchy --work-item $WorkItemId --depth 3 2>$null) | ConvertFrom-Json
 
+    # ── Route to get workspace_hint for branch naming ─────────────────────────
+    $workspaceHint = $null
+    try {
+        $routeJson = polyphony route --work-item $WorkItemId 2>$null
+        if ($routeJson) {
+            $routeResult = $routeJson | ConvertFrom-Json
+            $workspaceHint = $routeResult.workspace_hint
+        }
+    } catch { <# fall back to manual derivation #> }
+
     # ── Flatten hierarchy ─────────────────────────────────────────────────────
     function Flatten-Hierarchy($node, [object]$parent = $null) {
         $node | Add-Member -NotePropertyName '_parent' -NotePropertyValue $parent -Force
@@ -106,15 +116,21 @@ try {
         $ancestor = $ancestor._parent
     }
 
-    # ── Branch name ───────────────────────────────────────────────────────────
-    $branchSlug = ($PGName -replace '[^a-zA-Z0-9]+', '-').ToLower()
-    $expectedPrefix = "feature/$WorkItemId-$branchSlug"
+    # ── Branch name (workspace_hint with current-branch priority) ────────────
+    $expectedBranch = ''
+    if ($workspaceHint -and $workspaceHint.pg_branch) {
+        $pgNum = if ($PGName -match 'PG-(\d+)') { $Matches[1] } else { '1' }
+        $expectedBranch = $workspaceHint.pg_branch -replace '\{n\}', $pgNum
+    } else {
+        $branchSlug = ($PGName -replace '[^a-zA-Z0-9]+', '-').ToLower()
+        $expectedBranch = "feature/$WorkItemId-$branchSlug"
+        if ($expectedBranch.Length -gt 60) { $expectedBranch = $expectedBranch.Substring(0, 60) }
+    }
     $currentBranch = (git branch --show-current 2>$null) ?? ''
-    if ($currentBranch -and $currentBranch.StartsWith($expectedPrefix)) {
+    if ($currentBranch -and $currentBranch -eq $expectedBranch) {
         $branchName = $currentBranch
     } else {
-        $branchName = $expectedPrefix
-        if ($branchName.Length -gt 60) { $branchName = $branchName.Substring(0, 60) }
+        $branchName = $expectedBranch
     }
 
     # ── Output JSON ───────────────────────────────────────────────────────────

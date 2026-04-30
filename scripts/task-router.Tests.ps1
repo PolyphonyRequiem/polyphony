@@ -26,12 +26,15 @@ Describe 'task-router.ps1 — task routing with polyphony hierarchy (#2664)' {
         Mock twig { } -ParameterFilter { $args -contains 'sync' }
         Mock twig { } -ParameterFilter { $args -contains 'set' }
         Mock twig { } -ParameterFilter { $args -contains 'state' }
-        Mock git { 'feature/42-pg-1' } -ParameterFilter { $args -contains '--show-current' }
+        Mock git { 'pg-1/42-test-epic' } -ParameterFilter { $args -contains '--show-current' }
         Mock polyphony {
             @'
 {"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue One","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"PG-1; twig","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-1","children":[]},{"work_item_id":201,"title":"Task B","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]}]},{"work_item_id":101,"title":"Issue Two","type":"Issue","capabilities":["plannable"],"state":"To Do","tags":"PG-2","children":[{"work_item_id":300,"title":"Task C","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-2","children":[]}]}]}
 '@
         } -ParameterFilter { $args -contains 'hierarchy' }
+        Mock polyphony {
+            '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":{"feature_branch":"feature/42-test-epic","pg_branch":"pg-{n}/42-test-epic"}}'
+        } -ParameterFilter { $args -contains 'route' }
     }
 
     Context 'implement_task — selects first non-Done implementable item' {
@@ -77,16 +80,16 @@ Describe 'task-router.ps1 — task routing with polyphony hierarchy (#2664)' {
 
     Context 'Branch name derivation' {
 
-        It 'Uses current branch when it matches expected prefix' {
-            Mock git { 'feature/42-pg-1' } -ParameterFilter { $args -contains '--show-current' }
+        It 'Uses current branch when it matches expected workspace_hint branch' {
+            Mock git { 'pg-1/42-test-epic' } -ParameterFilter { $args -contains '--show-current' }
             $result = & $script:ScriptPath -WorkItemId 42 -PGName 'PG-1' | ConvertFrom-Json
-            $result.branch_name | Should -Be 'feature/42-pg-1'
+            $result.branch_name | Should -Be 'pg-1/42-test-epic'
         }
 
-        It 'Falls back to slug derivation when current branch does not match' {
+        It 'Falls back to workspace_hint branch when current branch does not match' {
             Mock git { 'main' } -ParameterFilter { $args -contains '--show-current' }
             $result = & $script:ScriptPath -WorkItemId 42 -PGName 'PG-1' | ConvertFrom-Json
-            $result.branch_name | Should -BeLike 'feature/42-pg-1*'
+            $result.branch_name | Should -Be 'pg-1/42-test-epic'
         }
     }
 
@@ -206,12 +209,15 @@ Describe 'task-router.ps1 — output schema compatibility (#2664)' {
         Mock twig { } -ParameterFilter { $args -contains 'sync' }
         Mock twig { } -ParameterFilter { $args -contains 'set' }
         Mock twig { } -ParameterFilter { $args -contains 'state' }
-        Mock git { 'feature/42-pg-1' } -ParameterFilter { $args -contains '--show-current' }
+        Mock git { 'pg-1/42-test-epic' } -ParameterFilter { $args -contains '--show-current' }
         Mock polyphony {
             @'
 {"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue One","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"PG-1; twig","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-1","children":[]},{"work_item_id":201,"title":"Task B","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]}]},{"work_item_id":101,"title":"Issue Two","type":"Issue","capabilities":["plannable"],"state":"To Do","tags":"PG-2","children":[{"work_item_id":300,"title":"Task C","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-2","children":[]}]}]}
 '@
         } -ParameterFilter { $args -contains 'hierarchy' }
+        Mock polyphony {
+            '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":{"feature_branch":"feature/42-test-epic","pg_branch":"pg-{n}/42-test-epic"}}'
+        } -ParameterFilter { $args -contains 'route' }
     }
 
     Context 'Required schema keys — all 8 from reference' {
@@ -280,6 +286,82 @@ Describe 'task-router.ps1 — output schema compatibility (#2664)' {
             $result.issue_title | Should -Be ''
             $result.remaining_count | Should -Be 0
             $result.branch_name | Should -Be ''
+        }
+    }
+}
+
+# ── Workspace hint integration verification (#2666) ──────────────────────────
+
+Describe 'task-router.ps1 — workspace_hint branch naming (#2666)' {
+
+    BeforeEach {
+        $global:LASTEXITCODE = 0
+        Mock twig { } -ParameterFilter { $args -contains 'sync' }
+        Mock twig { } -ParameterFilter { $args -contains 'set' }
+        Mock twig { } -ParameterFilter { $args -contains 'state' }
+        Mock git { 'main' } -ParameterFilter { $args -contains '--show-current' }
+        Mock polyphony {
+            @'
+{"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue One","type":"Issue","capabilities":["plannable"],"state":"Doing","tags":"PG-1","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-1","children":[]}]}]}
+'@
+        } -ParameterFilter { $args -contains 'hierarchy' }
+        Mock polyphony {
+            '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":{"feature_branch":"feature/42-test-epic","pg_branch":"pg-{n}/42-test-epic"}}'
+        } -ParameterFilter { $args -contains 'route' }
+    }
+
+    Context 'Uses workspace_hint pg_branch with {n} substitution' {
+
+        It 'Derives branch from pg_branch template for PG-1' {
+            $result = & $script:ScriptPath -WorkItemId 42 -PGName 'PG-1' | ConvertFrom-Json
+            $result.branch_name | Should -Be 'pg-1/42-test-epic'
+        }
+
+        It 'Derives branch from pg_branch template for PG-3' {
+            $result = & $script:ScriptPath -WorkItemId 42 -PGName 'PG-3' | ConvertFrom-Json
+            $result.branch_name | Should -Be 'pg-3/42-test-epic'
+        }
+
+        It 'Prefers current branch when it matches expected workspace_hint branch' {
+            Mock git { 'pg-1/42-test-epic' } -ParameterFilter { $args -contains '--show-current' }
+            $result = & $script:ScriptPath -WorkItemId 42 -PGName 'PG-1' | ConvertFrom-Json
+            $result.branch_name | Should -Be 'pg-1/42-test-epic'
+        }
+    }
+
+    Context 'Manual fallback when workspace_hint is null' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"phase":"in_progress","action":"monitor","message":"In progress","workspace_hint":null}'
+            } -ParameterFilter { $args -contains 'route' }
+        }
+
+        It 'Falls back to manual slug when no workspace_hint' {
+            $result = & $script:ScriptPath -WorkItemId 42 -PGName 'PG-1' | ConvertFrom-Json
+            $result.branch_name | Should -BeLike 'feature/42-pg-1*'
+        }
+    }
+
+    Context 'Manual fallback when polyphony route fails' {
+
+        BeforeEach {
+            Mock polyphony { throw 'route failed' } -ParameterFilter { $args -contains 'route' }
+        }
+
+        It 'Falls back to manual slug when route throws' {
+            $result = & $script:ScriptPath -WorkItemId 42 -PGName 'PG-1' | ConvertFrom-Json
+            $result.branch_name | Should -BeLike 'feature/42-pg-1*'
+        }
+    }
+
+    Context 'Type literal audit' {
+
+        It 'Contains zero type-name string literals in task-router.ps1' {
+            $content = Get-Content $script:ScriptPath -Raw
+            $content | Should -Not -Match "'Epic'"
+            $content | Should -Not -Match "'Issue'"
+            $content | Should -Not -Match "'Task'"
         }
     }
 }
