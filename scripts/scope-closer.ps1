@@ -9,11 +9,14 @@
     ADO work item ID (root of the hierarchy).
 .PARAMETER PGName
     PR Group name (e.g., PG-1) to scope closure to.
+.PARAMETER PRNumber
+    Pull request number associated with the PG closure.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][int]$WorkItemId,
-    [Parameter(Mandatory)][string]$PGName
+    [Parameter(Mandatory)][string]$PGName,
+    [Parameter()][int]$PRNumber = 0
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/pg-helpers.ps1"
@@ -70,6 +73,7 @@ try {
 
     [ordered]@{
         pg_name         = $PGName
+        pr_number       = $PRNumber
         closed_items    = @($closedItems)
         failed_closures = @($failedClosures)
         total_closed    = $closedItems.Count
