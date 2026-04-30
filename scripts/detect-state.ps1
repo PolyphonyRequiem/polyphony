@@ -36,25 +36,99 @@ try {
     # reading any state to prevent routing on stale data.
     twig sync --output json 2>$null | Out-Null
 
-    # ── Stub variables ───────────────────────────────────────────────────────
-    # Defaults for variables populated by prior tasks:
-    #   - #2632: polyphony route integration sets $phase, $workItemType,
-    #            $workItemState, $workItemTitle
-    #   - #2633: plan discovery sets $hasPlan, $planStatus, $planPath,
-    #            $planSource, $hasSeededChildren
-    $workItemType          = ''
-    $workItemState         = ''
-    $workItemTitle         = ''
-    $phase                 = 'needs_planning'
+    # ── Plan discovery stubs (#2633) ──────────────────────────────────────────
+    # Defaults for plan-related variables populated by task #2633.
     $hasPlan               = $false
     $planStatus            = 'none'
     $planPath              = ''
     $planSource            = 'none'
-    $hasSeededChildren     = $false
-    $anyChildMissingTasks  = $false
-    $seedStatus            = 'unseeded'
-    $implementationStatus  = 'not_started'
     $errorMsg              = ''
+
+    # ── Set active work item (#2632) ──────────────────────────────────────────
+    twig set $WorkItemId --output json 2>$null | Out-Null
+
+    # ── Polyphony route (#2632) ───────────────────────────────────────────────
+    # Replaces ~100 lines of manual state detection with a single call.
+    # RouteResult provides: phase, action, message, workspace_hint.
+    $routeJson = polyphony route --work-item $WorkItemId 2>$null
+    $routeResult = $routeJson | ConvertFrom-Json
+
+    $phase = $routeResult.phase
+    $implementationStatus = switch ($routeResult.action) {
+        'plan'      { 'not_started' }
+        'seed'      { 'not_started' }
+        'implement' { 'not_started' }
+        'monitor'   { 'in_progress' }
+        'close'     { 'done' }
+        'none' {
+            if ($routeResult.phase -eq 'done') { 'done' }
+            elseif ($routeResult.phase -eq 'removed') { 'removed' }
+            else { 'not_started' }
+        }
+        default     { $routeResult.action }
+    }
+
+    $workspaceHint = if ($routeResult.workspace_hint) {
+        $routeResult.workspace_hint | ConvertTo-Json -Compress
+    } else { '{}' }
+
+    # ── Read work item metadata from twig tree (#2632) ────────────────────────
+    # twig tree provides type, state, title, and child hierarchy
+    # that polyphony route doesn't return.
+    $treeJson = twig tree --depth 2 --output json 2>$null
+    $tree = $treeJson | ConvertFrom-Json
+
+    $workItemType  = if ($tree.type)  { $tree.type }  else { '' }
+    $workItemState = if ($tree.state) { $tree.state } else { '' }
+    $workItemTitle = if ($tree.title) { $tree.title } else { '' }
+
+    # ── Children analysis (#2632) ─────────────────────────────────────────────
+    $children = @()
+    if ($tree.children) { $children = @($tree.children) }
+    $childCount = $children.Count
+    $doneCount  = @($children | Where-Object { $_.state -eq 'Done' }).Count
+    $doingCount = @($children | Where-Object { $_.state -eq 'Doing' }).Count
+    $todoCount  = @($children | Where-Object { $_.state -eq 'To Do' }).Count
+
+    $hasSeededChildren = $childCount -gt 0
+
+    $anyChildMissingTasks = $false
+    foreach ($child in $children) {
+        if ($child.state -ne 'Done') {
+            $grandchildren = @()
+            if ($child.children) { $grandchildren = @($child.children) }
+            if ($grandchildren.Count -eq 0) {
+                $anyChildMissingTasks = $true
+                break
+            }
+        }
+    }
+
+    $seedStatus = if ($childCount -eq 0) { 'unseeded' }
+                  elseif ($anyChildMissingTasks) { 'partial' }
+                  else { 'seeded' }
+
+    # ── Unmerged branches check (#2632) ───────────────────────────────────────
+    # Detect unmerged feature branches for implementation status.
+    # Repo slug derived at runtime from git remote — no hardcoded values.
+    $remoteUrl = git remote get-url origin 2>$null
+    $repoSlug = ($remoteUrl -replace '.*github\.com[:/]' -replace '\.git$').Trim()
+
+    if ($repoSlug -and $routeResult.workspace_hint) {
+        $featureBranch = $routeResult.workspace_hint.feature_branch
+        if ($featureBranch) {
+            $remoteBranches = @(git ls-remote --heads origin "${featureBranch}*" 2>$null)
+            if ($remoteBranches.Count -gt 0) {
+                $openPrsJson = gh pr list --repo $repoSlug --head $featureBranch --state open --json number 2>$null
+                if ($openPrsJson) {
+                    $openPrs = $openPrsJson | ConvertFrom-Json
+                    if ($openPrs.Count -gt 0 -and $implementationStatus -ne 'done') {
+                        $implementationStatus = 'in_progress'
+                    }
+                }
+            }
+        }
+    }
 
     # ── Step 1: State transition via polyphony validate (#2634) ───────────
     # Replace the former type-name guard with a type-agnostic
@@ -98,10 +172,10 @@ try {
 
     # ── Build output ─────────────────────────────────────────────────────
     $childrenSummary = @{
-        total = 0
-        done  = 0
-        doing = 0
-        todo  = 0
+        total = $childCount
+        done  = $doneCount
+        doing = $doingCount
+        todo  = $todoCount
     } | ConvertTo-Json -Compress
 
     $output = [ordered]@{
@@ -120,6 +194,7 @@ try {
         seed_status             = $seedStatus
         children_summary        = $childrenSummary
         implementation_status   = $implementationStatus
+        workspace_hint          = $workspaceHint
         intent_conflict         = $intentConflict
         needs_cleanup           = $needsCleanup
         error                   = $errorMsg
