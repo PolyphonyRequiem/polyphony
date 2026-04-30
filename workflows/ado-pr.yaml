@@ -1,0 +1,129 @@
+# ado-pr — ADO PR lifecycle stub with structured error and human gate.
+#
+# Placeholder for Azure DevOps PR operations. Returns a structured error
+# indicating ADO PR support is not yet implemented, with a human gate
+# offering to proceed with manual PR management or abort.
+#
+# Interface contract: Accepts the same inputs and produces the same outputs
+# as github-pr.yaml (pr_number, branch_name, target_branch, review_policy →
+# merged, pr_url). This enables the implementation workflow to select the
+# platform sub-workflow based on process-config.yaml's platform field.
+#
+# Invariants:
+#   Pre:  PR exists (created by pr_submit); platform is 'ado'.
+#   Post: Human has managed the PR manually and confirmed merge status,
+#         or aborted. Outputs merged and pr_url for downstream consumers.
+
+workflow:
+  name: ado-pr
+  description: >-
+    ADO PR lifecycle stub. Presents a structured error indicating ADO PR
+    automation is not yet implemented, then offers a human gate for manual
+    PR management or abort.
+  version: "1.0.0"
+  entry_point: ado_pr_error
+
+  input:
+    pr_number:
+      type: number
+      required: true
+      description: Pull request number (ADO PR ID)
+    branch_name:
+      type: string
+      required: true
+      description: Source branch name for the PR
+    target_branch:
+      type: string
+      required: true
+      description: Target branch the PR merges into
+    review_policy:
+      type: string
+      required: false
+      default: "manual"
+      description: "Review policy (always 'manual' for ADO stub)"
+
+output:
+  merged: "{{ ado_pr_manual_gate.output.choice == 'merged' }}"
+  pr_url: ""
+
+agents:
+  # ── ADO PR error reporter ──────────────────────────────────────────────
+  #
+  # Script node that emits a structured error indicating ADO PR automation
+  # is not yet implemented. Provides context about the PR and platform
+  # limitation. Always routes to the human gate for manual resolution.
+  #
+  # Invariants:
+  #   Pre:  PR details are available via workflow input.
+  #   Post: output.error contains structured error details for human gate.
+  - name: ado_pr_error
+    type: script
+    description: Emit structured error — ADO PR automation not yet implemented
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        @{
+          error = @{
+            code    = 'ADO_PR_NOT_IMPLEMENTED'
+            message = 'Azure DevOps PR automation is not yet implemented. Manual PR management is required.'
+            details = @{
+              pr_number     = '{{ workflow.input.pr_number }}'
+              branch_name   = '{{ workflow.input.branch_name }}'
+              target_branch = '{{ workflow.input.target_branch }}'
+              review_policy = '{{ workflow.input.review_policy }}'
+              platform      = 'ado'
+            }
+          }
+          action_required = 'Please manage this PR manually in Azure DevOps, then confirm the result below.'
+        } | ConvertTo-Json -Depth 4
+    routes:
+      - to: ado_pr_manual_gate
+
+  # ── Human gate for manual PR management ────────────────────────────────
+  #
+  # Presents the user with the structured error and PR details, then offers
+  # options to confirm the PR was merged manually, or to abort.
+  #
+  # Invariants:
+  #   Pre:  ado_pr_error has emitted the structured error.
+  #   Post: User has confirmed merge (choice=merged) or aborted (choice=abort).
+  - name: ado_pr_manual_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ ADO PR Automation Not Available
+
+      Azure DevOps pull request automation is **not yet implemented**.
+      Please manage this PR manually in Azure DevOps.
+
+      ### PR Details
+
+      | Field | Value |
+      |-------|-------|
+      | PR Number | `{{ workflow.input.pr_number }}` |
+      | Source Branch | `{{ workflow.input.branch_name }}` |
+      | Target Branch | `{{ workflow.input.target_branch }}` |
+      | Review Policy | `{{ workflow.input.review_policy }}` |
+
+      ### Error
+
+      **Code:** `{{ ado_pr_error.output.error.code }}`
+
+      {{ ado_pr_error.output.error.message }}
+
+      ---
+
+      **Action Required:** Complete the PR review and merge process in Azure
+      DevOps, then select an option below to continue the workflow.
+
+      Choose an action:
+      - **Merged** — the PR has been reviewed and merged manually in ADO
+      - **Abort** — cancel this PR lifecycle and stop the workflow
+    options:
+      - label: "✅ Merged"
+        value: merged
+        route: $end
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
