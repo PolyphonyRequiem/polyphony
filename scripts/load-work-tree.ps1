@@ -11,11 +11,10 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/invoke-gh.ps1"
 . "$PSScriptRoot/lib/pg-helpers.ps1"
 . "$PSScriptRoot/lib/ado-helpers.ps1"
+. "$PSScriptRoot/lib/gh-helpers.ps1"
 
 try {
-$_ghRepo = ''
-$_remoteUrl = (git remote get-url origin 2>$null) ?? ''
-if ($_remoteUrl -match 'github\.com(?:/|:)([^/]+/[^/.]+)') { $_ghRepo = $Matches[1] }
+$_ghRepo = Get-RepoSlug
 
 twig sync --output json 2>$null | Out-Null
 $hierarchy = (polyphony hierarchy --work-item $WorkItemId --depth 3 2>$null) | ConvertFrom-Json

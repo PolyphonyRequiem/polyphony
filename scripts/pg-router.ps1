@@ -16,12 +16,11 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/invoke-gh.ps1"
 . "$PSScriptRoot/lib/pg-helpers.ps1"
 . "$PSScriptRoot/lib/ado-helpers.ps1"
+. "$PSScriptRoot/lib/gh-helpers.ps1"
 
 try {
     # ── Derive GitHub repo slug ───────────────────────────────────────────────
-    $_ghRepo = ''
-    $_remoteUrl = (git remote get-url origin 2>$null) ?? ''
-    if ($_remoteUrl -match 'github\.com(?:/|:)([^/]+/[^/.]+)') { $_ghRepo = $Matches[1] }
+    $_ghRepo = Get-RepoSlug
 
     # ── Sync & fetch hierarchy ────────────────────────────────────────────────
     twig sync --output json 2>$null | Out-Null

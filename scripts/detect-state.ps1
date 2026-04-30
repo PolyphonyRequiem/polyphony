@@ -30,6 +30,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/ado-helpers.ps1"
+. "$PSScriptRoot/lib/gh-helpers.ps1"
 
 try {
     # ── Derive ADO workspace from twig config (#2651) ────────────────────────
@@ -175,8 +176,7 @@ try {
     # ── Unmerged branches check (#2632) ───────────────────────────────────────
     # Detect unmerged feature branches for implementation status.
     # Repo slug derived at runtime from git remote — no hardcoded values.
-    $remoteUrl = git remote get-url origin 2>$null
-    $repoSlug = ($remoteUrl -replace '.*github\.com[:/]' -replace '\.git$').Trim()
+    $repoSlug = Get-RepoSlug
 
     if ($repoSlug -and $routeResult.workspace_hint) {
         $featureBranch = $routeResult.workspace_hint.feature_branch
