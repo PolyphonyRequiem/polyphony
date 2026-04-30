@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Polyphony.Configuration;
+using Polyphony.Routing;
 using Twig.Infrastructure;
 
 namespace Polyphony.Infrastructure;
@@ -34,6 +35,11 @@ public static class PolyphonyServiceRegistration
         // Polyphony-specific: ProcessConfig loaded from YAML.
         // Registered as a factory so loading is deferred until first resolution.
         services.AddSingleton(_ => ProcessConfigLoader.Load(configPath));
+
+        // Routing services
+        services.AddSingleton<PhaseDetector>();
+        services.AddSingleton<HierarchyWalker>();
+        services.AddSingleton<TransitionValidator>();
 
         return services;
     }
