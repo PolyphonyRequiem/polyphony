@@ -36,13 +36,67 @@ try {
     # reading any state to prevent routing on stale data.
     twig sync --output json 2>$null | Out-Null
 
-    # ── Stub output ──────────────────────────────────────────────────────────
-    # Minimal valid JSON with all required schema keys set to defaults.
-    # Subsequent tasks will replace stubs with real polyphony-backed logic:
-    #   - #2632: polyphony route integration (phase, action, workspace_hint)
-    #   - #2633: plan discovery (has_plan, plan_status, plan_path, plan_source)
-    #   - #2634: intent validation and state transitions
+    # ── Stub variables ───────────────────────────────────────────────────────
+    # Defaults for variables populated by prior tasks:
+    #   - #2632: polyphony route integration sets $phase, $workItemType,
+    #            $workItemState, $workItemTitle
+    #   - #2633: plan discovery sets $hasPlan, $planStatus, $planPath,
+    #            $planSource, $hasSeededChildren
+    $workItemType          = ''
+    $workItemState         = ''
+    $workItemTitle         = ''
+    $phase                 = 'needs_planning'
+    $hasPlan               = $false
+    $planStatus            = 'none'
+    $planPath              = ''
+    $planSource            = 'none'
+    $hasSeededChildren     = $false
+    $anyChildMissingTasks  = $false
+    $seedStatus            = 'unseeded'
+    $implementationStatus  = 'not_started'
+    $errorMsg              = ''
 
+    # ── Step 1: State transition via polyphony validate (#2634) ───────────
+    # Replace the former type-name guard with a type-agnostic
+    # validation call. polyphony validate checks the process config to
+    # determine if begin_planning is a valid event for this work item type.
+    $validateJson = polyphony validate --work-item $WorkItemId --event begin_planning 2>$null
+    $validateResult = $validateJson | ConvertFrom-Json
+    if ($validateResult.is_valid -and $workItemState -eq 'To Do' -and $hasSeededChildren) {
+        twig set $WorkItemId --output json 2>$null | Out-Null
+        twig state $validateResult.target_state --output json 2>$null | Out-Null
+        $workItemState = $validateResult.target_state
+    }
+
+    # ── Step 2: Intent conflict detection (#2634) ─────────────────────────
+    # Detects conflicts between the user's stated intent and the current
+    # work item state. Ported from reference lines 200-210.
+    $intentConflict = $false
+    $needsCleanup   = $false
+
+    switch ($Intent) {
+        'new' {
+            if ($hasSeededChildren -or $hasPlan) {
+                $intentConflict = $true
+            }
+        }
+        'redo' {
+            $needsCleanup = $hasSeededChildren -or $hasPlan
+        }
+    }
+
+    # ── Step 3: Phase override by intent (#2634) ─────────────────────────
+    # When intent conflicts or cleanup is needed, preserve the phase from
+    # polyphony route (let conflict/cleanup take precedence over intent).
+    # When plan status is ambiguous, surface an error message.
+    if (-not $intentConflict -and -not $needsCleanup) {
+        if ($planStatus -eq 'ambiguous') {
+            $errorMsg = "Plan status is ambiguous: multiple plan sources detected. Resolve before proceeding."
+        }
+        # Otherwise, use the phase from polyphony route (set by #2632)
+    }
+
+    # ── Build output ─────────────────────────────────────────────────────
     $childrenSummary = @{
         total = 0
         done  = 0
@@ -52,23 +106,23 @@ try {
 
     $output = [ordered]@{
         work_item_id            = $WorkItemId
-        work_item_type          = ''
-        work_item_state         = ''
-        work_item_title         = ''
+        work_item_type          = $workItemType
+        work_item_state         = $workItemState
+        work_item_title         = $workItemTitle
         intent                  = $Intent
-        phase                   = 'needs_planning'
-        has_plan                = $false
-        plan_status             = 'none'
-        plan_path               = ''
-        plan_source             = 'none'
-        has_seeded_children     = $false
-        any_child_missing_tasks = $false
-        seed_status             = 'unseeded'
+        phase                   = $phase
+        has_plan                = $hasPlan
+        plan_status             = $planStatus
+        plan_path               = $planPath
+        plan_source             = $planSource
+        has_seeded_children     = $hasSeededChildren
+        any_child_missing_tasks = $anyChildMissingTasks
+        seed_status             = $seedStatus
         children_summary        = $childrenSummary
-        implementation_status   = 'not_started'
-        intent_conflict         = $false
-        needs_cleanup           = $false
-        error                   = ''
+        implementation_status   = $implementationStatus
+        intent_conflict         = $intentConflict
+        needs_cleanup           = $needsCleanup
+        error                   = $errorMsg
     }
 
     $output | ConvertTo-Json -Depth 3
