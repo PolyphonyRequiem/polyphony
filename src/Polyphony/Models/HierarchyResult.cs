@@ -7,5 +7,6 @@ public sealed record HierarchyResult
     public required string Type { get; init; }
     public required string[] Capabilities { get; init; }
     public required string State { get; init; }
+    public string? Tags { get; init; }
     public HierarchyResult[]? Children { get; init; }
 }
