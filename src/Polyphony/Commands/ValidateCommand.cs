@@ -27,6 +27,6 @@ public sealed class ValidateCommand
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.ValidateResult));
-        return 0;
+        return ExitCodes.Success;
     }
 }
