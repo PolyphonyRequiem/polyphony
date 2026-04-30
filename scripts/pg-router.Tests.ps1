@@ -68,7 +68,7 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
         }
     }
 
-    Context 'submit_pr — branch exists but no PR' {
+    Context 'create_branch — branch exists but no PR' {
 
         BeforeEach {
             Mock git {
@@ -76,9 +76,9 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
             } -ParameterFilter { $args -contains 'branch' }
         }
 
-        It 'Returns submit_pr when branch exists but no open or merged PR' {
+        It 'Returns create_branch when branch exists but no open or merged PR' {
             $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
-            $result.action | Should -Be 'submit_pr'
+            $result.action | Should -Be 'create_branch'
             $result.current_pg | Should -Be 'PG-1'
         }
     }
@@ -130,6 +130,12 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
     Context 'all_complete — all PGs merged' {
 
         BeforeEach {
+            # Override hierarchy: both issues progressed beyond "To Do" for stale-branch defense
+            Mock polyphony {
+                @'
+{"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue One","type":"Issue","capabilities":["plannable"],"state":"Done","tags":"PG-1; twig","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]},{"work_item_id":201,"title":"Task B","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]}]},{"work_item_id":101,"title":"Issue Two","type":"Issue","capabilities":["plannable"],"state":"Done","tags":"PG-2","children":[{"work_item_id":300,"title":"Task C","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-2","children":[]}]}]}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
             Mock gh {
                 '[{"number":10,"headRefName":"feature/42-pg-1","url":"https://github.com/PolyphonyRequiem/twig/pull/10"},{"number":11,"headRefName":"feature/42-pg-2","url":"https://github.com/PolyphonyRequiem/twig/pull/11"}]'
             } -ParameterFilter { $args -contains 'merged' }
@@ -219,6 +225,141 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
         }
     }
 
+    Context 'Stale-branch defense — merged PR but all issues still To Do' {
+
+        BeforeEach {
+            # PG-2 has a merged PR but Issue 101 is still "To Do" — stale branch
+            Mock gh {
+                '[{"number":10,"headRefName":"feature/42-pg-2","url":"https://github.com/PolyphonyRequiem/twig/pull/10"}]'
+            } -ParameterFilter { $args -contains 'merged' }
+        }
+
+        It 'Treats merged PR as stale when all container items are still To Do' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.current_pg | Should -Be 'PG-1'
+            $result.completed_pgs | Should -Not -Contain 'PG-2'
+        }
+
+        It 'Routes stale PG with create_branch action' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.remaining_pgs | Should -Contain 'PG-2'
+        }
+    }
+
+    Context 'Stale-branch defense — merged PR with progressed issue is valid' {
+
+        BeforeEach {
+            # PG-1 has a merged PR and Issue 100 is "Doing" (progressed) — valid completion
+            Mock gh {
+                '[{"number":10,"headRefName":"feature/42-pg-1","url":"https://github.com/PolyphonyRequiem/twig/pull/10"}]'
+            } -ParameterFilter { $args -contains 'merged' }
+        }
+
+        It 'Marks PG as completed when container item has progressed beyond To Do' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.completed_pgs | Should -Contain 'PG-1'
+            $result.current_pg | Should -Be 'PG-2'
+        }
+    }
+
+    Context 'ADO-state completion fallback — all issues Done, no PR' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue One","type":"Issue","capabilities":["plannable"],"state":"Done","tags":"PG-1","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]}]},{"work_item_id":101,"title":"Issue Two","type":"Issue","capabilities":["plannable"],"state":"To Do","tags":"PG-2","children":[{"work_item_id":300,"title":"Task C","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-2","children":[]}]}]}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Treats PG as complete when all issues are Done even without merged PR' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.completed_pgs | Should -Contain 'PG-1'
+            $result.current_pg | Should -Be 'PG-2'
+            $result.action | Should -Be 'create_branch'
+        }
+    }
+
+    Context 'Task-only PG — completion via task states' {
+
+        BeforeEach {
+            # PG-1 has only tasks (no container items), all Done
+            Mock polyphony {
+                @'
+{"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]},{"work_item_id":201,"title":"Task B","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]},{"work_item_id":300,"title":"Task C","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"PG-2","children":[]}]}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Marks task-only PG as complete when all tasks are Done' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.completed_pgs | Should -Contain 'PG-1'
+            $result.current_pg | Should -Be 'PG-2'
+        }
+
+        It 'Does not mark task-only PG complete when tasks remain' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.completed_pgs | Should -Not -Contain 'PG-2'
+            $result.remaining_pgs | Should -Contain 'PG-2'
+        }
+    }
+
+    Context 'Issue-as-task — plannable+implementable with no children in PG' {
+
+        BeforeEach {
+            Mock polyphony {
+                @'
+{"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Self-contained Issue","type":"Issue","capabilities":["plannable","implementable"],"state":"To Do","tags":"PG-1","children":[]}]}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Classifies issue-as-task items into task_ids' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.task_ids | Should -Contain 100
+        }
+
+        It 'Does not place issue-as-task items in issue_ids' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.issue_ids | Should -Not -Contain 100
+        }
+    }
+
+    Context 'No-tag fallback slug capping' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"title":"This Is A Very Long Feature Title That Should Be Truncated At Forty Characters","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":200,"title":"Leaf","type":"Task","capabilities":["implementable"],"state":"To Do","tags":"","children":[]}]}'
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Caps slug at 40 characters in branch name' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            # branch_name = "feature/42-" (11 chars) + slug (≤40 chars)
+            $slug = $result.branch_name -replace '^feature/42-', ''
+            $slug.Length | Should -BeLessOrEqual 40
+        }
+    }
+
+    Context 'No-tag fallback — issue-as-task classification' {
+
+        BeforeEach {
+            Mock polyphony {
+                '{"work_item_id":42,"title":"Untagged","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Self-contained","type":"Issue","capabilities":["plannable","implementable"],"state":"To Do","tags":"","children":[]}]}'
+            } -ParameterFilter { $args -contains 'hierarchy' }
+        }
+
+        It 'Places issue-as-task items in task_ids in fallback mode' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.task_ids | Should -Contain 100
+        }
+
+        It 'Excludes issue-as-task items from issue_ids in fallback mode' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.issue_ids | Should -Not -Contain 100
+        }
+    }
+
     Context 'Error handling' {
 
         It 'Returns error JSON when polyphony hierarchy fails' {
@@ -284,6 +425,12 @@ Describe 'pg-router.ps1 — output schema compatibility (#2663)' {
     Context 'Scenario — all_complete has safe defaults' {
 
         BeforeEach {
+            # Override hierarchy: all issues progressed beyond "To Do" for stale-branch defense
+            Mock polyphony {
+                @'
+{"work_item_id":42,"title":"Test Epic","type":"Epic","capabilities":["plannable"],"state":"Doing","tags":"","children":[{"work_item_id":100,"title":"Issue One","type":"Issue","capabilities":["plannable"],"state":"Done","tags":"PG-1; twig","children":[{"work_item_id":200,"title":"Task A","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]},{"work_item_id":201,"title":"Task B","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-1","children":[]}]},{"work_item_id":101,"title":"Issue Two","type":"Issue","capabilities":["plannable"],"state":"Done","tags":"PG-2","children":[{"work_item_id":300,"title":"Task C","type":"Task","capabilities":["implementable"],"state":"Done","tags":"PG-2","children":[]}]}]}
+'@
+            } -ParameterFilter { $args -contains 'hierarchy' }
             Mock gh {
                 '[{"number":10,"headRefName":"feature/42-pg-1","url":""},{"number":11,"headRefName":"feature/42-pg-2","url":""}]'
             } -ParameterFilter { $args -contains 'merged' }

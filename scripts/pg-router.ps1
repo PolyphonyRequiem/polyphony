@@ -58,10 +58,23 @@ try {
         }
     } else {
         $slug = ($hierarchy.title -replace '[^a-zA-Z0-9]+', '-' -replace '-+$', '').ToLower()
+        if ($slug.Length -gt 40) { $slug = $slug.Substring(0, 40) -replace '-+$', '' }
         $prGroups += [ordered]@{
             name        = 'PG-1'
-            task_ids    = @($allItems | Where-Object { $_.capabilities -contains 'implementable' -and $_.capabilities -notcontains 'plannable' } | ForEach-Object { $_.work_item_id })
-            issue_ids   = @($allItems | Where-Object { $_.capabilities -contains 'plannable' } | ForEach-Object { $_.work_item_id })
+            task_ids    = @($allItems | Where-Object {
+                $cap = $_.capabilities
+                $cap -contains 'implementable' -and (
+                    $cap -notcontains 'plannable' -or
+                    (-not $_.children -or $_.children.Count -eq 0)
+                )
+            } | ForEach-Object { $_.work_item_id })
+            issue_ids   = @($allItems | Where-Object {
+                $cap = $_.capabilities
+                $cap -contains 'plannable' -and (
+                    $cap -notcontains 'implementable' -or
+                    ($_.children -and $_.children.Count -gt 0)
+                )
+            } | ForEach-Object { $_.work_item_id })
             branch_name = New-BranchName $slug
         }
     }
@@ -89,28 +102,63 @@ try {
         $openPR = $openPRs | Where-Object { $_.headRefName -eq $pg.branch_name } | Select-Object -First 1
 
         if ($mergedPR) {
-            $completedPGs += $pg.name
-            $pg['completed'] = $true
-            $pg['pr_number'] = $mergedPR.number
-            $pg['pr_url'] = if ($mergedPR.url) { $mergedPR.url } else { '' }
+            # Stale-branch defense: verify at least one container item progressed beyond "To Do"
+            $stale = $false
+            if ($pg.issue_ids.Count -gt 0) {
+                $progressedCount = @($allItems | Where-Object {
+                    $pg.issue_ids -contains $_.work_item_id -and $_.state -ne 'To Do'
+                }).Count
+                $stale = $progressedCount -eq 0
+            }
+
+            if (-not $stale) {
+                $completedPGs += $pg.name
+                $pg['completed'] = $true
+                $pg['pr_number'] = $mergedPR.number
+                $pg['pr_url'] = if ($mergedPR.url) { $mergedPR.url } else { '' }
+            } else {
+                # Stale branch from prior run — treat as incomplete
+                $pg['completed'] = $false
+                $pg['pr_number'] = 0
+                $pg['pr_url'] = ''
+                $pg['action'] = 'create_branch'
+                if (-not $currentPG) { $currentPG = $pg }
+            }
         } elseif ($openPR) {
             $pg['completed'] = $false
             $pg['pr_number'] = $openPR.number
             $pg['pr_url'] = if ($openPR.url) { $openPR.url } else { '' }
             $pg['action'] = 'submit_pr'
             if (-not $currentPG) { $currentPG = $pg }
-        } elseif ($branchExists) {
-            $pg['completed'] = $false
-            $pg['pr_number'] = 0
-            $pg['pr_url'] = ''
-            $pg['action'] = 'submit_pr'
-            if (-not $currentPG) { $currentPG = $pg }
         } else {
-            $pg['completed'] = $false
-            $pg['pr_number'] = 0
-            $pg['pr_url'] = ''
-            $pg['action'] = 'create_branch'
-            if (-not $currentPG) { $currentPG = $pg }
+            # ADO-state-only completion fallback — gh failure recovery
+            $allDone = $false
+            if ($pg.issue_ids.Count -gt 0) {
+                $doneCount = @($allItems | Where-Object {
+                    $pg.issue_ids -contains $_.work_item_id -and $_.state -eq 'Done'
+                }).Count
+                $allDone = $doneCount -eq $pg.issue_ids.Count
+            } elseif ($pg.task_ids.Count -gt 0) {
+                # Task-only PG: rely on task states
+                $doneCount = @($allItems | Where-Object {
+                    $pg.task_ids -contains $_.work_item_id -and $_.state -eq 'Done'
+                }).Count
+                $allDone = $doneCount -eq $pg.task_ids.Count
+            }
+
+            if ($allDone) {
+                $completedPGs += $pg.name
+                $pg['completed'] = $true
+                $pg['pr_number'] = 0
+                $pg['pr_url'] = ''
+            } else {
+                # Branch exists or not → create_branch (branch_manager handles rebase)
+                $pg['completed'] = $false
+                $pg['pr_number'] = 0
+                $pg['pr_url'] = ''
+                $pg['action'] = 'create_branch'
+                if (-not $currentPG) { $currentPG = $pg }
+            }
         }
     }
 
