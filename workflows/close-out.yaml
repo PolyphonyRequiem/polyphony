@@ -1,0 +1,199 @@
+# close-out — Post-implementation close-out and observation filing sub-workflow.
+#
+# After the feature PR merges, this sub-workflow generates post-mortem
+# observations from the completed hierarchy and files them as new work
+# items using filing-eligible types from process-config.yaml.
+#
+# Invariants:
+#   Pre:  work_item_id exists, implementation complete, feature PR merged.
+#   Post: Observations filed as new work items; output.filed_count returned.
+
+workflow:
+  name: close-out
+  description: >-
+    Post-implementation close-out. Generates structured observations from the
+    completed work item hierarchy and files them as new ADO work items using
+    filing-eligible types from process-config.yaml.
+  version: "1.0.0"
+  entry_point: close_out
+
+  input:
+    work_item_id:
+      type: number
+      required: true
+      description: ADO work item ID of the focus (root) item
+    feature_branch:
+      type: string
+      required: false
+      default: ""
+      description: Feature branch that was merged
+
+tools:
+  - twig
+  - gh
+  - filesystem
+
+output:
+  filed_count: "{{ closeout_filer.output.filed_count | default(0) }}"
+
+agents:
+  # ── Post-mortem analysis ───────────────────────────────────────────────
+  #
+  # Performs post-mortem analysis scoped to the focus work item hierarchy.
+  # Reads the work tree, plan artifacts, and PR history to generate
+  # structured observations about what went well and what can improve.
+  # Type information is loaded from process-config.yaml — no hardcoded
+  # type names.
+  #
+  # Invariants:
+  #   Pre:  work_item_id hierarchy is complete (all children in terminal state).
+  #   Post: output.observations contains a structured array of observations.
+  - name: close_out
+    model: claude-opus-4-20250514
+    context_window: 1000000
+    description: Post-mortem analysis generating structured observations from the completed hierarchy
+    tools:
+      - twig
+      - gh
+      - filesystem
+    prompt: |
+      You are the close-out analyst for the twig SDLC workflow.
+
+      ## Your Mission
+
+      Perform a post-mortem analysis of the completed work item hierarchy and
+      generate structured observations that can be filed as new work items for
+      future improvement.
+
+      ## Context
+
+      - **Focus work item:** {{ workflow.input.work_item_id }}
+      - **Feature branch:** {{ workflow.input.feature_branch }}
+
+      ## Instructions
+
+      1. **Load the hierarchy** — Use `twig show {{ workflow.input.work_item_id }} --tree`
+         to see the full work item tree and its completion state.
+
+      2. **Read process configuration** — Load `.conductor/process-config.yaml` to
+         understand the type definitions and which types are `filing_eligible`.
+         Do NOT hardcode type names — use only the types listed in the config.
+
+      3. **Review the work** — Examine:
+         - Work item descriptions and acceptance criteria vs actual outcomes
+         - Commit history on the feature branch
+         - PR comments and review feedback
+         - Any plan documents referenced by the work items
+
+      4. **Generate observations** — For each finding, classify it as:
+         - `improvement` — Something that could be done better next time
+         - `bug` — A defect discovered during or after implementation
+         - `debt` — Technical debt introduced or discovered
+         - `process` — A workflow or process improvement opportunity
+
+      5. **Determine target type** — For each observation, select the appropriate
+         work item type from the `filing_eligible` types in process-config.yaml.
+         Do NOT use types that have `filing_eligible: false`.
+
+      ## Output
+
+      Return a JSON object with this structure:
+      ```json
+      {
+        "observations": [
+          {
+            "title": "Brief descriptive title",
+            "description": "Detailed description of the observation",
+            "category": "improvement | bug | debt | process",
+            "target_type": "<type from filing_eligible types in process-config.yaml>",
+            "priority": 1,
+            "rationale": "Why this observation matters"
+          }
+        ],
+        "summary": "Brief post-mortem summary"
+      }
+      ```
+
+      ## Constraints
+
+      - Keep observations actionable and specific
+      - Each observation should be independently fileable as a work item
+      - Do NOT reference type names that are not in process-config.yaml
+      - Do NOT use types where `filing_eligible` is false
+      - Focus on the hierarchy under work item {{ workflow.input.work_item_id }} only
+      - If no observations are warranted, return an empty observations array
+    routes:
+      - to: closeout_filer
+        when: "{{ close_out.output.observations | length > 0 }}"
+      - to: $end
+        when: "{{ close_out.output.observations | length == 0 }}"
+
+  # ── Observation filer ──────────────────────────────────────────────────
+  #
+  # Creates ADO work items for each observation generated by close_out.
+  # Uses filing_eligible types from process-config.yaml to determine
+  # valid target types. No hardcoded type names.
+  #
+  # Invariants:
+  #   Pre:  close_out.output.observations is a non-empty array of observations.
+  #   Post: Each observation is filed as a new ADO work item; output.filed_count set.
+  - name: closeout_filer
+    model: claude-sonnet-4-20250514
+    description: Creates ADO work items for each close-out observation
+    tools:
+      - twig
+    prompt: |
+      You are the close-out filer for the twig SDLC workflow.
+
+      ## Your Mission
+
+      Create ADO work items for each observation from the post-mortem analysis.
+
+      ## Context
+
+      - **Focus work item:** {{ workflow.input.work_item_id }}
+      - **Observations to file:**
+
+      {{ close_out.output.observations | tojson(indent=2) }}
+
+      ## Instructions
+
+      1. **Read process configuration** — Load `.conductor/process-config.yaml` to
+         confirm which types are `filing_eligible`. Only create work items of
+         types where `filing_eligible` is true.
+
+      2. **File each observation** — For each observation in the list above:
+         - Use `twig seed` to create a new work item
+         - Set the type to the observation's `target_type` (must be `filing_eligible`)
+         - Set the title from the observation's `title`
+         - Set the description including the observation's `description` and `rationale`
+         - Set the priority from the observation's `priority`
+         - Tag with `closeout-finding`
+
+      3. **Track results** — Count successful filings and record created item IDs.
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "filed_count": 0,
+        "filed_items": [
+          {
+            "observation_title": "...",
+            "work_item_id": 0,
+            "work_item_type": "..."
+          }
+        ],
+        "errors": []
+      }
+      ```
+
+      ## Constraints
+
+      - Do NOT create work items of types where `filing_eligible` is false
+      - Do NOT modify existing work items in the completed hierarchy
+      - Each observation becomes exactly one new work item
+      - If a filing fails, record the error and continue with remaining observations
+    routes:
+      - to: $end
