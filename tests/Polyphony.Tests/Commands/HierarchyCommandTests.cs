@@ -196,4 +196,36 @@ public sealed class HierarchyCommandTests : CommandTestBase
         output.ShouldContain("\"children\"");
         output.ShouldContain("\"capabilities\"");
     }
+
+    [Fact]
+    public async Task Hierarchy_ItemWithTags_OutputIncludesTagsField()
+    {
+        var epic = new WorkItemBuilder()
+            .WithId(600).WithType("Epic").WithTitle("Tagged Epic")
+            .WithState("Doing").WithTags("PG-1; Sprint 5")
+            .Build();
+        await SeedAsync(epic);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Hierarchy(600));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        output.ShouldContain("\"tags\"");
+        output.ShouldContain("PG-1; Sprint 5");
+    }
+
+    [Fact]
+    public async Task Hierarchy_ItemWithoutTags_OutputOmitsTagsField()
+    {
+        var epic = new WorkItemBuilder()
+            .WithId(700).WithType("Epic").WithTitle("Untagged")
+            .WithState("Doing")
+            .Build();
+        await SeedAsync(epic);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Hierarchy(700));
+
+        output.ShouldNotContain("\"tags\"");
+    }
 }

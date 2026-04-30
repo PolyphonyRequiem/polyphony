@@ -263,4 +263,60 @@ public sealed class HierarchyWalkerTests
         await Should.ThrowAsync<OperationCanceledException>(
             () => walker.WalkAsync(1, maxDepth: 3, cts.Token));
     }
+
+    [Fact]
+    public async Task WalkAsync_ItemWithTags_PopulatesTagsProperty()
+    {
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithTitle("Tagged")
+            .WithState("Doing").WithTags("PG-1; Sprint 5")
+            .Build();
+
+        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(item);
+
+        var result = await CreateWalker().WalkAsync(1, maxDepth: 0, CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        result.Tags.ShouldBe("PG-1; Sprint 5");
+    }
+
+    [Fact]
+    public async Task WalkAsync_ItemWithoutTags_TagsIsNull()
+    {
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithTitle("No Tags")
+            .WithState("Doing")
+            .Build();
+
+        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(item);
+
+        var result = await CreateWalker().WalkAsync(1, maxDepth: 0, CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        result.Tags.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task WalkAsync_ChildrenInheritTheirOwnTags()
+    {
+        var parent = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithTitle("Parent")
+            .WithState("Doing").WithTags("PG-1")
+            .Build();
+        var child = new WorkItemBuilder()
+            .WithId(10).WithType("Issue").WithTitle("Child")
+            .WithState("To Do").WithTags("PG-1; Sprint 5")
+            .Build();
+
+        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(parent);
+        _repository.GetChildrenAsync(1, Arg.Any<CancellationToken>())
+            .Returns(new List<WorkItem> { child });
+
+        var result = await CreateWalker().WalkAsync(1, maxDepth: 1, CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        result.Tags.ShouldBe("PG-1");
+        result.Children.ShouldNotBeNull();
+        result.Children[0].Tags.ShouldBe("PG-1; Sprint 5");
+    }
 }
