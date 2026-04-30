@@ -113,7 +113,11 @@ agents:
   # ── State detection ────────────────────────────────────────────────────
   #
   # Runs detect-state.ps1 to determine the current lifecycle phase via
-  # Polyphony route. Phase-based routing is added by Task 3.1.2.
+  # Polyphony route. Routes to sub-workflows based on phase:
+  #   needs_planning / needs_seeding     → planning
+  #   ready_for_implementation / in_progress → implementation
+  #   ready_for_completion               → close_out
+  #   done / removed                     → $end
   #
   # Invariants:
   #   Pre:  Preflight passed or user chose to proceed anyway.
@@ -130,7 +134,75 @@ agents:
       - "{{ workflow.input.work_item_id }}"
       - "-Intent"
       - "{{ workflow.input.intent }}"
-    # Phase-based routing (needs_planning, ready_for_implementation,
-    # ready_for_completion, done, removed) is implemented in Task 3.1.2.
+    routes:
+      - to: planning
+        when: "{{ state_detector.output.phase == 'needs_planning' }}"
+      - to: planning
+        when: "{{ state_detector.output.phase == 'needs_seeding' }}"
+      - to: implementation
+        when: "{{ state_detector.output.phase == 'ready_for_implementation' }}"
+      - to: implementation
+        when: "{{ state_detector.output.phase == 'in_progress' }}"
+      - to: close_out
+        when: "{{ state_detector.output.phase == 'ready_for_completion' }}"
+      - to: $end
+        when: "{{ state_detector.output.phase == 'done' }}"
+      - to: $end
+        when: "{{ state_detector.output.phase == 'removed' }}"
+
+  # ── Planning sub-workflow ─────────────────────────────────────────────
+  #
+  # Invoked when state_detector.output.phase is needs_planning or
+  # needs_seeding. Handles architect planning, plan PR review, and child
+  # seeding for any plannable work item type.
+  #
+  # Invariants:
+  #   Pre:  state_detector.output.phase in {needs_planning, needs_seeding}.
+  #   Post: Work item has an approved plan and seeded children.
+  - name: planning
+    type: workflow
+    description: Planning and seeding sub-workflow for plannable items
+    path: workflows/twig-sdlc-v2-planning.yaml
+    input:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      intent: "{{ workflow.input.intent }}"
+      user_plan_path: "{{ workflow.input.user_plan_path }}"
+    routes:
+      - to: $end
+
+  # ── Implementation sub-workflow ───────────────────────────────────────
+  #
+  # Invoked when state_detector.output.phase is ready_for_implementation
+  # or in_progress. Manages PG lifecycle, coding agents, PR creation and
+  # review for any implementable work item type.
+  #
+  # Invariants:
+  #   Pre:  state_detector.output.phase in {ready_for_implementation, in_progress}.
+  #   Post: All PGs implemented, PRs merged, feature branch complete.
+  - name: implementation
+    type: workflow
+    description: Implementation sub-workflow for implementable items
+    path: workflows/twig-sdlc-v2-implement.yaml
+    input:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      intent: "{{ workflow.input.intent }}"
+    routes:
+      - to: $end
+
+  # ── Close-out sub-workflow ────────────────────────────────────────────
+  #
+  # Invoked when state_detector.output.phase is ready_for_completion.
+  # Performs post-mortem analysis and files observations as new work items
+  # using filing-eligible types from process-config.yaml.
+  #
+  # Invariants:
+  #   Pre:  state_detector.output.phase == ready_for_completion.
+  #   Post: Observations filed; output.filed_count returned.
+  - name: close_out
+    type: workflow
+    description: Post-implementation close-out and observation filing
+    path: workflows/close-out.yaml
+    input:
+      work_item_id: "{{ workflow.input.work_item_id }}"
     routes:
       - to: $end
