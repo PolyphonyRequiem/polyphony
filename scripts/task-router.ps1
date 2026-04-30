@@ -19,6 +19,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/pg-helpers.ps1"
+. "$PSScriptRoot/lib/ado-helpers.ps1"
 
 try {
     # ── Sync & fetch hierarchy ────────────────────────────────────────────────
@@ -93,6 +94,7 @@ try {
             remaining_count = 0
             current_pg      = $PGName
             branch_name     = ''
+            ado_workspace   = Get-AdoWorkspace
         } | ConvertTo-Json -Depth 3
         return
     }
@@ -143,6 +145,7 @@ try {
         remaining_count = $remaining
         current_pg      = $PGName
         branch_name     = $branchName
+        ado_workspace   = Get-AdoWorkspace
     } | ConvertTo-Json -Depth 3
 } catch {
     [ordered]@{ error = $_.Exception.Message } | ConvertTo-Json

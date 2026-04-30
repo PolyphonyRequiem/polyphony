@@ -10,11 +10,11 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/resolve-gh-token.ps1"
 . "$PSScriptRoot/invoke-gh.ps1"
 . "$PSScriptRoot/lib/pg-helpers.ps1"
+. "$PSScriptRoot/lib/ado-helpers.ps1"
+. "$PSScriptRoot/lib/gh-helpers.ps1"
 
 try {
-$_ghRepo = ''
-$_remoteUrl = (git remote get-url origin 2>$null) ?? ''
-if ($_remoteUrl -match 'github\.com(?:/|:)([^/]+/[^/.]+)') { $_ghRepo = $Matches[1] }
+$_ghRepo = Get-RepoSlug
 
 twig sync --output json 2>$null | Out-Null
 $hierarchy = (polyphony hierarchy --work-item $WorkItemId --depth 3 2>$null) | ConvertFrom-Json
@@ -109,6 +109,7 @@ $taggedCount = @($allItems | Where-Object { Get-PGTag -Tags $_.tags }).Count
     total_tasks = @($allItems | Where-Object { $_.capabilities -contains 'implementable' -and $_.capabilities -notcontains 'plannable' }).Count
     total_issues = @($allItems | Where-Object { $_.capabilities -contains 'plannable' }).Count
     tagged_items = $taggedCount; untagged_items = ($allItems.Count - $taggedCount)
+    ado_org = Get-AdoOrg; ado_project = Get-AdoProject; ado_workspace = Get-AdoWorkspace
 } | ConvertTo-Json -Depth 5
 
 } catch {

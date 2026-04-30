@@ -29,8 +29,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/lib/ado-helpers.ps1"
+. "$PSScriptRoot/lib/gh-helpers.ps1"
 
 try {
+    # ── Derive ADO workspace from twig config (#2651) ────────────────────────
+    $_adoOrg = Get-AdoOrg
+    $_adoProject = Get-AdoProject
+    $_adoWorkspace = Get-AdoWorkspace
+
     # ── Step 0: Sync local cache from ADO ────────────────────────────────────
     # The local .twig SQLite cache may be stale. Force a refresh before
     # reading any state to prevent routing on stale data.
@@ -74,8 +81,8 @@ try {
                     $matched = $true
                 }
             }
-            # Legacy table metadata: | **Issue** | #<id>
-            if (-not $matched -and $content -match '\|\s*\*{0,2}Issue\*{0,2}\s*\|\s*#(\d+)') {
+            # Legacy table metadata: | **<any label>** | #<id>
+            if (-not $matched -and $content -match '\|\s*\*{0,2}[^|*]+\*{0,2}\s*\|\s*#(\d+)') {
                 if ([int]$Matches[1] -eq $WorkItemId) {
                     $matched = $true
                 }
@@ -169,8 +176,7 @@ try {
     # ── Unmerged branches check (#2632) ───────────────────────────────────────
     # Detect unmerged feature branches for implementation status.
     # Repo slug derived at runtime from git remote — no hardcoded values.
-    $remoteUrl = git remote get-url origin 2>$null
-    $repoSlug = ($remoteUrl -replace '.*github\.com[:/]' -replace '\.git$').Trim()
+    $repoSlug = Get-RepoSlug
 
     if ($repoSlug -and $routeResult.workspace_hint) {
         $featureBranch = $routeResult.workspace_hint.feature_branch
@@ -253,6 +259,9 @@ try {
         children_summary        = $childrenSummary
         implementation_status   = $implementationStatus
         workspace_hint          = $workspaceHint
+        ado_org                 = $_adoOrg
+        ado_project             = $_adoProject
+        ado_workspace           = $_adoWorkspace
         intent_conflict         = $intentConflict
         needs_cleanup           = $needsCleanup
         error                   = $errorMsg

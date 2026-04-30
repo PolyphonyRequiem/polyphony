@@ -20,6 +20,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/pg-helpers.ps1"
+. "$PSScriptRoot/lib/ado-helpers.ps1"
 
 try {
     twig sync --output json 2>$null | Out-Null
@@ -78,6 +79,7 @@ try {
         failed_closures = @($failedClosures)
         total_closed    = $closedItems.Count
         total_failed    = $failedClosures.Count
+        ado_workspace   = Get-AdoWorkspace
     } | ConvertTo-Json -Depth 3
 } catch {
     [ordered]@{ error = $_.Exception.Message } | ConvertTo-Json
