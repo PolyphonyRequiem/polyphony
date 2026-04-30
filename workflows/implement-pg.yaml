@@ -341,7 +341,11 @@ agents:
   #
   # Checks ADO predecessor links to determine if the PG is blocked by
   # unresolved dependencies. Runs dependency-check.ps1 which queries ADO
-  # for predecessor work items and their states.
+  # for predecessor work items and their states. Items with no predecessor
+  # links are routed directly to reducer_issue (gate never fires).
+  #
+  # On re-entry (P3), this node re-runs and auto-clears blocks whose
+  # predecessors have since reached a terminal state.
   #
   # Invariants:
   #   Pre:  All tasks in this PG are complete (task_router.output.action == 'all_tasks_done').
@@ -364,14 +368,25 @@ agents:
 
   # ── Dependency gate (human decision point) ─────────────────────────────
   #
-  # Fires when dependency_check detects unresolved predecessor links. Presents
-  # the user with the list of blocking items and offers three options:
-  # wait (check again later), override (proceed despite blockers), or
-  # reassign (move tasks to another PG) (P6, P13).
+  # Fires only when dependency_check detects unresolved predecessor links
+  # on the parent work item. Items with no predecessor links bypass this
+  # gate entirely (dependency_check returns not_blocked).
+  #
+  # Presents blocking items and three options (P6: genuine multi-option
+  # decision; P13: Jinja2 Markdown template with table layout):
+  #   - Wait:     Route back to dependency_check. On workflow resume,
+  #               predecessors are re-checked automatically — if they
+  #               completed in the interim, the block clears without
+  #               user intervention (P3: re-entry by state).
+  #   - Override: Proceed to issue review despite unresolved dependencies
+  #               (user accepts risk of integration issues).
+  #   - Reassign: End this PG. Tasks should be reassigned to another PG
+  #               or tracked externally outside this workflow.
   #
   # Invariants:
-  #   Pre:  dependency_check.output.status == 'blocked'.
-  #   Post: User has chosen wait (re-check), override (proceed), or reassign (end).
+  #   Pre:  dependency_check.output.status == 'blocked';
+  #         dependency_check.output.blocking_items is non-empty.
+  #   Post: User has chosen wait (re-check), override (proceed), or reassign (end PG).
   - name: dependency_gate
     type: human_gate
     prompt: |
@@ -393,10 +408,14 @@ agents:
       **{{ dependency_check.output.blocking_items | length }}** predecessor(s) are
       not yet complete.
 
+      > **Re-entry note:** Choosing **Wait** routes back to the dependency check.
+      > If the workflow resumes later, predecessors are re-checked automatically —
+      > any that completed in the interim will clear the block without user action.
+
       Choose an action:
-      - **Wait** — re-check dependencies later (blockers may resolve)
-      - **Override** — proceed to issue review despite unresolved dependencies
-      - **Reassign** — abort this PG and reassign tasks
+      - **Wait** — re-check dependencies later (blockers may resolve on their own)
+      - **Override** — proceed to issue review despite unresolved dependencies (user accepts risk)
+      - **Reassign** — end this PG and track dependencies externally
     options:
       - label: "⏳ Wait"
         value: wait
