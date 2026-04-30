@@ -265,56 +265,54 @@ public sealed class HierarchyWalkerTests
     }
 
     [Fact]
-    public async Task WalkAsync_PopulatesTagsFromFields()
+    public async Task WalkAsync_ItemWithTags_PopulatesTagsProperty()
     {
-        var root = new WorkItemBuilder()
-            .WithId(1).WithType("Epic").WithTitle("Root").WithState("Doing")
-            .WithField("System.Tags", "PG-1; twig")
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithTitle("Tagged")
+            .WithState("Doing").WithTags("PG-1; Sprint 5")
             .Build();
 
-        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(root);
+        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(item);
 
-        var walker = CreateWalker();
-        var result = await walker.WalkAsync(1, maxDepth: 0, CancellationToken.None);
+        var result = await CreateWalker().WalkAsync(1, maxDepth: 0, CancellationToken.None);
 
         result.ShouldNotBeNull();
-        result.Tags.ShouldBe("PG-1; twig");
+        result.Tags.ShouldBe("PG-1; Sprint 5");
     }
 
     [Fact]
-    public async Task WalkAsync_NoTagsField_TagsIsNull()
+    public async Task WalkAsync_ItemWithoutTags_TagsIsNull()
     {
-        var root = new WorkItemBuilder()
-            .WithId(1).WithType("Epic").WithTitle("Root").WithState("Doing")
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithTitle("No Tags")
+            .WithState("Doing")
             .Build();
 
-        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(root);
+        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(item);
 
-        var walker = CreateWalker();
-        var result = await walker.WalkAsync(1, maxDepth: 0, CancellationToken.None);
+        var result = await CreateWalker().WalkAsync(1, maxDepth: 0, CancellationToken.None);
 
         result.ShouldNotBeNull();
         result.Tags.ShouldBeNull();
     }
 
     [Fact]
-    public async Task WalkAsync_PropagatesTagsToChildren()
+    public async Task WalkAsync_ChildrenInheritTheirOwnTags()
     {
-        var root = new WorkItemBuilder()
-            .WithId(1).WithType("Epic").WithTitle("Root").WithState("Doing")
-            .WithField("System.Tags", "PG-1")
+        var parent = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithTitle("Parent")
+            .WithState("Doing").WithTags("PG-1")
             .Build();
         var child = new WorkItemBuilder()
-            .WithId(10).WithType("Task").WithTitle("Child").WithState("To Do")
-            .WithField("System.Tags", "PG-1; Sprint 5")
+            .WithId(10).WithType("Issue").WithTitle("Child")
+            .WithState("To Do").WithTags("PG-1; Sprint 5")
             .Build();
 
-        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(root);
+        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(parent);
         _repository.GetChildrenAsync(1, Arg.Any<CancellationToken>())
             .Returns(new List<WorkItem> { child });
 
-        var walker = CreateWalker();
-        var result = await walker.WalkAsync(1, maxDepth: 1, CancellationToken.None);
+        var result = await CreateWalker().WalkAsync(1, maxDepth: 1, CancellationToken.None);
 
         result.ShouldNotBeNull();
         result.Tags.ShouldBe("PG-1");

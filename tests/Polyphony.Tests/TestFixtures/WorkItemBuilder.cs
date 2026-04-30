@@ -13,6 +13,7 @@ public sealed class WorkItemBuilder
     private string _type = "Issue";
     private string _title = "Test Item";
     private string _state = "To Do";
+    private string? _tags;
     private int? _parentId;
     private readonly List<WorkItemBuilder> _children = [];
     private readonly Dictionary<string, string?> _fields = [];
@@ -22,6 +23,7 @@ public sealed class WorkItemBuilder
     public WorkItemBuilder WithType(string type) { _type = type; return this; }
     public WorkItemBuilder WithState(string state) { _state = state; return this; }
     public WorkItemBuilder WithParentId(int? parentId) { _parentId = parentId; return this; }
+    public WorkItemBuilder WithTags(string tags) { _tags = tags; return this; }
     public WorkItemBuilder WithField(string name, string? value) { _fields[name] = value; return this; }
 
     /// <summary>
@@ -51,6 +53,8 @@ public sealed class WorkItemBuilder
 
         // State has internal set — use the public ChangeState() then clear dirty via MarkSynced().
         item.ChangeState(_state);
+        if (_tags != null)
+            item.UpdateField("System.Tags", _tags);
         item.MarkSynced(1);
 
         // Apply arbitrary fields after MarkSynced so they don't affect dirty state.
