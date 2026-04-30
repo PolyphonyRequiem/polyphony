@@ -69,9 +69,9 @@ agents:
       - "-NoProfile"
       - "-File"
       - "scripts/depth-guard.ps1"
-      - "--depth"
+      - "-Depth"
       - "{{ workflow.input.depth }}"
-      - "--max-depth"
+      - "-MaxDepth"
       - "{{ workflow.input.max_depth }}"
     routes:
       - to: type_loader
@@ -125,10 +125,40 @@ agents:
       - "-NoProfile"
       - "-File"
       - "scripts/load-type-context.ps1"
-      - "--work-item-id"
+      - "-WorkItemId"
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: route_check
+        when: "{{ type_loader.exit_code == 0 }}"
+      - to: type_loader_error_gate
+        when: "{{ type_loader.exit_code != 0 }}"
+
+  # ── Type loader error gate ───────────────────────────────────────────────
+  #
+  # Human notification that type context loading failed. The user acknowledges
+  # and the workflow ends for this item.
+  #
+  # Invariants:
+  #   Pre:  type_loader has exited with a non-zero exit code.
+  #   Post: User has acknowledged the error; workflow ends.
+  - name: type_loader_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Type Context Load Failed
+
+      Planning for work item **{{ workflow.input.work_item_id }}** cannot continue
+      because the type context could not be loaded.
+
+      **Error:** {{ type_loader.output.error | default("Unknown error — check that .conductor/work-item-types/ is configured and the work item exists in ADO.") }}
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning for this work item
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
 
   # ── Route check ──────────────────────────────────────────────────────────
   #
@@ -427,61 +457,7 @@ agents:
     description: Create child work items from the approved plan
     tools:
       - twig
-    prompt: |
-      You are the work item seeder for the twig SDLC planning workflow.
-
-      ## Your Mission
-
-      Create child work items from the approved plan using the twig CLI.
-
-      ## Context
-
-      - **Parent work item:** {{ workflow.input.work_item_id }}
-      - **Type definition:** {{ type_loader.output.definition }}
-      - **Decomposition guidance:** {{ type_loader.output.decomposition_guidance }}
-
-      ## Approved Plan
-
-      {{ architect.output.plan }}
-
-      ## Instructions
-
-      1. **Read the plan** — identify each child item to create from the plan.
-
-      2. **Determine child type** — use the type definition and decomposition
-         guidance to select the appropriate child type. Do NOT hardcode type
-         names — use only types from the decomposition guidance.
-
-      3. **Create work items** — for each child item:
-         - Use `twig seed` to create the work item under parent {{ workflow.input.work_item_id }}
-         - Set the title, description, and acceptance criteria from the plan
-         - Tag with appropriate PG grouping if specified in the plan
-
-      4. **Track results** — count successful and failed creations.
-
-      ## Output
-
-      Return a JSON object:
-      ```json
-      {
-        "seeded_count": 0,
-        "seeded_items": [
-          {
-            "title": "...",
-            "work_item_id": 0,
-            "work_item_type": "..."
-          }
-        ],
-        "errors": []
-      }
-      ```
-
-      ## Constraints
-
-      - Do NOT hardcode type names — use only types from the decomposition guidance
-      - Each plan item becomes exactly one work item
-      - Preserve the plan's grouping (PG tags) if specified
-      - If a creation fails, record the error and continue with remaining items
+    prompt: !file ../prompts/seeder-plan-level.md
     routes:
       - to: child_router
 
@@ -502,7 +478,7 @@ agents:
       - "-NoProfile"
       - "-File"
       - "scripts/child-router.ps1"
-      - "--work-item-id"
+      - "-WorkItemId"
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: plan_children_group
@@ -537,4 +513,37 @@ agents:
           intent: "{{ workflow.input.intent }}"
           user_plan_path: ""
     routes:
+      - to: plan_children_summary_gate
+        when: "{{ plan_children_group.failed_count > 0 }}"
       - to: $end
+        when: "{{ plan_children_group.failed_count == 0 }}"
+
+  # ── Plan children summary gate ───────────────────────────────────────────
+  #
+  # Fires only when one or more child planning sub-workflows failed. Surfaces
+  # failures to the user so they can decide whether to abort or continue.
+  #
+  # Invariants:
+  #   Pre:  plan_children_group has completed with at least one failure.
+  #   Post: User has acknowledged the partial failure; workflow ends.
+  - name: plan_children_summary_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Child Planning Partial Failure
+
+      Planning for work item **{{ workflow.input.work_item_id }}** completed with errors.
+
+      - **Succeeded:** {{ plan_children_group.succeeded_count }}
+      - **Failed:** {{ plan_children_group.failed_count }}
+
+      Some child work items were not planned. Review the failures and re-run
+      planning for the affected items if needed.
+
+      ---
+
+      Choose an action:
+      - **Acknowledge** — accept the partial result and continue
+    options:
+      - label: "✅ Acknowledge"
+        value: acknowledge
+        route: $end
