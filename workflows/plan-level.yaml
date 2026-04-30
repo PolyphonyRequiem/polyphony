@@ -5,7 +5,8 @@
 # knowledge is injected at runtime via type_loader — no type-name literals
 # appear in this file.
 #
-# Self-recursion for child plannable levels is added in Task 2681.
+# Self-recursion: child_router discovers plannable children and invokes
+# this workflow per child with depth+1 (Task 2681).
 #
 # Invariants:
 #   Pre:  work_item_id exists in ADO and is plannable per process-config.yaml.
@@ -415,7 +416,7 @@ agents:
   #
   # Creates child work items from the approved plan using the twig CLI.
   # Uses type information from type_loader to determine appropriate child
-  # types. Routes to $end (child recursion added in Task 2681).
+  # types. Routes to child_router for recursive planning of plannable children.
   #
   # Invariants:
   #   Pre:  Plan is approved; type_loader outputs available.
@@ -481,5 +482,59 @@ agents:
       - Each plan item becomes exactly one work item
       - Preserve the plan's grouping (PG tags) if specified
       - If a creation fails, record the error and continue with remaining items
+    routes:
+      - to: child_router
+
+  # ── Child router ─────────────────────────────────────────────────────────
+  #
+  # Discovers plannable children of the current work item using polyphony
+  # hierarchy. Filters by 'plannable' capability to determine which children
+  # need their own planning sub-workflow invocation.
+  #
+  # Invariants:
+  #   Pre:  Seeder has completed; child work items may exist.
+  #   Post: output.has_plannable_children is set; plannable_children array populated.
+  - name: child_router
+    type: script
+    description: Discover plannable children for recursive planning
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/child-router.ps1"
+      - "--work-item-id"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: plan_children_group
+        when: "{{ child_router.output.has_plannable_children == true }}"
+      - to: $end
+        when: "{{ child_router.output.has_plannable_children == false }}"
+
+  # ── Plan children group (for_each) ──────────────────────────────────────
+  #
+  # Self-recursion: invokes plan-level.yaml for each plannable child with
+  # depth+1. This enables any hierarchy depth to be planned with a single
+  # workflow file. Conductor enforces max_depth to prevent runaway recursion.
+  #
+  # Invariants:
+  #   Pre:  child_router.output.has_plannable_children == true.
+  #   Post: Each plannable child has been planned (or depth-limited).
+  - name: plan_children_group
+    for_each:
+      source: "{{ child_router.output.plannable_children }}"
+      as: child
+      max_concurrent: 3
+      failure_mode: continue_on_error
+      agent:
+        name: plan_child
+        type: workflow
+        workflow: ./plan-level.yaml
+        max_depth: 6
+        input_mapping:
+          work_item_id: "{{ child.id }}"
+          depth: "{{ workflow.input.depth + 1 }}"
+          max_depth: "{{ workflow.input.max_depth }}"
+          intent: "{{ workflow.input.intent }}"
+          user_plan_path: ""
     routes:
       - to: $end
