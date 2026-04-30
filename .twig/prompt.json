@@ -1,9 +1,9 @@
 {
-  "text": "\uEAB3  #2608 Rewrite HierarchyCommand with HierarchyWalker and DI [Doing]",
-  "id": 2608,
+  "text": "\uEAB3  #2606 Rewrite RouteCommand with full routing logic and DI [Doing]",
+  "id": 2606,
   "type": "Task",
   "typeBadge": "\uEAB3 ",
-  "title": "Rewrite HierarchyCommand with HierarchyWalker and DI",
+  "title": "Rewrite RouteCommand with full routing logic and DI",
   "state": "Doing",
   "stateCategory": "InProgress",
   "isDirty": false,
@@ -11,5 +11,5 @@
   "typeTextColor": "#000000",
   "stateColor": "#007acc",
   "branch": null,
-  "generatedAt": "2026-04-29T23:53:59.7340883Z"
+  "generatedAt": "2026-04-29T23:56:53.0059392Z"
 }

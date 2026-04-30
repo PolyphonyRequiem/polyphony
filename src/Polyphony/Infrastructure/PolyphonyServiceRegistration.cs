@@ -37,6 +37,7 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton(_ => ProcessConfigLoader.Load(configPath));
 
         // Routing services
+        services.AddSingleton<PhaseDetector>();
         services.AddSingleton<HierarchyWalker>();
         services.AddSingleton<TransitionValidator>();
 
