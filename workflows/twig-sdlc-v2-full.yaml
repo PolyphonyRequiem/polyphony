@@ -1,0 +1,136 @@
+# twig-sdlc-v2-full — Type-agnostic apex workflow for the twig SDLC pipeline.
+#
+# Entry point for any work item type at any hierarchy level. Runs preflight
+# validation, detects lifecycle phase via Polyphony, and routes to the
+# appropriate sub-workflow (planning, implementation, close-out, or end).
+#
+# Invariants:
+#   Pre:  work_item_id exists in ADO and is accessible via twig CLI.
+#   Post: Work item is routed to the correct phase sub-workflow or $end.
+
+workflow:
+  name: twig-sdlc-v2-full
+  description: >-
+    Type-agnostic SDLC apex workflow. Validates prerequisites, detects lifecycle
+    phase, and routes to planning, implementation, close-out, or end.
+  version: "1.0.0"
+  entry_point: preflight_check
+
+  input:
+    work_item_id:
+      type: number
+      required: true
+      description: ADO work item ID (any type at any level)
+    intent:
+      type: string
+      required: false
+      default: resume
+      description: "new | redo | resume"
+    user_plan_path:
+      type: string
+      required: false
+      default: ""
+      description: Path to user-authored plan document
+
+agents:
+  # ── Preflight validation ───────────────────────────────────────────────
+  #
+  # Runs preflight-check.ps1 to validate external dependencies (gh auth,
+  # ADO access, .NET SDK, git state, etc.) before expensive LLM work begins.
+  #
+  # Invariants:
+  #   Pre:  work_item_id is a valid integer.
+  #   Post: output.ready is true/false; output contains check details.
+  - name: preflight_check
+    type: script
+    description: Validate external dependencies before expensive LLM work begins
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/preflight-check.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: state_detector
+        when: "{{ preflight_check.output.ready == true }}"
+      - to: preflight_gate
+        when: "{{ preflight_check.output.ready == false }}"
+
+  # ── Preflight gate (human decision point) ──────────────────────────────
+  #
+  # Fires only when preflight_check.output.ready == false. Presents the user
+  # with a Jinja2 Markdown summary of failed checks and remediation steps,
+  # then offers three choices: retry, proceed anyway, or abort (P6, P13).
+  #
+  # Invariants:
+  #   Pre:  preflight_check has run and output.ready == false.
+  #   Post: User has chosen retry (loop), proceed (continue), or abort (end).
+  - name: preflight_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Preflight Check Failed
+
+      {{ preflight_check.output.summary }}
+
+      ### Required Checks
+
+      | # | Check | Status | Detail |
+      |---|-------|--------|--------|
+      {% for check in preflight_check.output.required_checks %}
+      | {{ loop.index }} | `{{ check.name }}` | {{ "✅" if check.passed else "❌" }} | {{ check.detail }} |
+      {% endfor %}
+
+      {% if preflight_check.output.advisory_checks %}
+      ### Advisory Checks
+
+      | # | Check | Status | Detail | Remediation |
+      |---|-------|--------|--------|-------------|
+      {% for check in preflight_check.output.advisory_checks %}
+      | {{ loop.index }} | `{{ check.name }}` | {{ "✅" if check.passed else "⚠️" }} | {{ check.detail }} | {{ check.remediation if not check.passed else "—" }} |
+      {% endfor %}
+      {% endif %}
+
+      ---
+
+      **{{ preflight_check.output.failed_count }}** required check(s) failed, **{{ preflight_check.output.warning_count }}** advisory warning(s).
+
+      Choose an action:
+      - **Retry** — fix the issues above and re-run preflight checks
+      - **Proceed Anyway** — continue despite failures (use with caution)
+      - **Abort** — cancel the workflow
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: preflight_check
+      - label: "⏩ Proceed Anyway"
+        value: proceed
+        route: state_detector
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── State detection ────────────────────────────────────────────────────
+  #
+  # Runs detect-state.ps1 to determine the current lifecycle phase via
+  # Polyphony route. Phase-based routing is added by Task 3.1.2.
+  #
+  # Invariants:
+  #   Pre:  Preflight passed or user chose to proceed anyway.
+  #   Post: output.phase contains the detected lifecycle phase.
+  - name: state_detector
+    type: script
+    description: Detect current lifecycle phase via Polyphony route
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/detect-state.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Intent"
+      - "{{ workflow.input.intent }}"
+    # Phase-based routing (needs_planning, ready_for_implementation,
+    # ready_for_completion, done, removed) is implemented in Task 3.1.2.
+    routes:
+      - to: $end
