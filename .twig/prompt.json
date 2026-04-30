@@ -1,9 +1,9 @@
 {
-  "text": "\uEAB3  #2633 Retain plan discovery logic [Doing]",
-  "id": 2633,
+  "text": "\uEAB3  #2661 Build PG structure and PR groups from capability-annotated hierarchy [Doing]",
+  "id": 2661,
   "type": "Task",
   "typeBadge": "\uEAB3 ",
-  "title": "Retain plan discovery logic",
+  "title": "Build PG structure and PR groups from capability-annotated hierarchy",
   "state": "Doing",
   "stateCategory": "InProgress",
   "isDirty": false,
@@ -11,5 +11,5 @@
   "typeTextColor": "#000000",
   "stateColor": "#007acc",
   "branch": null,
-  "generatedAt": "2026-04-30T14:06:08.5953364Z"
+  "generatedAt": "2026-04-30T14:19:00.9248651Z"
 }
