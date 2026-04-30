@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Polyphony.Commands;
+using Polyphony.Routing;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
@@ -13,41 +14,30 @@ namespace Polyphony.Tests.Commands;
 /// </summary>
 public sealed class ValidateCommandTests : CommandTestBase
 {
-    [Fact]
-    public void Validate_ReturnsSuccessExitCode()
-    {
-        var cmd = new ValidateCommand();
-        var (exitCode, _) = CaptureConsole(() => cmd.Validate(100, "begin_planning"));
+    private ValidateCommand CreateCommand() => new(new TransitionValidator(Config), Repository);
 
-        exitCode.ShouldBe(ExitCodes.Success);
+    [Fact]
+    public async Task Validate_WorkItemNotFound_ReturnsCacheErrorExitCode()
+    {
+        var cmd = CreateCommand();
+        var (exitCode, _) = await CaptureConsoleAsync(() => cmd.Validate(999, "begin_planning"));
+
+        exitCode.ShouldBe(ExitCodes.CacheError);
     }
 
     [Fact]
-    public void Validate_OutputDeserializesToValidateResult()
+    public async Task Validate_WorkItemNotFound_OutputsErrorJson()
     {
-        var cmd = new ValidateCommand();
-        var (_, output) = CaptureConsole(() => cmd.Validate(100, "begin_planning"));
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Validate(999, "begin_planning"));
 
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ValidateResult);
-        result.ShouldNotBeNull();
+        output.ShouldContain("\"error\"");
+        output.ShouldContain("\"work_item_id\":999");
     }
 
     [Fact]
-    public void Validate_OutputContainsWorkItemIdAndEvent()
+    public async Task Validate_ValidEvent_ReturnsSuccessExitCode()
     {
-        var cmd = new ValidateCommand();
-        var (_, output) = CaptureConsole(() => cmd.Validate(42, "implementation_complete"));
-
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ValidateResult);
-        result.ShouldNotBeNull();
-        result.WorkItemId.ShouldBe(42);
-        result.Event.ShouldBe("implementation_complete");
-    }
-
-    [Fact]
-    public async Task Validate_ValidEvent_ReturnsValidJson()
-    {
-        // Seed an Epic in "To Do" — begin_planning is a valid event for this type
         var epic = new WorkItemBuilder()
             .WithId(100)
             .WithType("Epic")
@@ -56,20 +46,37 @@ public sealed class ValidateCommandTests : CommandTestBase
             .Build();
         await SeedAsync(epic);
 
-        var cmd = new ValidateCommand();
-        var (exitCode, output) = CaptureConsole(() => cmd.Validate(100, "begin_planning"));
+        var cmd = CreateCommand();
+        var (exitCode, _) = await CaptureConsoleAsync(() => cmd.Validate(100, "begin_planning"));
 
         exitCode.ShouldBe(ExitCodes.Success);
+    }
+
+    [Fact]
+    public async Task Validate_ValidEvent_ReturnsIsValidTrueWithTargetState()
+    {
+        var epic = new WorkItemBuilder()
+            .WithId(100)
+            .WithType("Epic")
+            .WithTitle("Test Epic")
+            .WithState("To Do")
+            .Build();
+        await SeedAsync(epic);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Validate(100, "begin_planning"));
+
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ValidateResult);
         result.ShouldNotBeNull();
         result.WorkItemId.ShouldBe(100);
         result.Event.ShouldBe("begin_planning");
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Doing");
     }
 
     [Fact]
-    public async Task Validate_InvalidEvent_ReturnsIsValidFalse()
+    public async Task Validate_UnknownEvent_ReturnsRoutingFailureExitCode()
     {
-        // Seed a Task — "nonexistent_event" is not a valid event
         var task = new WorkItemBuilder()
             .WithId(200)
             .WithType("Task")
@@ -78,38 +85,146 @@ public sealed class ValidateCommandTests : CommandTestBase
             .Build();
         await SeedAsync(task);
 
-        var cmd = new ValidateCommand();
-        var (_, output) = CaptureConsole(() => cmd.Validate(200, "nonexistent_event"));
+        var cmd = CreateCommand();
+        var (exitCode, _) = await CaptureConsoleAsync(() => cmd.Validate(200, "nonexistent_event"));
+
+        exitCode.ShouldBe(ExitCodes.RoutingFailure);
+    }
+
+    [Fact]
+    public async Task Validate_UnknownEvent_ReturnsIsValidFalseWithMessage()
+    {
+        var task = new WorkItemBuilder()
+            .WithId(200)
+            .WithType("Task")
+            .WithTitle("Test Task")
+            .WithState("To Do")
+            .Build();
+        await SeedAsync(task);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Validate(200, "nonexistent_event"));
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ValidateResult);
         result.ShouldNotBeNull();
         result.IsValid.ShouldBeFalse();
+        result.Message.ShouldNotBeNullOrEmpty();
+        result.Message.ShouldContain("nonexistent_event");
     }
 
     [Fact]
-    public void Validate_OutputContainsIsValidField()
+    public async Task Validate_InvalidPrecondition_ReturnsRoutingFailureExitCode()
     {
-        var cmd = new ValidateCommand();
-        var (_, output) = CaptureConsole(() => cmd.Validate(100, "begin_planning"));
+        // Epic in "Doing" (InProgress) — begin_planning requires Proposed
+        var epic = new WorkItemBuilder()
+            .WithId(101)
+            .WithType("Epic")
+            .WithTitle("In Progress Epic")
+            .WithState("Doing")
+            .Build();
+        await SeedAsync(epic);
 
-        // Verify the JSON contains the is_valid field (snake_case per PolyphonyJsonContext)
+        var cmd = CreateCommand();
+        var (exitCode, _) = await CaptureConsoleAsync(() => cmd.Validate(101, "begin_planning"));
+
+        exitCode.ShouldBe(ExitCodes.RoutingFailure);
+    }
+
+    [Fact]
+    public async Task Validate_InvalidPrecondition_ReturnsIsValidFalseWithMessage()
+    {
+        var epic = new WorkItemBuilder()
+            .WithId(101)
+            .WithType("Epic")
+            .WithTitle("In Progress Epic")
+            .WithState("Doing")
+            .Build();
+        await SeedAsync(epic);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Validate(101, "begin_planning"));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ValidateResult);
+        result.ShouldNotBeNull();
+        result.IsValid.ShouldBeFalse();
+        result.TargetState.ShouldBe("Doing");
+        result.Message!.ShouldContain("begin_planning");
+    }
+
+    [Fact]
+    public async Task Validate_OutputContainsIsValidField()
+    {
+        var task = new WorkItemBuilder()
+            .WithId(300)
+            .WithType("Task")
+            .WithTitle("Snake Case Check")
+            .WithState("To Do")
+            .Build();
+        await SeedAsync(task);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Validate(300, "begin_implementation"));
+
         output.ShouldContain("\"is_valid\"");
+    }
+
+    [Fact]
+    public async Task Validate_OutputUsesSnakeCasePropertyNames()
+    {
+        var task = new WorkItemBuilder()
+            .WithId(400)
+            .WithType("Task")
+            .WithTitle("Output Format")
+            .WithState("To Do")
+            .Build();
+        await SeedAsync(task);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Validate(400, "begin_implementation"));
+
+        output.ShouldContain("\"work_item_id\"");
+        output.ShouldContain("\"is_valid\"");
+        output.ShouldContain("\"target_state\"");
     }
 
     [Fact]
     public async Task Validate_SeededDatabase_WorkItemCanBeQueried()
     {
         var issue = new WorkItemBuilder()
-            .WithId(300)
+            .WithId(500)
             .WithType("Issue")
             .WithTitle("Validation Target")
             .WithState("Doing")
             .Build();
         await SeedAsync(issue);
 
-        var loaded = await Repository.GetByIdAsync(300);
+        var loaded = await Repository.GetByIdAsync(500);
         loaded.ShouldNotBeNull();
-        loaded.Id.ShouldBe(300);
+        loaded.Id.ShouldBe(500);
         loaded.State.ShouldBe("Doing");
+    }
+
+    [Fact]
+    public async Task Validate_AllChildrenComplete_EventIsValid()
+    {
+        var (epic, children) = new WorkItemBuilder()
+            .WithId(600)
+            .WithType("Epic")
+            .WithTitle("Completed Children Epic")
+            .WithState("Doing")
+            .WithChildren(
+                new WorkItemBuilder().WithId(601).WithType("Task").WithTitle("Task 1").WithState("Done"),
+                new WorkItemBuilder().WithId(602).WithType("Task").WithTitle("Task 2").WithState("Done"))
+            .BuildAll();
+        await SeedAsync([epic, .. children]);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Validate(600, "implementation_complete"));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ValidateResult);
+        result.ShouldNotBeNull();
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Done");
     }
 }
