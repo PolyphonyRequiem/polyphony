@@ -17,4 +17,8 @@
     <ProjectReference Include="..\..\..\twig2\src\Twig.Domain\Twig.Domain.csproj" />
     <ProjectReference Include="..\..\..\twig2\src\Twig.Infrastructure\Twig.Infrastructure.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="TestFixtures\ProcessConfigs\*.yaml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
