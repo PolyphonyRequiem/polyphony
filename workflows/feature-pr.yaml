@@ -1,0 +1,496 @@
+# feature-pr — Feature PR creation, review, and remediation cycle.
+#
+# Creates a feature PR (all PGs merged → feature branch → target branch),
+# submits it for review via the platform-specific PR sub-workflow, and
+# handles remediation cycles when the reviewer requests changes.
+#
+# Remediation cycle: changes_requested → remediation_planner → remediation_seeder
+# → implement-pg (remediation PG) → re-request review. Capped at 3 cycles;
+# after that, a human gate fires for escalation.
+#
+# Invariants:
+#   Pre:  All PGs are merged into the feature branch; feature branch is ready
+#         for a PR to the target branch.
+#   Post: Feature PR is merged (merged=true) or aborted (merged=false).
+
+workflow:
+  name: feature-pr
+  description: >-
+    Feature PR lifecycle. Creates a feature PR, reviews it via the platform
+    PR sub-workflow, and runs remediation cycles (capped at 3) when changes
+    are requested. Escalates to human gate after cap is exceeded.
+  version: "1.0.0"
+  entry_point: feature_pr_creator
+
+  input:
+    work_item_id:
+      type: number
+      required: true
+      description: ADO work item ID of the root (Epic/Feature-level) item
+    feature_branch:
+      type: string
+      required: true
+      description: Feature branch containing all merged PG work
+    target_branch:
+      type: string
+      required: true
+      description: Target branch the feature PR merges into (e.g., main)
+    platform:
+      type: string
+      required: false
+      default: github
+      description: "PR platform: github | ado"
+    plan_path:
+      type: string
+      required: false
+      default: ""
+      description: Path to the original plan document for remediation context
+
+output:
+  merged: "{{ feature_pr_merger.output.merged | default(false) }}"
+  pr_url: "{{ feature_pr_merger.output.pr_url | default('') }}"
+
+agents:
+  # ── Feature PR creator ──────────────────────────────────────────────────
+  #
+  # Creates the feature PR from the feature branch to the target branch.
+  # Uses gh pr create to submit the PR and captures the PR number for
+  # downstream review and merge steps.
+  #
+  # Invariants:
+  #   Pre:  Feature branch exists with all PG work merged.
+  #   Post: Feature PR is created; output.pr_number is set.
+  - name: feature_pr_creator
+    type: agent
+    model: claude-sonnet-4-20250514
+    description: Create feature PR from feature branch to target branch
+    tools:
+      - gh
+      - twig
+      - filesystem
+    prompt: |
+      You are the feature PR creator for the twig SDLC workflow.
+
+      ## Your Mission
+
+      Create a feature pull request from the feature branch to the target branch.
+
+      ## Context
+
+      - **Work item:** {{ workflow.input.work_item_id }}
+      - **Feature branch:** {{ workflow.input.feature_branch }}
+      - **Target branch:** {{ workflow.input.target_branch }}
+
+      ## Instructions
+
+      1. **Read the work item** — Use `twig show {{ workflow.input.work_item_id }} --tree`
+         to understand the full scope of work being delivered.
+
+      2. **Generate PR description** — Summarize:
+         - What was implemented (from work item hierarchy)
+         - Key changes per PG
+         - Test coverage summary
+         - Any known limitations or follow-ups
+
+      3. **Create the PR** — Use:
+         ```
+         gh pr create \
+           --base {{ workflow.input.target_branch }} \
+           --head {{ workflow.input.feature_branch }} \
+           --title "feat: <descriptive title> AB#{{ workflow.input.work_item_id }}" \
+           --body "<generated description>"
+         ```
+
+      4. **Capture the PR number** from the gh output.
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "pr_number": 0,
+        "pr_url": "",
+        "title": "",
+        "description_summary": ""
+      }
+      ```
+    routes:
+      - to: feature_pr_review
+
+  # ── Feature PR review ───────────────────────────────────────────────────
+  #
+  # Delegates to the platform-specific PR sub-workflow (github-pr.yaml or
+  # ado-pr.yaml) for the actual review/fix/merge cycle. The sub-workflow
+  # handles its own internal fix loop (max 10 for code-level issues).
+  # This agent captures the sub-workflow result and routes based on whether
+  # the feature PR was approved or needs remediation.
+  #
+  # Invariants:
+  #   Pre:  feature_pr_creator.output.pr_number is set.
+  #   Post: output.verdict is 'approved' or 'changes_requested'.
+  - name: feature_pr_review
+    type: agent
+    model: claude-opus-4-20250514
+    context_window: 1000000
+    description: Review feature PR for correctness, completeness, and quality
+    tools:
+      - gh
+      - filesystem
+    prompt: |
+      You are the feature PR reviewer for the twig SDLC workflow.
+
+      ## Your Mission
+
+      Perform a thorough review of the feature PR for work item
+      {{ workflow.input.work_item_id }}.
+
+      ## Context
+
+      - **PR number:** {{ feature_pr_creator.output.pr_number }}
+      - **Feature branch:** {{ workflow.input.feature_branch }}
+      - **Target branch:** {{ workflow.input.target_branch }}
+      - **Remediation cycle:** {{ remediation_counter.output.iteration | default(0) }}
+
+      ## Instructions
+
+      1. **Fetch the PR diff** — Use `gh pr diff {{ feature_pr_creator.output.pr_number }}`
+
+      2. **Read the PR description** — Use `gh pr view {{ feature_pr_creator.output.pr_number }}`
+
+      3. **Review for feature-level concerns:**
+         - Does the implementation satisfy the work item requirements?
+         - Are all acceptance criteria met?
+         - Is the overall architecture sound?
+         - Are there integration concerns across PGs?
+         - Are tests comprehensive and meaningful?
+
+      4. **Post review** — Use `gh api` to submit a PR review.
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "verdict": "approved | changes_requested",
+        "feedback": "Detailed review summary",
+        "issues": ["List of specific issues if changes_requested"],
+        "severity": "critical | major | minor"
+      }
+      ```
+    routes:
+      - to: feature_pr_merger
+        when: "{{ feature_pr_review.output.verdict == 'approved' }}"
+      - to: remediation_counter
+        when: "{{ feature_pr_review.output.verdict == 'changes_requested' }}"
+
+  # ── Remediation cycle counter ───────────────────────────────────────────
+  #
+  # Tracks the number of remediation cycles (review → plan → implement →
+  # re-review). Uses a counter file scoped to the work item ID. Increments
+  # after each cycle. Enforces the max 3 remediation cycle cap. Routes to
+  # remediation_cap_gate if cap is reached AND review returned
+  # changes_requested, or to remediation_planner if under the cap.
+  #
+  # Invariants:
+  #   Pre:  feature_pr_review.output.verdict == 'changes_requested'.
+  #   Post: output.iteration is the current count (1-based);
+  #         output.under_limit indicates whether remediation may continue.
+  - name: remediation_counter
+    type: script
+    description: Track remediation cycle count (max 3 cycles)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-remediation-count-{{ workflow.input.work_item_id }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        @{ iteration = $count; under_limit = ($count -lt 3) } | ConvertTo-Json
+    routes:
+      - to: remediation_planner
+        when: "{{ remediation_counter.output.under_limit == true }}"
+      - to: remediation_cap_gate
+        when: "{{ remediation_counter.output.under_limit == false }}"
+
+  # ── Remediation cap gate ────────────────────────────────────────────────
+  #
+  # Human decision point when the remediation cycle has reached the maximum
+  # cap (3 cycles). Fires when remediation_count >= 3 AND review returned
+  # changes_requested. Offers two options:
+  #   Continue — bypass the cap for this cycle only (counter does NOT reset)
+  #   Abort    — leave the feature PR open for manual resolution
+  #
+  # Invariants:
+  #   Pre:  remediation_counter.output.iteration >= 3;
+  #         feature_pr_review.output.verdict == 'changes_requested'.
+  #   Post: Human has chosen to continue (bypass) or abort.
+  - name: remediation_cap_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Remediation Cycle Cap Reached — Work Item #{{ workflow.input.work_item_id }}
+
+      The remediation cycle for the feature PR has reached the maximum of
+      **3 cycles** without achieving approval.
+
+      ### Feature PR Details
+
+      | Field | Value |
+      |-------|-------|
+      | Work Item | `{{ workflow.input.work_item_id }}` |
+      | PR Number | `{{ feature_pr_creator.output.pr_number }}` |
+      | Feature Branch | `{{ workflow.input.feature_branch }}` |
+      | Target Branch | `{{ workflow.input.target_branch }}` |
+      | Remediation Cycles | {{ remediation_counter.output.iteration }} |
+
+      ### Latest Review Feedback
+
+      {{ feature_pr_review.output.feedback }}
+
+      ### Remaining Issues
+
+      {% for issue in feature_pr_review.output.issues %}
+      - {{ issue }}
+      {% endfor %}
+
+      ---
+
+      The automated remediation cycle has not resolved all review issues after
+      **{{ remediation_counter.output.iteration }}** attempts. The feature PR
+      remains open.
+
+      Choose an action:
+      - **Continue** — override the cap for this cycle only and attempt another
+        remediation round (counter does not reset)
+      - **Abort** — leave the feature PR open for manual resolution and end
+        the workflow
+    options:
+      - label: "🔄 Continue Anyway"
+        value: continue
+        route: remediation_planner
+      - label: "🛑 Abort"
+        value: abort
+        route: remediation_abort
+
+  # ── Remediation abort ───────────────────────────────────────────────────
+  #
+  # Terminal node when the human chooses to abort after the remediation cap.
+  # Emits merged=false so downstream consumers know the feature PR was NOT
+  # merged and remains open for manual resolution.
+  #
+  # Invariants:
+  #   Pre:  Human chose 'abort' at remediation_cap_gate.
+  #   Post: output.merged is false; workflow ends.
+  - name: remediation_abort
+    type: script
+    description: Emit merged=false when remediation is aborted
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        @{
+          merged = $false
+          pr_url = ''
+          reason = 'Remediation cycle cap exceeded — aborted by human decision'
+          remediation_count = {{ remediation_counter.output.iteration }}
+        } | ConvertTo-Json
+    routes:
+      - to: $end
+
+  # ── Remediation planner ─────────────────────────────────────────────────
+  #
+  # Creates an addendum plan based on the review feedback. Reads the original
+  # plan and the reviewer's issues to produce a targeted remediation plan
+  # that addresses only the requested changes.
+  #
+  # Invariants:
+  #   Pre:  feature_pr_review.output.verdict == 'changes_requested';
+  #         remediation_counter.output.under_limit == true OR human chose
+  #         'continue' at remediation_cap_gate.
+  #   Post: output.addendum_plan_path is set; output.work_items describes
+  #         the work needed.
+  - name: remediation_planner
+    type: agent
+    model: claude-opus-4-20250514
+    context_window: 1000000
+    description: Create addendum plan from review feedback for remediation
+    tools:
+      - twig
+      - gh
+      - filesystem
+    prompt: |
+      You are the remediation planner for the twig SDLC workflow.
+
+      ## Your Mission
+
+      Create an addendum plan to address the review feedback on the feature PR
+      for work item {{ workflow.input.work_item_id }}.
+
+      ## Context
+
+      - **Work item:** {{ workflow.input.work_item_id }}
+      - **PR number:** {{ feature_pr_creator.output.pr_number }}
+      - **Remediation cycle:** {{ remediation_counter.output.iteration }}
+      - **Original plan:** {{ workflow.input.plan_path }}
+      - **Review feedback:** {{ feature_pr_review.output.feedback }}
+      - **Issues to address:**
+      {% for issue in feature_pr_review.output.issues %}
+        - {{ issue }}
+      {% endfor %}
+
+      ## Instructions
+
+      1. **Read the original plan** (if available) to understand context
+      2. **Analyze each review issue** to determine scope of work needed
+      3. **Create an addendum plan document** that:
+         - References the original plan
+         - Lists specific tasks to address each review issue
+         - Estimates effort and files affected
+         - Notes the remediation cycle number
+      4. **Save the addendum** as `docs/plans/remediation-{{ workflow.input.work_item_id }}-cycle-{{ remediation_counter.output.iteration }}.md`
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "addendum_plan_path": "docs/plans/remediation-...",
+        "work_items": [
+          {
+            "title": "Brief task title",
+            "description": "What needs to be done",
+            "files": ["affected/files"]
+          }
+        ],
+        "estimated_tasks": 0
+      }
+      ```
+    routes:
+      - to: remediation_seeder
+
+  # ── Remediation seeder ──────────────────────────────────────────────────
+  #
+  # Creates new ADO work items for the remediation tasks identified by
+  # the remediation planner. Seeds them as children of the root work item
+  # so they appear in the hierarchy.
+  #
+  # Invariants:
+  #   Pre:  remediation_planner.output.work_items is a non-empty array.
+  #   Post: New work items are created in ADO; output.work_item_ids is set.
+  - name: remediation_seeder
+    type: agent
+    model: claude-sonnet-4-20250514
+    description: Create ADO work items for remediation tasks
+    tools:
+      - twig
+    prompt: |
+      You are the remediation seeder for the twig SDLC workflow.
+
+      ## Your Mission
+
+      Create ADO work items for the remediation tasks.
+
+      ## Context
+
+      - **Parent work item:** {{ workflow.input.work_item_id }}
+      - **Remediation cycle:** {{ remediation_counter.output.iteration }}
+      - **Tasks to seed:**
+
+      {{ remediation_planner.output.work_items | tojson(indent=2) }}
+
+      ## Instructions
+
+      1. For each work item in the list above, use `twig seed` to create
+         a child task under work item {{ workflow.input.work_item_id }}
+      2. Set the title, description, and tag with `remediation-cycle-{{ remediation_counter.output.iteration }}`
+      3. Record the created work item IDs
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "work_item_ids": [0],
+        "pg_number": 0,
+        "branch_name": "remediation/{{ workflow.input.work_item_id }}-cycle-{{ remediation_counter.output.iteration }}"
+      }
+      ```
+    routes:
+      - to: remediation_implementer
+
+  # ── Remediation implementer ─────────────────────────────────────────────
+  #
+  # Invokes implement-pg.yaml as a sub-workflow to execute the remediation
+  # PG. The remediation branch targets the feature branch (not main) so
+  # fixes land on the feature branch for the next review cycle.
+  #
+  # Invariants:
+  #   Pre:  remediation_seeder.output.work_item_ids is a non-empty array.
+  #   Post: Remediation PG is implemented and merged into the feature branch.
+  - name: remediation_implementer
+    type: workflow
+    description: Execute remediation PG via implement-pg sub-workflow
+    workflow: workflows/implement-pg.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      pg_number: "{{ remediation_seeder.output.pg_number }}"
+      work_item_ids: "{{ remediation_seeder.output.work_item_ids }}"
+      branch_name: "{{ remediation_seeder.output.branch_name }}"
+      feature_branch: "{{ workflow.input.feature_branch }}"
+      platform: "{{ workflow.input.platform }}"
+    routes:
+      - to: feature_pr_review
+
+  # ── Feature PR merger ───────────────────────────────────────────────────
+  #
+  # Merges the approved feature PR. Only reached when the feature PR review
+  # returns approved. Uses squash merge for clean history.
+  #
+  # Invariants:
+  #   Pre:  feature_pr_review.output.verdict == 'approved'.
+  #   Post: Feature PR is merged; output.merged and output.pr_url are set.
+  - name: feature_pr_merger
+    type: agent
+    model: claude-sonnet-4-20250514
+    description: Merge the approved feature PR
+    tools:
+      - gh
+    prompt: |
+      You are the feature PR merger for the twig SDLC workflow.
+
+      ## Your Mission
+
+      Merge the approved feature PR #{{ feature_pr_creator.output.pr_number }}.
+
+      ## Instructions
+
+      1. **Verify merge readiness** — Use `gh pr view {{ feature_pr_creator.output.pr_number }}`
+         to confirm the PR is approved and all checks pass.
+
+      2. **Merge the PR**:
+         ```
+         gh pr merge {{ feature_pr_creator.output.pr_number }} --squash --delete-branch
+         ```
+
+      3. **Record the result**.
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "merged": true,
+        "pr_url": "https://github.com/{owner}/{repo}/pull/{{ feature_pr_creator.output.pr_number }}",
+        "merge_method": "squash",
+        "error": ""
+      }
+      ```
+
+      If the merge fails, set `merged` to `false` and include the error.
+    routes:
+      - to: $end
