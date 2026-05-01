@@ -562,7 +562,7 @@ Test Work Items ──→ WorkItemBuilder ──→ SQLite/Mock ──→│
 
 ## Validation Results
 
-> **Last updated:** 2026-05-01 | **Test suite:** 533 tests, 0 failures, 0 skipped | **Duration:** ~3s
+> **Last updated:** 2026-05-01 | **Test suite:** 533 tests, 0 failures, 0 skipped | **Duration:** ~8s | **Conductor validate:** 9/9 pass | **Pester lint-conductor-validate:** 7/7 pass
 
 ### Cross-Process Template Results
 
@@ -604,16 +604,192 @@ All four ADO process templates were validated across unit tests, integration tes
 | JsonOutputContractTests | 24 | Exit codes, snake_case, null omission, round-trip deserialization, PascalCase leak detection |
 | **Total (Phase 4 new)** | **149** | |
 
+### Conductor Workflow YAML Validation
+
+All 9 workflow YAMLs pass `conductor validate`:
+
+| Workflow YAML | Status | Description |
+|---------------|:---:|-------------|
+| `twig-sdlc-v2-full.yaml` | ✅ Pass | Apex workflow: preflight → state detection → phase routing |
+| `twig-sdlc-v2-planning.yaml` | ✅ Pass | Planning orchestration: preflight-lite → plan-level → seed check |
+| `twig-sdlc-v2-implement.yaml` | ✅ Pass | Implementation orchestration: load work tree → parallel PG dispatch |
+| `plan-level.yaml` | ✅ Pass | Recursive planning core for any plannable hierarchy level |
+| `implement-pg.yaml` | ✅ Pass | Single PG lifecycle: task loop → PR → merge → scope close |
+| `feature-pr.yaml` | ✅ Pass | Feature PR lifecycle with remediation cycles (max 3) |
+| `github-pr.yaml` | ✅ Pass | GitHub PR lifecycle: review → fix loop → merge |
+| `ado-pr.yaml` | ✅ Pass | ADO PR lifecycle stub with human gate |
+| `close-out.yaml` | ✅ Pass | Post-implementation close-out and observation filing |
+
+**Automated guard:** `tests/lint-conductor-validate.ps1` runs `conductor validate` against all workflow YAMLs. Pester test suite (`tests/lint-conductor-validate.Tests.ps1`) verifies the lint script behavior: 7 tests covering all-pass, failure detection, per-YAML reporting, and edge cases (no YAMLs, missing directory).
+
+### Basic Template End-to-End Workflow Routing
+
+Full trace of the v2 SDLC workflow routing for the twig repo's own Basic process template (Epic/Issue/Task) as configured in `.conductor/process-config.yaml`.
+
+#### Process Config Verification
+
+The twig repo's `.conductor/process-config.yaml` defines:
+
+| Field | Value | Validated |
+|-------|-------|:---------:|
+| `process_template` | Basic | ✅ |
+| `platform` | github | ✅ Routes to `github-pr.yaml` (not `ado-pr.yaml`) |
+| Epic capabilities | `[plannable]` | ✅ Plannable-only; decomposed into Issues |
+| Issue capabilities | `[plannable, implementable]` | ✅ Dual-capability; can be planned or implemented directly |
+| Task capabilities | `[implementable]` | ✅ Leaf implementable items |
+| `branch_strategy.target` | main | ✅ |
+| `branch_strategy.feature_branch` | `feature/{root_id}-{slug}` | ✅ |
+| `branch_strategy.pg_branch` | `pg-{n}/{root_id}-{slug}` | ✅ |
+
+#### Phase Transition Routing — Apex Workflow
+
+Routing from `twig-sdlc-v2-full.yaml` for each detected lifecycle phase:
+
+| Phase | Source | Sub-Workflow Target | Status |
+|-------|--------|---------------------|:------:|
+| `needs_planning` | `detect-state.ps1` | `twig-sdlc-v2-planning.yaml` | ✅ Correct |
+| `needs_seeding` | `detect-state.ps1` | `twig-sdlc-v2-planning.yaml` | ✅ Correct |
+| `ready_for_implementation` | `detect-state.ps1` | `twig-sdlc-v2-implement.yaml` | ✅ Correct |
+| `in_progress` | `detect-state.ps1` | `twig-sdlc-v2-implement.yaml` | ✅ Correct |
+| `ready_for_completion` | `detect-state.ps1` | `close-out.yaml` | ✅ Correct |
+| `done` | `detect-state.ps1` | `$end` | ✅ Correct |
+| `removed` | `detect-state.ps1` | `$end` | ✅ Correct |
+
+All 7 phase values produced by `detect-state.ps1` are handled by the apex workflow's route table. No unhandled phase values exist.
+
+#### Planning Sub-Workflow Routing
+
+Flow through `twig-sdlc-v2-planning.yaml`:
+
+```
+preflight_lite (preflight-lite.ps1)
+  ├─ ready=true  → plan_level (plan-level.yaml, depth=0, max_depth=6)
+  └─ ready=false → preflight_lite_gate (human: retry/abort)
+
+plan_level → seed_check (detect-state.ps1 re-invoked with intent=resume)
+  ├─ phase=needs_seeding        → work_tree_seeder (agent: seed children from plan)
+  └─ phase=ready_for_implementation → $end (planning complete)
+```
+
+**Basic template behavior:** An Epic in "To Do" state → `StateCategoryResolver` maps "To Do" → `Proposed` → `PhaseDetector` routes to `needs_planning`. After planning completes and children are seeded, re-detection produces `ready_for_implementation`.
+
+#### Implementation Sub-Workflow Routing
+
+Flow through `twig-sdlc-v2-implement.yaml`:
+
+```
+preflight_lite (preflight-lite.ps1)
+  ├─ ready=true  → load_work_tree (load-work-tree.ps1)
+  └─ ready=false → preflight_lite_gate (human: retry/abort)
+
+load_work_tree
+  ├─ pending_pgs > 0 → pg_dispatcher → pg_execution_group (for_each → implement-pg.yaml)
+  └─ pending_pgs = 0 → $end (all PGs already complete)
+
+pg_execution_group (max_concurrent=3, failure_mode=fail_fast)
+  ├─ failed_count = 0 → $end (success)
+  └─ failed_count > 0 → pg_summary_gate (human: retry/abort)
+```
+
+**Basic template behavior:** `load-work-tree.ps1` uses `polyphony hierarchy` to discover the work tree. `pg-router.ps1` groups items by PG tag using `Group-ByPG` from `lib/pg-helpers.ps1` — capability-based, not type-name-based.
+
+#### PG Implementation Routing (implement-pg.yaml)
+
+Flow through `implement-pg.yaml` for each PG:
+
+```
+pg_router (pg-router.ps1)
+  ├─ action=create_branch   → branch_manager → task_router
+  ├─ action=implement_tasks → task_router
+  ├─ action=submit_pr       → pr_submit (re-entry: PR not yet created)
+  └─ action=all_complete    → $end
+
+task_router (task-router.ps1)
+  ├─ action=implement_task → coder → reducer_code → task_reviewer
+  │   ├─ verdict=approved          → task_completer → task_router (loop)
+  │   └─ verdict=changes_requested → coder (fix loop)
+  └─ action=all_tasks_done → dependency_check
+      ├─ status=not_blocked → reducer_issue → issue_reviewer
+      │   ├─ verdict=approved → user_acceptance → pr_submit
+      │   └─ verdict=changes_requested → task_router (rework)
+      └─ status=blocked → dependency_gate (human: wait/override/reassign)
+
+pr_submit → pr_platform_router
+  ├─ platform=github → pr_lifecycle_github (github-pr.yaml) → scope_closer
+  └─ platform=ado    → pr_lifecycle_ado (ado-pr.yaml) → scope_closer
+```
+
+**PR platform routing for twig repo:** `process-config.yaml` specifies `platform: github`. The `pr_platform_router` in `implement-pg.yaml` routes to `github-pr.yaml` (lines 672–675). Confirmed: `ado-pr.yaml` is never selected for this repo.
+
+**Task routing:** `task-router.ps1` filters by `implementable` capability and PG tag, with 4 fallback levels: direct tag match → children of tagged containers → issue-as-task (plannable+implementable) → all implementable items. This is type-agnostic — no hardcoded type names.
+
+#### Script Output Contract Verification
+
+Key scripts produce JSON output consumed by workflow route conditions:
+
+| Script | Key Output Fields | Consumer | Verified |
+|--------|-------------------|----------|:--------:|
+| `preflight-check.ps1` | `ready`, `summary`, `required_checks[]`, `failed_count` | `twig-sdlc-v2-full.yaml` routes on `ready` | ✅ |
+| `preflight-lite.ps1` | `ready`, `summary`, `checks[]` | Planning/implement preflight gates | ✅ |
+| `detect-state.ps1` | `phase`, `work_item_id`, `work_item_type`, `work_item_state`, `intent` | Apex workflow phase routing | ✅ |
+| `pg-router.ps1` | `action`, `pr_groups[]`, `feature_branch` | `implement-pg.yaml` routes on `action` | ✅ |
+| `task-router.ps1` | `action`, `task_id`, `task_title`, `branch_name` | `implement-pg.yaml` routes on `action` | ✅ |
+| `load-work-tree.ps1` | `pr_groups[]`, `completed_pgs`, `pending_pgs` | `twig-sdlc-v2-implement.yaml` routes on `pending_pgs` length | ✅ |
+| `scope-closer.ps1` | exit code 0/1 | `implement-pg.yaml` merged output | ✅ |
+| `dependency-check.ps1` | `status`, `blocking_items[]` | `implement-pg.yaml` dependency gate | ✅ |
+
+All script output field names align with their consumers' Jinja2 template references in the workflow YAMLs. No field name mismatches were found.
+
+#### Close-Out Routing
+
+Flow through `close-out.yaml`:
+
+```
+close_out (agent: post-mortem analysis, reads hierarchy + plan + PR history)
+  └─ closeout_filer (agent: files observations as new work items)
+      └─ output.filed_count → $end
+```
+
+**Basic template behavior:** `close-out.yaml` uses `filing_eligible` from process-config.yaml to determine which types can receive filed observations. For Basic: Issue (`true`) and Task (`true`) are eligible; Epic (`false`) is not. This is type-agnostic — the workflow reads the config, not hardcoded type lists.
+
+#### End-to-End Routing Summary
+
+The complete lifecycle for a Basic template work item flows through these phases:
+
+```
+Epic (To Do) ──detect-state──→ needs_planning
+  └─ twig-sdlc-v2-planning.yaml
+       ├─ plan-level.yaml (recursive planning)
+       └─ work_tree_seeder (seed Issues/Tasks from plan)
+
+Epic (Doing, children seeded) ──detect-state──→ ready_for_implementation
+  └─ twig-sdlc-v2-implement.yaml
+       ├─ load-work-tree.ps1 (discover PG structure)
+       └─ implement-pg.yaml × N (parallel, max 3 concurrent)
+            ├─ task-router.ps1 (next implementable Task)
+            ├─ coder → reviewer → completer (per Task)
+            ├─ pr_platform_router → github-pr.yaml (platform: github)
+            └─ scope-closer.ps1 (transition Tasks to Done)
+
+Epic (all children Done) ──detect-state──→ ready_for_completion
+  └─ close-out.yaml
+       ├─ Post-mortem analysis
+       └─ Observation filing (Issue/Task eligible)
+
+Epic (Done) ──detect-state──→ done → $end
+```
+
+**Result:** All major phase transitions route correctly for the Basic template. The v2 workflow correctly handles the twig repo's own work items using the configuration in `.conductor/process-config.yaml`.
+
 ### Validation Gaps — Postmortem Observations
 
 The following gaps were identified during Phase 4 validation. These should be filed as postmortem observations by the close-out workflow.
 
-#### Gap 1: Conductor YAML Validation Not Automated
+#### Gap 1: Conductor YAML Validation Not Automated *(Resolved)*
 
-**Severity:** Moderate
-**Description:** Task 4.3.1 (`lint-conductor-validate.ps1`) and Task 4.3.2 (Pester tests for the lint script) were planned but not implemented. The 9 workflow YAMLs in `workflows/` have not been validated through an automated `conductor validate` pipeline. Manual validation may have occurred, but there is no automated regression guard.
-**Impact:** Workflow YAML structural regressions could go undetected until conductor runtime. This is the primary planned deliverable from Issue 4.3 that remains unverified in CI.
-**Recommendation:** Create `tests/lint-conductor-validate.ps1` and its Pester test suite as a follow-up task. Consider gating on `conductor` CLI availability via environment variable to handle CI environments where conductor is not installed.
+**Severity:** ~~Moderate~~ → **Resolved**
+**Description:** Task 4.3.1 (`lint-conductor-validate.ps1`) and Task 4.3.2 (Pester tests for the lint script) have been implemented. All 9 workflow YAMLs pass `conductor validate`. The lint script (`tests/lint-conductor-validate.ps1`) provides an automated regression guard, and its Pester test suite (`tests/lint-conductor-validate.Tests.ps1`) validates the lint script's own behavior with 7 test cases covering pass/fail detection, per-YAML reporting, and edge cases.
+**Resolution:** Implemented in AB#2778. Validated end-to-end in AB#2780.
 
 #### Gap 2: Full Lifecycle Coverage Limited to Agile Template
 
@@ -636,12 +812,19 @@ The following gaps were identified during Phase 4 validation. These should be fi
 **Impact:** Low — the `StateCategoryResolver` two-tier strategy (authoritative entries → hardcoded fallback) handles this by design. The authoritative path is exercised in integration tests. Custom states would use the same authoritative path.
 **Recommendation:** If a specific org customization causes routing failures, add targeted test fixtures with that org's state names and `StateEntry` data.
 
-#### Gap 5: Script Output Contract Verification Incomplete
+#### Gap 5: Script Output Contract Verification Incomplete *(Partially Resolved)*
+
+**Severity:** ~~Low~~ → **Informational**
+**Description:** Task 4.3.3 planned to verify script output contracts (JSON schema, required fields) against workflow expectations across the PowerShell script suite. The existing Pester lint tests (lint-type-agnostic, lint-apex-routing, etc.) validate script behavior but do not systematically verify output contract alignment with conductor workflow input schemas. The Basic template end-to-end trace (AB#2780) manually verified all 8 script output field names align with their consumer Jinja2 template references — no mismatches found.
+**Impact:** Informational — manual verification complete for the Basic template. Automated contract assertions would guard against future drift.
+**Recommendation:** Consider adding output contract assertions to existing Pester lint suites in a future maintenance pass.
+
+#### Gap 6: No Live Conductor Dry-Run Execution
 
 **Severity:** Low
-**Description:** Task 4.3.3 planned to verify script output contracts (JSON schema, required fields) against workflow expectations across the PowerShell script suite. The existing Pester lint tests (lint-type-agnostic, lint-apex-routing, etc.) validate script behavior but do not systematically verify output contract alignment with conductor workflow input schemas.
-**Impact:** Low — the existing lint tests cover the critical script behaviors. Output contract drift between scripts and workflows would be caught during conductor dry-run or runtime.
-**Recommendation:** Consider adding output contract assertions to existing Pester lint suites in a future maintenance pass.
+**Description:** The end-to-end validation (AB#2780) traces workflow routing by examining YAML definitions, script logic, and process-config.yaml. `conductor validate` confirms structural validity of all 9 YAMLs. However, no `conductor dry-run` or live conductor execution was performed to verify runtime Jinja2 template rendering, variable passing between agents, or for_each dispatch behavior.
+**Impact:** Low — structural validation via `conductor validate` catches the most common issues (missing agents, broken routes, schema violations). Runtime issues (template rendering errors, variable scoping) would surface during the first real workflow execution.
+**Recommendation:** Perform a `conductor dry-run` against one workflow (e.g., `twig-sdlc-v2-full.yaml`) with mock inputs when conductor dry-run support is available. Track as a postmortem observation.
 
 ---
 
