@@ -5,104 +5,128 @@ using Xunit;
 namespace Polyphony.Tests.Routing;
 
 /// <summary>
-/// Tests for <see cref="RoutingDecision"/> DU ensuring each case record is properly
-/// constructible and maps correctly through <see cref="RoutingDecisionMapper"/>.
+/// Tests for the <see cref="RoutingDecision"/> discriminated union.
+/// Verifies case construction, type identity, equality, and exhaustive pattern matching.
 /// </summary>
 public sealed class RoutingDecisionTests
 {
     [Fact]
-    public void NeedsPlanning_MapsCorrectly()
+    public void NeedsPlanning_ConstructsWithMessage()
     {
-        RoutingDecision decision = new NeedsPlanning("plan it");
-        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
-
-        phase.ShouldBe(SdlcPhase.NeedsPlanning);
-        action.ShouldBe(SdlcAction.Plan);
-        message.ShouldBe("plan it");
+        var decision = new NeedsPlanning("Item needs planning.");
+        decision.Message.ShouldBe("Item needs planning.");
     }
 
     [Fact]
-    public void NeedsSeeding_MapsCorrectly()
+    public void NeedsSeeding_ConstructsWithMessage()
     {
-        RoutingDecision decision = new NeedsSeeding("seed it");
-        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
-
-        phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        action.ShouldBe(SdlcAction.Seed);
-        message.ShouldBe("seed it");
+        var decision = new NeedsSeeding("Needs decomposition.");
+        decision.Message.ShouldBe("Needs decomposition.");
     }
 
     [Fact]
-    public void ReadyForImplementation_MapsCorrectly()
+    public void ReadyForImplementation_ConstructsWithMessage()
     {
-        RoutingDecision decision = new ReadyForImplementation("implement it");
-        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
-
-        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        action.ShouldBe(SdlcAction.Implement);
-        message.ShouldBe("implement it");
+        var decision = new ReadyForImplementation("Ready to implement.");
+        decision.Message.ShouldBe("Ready to implement.");
     }
 
     [Fact]
-    public void ImplementationInProgress_MapsCorrectly()
+    public void ImplementationInProgress_ConstructsWithMessage()
     {
-        RoutingDecision decision = new ImplementationInProgress("3 of 5 children completed");
-        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
-
-        phase.ShouldBe(SdlcPhase.InProgress);
-        action.ShouldBe(SdlcAction.Monitor);
-        message.ShouldBe("3 of 5 children completed");
+        var decision = new ImplementationInProgress("3 of 5 children completed");
+        decision.Message.ShouldBe("3 of 5 children completed");
     }
 
     [Fact]
-    public void ReadyForCompletion_MapsCorrectly()
+    public void ReadyForCompletion_ConstructsWithMessage()
     {
-        RoutingDecision decision = new ReadyForCompletion("close it");
-        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
-
-        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        action.ShouldBe(SdlcAction.Close);
-        message.ShouldBe("close it");
+        var decision = new ReadyForCompletion("All children done.");
+        decision.Message.ShouldBe("All children done.");
     }
 
     [Fact]
-    public void RoutingDone_MapsCorrectly()
+    public void RoutingDone_ConstructsWithMessage()
     {
-        RoutingDecision decision = new RoutingDone("all done");
-        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
-
-        phase.ShouldBe(SdlcPhase.Done);
-        action.ShouldBe(SdlcAction.None);
-        message.ShouldBe("all done");
+        var decision = new RoutingDone("Complete.");
+        decision.Message.ShouldBe("Complete.");
     }
 
     [Fact]
-    public void RoutingRemoved_MapsCorrectly()
+    public void RoutingRemoved_ConstructsWithMessage()
     {
-        RoutingDecision decision = new RoutingRemoved("removed");
-        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
-
-        phase.ShouldBe(SdlcPhase.Removed);
-        action.ShouldBe(SdlcAction.None);
-        message.ShouldBe("removed");
+        var decision = new RoutingRemoved("Item removed.");
+        decision.Message.ShouldBe("Item removed.");
     }
 
     [Fact]
-    public void RoutingUnknown_MapsCorrectly()
+    public void RoutingUnknown_ConstructsWithMessage()
     {
-        RoutingDecision decision = new RoutingUnknown("test");
-        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
+        var decision = new RoutingUnknown("Unrecognized state.");
+        decision.Message.ShouldBe("Unrecognized state.");
+    }
 
-        phase.ShouldBe(SdlcPhase.Unknown);
-        action.ShouldBe(SdlcAction.None);
-        message.ShouldBe("test");
+    [Fact]
+    public void CaseType_NeedsPlanning_MatchesPattern()
+    {
+        RoutingDecision rd = new NeedsPlanning("test");
+        (rd is NeedsPlanning).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CaseType_NeedsSeeding_MatchesPattern()
+    {
+        RoutingDecision rd = new NeedsSeeding("test");
+        (rd is NeedsSeeding).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CaseType_ReadyForImplementation_MatchesPattern()
+    {
+        RoutingDecision rd = new ReadyForImplementation("test");
+        (rd is ReadyForImplementation).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CaseType_ImplementationInProgress_MatchesPattern()
+    {
+        RoutingDecision rd = new ImplementationInProgress("test");
+        (rd is ImplementationInProgress).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CaseType_ReadyForCompletion_MatchesPattern()
+    {
+        RoutingDecision rd = new ReadyForCompletion("test");
+        (rd is ReadyForCompletion).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CaseType_RoutingDone_MatchesPattern()
+    {
+        RoutingDecision rd = new RoutingDone("test");
+        (rd is RoutingDone).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CaseType_RoutingRemoved_MatchesPattern()
+    {
+        RoutingDecision rd = new RoutingRemoved("test");
+        (rd is RoutingRemoved).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CaseType_RoutingUnknown_MatchesPattern()
+    {
+        RoutingDecision rd = new RoutingUnknown("test");
+        (rd is RoutingUnknown).ShouldBeTrue();
     }
 
     [Fact]
     public void Equality_SameCase_SameMessage_AreEqual()
     {
-        var a = new RoutingDone("all done");
-        var b = new RoutingDone("all done");
+        var a = new RoutingDone("done");
+        var b = new RoutingDone("done");
 
         a.ShouldBe(b);
     }
@@ -117,11 +141,140 @@ public sealed class RoutingDecisionTests
     }
 
     [Fact]
-    public void Equality_DifferentCases_AreNotEqual()
+    public void Equality_DifferentCases_SameMessage_AreNotEqual()
     {
-        RoutingDecision a = new RoutingDone("done");
-        RoutingDecision b = new RoutingRemoved("done");
+        RoutingDecision x = new NeedsPlanning("x");
+        RoutingDecision y = new NeedsSeeding("x");
 
-        a.ShouldNotBe(b);
+        x.ShouldNotBe(y);
     }
+
+    [Theory]
+    [MemberData(nameof(AllCasePairs))]
+    public void Equality_DistinctCases_AreNeverEqual(RoutingDecision left, RoutingDecision right)
+    {
+        left.ShouldNotBe(right);
+    }
+
+    public static TheoryData<RoutingDecision, RoutingDecision> AllCasePairs()
+    {
+        var cases = AllCases("same");
+        var data = new TheoryData<RoutingDecision, RoutingDecision>();
+        for (var i = 0; i < cases.Length; i++)
+        {
+            for (var j = i + 1; j < cases.Length; j++)
+            {
+                data.Add(cases[i], cases[j]);
+            }
+        }
+        return data;
+    }
+
+    [Fact]
+    public void PatternMatch_ExhaustiveSwitch_MatchesCorrectCase()
+    {
+        RoutingDecision d = new ReadyForCompletion("ready");
+
+        var matched = d switch
+        {
+            NeedsPlanning => "plan",
+            NeedsSeeding => "seed",
+            ReadyForImplementation => "impl",
+            ImplementationInProgress => "progress",
+            ReadyForCompletion => "complete",
+            RoutingDone => "done",
+            RoutingRemoved => "removed",
+            RoutingUnknown => "unknown",
+        };
+
+        matched.ShouldBe("complete");
+    }
+
+    [Theory]
+    [MemberData(nameof(AllCasesWithExpectedLabel))]
+    public void PatternMatch_AllCases_MatchExpectedLabel(RoutingDecision decision, string expectedLabel)
+    {
+        var label = decision switch
+        {
+            NeedsPlanning => "plan",
+            NeedsSeeding => "seed",
+            ReadyForImplementation => "impl",
+            ImplementationInProgress => "progress",
+            ReadyForCompletion => "complete",
+            RoutingDone => "done",
+            RoutingRemoved => "removed",
+            RoutingUnknown => "unknown",
+            null => throw new ArgumentNullException(nameof(decision)),
+        };
+
+        label.ShouldBe(expectedLabel);
+    }
+
+    public static TheoryData<RoutingDecision, string> AllCasesWithExpectedLabel() => new()
+    {
+        { new NeedsPlanning("msg"), "plan" },
+        { new NeedsSeeding("msg"), "seed" },
+        { new ReadyForImplementation("msg"), "impl" },
+        { new ImplementationInProgress("msg"), "progress" },
+        { new ReadyForCompletion("msg"), "complete" },
+        { new RoutingDone("msg"), "done" },
+        { new RoutingRemoved("msg"), "removed" },
+        { new RoutingUnknown("msg"), "unknown" },
+    };
+
+    [Theory]
+    [MemberData(nameof(AllCasesWithMessage))]
+    public void Message_IsAccessible_OnAllCases(RoutingDecision decision, string expectedMessage)
+    {
+        // Access Message via pattern matching since the union base doesn't expose it directly
+        var message = decision switch
+        {
+            NeedsPlanning d => d.Message,
+            NeedsSeeding d => d.Message,
+            ReadyForImplementation d => d.Message,
+            ImplementationInProgress d => d.Message,
+            ReadyForCompletion d => d.Message,
+            RoutingDone d => d.Message,
+            RoutingRemoved d => d.Message,
+            RoutingUnknown d => d.Message,
+            null => throw new ArgumentNullException(nameof(decision)),
+        };
+
+        message.ShouldBe(expectedMessage);
+    }
+
+    public static TheoryData<RoutingDecision, string> AllCasesWithMessage() => new()
+    {
+        { new NeedsPlanning("plan-msg"), "plan-msg" },
+        { new NeedsSeeding("seed-msg"), "seed-msg" },
+        { new ReadyForImplementation("impl-msg"), "impl-msg" },
+        { new ImplementationInProgress("progress-msg"), "progress-msg" },
+        { new ReadyForCompletion("complete-msg"), "complete-msg" },
+        { new RoutingDone("done-msg"), "done-msg" },
+        { new RoutingRemoved("removed-msg"), "removed-msg" },
+        { new RoutingUnknown("unknown-msg"), "unknown-msg" },
+    };
+
+    [Fact]
+    public void WithExpression_CreatesModifiedCopy()
+    {
+        var original = new NeedsPlanning("original");
+        var modified = original with { Message = "modified" };
+
+        modified.Message.ShouldBe("modified");
+        original.Message.ShouldBe("original");
+        original.ShouldNotBe(modified);
+    }
+
+    private static RoutingDecision[] AllCases(string message) =>
+    [
+        new NeedsPlanning(message),
+        new NeedsSeeding(message),
+        new ReadyForImplementation(message),
+        new ImplementationInProgress(message),
+        new ReadyForCompletion(message),
+        new RoutingDone(message),
+        new RoutingRemoved(message),
+        new RoutingUnknown(message),
+    ];
 }
