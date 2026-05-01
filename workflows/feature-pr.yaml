@@ -6,7 +6,8 @@
 # the sub-workflow cannot resolve issues (merged=false).
 #
 # Remediation cycle: merged=false → remediation_planner → remediation_seeder
-# → implement-pg (remediation PG) → re-request review. Capped at 3 cycles;
+# → implement-pg (remediation PG) → feature_pr_updater (re-request review)
+# → pr_platform_router (re-review). Capped at 3 cycles;
 # after that, a human gate fires for escalation.
 #
 # Invariants:
@@ -20,7 +21,8 @@ workflow:
     Feature PR lifecycle. Creates a feature PR via script, delegates to the
     platform-specific PR sub-workflow (github-pr.yaml or ado-pr.yaml) for
     review/fix/merge, and runs remediation cycles (capped at 3) when the
-    sub-workflow fails to merge. Escalates to human gate after cap is exceeded.
+    sub-workflow fails to merge. After each remediation, re-requests review
+    via feature_pr_updater. Escalates to human gate after cap is exceeded.
   version: "1.0.0"
   entry_point: feature_pr_creator
 
@@ -314,14 +316,14 @@ agents:
          - Lists specific tasks to address each review issue
          - Estimates effort and files affected
          - Notes the remediation cycle number
-      5. **Save the addendum** as `docs/plans/remediation-{{ workflow.input.work_item_id }}-cycle-{{ remediation_counter.output.iteration }}.md`
+      5. **Save the addendum** as `docs/projects/{{ workflow.input.work_item_id }}-addendum-{{ remediation_counter.output.iteration }}.plan.md`
 
       ## Output
 
       Return a JSON object:
       ```json
       {
-        "addendum_plan_path": "docs/plans/remediation-...",
+        "addendum_plan_path": "docs/projects/<work_item_id>-addendum-<N>.plan.md",
         "work_items": [
           {
             "title": "Brief task title",
@@ -390,8 +392,8 @@ agents:
   # Invokes implement-pg.yaml as a sub-workflow to execute the remediation
   # PG. The remediation branch targets the feature branch (not main) so
   # fixes land on the feature branch for the next review cycle. After
-  # remediation merges, routes back to pr_platform_router for re-review
-  # of the feature PR via the platform sub-workflow.
+  # remediation merges, routes to feature_pr_updater which re-requests
+  # review on the feature PR before looping back to pr_platform_router.
   #
   # Invariants:
   #   Pre:  remediation_seeder.output.work_item_ids is a non-empty array.
@@ -407,5 +409,77 @@ agents:
       branch_name: "{{ remediation_seeder.output.branch_name }}"
       feature_branch: "{{ workflow.input.feature_branch }}"
       platform: "{{ workflow.input.platform }}"
+    routes:
+      - to: feature_pr_updater
+
+  # ── Feature PR updater ─────────────────────────────────────────────────
+  #
+  # Re-requests review on the feature PR after the remediation PG has been
+  # implemented and merged into the feature branch. Uses `gh api` to
+  # dismiss stale reviews and request a fresh review cycle, then routes
+  # back to pr_platform_router to re-enter the review flow.
+  #
+  # Invariants:
+  #   Pre:  remediation_implementer has completed; remediation changes are
+  #         merged into the feature branch.
+  #   Post: Review is re-requested on the feature PR; routes to
+  #         pr_platform_router for the next review cycle.
+  - name: feature_pr_updater
+    type: agent
+    model: claude-sonnet-4-20250514
+    description: Re-request review on the feature PR after remediation
+    tools:
+      - gh
+    prompt: |
+      You are the feature PR updater for the twig SDLC workflow.
+
+      ## Your Mission
+
+      Re-request review on the feature PR after remediation cycle
+      {{ remediation_counter.output.iteration }} has completed.
+
+      ## Context
+
+      - **Work item:** {{ workflow.input.work_item_id }}
+      - **PR number:** {{ feature_pr_creator.output.pr_number }}
+      - **Feature branch:** {{ workflow.input.feature_branch }}
+      - **Target branch:** {{ workflow.input.target_branch }}
+      - **Remediation cycle:** {{ remediation_counter.output.iteration }}
+      - **Addendum plan:** {{ remediation_planner.output.addendum_plan_path }}
+
+      ## Instructions
+
+      1. **Add a PR comment** summarizing the remediation work:
+         ```
+         gh pr comment {{ feature_pr_creator.output.pr_number }} \
+           --body "## Remediation Cycle {{ remediation_counter.output.iteration }} Complete\n\nRemediation changes have been implemented and merged into the feature branch. Please re-review.\n\nAddendum plan: {{ remediation_planner.output.addendum_plan_path }}"
+         ```
+
+      2. **Re-request review** using the GitHub API. Fetch the most recent
+         reviewer and re-request their review:
+         ```
+         gh api repos/{owner}/{repo}/pulls/{{ feature_pr_creator.output.pr_number }}/requested_reviewers \
+           --method POST \
+           -f "reviewers[]={reviewer_login}"
+         ```
+         If the reviewer cannot be determined, use `gh pr edit` to request
+         review from the repository's default reviewers.
+
+      3. **Mark the PR as ready for review** (in case it was in draft):
+         ```
+         gh pr ready {{ feature_pr_creator.output.pr_number }}
+         ```
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "pr_number": {{ feature_pr_creator.output.pr_number }},
+        "review_requested": true,
+        "comment_posted": true,
+        "remediation_cycle": {{ remediation_counter.output.iteration }}
+      }
+      ```
     routes:
       - to: pr_platform_router
