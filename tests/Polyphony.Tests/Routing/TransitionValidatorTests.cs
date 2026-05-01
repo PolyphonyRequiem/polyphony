@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Polyphony.Configuration;
 using Polyphony.Routing;
 using Polyphony.Tests.TestFixtures;
@@ -45,10 +46,10 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "begin_planning", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Doing");
-        result.WorkItemId.ShouldBe(1);
-        result.Event.ShouldBe("begin_planning");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Doing");
+        valid.WorkItemId.ShouldBe(1);
+        valid.Event.ShouldBe("begin_planning");
     }
 
     [Fact]
@@ -59,8 +60,8 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Doing");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Doing");
     }
 
     [Fact]
@@ -71,8 +72,8 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Doing");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Doing");
     }
 
     [Fact]
@@ -83,8 +84,8 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "implementation_complete", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Done");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Done");
     }
 
     [Fact]
@@ -99,8 +100,8 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "all_children_complete", [child1, child2]);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Done");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Done");
     }
 
     // ── Unknown event tests ──────────────────────────────────────────
@@ -113,9 +114,9 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "nonexistent_event", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("Unknown event");
-        result.Message!.ShouldContain("nonexistent_event");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("Unknown event");
+        invalid.Message.ShouldContain("nonexistent_event");
     }
 
     [Fact]
@@ -126,9 +127,9 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "begin_planning", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("No transitions defined");
-        result.Message!.ShouldContain("Bug");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("No transitions defined");
+        invalid.Message.ShouldContain("Bug");
     }
 
     // ── Precondition failure tests ───────────────────────────────────
@@ -141,10 +142,10 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "begin_planning", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.TargetState.ShouldBe("Doing");
-        result.Message!.ShouldContain("begin_planning");
-        result.Message!.ShouldContain("Proposed");
+        var invalid = AssertInvalid(result);
+        invalid.TargetState.ShouldBe("Doing");
+        invalid.Message.ShouldContain("begin_planning");
+        invalid.Message.ShouldContain("Proposed");
     }
 
     [Fact]
@@ -155,9 +156,9 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("begin_implementation");
-        result.Message!.ShouldContain("Proposed or InProgress");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("begin_implementation");
+        invalid.Message.ShouldContain("Proposed or InProgress");
     }
 
     [Fact]
@@ -168,9 +169,9 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "implementation_complete", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("implementation_complete");
-        result.Message!.ShouldContain("InProgress");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("implementation_complete");
+        invalid.Message.ShouldContain("InProgress");
     }
 
     [Fact]
@@ -185,9 +186,9 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "all_children_complete", [child1, child2]);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("all_children_complete");
-        result.Message!.ShouldContain("child #11");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("all_children_complete");
+        invalid.Message.ShouldContain("child #11");
     }
 
     [Fact]
@@ -198,8 +199,8 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "all_children_complete", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("no children");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("no children");
     }
 
     // ── Edge cases ───────────────────────────────────────────────────
@@ -221,8 +222,8 @@ public sealed class TransitionValidatorTests
 
         var result = validator.Validate(item, "custom_event", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("CustomState");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("CustomState");
     }
 
     [Fact]
@@ -235,7 +236,7 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "all_children_complete", [child]);
 
-        result.IsValid.ShouldBeTrue();
+        AssertValid(result);
     }
 
     [Fact]
@@ -249,7 +250,7 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "all_children_complete", [child]);
 
-        result.IsValid.ShouldBeTrue();
+        AssertValid(result);
     }
 
     [Fact]
@@ -260,8 +261,8 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "implementation_complete", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.Message!.ShouldContain("Done");
+        var valid = AssertValid(result);
+        valid.Message.ShouldContain("Done");
     }
 
     [Fact]
@@ -272,8 +273,8 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "implementation_complete", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.TargetState.ShouldBe("Done");
+        var invalid = AssertInvalid(result);
+        invalid.TargetState.ShouldBe("Done");
     }
 
     [Fact]
@@ -288,7 +289,13 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "all_children_complete", [child1, child2]);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("child #10");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("child #10");
     }
+
+    private static ValidTransition AssertValid(TransitionOutcome outcome) =>
+        ((IUnion)outcome).Value.ShouldBeOfType<ValidTransition>();
+
+    private static InvalidTransition AssertInvalid(TransitionOutcome outcome) =>
+        ((IUnion)outcome).Value.ShouldBeOfType<InvalidTransition>();
 }
