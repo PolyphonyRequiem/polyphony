@@ -32,6 +32,11 @@ workflow:
       type: string
       required: true
       description: Feature branch that PG branches target for merge
+    platform:
+      type: string
+      required: false
+      default: github
+      description: "PR platform: github | ado"
 
 tools:
   - twig
@@ -193,6 +198,7 @@ agents:
           work_item_ids: "{{ pg.work_item_ids }}"
           branch_name: "{{ pg.branch_name }}"
           feature_branch: "{{ pg.feature_branch }}"
+          platform: "{{ workflow.input.platform }}"
     routes:
       - to: pg_summary_gate
         when: "{{ pg_execution_group.failed_count > 0 }}"

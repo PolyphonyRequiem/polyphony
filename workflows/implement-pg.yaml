@@ -53,7 +53,7 @@ tools:
   - filesystem
 
 output:
-  merged: "{{ scope_closer.exit_code == 0 }}"
+  merged: "{% if scope_closer is defined %}{{ scope_closer.exit_code == 0 }}{% else %}false{% endif %}"
   pr_url: "{{ pr_submit.output.pr_url | default('') }}"
 
 agents:
@@ -693,8 +693,9 @@ agents:
       review_policy: "auto"
     routes:
       - to: scope_closer
-
-  # ── ADO PR lifecycle sub-workflow ──────────────────────────────────────
+        when: "{{ pr_lifecycle_github.output.merged == true }}"
+      - to: $end
+        when: "{{ pr_lifecycle_github.output.merged == false }}"
   #
   # Invokes ado-pr.yaml for the ADO PR lifecycle (stub with human gate).
   # Returns after the human has managed the PR manually.
@@ -713,6 +714,9 @@ agents:
       review_policy: "manual"
     routes:
       - to: scope_closer
+        when: "{{ pr_lifecycle_ado.output.merged == true }}"
+      - to: $end
+        when: "{{ pr_lifecycle_ado.output.merged == false }}"
 
   # ── Scope closer ──────────────────────────────────────────────────────
   #
