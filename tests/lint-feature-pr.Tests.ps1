@@ -32,29 +32,58 @@ workflow:
       type: string
 
 output:
-  merged: "{{ feature_pr_merger.output.merged | default(false) }}"
-  pr_url: "{{ feature_pr_merger.output.pr_url | default('') }}"
+  merged: "{{ pr_lifecycle_github.output.merged | default(false) }}"
+  pr_url: "{{ feature_pr_creator.output.pr_url | default('') }}"
 
 agents:
   - name: feature_pr_creator
-    type: agent
-    model: claude-sonnet-4-20250514
+    type: script
     description: Create feature PR
-    prompt: "Create the feature PR"
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/feature-pr-creator.ps1"
     routes:
-      - to: feature_pr_review
+      - to: pr_platform_router
 
-  - name: feature_pr_review
-    type: agent
-    model: claude-opus-4-20250514
-    context_window: 1000000
-    description: Review feature PR
-    prompt: "Review the feature PR"
+  - name: pr_platform_router
+    type: script
+    description: Route to platform-specific PR lifecycle
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - "@{ platform = 'github' } | ConvertTo-Json"
     routes:
-      - to: feature_pr_merger
-        when: "{{ feature_pr_review.output.verdict == 'approved' }}"
+      - to: pr_lifecycle_github
+        when: "{{ pr_platform_router.output.platform == 'github' }}"
+      - to: pr_lifecycle_ado
+        when: "{{ pr_platform_router.output.platform == 'ado' }}"
+
+  - name: pr_lifecycle_github
+    type: workflow
+    description: GitHub PR lifecycle
+    workflow: ./github-pr.yaml
+    input_mapping:
+      pr_number: "{{ feature_pr_creator.output.pr_number }}"
+    routes:
+      - to: $end
+        when: "{{ pr_lifecycle_github.output.merged == true }}"
       - to: remediation_counter
-        when: "{{ feature_pr_review.output.verdict == 'changes_requested' }}"
+        when: "{{ pr_lifecycle_github.output.merged == false }}"
+
+  - name: pr_lifecycle_ado
+    type: workflow
+    description: ADO PR lifecycle
+    workflow: ./ado-pr.yaml
+    input_mapping:
+      pr_number: "{{ feature_pr_creator.output.pr_number }}"
+    routes:
+      - to: $end
+        when: "{{ pr_lifecycle_ado.output.merged == true }}"
+      - to: remediation_counter
+        when: "{{ pr_lifecycle_ado.output.merged == false }}"
 
   - name: remediation_counter
     type: script
@@ -107,15 +136,7 @@ agents:
     description: Seed remediation work items
     prompt: "Seed remediation tasks"
     routes:
-      - to: feature_pr_review
-
-  - name: feature_pr_merger
-    type: agent
-    model: claude-sonnet-4-20250514
-    description: Merge the approved feature PR
-    prompt: "Merge the feature PR"
-    routes:
-      - to: $end
+      - to: pr_platform_router
 '@
             }
         }
@@ -164,7 +185,7 @@ agents:
             ($output | Out-String) | Should -Match 'missing-output'
         }
 
-        It 'Fails when feature_pr_creator agent is missing' {
+        It 'Fails when feature_pr_creator node is missing' {
             $yaml = (Get-ValidFeaturePrYaml) -replace 'feature_pr_creator', 'some_other_creator'
             Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
@@ -172,20 +193,28 @@ agents:
             ($output | Out-String) | Should -Match 'missing-creator'
         }
 
-        It 'Fails when feature_pr_review agent is missing' {
-            $yaml = (Get-ValidFeaturePrYaml) -replace 'feature_pr_review', 'some_other_review'
+        It 'Fails when pr_platform_router is missing' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'pr_platform_router', 'some_other_router'
             Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-reviewer'
+            ($output | Out-String) | Should -Match 'missing-platform-router'
         }
 
-        It 'Fails when feature_pr_merger agent is missing' {
-            $yaml = (Get-ValidFeaturePrYaml) -replace 'feature_pr_merger', 'some_other_merger'
+        It 'Fails when pr_lifecycle_github is missing' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'pr_lifecycle_github', 'some_other_github'
             Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-merger'
+            ($output | Out-String) | Should -Match 'missing-github-lifecycle'
+        }
+
+        It 'Fails when pr_lifecycle_ado is missing' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'pr_lifecycle_ado', 'some_other_ado'
+            Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-ado-lifecycle'
         }
 
         It 'Fails when remediation_counter is missing' {
@@ -250,6 +279,14 @@ agents:
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'invalid-entry-point'
+        }
+
+        It 'Fails when no route to remediation_counter exists' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'to: remediation_counter', 'to: some_other_node'
+            Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'broken-remediation-loop'
         }
     }
 }

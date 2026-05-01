@@ -1,10 +1,11 @@
 # feature-pr — Feature PR creation, review, and remediation cycle.
 #
 # Creates a feature PR (all PGs merged → feature branch → target branch),
-# submits it for review via the platform-specific PR sub-workflow, and
-# handles remediation cycles when the reviewer requests changes.
+# delegates to the platform-specific PR sub-workflow (github-pr.yaml or
+# ado-pr.yaml) for review/fix/merge, and handles remediation cycles when
+# the sub-workflow cannot resolve issues (merged=false).
 #
-# Remediation cycle: changes_requested → remediation_planner → remediation_seeder
+# Remediation cycle: merged=false → remediation_planner → remediation_seeder
 # → implement-pg (remediation PG) → re-request review. Capped at 3 cycles;
 # after that, a human gate fires for escalation.
 #
@@ -16,9 +17,10 @@
 workflow:
   name: feature-pr
   description: >-
-    Feature PR lifecycle. Creates a feature PR, reviews it via the platform
-    PR sub-workflow, and runs remediation cycles (capped at 3) when changes
-    are requested. Escalates to human gate after cap is exceeded.
+    Feature PR lifecycle. Creates a feature PR via script, delegates to the
+    platform-specific PR sub-workflow (github-pr.yaml or ado-pr.yaml) for
+    review/fix/merge, and runs remediation cycles (capped at 3) when the
+    sub-workflow fails to merge. Escalates to human gate after cap is exceeded.
   version: "1.0.0"
   entry_point: feature_pr_creator
 
@@ -47,141 +49,108 @@ workflow:
       description: Path to the original plan document for remediation context
 
 output:
-  merged: "{{ feature_pr_merger.output.merged | default(false) }}"
-  pr_url: "{{ feature_pr_merger.output.pr_url | default('') }}"
+  merged: "{{ pr_lifecycle_github.output.merged | default(pr_lifecycle_ado.output.merged) | default(remediation_abort.output.merged) | default(false) }}"
+  pr_url: "{{ feature_pr_creator.output.pr_url | default('') }}"
 
 agents:
   # ── Feature PR creator ──────────────────────────────────────────────────
   #
   # Creates the feature PR from the feature branch to the target branch.
-  # Uses gh pr create to submit the PR and captures the PR number for
-  # downstream review and merge steps.
+  # Uses feature-pr-creator.ps1 script which calls gh pr create and
+  # captures the PR number for downstream review and merge steps.
+  # If an open PR already exists for the same head/base pair, reuses it.
   #
   # Invariants:
   #   Pre:  Feature branch exists with all PG work merged.
   #   Post: Feature PR is created; output.pr_number is set.
   - name: feature_pr_creator
-    type: agent
-    model: claude-sonnet-4-20250514
+    type: script
     description: Create feature PR from feature branch to target branch
-    tools:
-      - gh
-      - twig
-      - filesystem
-    prompt: |
-      You are the feature PR creator for the twig SDLC workflow.
-
-      ## Your Mission
-
-      Create a feature pull request from the feature branch to the target branch.
-
-      ## Context
-
-      - **Work item:** {{ workflow.input.work_item_id }}
-      - **Feature branch:** {{ workflow.input.feature_branch }}
-      - **Target branch:** {{ workflow.input.target_branch }}
-
-      ## Instructions
-
-      1. **Read the work item** — Use `twig show {{ workflow.input.work_item_id }} --tree`
-         to understand the full scope of work being delivered.
-
-      2. **Generate PR description** — Summarize:
-         - What was implemented (from work item hierarchy)
-         - Key changes per PG
-         - Test coverage summary
-         - Any known limitations or follow-ups
-
-      3. **Create the PR** — Use:
-         ```
-         gh pr create \
-           --base {{ workflow.input.target_branch }} \
-           --head {{ workflow.input.feature_branch }} \
-           --title "feat: <descriptive title> AB#{{ workflow.input.work_item_id }}" \
-           --body "<generated description>"
-         ```
-
-      4. **Capture the PR number** from the gh output.
-
-      ## Output
-
-      Return a JSON object:
-      ```json
-      {
-        "pr_number": 0,
-        "pr_url": "",
-        "title": "",
-        "description_summary": ""
-      }
-      ```
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/feature-pr-creator.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-FeatureBranch"
+      - "{{ workflow.input.feature_branch }}"
+      - "-TargetBranch"
+      - "{{ workflow.input.target_branch }}"
     routes:
-      - to: feature_pr_review
+      - to: pr_platform_router
 
-  # ── Feature PR review ───────────────────────────────────────────────────
+  # ── PR platform router ──────────────────────────────────────────────────
   #
-  # Delegates to the platform-specific PR sub-workflow (github-pr.yaml or
-  # ado-pr.yaml) for the actual review/fix/merge cycle. The sub-workflow
-  # handles its own internal fix loop (max 10 for code-level issues).
-  # This agent captures the sub-workflow result and routes based on whether
-  # the feature PR was approved or needs remediation.
+  # Routes to the platform-specific PR lifecycle sub-workflow based on the
+  # platform input. Driven exclusively by the workflow's platform field.
   #
   # Invariants:
-  #   Pre:  feature_pr_creator.output.pr_number is set.
-  #   Post: output.verdict is 'approved' or 'changes_requested'.
-  - name: feature_pr_review
-    type: agent
-    model: claude-opus-4-20250514
-    context_window: 1000000
-    description: Review feature PR for correctness, completeness, and quality
-    tools:
-      - gh
-      - filesystem
-    prompt: |
-      You are the feature PR reviewer for the twig SDLC workflow.
-
-      ## Your Mission
-
-      Perform a thorough review of the feature PR for work item
-      {{ workflow.input.work_item_id }}.
-
-      ## Context
-
-      - **PR number:** {{ feature_pr_creator.output.pr_number }}
-      - **Feature branch:** {{ workflow.input.feature_branch }}
-      - **Target branch:** {{ workflow.input.target_branch }}
-      - **Remediation cycle:** {{ remediation_counter.output.iteration | default(0) }}
-
-      ## Instructions
-
-      1. **Fetch the PR diff** — Use `gh pr diff {{ feature_pr_creator.output.pr_number }}`
-
-      2. **Read the PR description** — Use `gh pr view {{ feature_pr_creator.output.pr_number }}`
-
-      3. **Review for feature-level concerns:**
-         - Does the implementation satisfy the work item requirements?
-         - Are all acceptance criteria met?
-         - Is the overall architecture sound?
-         - Are there integration concerns across PGs?
-         - Are tests comprehensive and meaningful?
-
-      4. **Post review** — Use `gh api` to submit a PR review.
-
-      ## Output
-
-      Return a JSON object:
-      ```json
-      {
-        "verdict": "approved | changes_requested",
-        "feedback": "Detailed review summary",
-        "issues": ["List of specific issues if changes_requested"],
-        "severity": "critical | major | minor"
-      }
-      ```
+  #   Pre:  feature_pr_creator has created a PR; platform is 'github' or 'ado'.
+  #   Post: Routes to github-pr.yaml or ado-pr.yaml sub-workflow.
+  - name: pr_platform_router
+    type: script
+    description: Route to platform-specific PR lifecycle based on platform config
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{ platform = '{{ workflow.input.platform }}' } | ConvertTo-Json
     routes:
-      - to: feature_pr_merger
-        when: "{{ feature_pr_review.output.verdict == 'approved' }}"
+      - to: pr_lifecycle_github
+        when: "{{ pr_platform_router.output.platform == 'github' }}"
+      - to: pr_lifecycle_ado
+        when: "{{ pr_platform_router.output.platform == 'ado' }}"
+
+  # ── GitHub PR lifecycle sub-workflow ─────────────────────────────────────
+  #
+  # Invokes github-pr.yaml for the full GitHub PR lifecycle (review, fix,
+  # merge). Passes the feature PR details. On merged=true routes to $end;
+  # on merged=false routes to remediation cycle.
+  #
+  # Invariants:
+  #   Pre:  pr_platform_router.output.platform == 'github'; feature PR exists.
+  #   Post: PR is reviewed, fixed (if needed), and merged — or remediation
+  #         cycle begins.
+  - name: pr_lifecycle_github
+    type: workflow
+    description: GitHub PR lifecycle — review, fix loop, merge
+    workflow: ./github-pr.yaml
+    input_mapping:
+      pr_number: "{{ feature_pr_creator.output.pr_number }}"
+      branch_name: "{{ workflow.input.feature_branch }}"
+      target_branch: "{{ workflow.input.target_branch }}"
+      review_policy: "auto"
+    routes:
+      - to: $end
+        when: "{{ pr_lifecycle_github.output.merged == true }}"
       - to: remediation_counter
-        when: "{{ feature_pr_review.output.verdict == 'changes_requested' }}"
+        when: "{{ pr_lifecycle_github.output.merged == false }}"
+
+  # ── ADO PR lifecycle sub-workflow ────────────────────────────────────────
+  #
+  # Invokes ado-pr.yaml for the ADO PR lifecycle (stub with human gate).
+  # Returns after the human has managed the PR manually. On merged=true
+  # routes to $end; on merged=false routes to remediation cycle.
+  #
+  # Invariants:
+  #   Pre:  pr_platform_router.output.platform == 'ado'; feature PR exists.
+  #   Post: PR is managed (manually) and result returned.
+  - name: pr_lifecycle_ado
+    type: workflow
+    description: ADO PR lifecycle stub — human gate for manual PR management
+    workflow: ./ado-pr.yaml
+    input_mapping:
+      pr_number: "{{ feature_pr_creator.output.pr_number }}"
+      branch_name: "{{ workflow.input.feature_branch }}"
+      target_branch: "{{ workflow.input.target_branch }}"
+      review_policy: "manual"
+    routes:
+      - to: $end
+        when: "{{ pr_lifecycle_ado.output.merged == true }}"
+      - to: remediation_counter
+        when: "{{ pr_lifecycle_ado.output.merged == false }}"
 
   # ── Remediation cycle counter ───────────────────────────────────────────
   #
@@ -192,7 +161,7 @@ agents:
   # changes_requested, or to remediation_planner if under the cap.
   #
   # Invariants:
-  #   Pre:  feature_pr_review.output.verdict == 'changes_requested'.
+  #   Pre:  PR sub-workflow returned merged=false.
   #   Post: output.iteration is the current count (1-based);
   #         output.under_limit indicates whether remediation may continue.
   - name: remediation_counter
@@ -220,14 +189,14 @@ agents:
   # ── Remediation cap gate ────────────────────────────────────────────────
   #
   # Human decision point when the remediation cycle has reached the maximum
-  # cap (3 cycles). Fires when remediation_count >= 3 AND review returned
-  # changes_requested. Offers two options:
+  # cap (3 cycles). Fires when remediation_count >= 3 AND PR sub-workflow
+  # returned merged=false. Offers two options:
   #   Continue — bypass the cap for this cycle only (counter does NOT reset)
   #   Abort    — leave the feature PR open for manual resolution
   #
   # Invariants:
   #   Pre:  remediation_counter.output.iteration >= 3;
-  #         feature_pr_review.output.verdict == 'changes_requested'.
+  #         PR sub-workflow returned merged=false.
   #   Post: Human has chosen to continue (bypass) or abort.
   - name: remediation_cap_gate
     type: human_gate
@@ -247,21 +216,11 @@ agents:
       | Target Branch | `{{ workflow.input.target_branch }}` |
       | Remediation Cycles | {{ remediation_counter.output.iteration }} |
 
-      ### Latest Review Feedback
-
-      {{ feature_pr_review.output.feedback }}
-
-      ### Remaining Issues
-
-      {% for issue in feature_pr_review.output.issues %}
-      - {{ issue }}
-      {% endfor %}
-
       ---
 
-      The automated remediation cycle has not resolved all review issues after
-      **{{ remediation_counter.output.iteration }}** attempts. The feature PR
-      remains open.
+      The platform PR sub-workflow was unable to merge the feature PR after
+      **{{ remediation_counter.output.iteration }}** remediation cycles.
+      Review the PR comments on GitHub/ADO for details on unresolved issues.
 
       Choose an action:
       - **Continue** — override the cap for this cycle only and attempt another
@@ -304,12 +263,12 @@ agents:
 
   # ── Remediation planner ─────────────────────────────────────────────────
   #
-  # Creates an addendum plan based on the review feedback. Reads the original
-  # plan and the reviewer's issues to produce a targeted remediation plan
-  # that addresses only the requested changes.
+  # Creates an addendum plan based on the review feedback. Reads PR review
+  # comments from the platform (via gh api) and the original plan to produce
+  # a targeted remediation plan that addresses only the requested changes.
   #
   # Invariants:
-  #   Pre:  feature_pr_review.output.verdict == 'changes_requested';
+  #   Pre:  PR sub-workflow returned merged=false;
   #         remediation_counter.output.under_limit == true OR human chose
   #         'continue' at remediation_cap_gate.
   #   Post: output.addendum_plan_path is set; output.work_items describes
@@ -337,22 +296,20 @@ agents:
       - **PR number:** {{ feature_pr_creator.output.pr_number }}
       - **Remediation cycle:** {{ remediation_counter.output.iteration }}
       - **Original plan:** {{ workflow.input.plan_path }}
-      - **Review feedback:** {{ feature_pr_review.output.feedback }}
-      - **Issues to address:**
-      {% for issue in feature_pr_review.output.issues %}
-        - {{ issue }}
-      {% endfor %}
 
       ## Instructions
 
-      1. **Read the original plan** (if available) to understand context
-      2. **Analyze each review issue** to determine scope of work needed
-      3. **Create an addendum plan document** that:
+      1. **Read the PR review feedback** — Use `gh pr view {{ feature_pr_creator.output.pr_number }}`
+         and `gh api repos/{owner}/{repo}/pulls/{{ feature_pr_creator.output.pr_number }}/reviews`
+         to fetch all review comments and requested changes.
+      2. **Read the original plan** (if available) to understand context
+      3. **Analyze each review issue** to determine scope of work needed
+      4. **Create an addendum plan document** that:
          - References the original plan
          - Lists specific tasks to address each review issue
          - Estimates effort and files affected
          - Notes the remediation cycle number
-      4. **Save the addendum** as `docs/plans/remediation-{{ workflow.input.work_item_id }}-cycle-{{ remediation_counter.output.iteration }}.md`
+      5. **Save the addendum** as `docs/plans/remediation-{{ workflow.input.work_item_id }}-cycle-{{ remediation_counter.output.iteration }}.md`
 
       ## Output
 
@@ -427,7 +384,9 @@ agents:
   #
   # Invokes implement-pg.yaml as a sub-workflow to execute the remediation
   # PG. The remediation branch targets the feature branch (not main) so
-  # fixes land on the feature branch for the next review cycle.
+  # fixes land on the feature branch for the next review cycle. After
+  # remediation merges, routes back to pr_platform_router for re-review
+  # of the feature PR via the platform sub-workflow.
   #
   # Invariants:
   #   Pre:  remediation_seeder.output.work_item_ids is a non-empty array.
@@ -444,53 +403,4 @@ agents:
       feature_branch: "{{ workflow.input.feature_branch }}"
       platform: "{{ workflow.input.platform }}"
     routes:
-      - to: feature_pr_review
-
-  # ── Feature PR merger ───────────────────────────────────────────────────
-  #
-  # Merges the approved feature PR. Only reached when the feature PR review
-  # returns approved. Uses squash merge for clean history.
-  #
-  # Invariants:
-  #   Pre:  feature_pr_review.output.verdict == 'approved'.
-  #   Post: Feature PR is merged; output.merged and output.pr_url are set.
-  - name: feature_pr_merger
-    type: agent
-    model: claude-sonnet-4-20250514
-    description: Merge the approved feature PR
-    tools:
-      - gh
-    prompt: |
-      You are the feature PR merger for the twig SDLC workflow.
-
-      ## Your Mission
-
-      Merge the approved feature PR #{{ feature_pr_creator.output.pr_number }}.
-
-      ## Instructions
-
-      1. **Verify merge readiness** — Use `gh pr view {{ feature_pr_creator.output.pr_number }}`
-         to confirm the PR is approved and all checks pass.
-
-      2. **Merge the PR**:
-         ```
-         gh pr merge {{ feature_pr_creator.output.pr_number }} --squash --delete-branch
-         ```
-
-      3. **Record the result**.
-
-      ## Output
-
-      Return a JSON object:
-      ```json
-      {
-        "merged": true,
-        "pr_url": "https://github.com/{owner}/{repo}/pull/{{ feature_pr_creator.output.pr_number }}",
-        "merge_method": "squash",
-        "error": ""
-      }
-      ```
-
-      If the merge fails, set `merged` to `false` and include the error.
-    routes:
-      - to: $end
+      - to: pr_platform_router

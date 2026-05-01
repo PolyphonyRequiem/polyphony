@@ -5,15 +5,17 @@
     Parses workflows/feature-pr.yaml and verifies:
     1. Required inputs: work_item_id, feature_branch, target_branch
     2. Required outputs: merged, pr_url
-    3. Feature PR creator agent exists
-    4. Feature PR review agent exists
-    5. Feature PR merger agent exists
-    6. Remediation counter script exists with max 3 cap
-    7. Remediation cap gate (human_gate) exists with continue and abort options
-    8. Remediation planner agent exists
-    9. Remediation seeder agent exists
-    10. Entry point references a valid agent name
-    11. Abort option routes to remediation_abort or $end (merged=false)
+    3. Feature PR creator node exists (script type)
+    4. PR platform router exists for platform delegation
+    5. GitHub PR lifecycle sub-workflow exists (pr_lifecycle_github)
+    6. ADO PR lifecycle sub-workflow exists (pr_lifecycle_ado)
+    7. Remediation counter script exists with max 3 cap
+    8. Remediation cap gate (human_gate) exists with continue and abort options
+    9. Remediation planner agent exists
+    10. Remediation seeder agent exists
+    11. Entry point references a valid agent name
+    12. Abort option routes to remediation_abort or $end (merged=false)
+    13. Sub-workflow routes to remediation_counter on merged==false
     Exits 0 if clean, 1 if violations found.
 #>
 [CmdletBinding()]
@@ -55,31 +57,39 @@ foreach ($output in $requiredOutputs) {
     }
 }
 
-# ── Check 3: Feature PR creator agent ────────────────────────────────────
+# ── Check 3: Feature PR creator node ─────────────────────────────────────
 if ($content -notmatch 'name:\s*feature_pr_creator') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-creator'
-        Detail = "No feature_pr_creator agent found"
+        Detail = "No feature_pr_creator node found"
     }
 }
 
-# ── Check 4: Feature PR review agent ─────────────────────────────────────
-if ($content -notmatch 'name:\s*feature_pr_review') {
+# ── Check 4: PR platform router ──────────────────────────────────────────
+if ($content -notmatch 'name:\s*pr_platform_router') {
     $violations += [PSCustomObject]@{
-        Rule   = 'missing-reviewer'
-        Detail = "No feature_pr_review agent found"
+        Rule   = 'missing-platform-router'
+        Detail = "No pr_platform_router node found for platform delegation"
     }
 }
 
-# ── Check 5: Feature PR merger agent ─────────────────────────────────────
-if ($content -notmatch 'name:\s*feature_pr_merger') {
+# ── Check 5: GitHub PR lifecycle sub-workflow ─────────────────────────────
+if ($content -notmatch 'name:\s*pr_lifecycle_github') {
     $violations += [PSCustomObject]@{
-        Rule   = 'missing-merger'
-        Detail = "No feature_pr_merger agent found"
+        Rule   = 'missing-github-lifecycle'
+        Detail = "No pr_lifecycle_github sub-workflow node found"
     }
 }
 
-# ── Check 6: Remediation counter with max 3 cap ─────────────────────────
+# ── Check 6: ADO PR lifecycle sub-workflow ────────────────────────────────
+if ($content -notmatch 'name:\s*pr_lifecycle_ado') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-ado-lifecycle'
+        Detail = "No pr_lifecycle_ado sub-workflow node found"
+    }
+}
+
+# ── Check 7: Remediation counter with max 3 cap ─────────────────────────
 if ($content -notmatch 'name:\s*remediation_counter') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-counter'
@@ -93,7 +103,7 @@ if ($content -notmatch '-lt\s+3|-le\s+2|max.*3|3\s*cycle') {
     }
 }
 
-# ── Check 7: Remediation cap gate (human_gate) ──────────────────────────
+# ── Check 8: Remediation cap gate (human_gate) ──────────────────────────
 if ($content -notmatch 'name:\s*remediation_cap_gate') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-cap-gate'
@@ -101,7 +111,7 @@ if ($content -notmatch 'name:\s*remediation_cap_gate') {
     }
 }
 
-# ── Check 8: Gate has continue and abort options ─────────────────────────
+# ── Check 9: Gate has continue and abort options ─────────────────────────
 $requiredOptions = @('continue', 'abort')
 foreach ($opt in $requiredOptions) {
     if ($content -notmatch "value:\s*$opt") {
@@ -112,7 +122,7 @@ foreach ($opt in $requiredOptions) {
     }
 }
 
-# ── Check 9: Remediation planner agent ───────────────────────────────────
+# ── Check 10: Remediation planner agent ──────────────────────────────────
 if ($content -notmatch 'name:\s*remediation_planner') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-planner'
@@ -120,7 +130,7 @@ if ($content -notmatch 'name:\s*remediation_planner') {
     }
 }
 
-# ── Check 10: Remediation seeder agent ───────────────────────────────────
+# ── Check 11: Remediation seeder agent ───────────────────────────────────
 if ($content -notmatch 'name:\s*remediation_seeder') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-seeder'
@@ -128,7 +138,7 @@ if ($content -notmatch 'name:\s*remediation_seeder') {
     }
 }
 
-# ── Check 11: Entry point references a valid agent ──────────────────────
+# ── Check 12: Entry point references a valid agent ──────────────────────
 if ($content -match 'entry_point:\s*(\S+)') {
     $entryPoint = $Matches[1]
     if ($content -notmatch "name:\s*$entryPoint") {
@@ -139,7 +149,7 @@ if ($content -match 'entry_point:\s*(\S+)') {
     }
 }
 
-# ── Check 12: Workflow name is 'feature-pr' ──────────────────────────────
+# ── Check 13: Workflow name is 'feature-pr' ──────────────────────────────
 if ($content -notmatch 'name:\s*feature-pr') {
     $violations += [PSCustomObject]@{
         Rule   = 'wrong-workflow-name'
@@ -147,7 +157,7 @@ if ($content -notmatch 'name:\s*feature-pr') {
     }
 }
 
-# ── Check 13: Remediation abort emits merged=false ───────────────────────
+# ── Check 14: Remediation abort emits merged=false ───────────────────────
 if ($content -notmatch 'name:\s*remediation_abort') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-abort-handler'
@@ -155,18 +165,15 @@ if ($content -notmatch 'name:\s*remediation_abort') {
     }
 }
 
-# ── Check 14: Review routes to counter on changes_requested ──────────────
-$reviewBlock = ''
-$inReview = $false
+# ── Check 15: Sub-workflow routes to remediation_counter on merged==false ─
+$hasRemediationRoute = $false
 foreach ($line in $lines) {
-    if ($line -match 'name:\s*feature_pr_review') { $inReview = $true }
-    if ($inReview) { $reviewBlock += $line + "`n" }
-    if ($inReview -and $reviewBlock.Length -gt 100 -and $line -match '^\s*-\s*name:') { break }
+    if ($line -match 'to:\s*remediation_counter') { $hasRemediationRoute = $true; break }
 }
-if ($reviewBlock -and $reviewBlock -notmatch 'to:\s*remediation_counter') {
+if (-not $hasRemediationRoute) {
     $violations += [PSCustomObject]@{
         Rule   = 'broken-remediation-loop'
-        Detail = "feature_pr_review must route to remediation_counter on changes_requested"
+        Detail = "No route to remediation_counter found — sub-workflows must route to remediation on merged==false"
     }
 }
 
@@ -180,5 +187,5 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: feature-pr.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, creator/reviewer/merger agents, remediation counter (max 3), cap gate, planner, seeder)" -ForegroundColor Green
+Write-Host "PASS: feature-pr.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, creator/platform-router/github-lifecycle/ado-lifecycle, remediation counter (max 3), cap gate, planner, seeder)" -ForegroundColor Green
 exit 0
