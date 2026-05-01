@@ -285,3 +285,95 @@ Describe 'feature-pr-creator.ps1 — output shape' {
         $result.created | Should -BeOfType [bool]
     }
 }
+
+# ── Output schema compatibility verification (#2779) ─────────────────────────
+
+Describe 'feature-pr-creator.ps1 — output schema compatibility (#2779)' {
+
+    BeforeEach {
+        $env:GH_TOKEN = 'test-token'
+        Mock gh { $global:LASTEXITCODE = 0; '' } -ParameterFilter { $args -contains 'auth' }
+        Mock git { 'https://github.com/owner/repo.git' } -ParameterFilter {
+            $args -contains 'remote'
+        }
+        Mock git { 'abc123  refs/heads/feature/42-test' } -ParameterFilter {
+            $args -contains 'ls-remote'
+        }
+        Mock gh { $global:LASTEXITCODE = 0; '' } -ParameterFilter {
+            $args -contains 'pr' -and $args -contains 'list'
+        }
+        Mock gh {
+            $global:LASTEXITCODE = 0
+            'https://github.com/owner/repo/pull/42'
+        } -ParameterFilter {
+            $args -contains 'pr' -and $args -contains 'create'
+        }
+        Mock polyphony { $null }
+        Mock twig { $null }
+    }
+
+    Context 'Required schema keys — all 5 from feature-pr.yaml' {
+
+        It 'Contains all 5 required top-level keys' {
+            $requiredKeys = @(
+                'pr_number', 'pr_url', 'title', 'description_summary', 'created'
+            )
+
+            $result = & $script:ScriptPath -WorkItemId 42 -FeatureBranch 'feature/42-test' -TargetBranch 'main' | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present"
+            }
+        }
+
+        It 'Uses correct value types for each key' {
+            $result = & $script:ScriptPath -WorkItemId 42 -FeatureBranch 'feature/42-test' -TargetBranch 'main' | ConvertFrom-Json
+
+            # Integer — used by feature-pr.yaml: {{ feature_pr_creator.output.pr_number }}
+            $result.pr_number | Should -BeOfType [long]
+
+            # Strings — used by feature-pr.yaml: {{ feature_pr_creator.output.pr_url }}
+            $result.pr_url | Should -BeOfType [string]
+            $result.title | Should -BeOfType [string]
+            $result.description_summary | Should -BeOfType [string]
+
+            # Boolean
+            $result.created | Should -BeOfType [bool]
+        }
+    }
+
+    Context 'pr_url field compatibility — feature-pr.yaml workflow output' {
+
+        It 'Returns non-empty pr_url on successful creation' {
+            $result = & $script:ScriptPath -WorkItemId 42 -FeatureBranch 'feature/42-test' -TargetBranch 'main' | ConvertFrom-Json
+            $result.pr_url | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Returns pr_url for reused existing PR' {
+            Mock gh {
+                $global:LASTEXITCODE = 0
+                '[{"number":55,"url":"https://github.com/owner/repo/pull/55"}]'
+            } -ParameterFilter {
+                $args -contains 'pr' -and $args -contains 'list'
+            }
+
+            $result = & $script:ScriptPath -WorkItemId 42 -FeatureBranch 'feature/42-test' -TargetBranch 'main' | ConvertFrom-Json
+            $result.pr_url | Should -Not -BeNullOrEmpty
+            $result.pr_number | Should -Be 55
+        }
+    }
+
+    Context 'Error path — maintains schema on failure' {
+
+        It 'Error output preserves all required top-level keys' {
+            Mock git { } -ParameterFilter { $args -contains 'ls-remote' }
+
+            $result = & $script:ScriptPath -WorkItemId 42 -FeatureBranch 'feature/nonexistent' -TargetBranch 'main' | ConvertFrom-Json
+            $requiredKeys = @('pr_number', 'pr_url', 'created')
+            foreach ($key in $requiredKeys) {
+                $result.PSObject.Properties.Name | Should -Contain $key -Because "error path must preserve key '$key'"
+            }
+        }
+    }
+}

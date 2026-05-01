@@ -184,3 +184,108 @@ Describe 'child-router.ps1 — output shape' {
         $child.PSObject.Properties.Name | Should -Contain 'title'
     }
 }
+
+# ── Output schema compatibility verification (#2779) ─────────────────────────
+
+Describe 'child-router.ps1 — output schema compatibility (#2779)' {
+
+    BeforeEach {
+        Mock polyphony {
+            [ordered]@{
+                work_item_id   = 100
+                title          = 'Epic'
+                work_item_type = 'Epic'
+                capabilities   = @('plannable')
+                children       = @(
+                    [ordered]@{
+                        work_item_id   = 201
+                        title          = 'Issue A'
+                        work_item_type = 'Issue'
+                        capabilities   = @('plannable')
+                    },
+                    [ordered]@{
+                        work_item_id   = 202
+                        title          = 'Task B'
+                        work_item_type = 'Task'
+                        capabilities   = @('implementable')
+                    }
+                )
+            } | ConvertTo-Json -Depth 4
+        } -ParameterFilter { $args -contains 'hierarchy' }
+    }
+
+    Context 'Required schema keys — all 4 from plan-level.yaml' {
+
+        It 'Contains all 4 required top-level keys' {
+            $requiredKeys = @(
+                'has_plannable_children', 'plannable_children', 'parent_id', 'count'
+            )
+
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present"
+            }
+        }
+
+        It 'Uses correct value types for each key' {
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+
+            # Boolean — routed on by plan-level.yaml: {{ child_router.output.has_plannable_children == true }}
+            $result.has_plannable_children | Should -BeOfType [bool]
+
+            # Integer
+            $result.parent_id | Should -BeOfType [long]
+            $result.count | Should -BeOfType [long]
+
+            # Array
+            $result.PSObject.Properties.Name | Should -Contain 'plannable_children'
+        }
+
+        It 'plannable_children entries contain required sub-keys' {
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+            foreach ($child in $result.plannable_children) {
+                $childKeys = $child.PSObject.Properties.Name
+                $childKeys | Should -Contain 'id'
+                $childKeys | Should -Contain 'type'
+                $childKeys | Should -Contain 'title'
+            }
+        }
+    }
+
+    Context 'has_plannable_children field compatibility — plan-level.yaml routing' {
+
+        It 'Returns true when plannable children exist (routes to plan_children_group)' {
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+            $result.has_plannable_children | Should -BeTrue
+        }
+
+        It 'Returns false when no plannable children (routes to $end)' {
+            Mock polyphony {
+                [ordered]@{
+                    work_item_id   = 100
+                    title          = 'Leaf'
+                    work_item_type = 'Task'
+                    capabilities   = @('implementable')
+                } | ConvertTo-Json -Depth 4
+            } -ParameterFilter { $args -contains 'hierarchy' }
+
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+            $result.has_plannable_children | Should -BeFalse
+        }
+    }
+
+    Context 'Error path — maintains schema on failure' {
+
+        It 'Error output preserves all required top-level keys' {
+            Mock polyphony { $null } -ParameterFilter { $args -contains 'hierarchy' }
+
+            $result = & $script:ScriptPath -WorkItemId 999 | ConvertFrom-Json
+            $requiredKeys = @('has_plannable_children', 'plannable_children', 'parent_id', 'count')
+            foreach ($key in $requiredKeys) {
+                $result.PSObject.Properties.Name | Should -Contain $key -Because "error path must preserve key '$key'"
+            }
+        }
+    }
+}

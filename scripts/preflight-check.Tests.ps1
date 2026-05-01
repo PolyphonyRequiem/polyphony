@@ -220,3 +220,110 @@ Describe 'preflight-check.ps1 — error handling' {
         $result.details.error | Should -Not -BeNullOrEmpty
     }
 }
+
+# ── Output schema compatibility verification (#2779) ─────────────────────────
+
+Describe 'preflight-check.ps1 — output schema compatibility (#2779)' {
+
+    BeforeEach {
+        Mock git { $global:LASTEXITCODE = 0; '/repo/root' } -ParameterFilter { $args -contains '--show-toplevel' }
+        Mock twig { $global:LASTEXITCODE = 0; 'twig 1.0.0' } -ParameterFilter { $args -contains '--version' }
+        Mock twig { $global:LASTEXITCODE = 0; '{"info":"TestOrg"}' } -ParameterFilter { $args -contains 'organization' }
+        Mock twig { $global:LASTEXITCODE = 0; '{"info":"TestProject"}' } -ParameterFilter { $args -contains 'project' }
+        Mock twig { $global:LASTEXITCODE = 0; '{"id":42,"title":"Test Item","state":"Doing"}' } -ParameterFilter { $args -contains 'show' }
+        Mock gh { $global:LASTEXITCODE = 0; 'Logged in' } -ParameterFilter { $args -contains 'status' }
+        Mock polyphony { $global:LASTEXITCODE = 0; 'polyphony 1.0.0' } -ParameterFilter { $args -contains '--version' }
+        Mock dotnet { $global:LASTEXITCODE = 0; '10.0.100' } -ParameterFilter { $args -contains '--version' }
+    }
+
+    Context 'Required schema keys — all 7 from twig-sdlc-v2-full.yaml' {
+
+        It 'Contains all 7 required top-level keys' {
+            $requiredKeys = @(
+                'ready', 'summary', 'required_checks', 'advisory_checks',
+                'failed_count', 'warning_count', 'details'
+            )
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present"
+            }
+        }
+
+        It 'Uses correct value types for each key' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+
+            # Boolean — routed on by twig-sdlc-v2-full.yaml: {{ preflight_check.output.ready == true }}
+            $result.ready | Should -BeOfType [bool]
+
+            # String
+            $result.summary | Should -BeOfType [string]
+
+            # Integer
+            $result.failed_count | Should -BeOfType [long]
+            $result.warning_count | Should -BeOfType [long]
+
+            # Arrays
+            $result.PSObject.Properties.Name | Should -Contain 'required_checks'
+            $result.PSObject.Properties.Name | Should -Contain 'advisory_checks'
+        }
+
+        It 'required_checks entries contain required sub-keys' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            foreach ($check in $result.required_checks) {
+                $checkKeys = $check.PSObject.Properties.Name
+                $checkKeys | Should -Contain 'name'
+                $checkKeys | Should -Contain 'passed'
+                $checkKeys | Should -Contain 'detail'
+            }
+        }
+
+        It 'advisory_checks entries contain required sub-keys' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            foreach ($check in $result.advisory_checks) {
+                $checkKeys = $check.PSObject.Properties.Name
+                $checkKeys | Should -Contain 'name'
+                $checkKeys | Should -Contain 'passed'
+                $checkKeys | Should -Contain 'detail'
+            }
+        }
+
+        It 'details contains workflow-expected sub-keys' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $detailKeys = $result.details.PSObject.Properties.Name
+            $detailKeys | Should -Contain 'work_item_id'
+            $detailKeys | Should -Contain 'ado_org'
+            $detailKeys | Should -Contain 'ado_project'
+        }
+    }
+
+    Context 'ready field compatibility — twig-sdlc-v2-full.yaml routing' {
+
+        It 'Returns ready=true when all required checks pass (routes to state_detector)' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.ready | Should -BeTrue
+        }
+
+        It 'Returns ready=false when a required check fails (routes to preflight_gate)' {
+            Mock git { $global:LASTEXITCODE = 128; $null } -ParameterFilter { $args -contains '--show-toplevel' }
+
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.ready | Should -BeFalse
+        }
+    }
+
+    Context 'Error path — maintains schema on failure' {
+
+        It 'Error output preserves all required top-level keys' {
+            Mock twig { throw 'Fatal error' } -ParameterFilter { $args -contains 'organization' }
+
+            $result = & $script:ScriptPath -WorkItemId 42 2>$null | ConvertFrom-Json
+            $requiredKeys = @('ready', 'summary', 'required_checks', 'advisory_checks', 'failed_count', 'warning_count', 'details')
+            foreach ($key in $requiredKeys) {
+                $result.PSObject.Properties.Name | Should -Contain $key -Because "error path must preserve key '$key'"
+            }
+        }
+    }
+}

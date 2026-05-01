@@ -72,3 +72,67 @@ Describe 'depth-guard.ps1 — output shape' {
         $result.PSObject.Properties.Name | Should -Contain 'message'
     }
 }
+
+# ── Output schema compatibility verification (#2779) ─────────────────────────
+
+Describe 'depth-guard.ps1 — output schema compatibility (#2779)' {
+
+    Context 'Required schema keys — all 5 from plan-level.yaml' {
+
+        It 'Contains all 5 required top-level keys' {
+            $requiredKeys = @('allowed', 'depth', 'max_depth', 'remaining', 'message')
+
+            $result = & $script:ScriptPath -Depth 1 -MaxDepth 6 | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present"
+            }
+        }
+
+        It 'Uses correct value types for each key' {
+            $result = & $script:ScriptPath -Depth 1 -MaxDepth 6 | ConvertFrom-Json
+
+            # Boolean — routed on by plan-level.yaml: {{ depth_guard.output.allowed == true }}
+            $result.allowed | Should -BeOfType [bool]
+
+            # Integer
+            $result.depth | Should -BeOfType [long]
+            $result.max_depth | Should -BeOfType [long]
+            $result.remaining | Should -BeOfType [long]
+
+            # String
+            $result.message | Should -BeOfType [string]
+        }
+    }
+
+    Context 'allowed field compatibility — plan-level.yaml routing' {
+
+        It 'Returns allowed=true when under limit (routes to type_loader)' {
+            $result = & $script:ScriptPath -Depth 0 -MaxDepth 6 | ConvertFrom-Json
+            $result.allowed | Should -BeTrue
+        }
+
+        It 'Returns allowed=false when at limit (routes to depth_exceeded_gate)' {
+            $result = & $script:ScriptPath -Depth 6 -MaxDepth 6 | ConvertFrom-Json
+            $result.allowed | Should -BeFalse
+        }
+
+        It 'Returns allowed=false when over limit (routes to depth_exceeded_gate)' {
+            $result = & $script:ScriptPath -Depth 10 -MaxDepth 6 | ConvertFrom-Json
+            $result.allowed | Should -BeFalse
+        }
+    }
+
+    Context 'Schema stability — same keys in allowed and disallowed paths' {
+
+        It 'Allowed output has identical key set to disallowed output' {
+            $allowed = & $script:ScriptPath -Depth 0 -MaxDepth 6 | ConvertFrom-Json
+            $disallowed = & $script:ScriptPath -Depth 6 -MaxDepth 6 | ConvertFrom-Json
+
+            $allowedKeys = @($allowed.PSObject.Properties.Name | Sort-Object)
+            $disallowedKeys = @($disallowed.PSObject.Properties.Name | Sort-Object)
+            $allowedKeys | Should -Be $disallowedKeys
+        }
+    }
+}

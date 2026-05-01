@@ -159,3 +159,82 @@ Describe 'preflight-lite.ps1 — error handling' {
         $result.checks | Should -BeNullOrEmpty
     }
 }
+
+# ── Output schema compatibility verification (#2779) ─────────────────────────
+
+Describe 'preflight-lite.ps1 — output schema compatibility (#2779)' {
+
+    BeforeEach {
+        Mock git { $global:LASTEXITCODE = 0; '/repo/root' } -ParameterFilter { $args -contains '--show-toplevel' }
+        Mock twig { $global:LASTEXITCODE = 0; 'twig 1.0.0' } -ParameterFilter { $args -contains '--version' }
+        Mock polyphony { $global:LASTEXITCODE = 0; 'polyphony 1.0.0' } -ParameterFilter { $args -contains '--version' }
+    }
+
+    Context 'Required schema keys — all 4 from twig-sdlc-v2-implement.yaml / twig-sdlc-v2-planning.yaml' {
+
+        It 'Contains all 4 required top-level keys' {
+            $requiredKeys = @('ready', 'summary', 'checks', 'failed_count')
+
+            $result = & $script:ScriptPath | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present"
+            }
+        }
+
+        It 'Uses correct value types for each key' {
+            $result = & $script:ScriptPath | ConvertFrom-Json
+
+            # Boolean — routed on by twig-sdlc-v2-implement.yaml: {{ preflight_lite.output.ready == true }}
+            $result.ready | Should -BeOfType [bool]
+
+            # String
+            $result.summary | Should -BeOfType [string]
+
+            # Integer
+            $result.failed_count | Should -BeOfType [long]
+
+            # Array
+            $result.PSObject.Properties.Name | Should -Contain 'checks'
+        }
+
+        It 'checks entries contain required sub-keys' {
+            $result = & $script:ScriptPath | ConvertFrom-Json
+            foreach ($check in $result.checks) {
+                $checkKeys = $check.PSObject.Properties.Name
+                $checkKeys | Should -Contain 'name'
+                $checkKeys | Should -Contain 'passed'
+                $checkKeys | Should -Contain 'detail'
+            }
+        }
+    }
+
+    Context 'ready field compatibility — dual consumer routing' {
+
+        It 'Returns ready=true when all checks pass (routes to load_work_tree / plan_level)' {
+            $result = & $script:ScriptPath | ConvertFrom-Json
+            $result.ready | Should -BeTrue
+        }
+
+        It 'Returns ready=false when a check fails (routes to preflight_lite_gate)' {
+            Mock twig { $global:LASTEXITCODE = 1; $null } -ParameterFilter { $args -contains '--version' }
+
+            $result = & $script:ScriptPath | ConvertFrom-Json
+            $result.ready | Should -BeFalse
+        }
+    }
+
+    Context 'Error path — maintains schema on failure' {
+
+        It 'Error output preserves all required top-level keys' {
+            Mock git { throw 'Fatal error' } -ParameterFilter { $args -contains '--show-toplevel' }
+
+            $result = & $script:ScriptPath 2>$null | ConvertFrom-Json
+            $requiredKeys = @('ready', 'summary', 'checks', 'failed_count')
+            foreach ($key in $requiredKeys) {
+                $result.PSObject.Properties.Name | Should -Contain $key -Because "error path must preserve key '$key'"
+            }
+        }
+    }
+}
