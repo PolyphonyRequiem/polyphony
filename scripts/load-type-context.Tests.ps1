@@ -164,3 +164,112 @@ Describe 'load-type-context.ps1 — twig show failure' {
         $result.type | Should -Be ''
     }
 }
+
+# ── Output schema compatibility verification (#2779) ─────────────────────────
+
+Describe 'load-type-context.ps1 — output schema compatibility (#2779)' {
+
+    Context 'Required schema keys — all 4 from plan-level.yaml' {
+
+        BeforeAll {
+            $script:TempDir = Join-Path ([System.IO.Path]::GetTempPath()) "load-type-context-compat-$(Get-Random)"
+            New-Item -ItemType Directory -Path (Join-Path $script:TempDir 'work-item-types/templates') -Force | Out-Null
+            Set-Content -Path (Join-Path $script:TempDir 'work-item-types/issue.md') -Value 'An Issue is a unit of work.'
+            Set-Content -Path (Join-Path $script:TempDir 'work-item-types/templates/issue-template.md') -Value '## Template'
+
+            $processConfig = @"
+process_template: Basic
+
+types:
+  Issue:
+    capabilities: [plannable, implementable]
+    filing_eligible: true
+    max_nesting_depth: 1
+    decomposition_guidance: |
+      Decompose into Tasks when scope exceeds a single PG.
+"@
+            Set-Content -Path (Join-Path $script:TempDir 'process-config.yaml') -Value $processConfig
+        }
+
+        AfterAll {
+            Remove-Item -Path $script:TempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        BeforeEach {
+            Mock twig {
+                $global:LASTEXITCODE = 0
+                '{"id":42,"title":"Test Issue","type":"Issue","state":"Doing"}'
+            } -ParameterFilter { $args -contains 'show' }
+        }
+
+        It 'Contains all 4 required top-level keys' {
+            $requiredKeys = @('type', 'definition', 'template', 'decomposition_guidance')
+
+            $result = & $script:ScriptPath -WorkItemId 42 -ConfigPath $script:TempDir | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present"
+            }
+        }
+
+        It 'Uses correct value types for each key' {
+            $result = & $script:ScriptPath -WorkItemId 42 -ConfigPath $script:TempDir | ConvertFrom-Json
+
+            # Strings — used by plan-level.yaml: {{ type_loader.output.type }}, {{ type_loader.output.definition }}, etc.
+            $result.type | Should -BeOfType [string]
+            $result.definition | Should -BeOfType [string]
+            $result.template | Should -BeOfType [string]
+            $result.decomposition_guidance | Should -BeOfType [string]
+        }
+    }
+
+    Context 'exit_code compatibility — plan-level.yaml routing' {
+
+        BeforeAll {
+            $script:TempDir2 = Join-Path ([System.IO.Path]::GetTempPath()) "load-type-context-compat2-$(Get-Random)"
+            New-Item -ItemType Directory -Path (Join-Path $script:TempDir2 'work-item-types') -Force | Out-Null
+            Set-Content -Path (Join-Path $script:TempDir2 'work-item-types/issue.md') -Value 'An Issue.'
+        }
+
+        AfterAll {
+            Remove-Item -Path $script:TempDir2 -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Exits 0 on success (routes to route_check)' {
+            Mock twig {
+                $global:LASTEXITCODE = 0
+                '{"id":42,"title":"Test","type":"Issue","state":"Doing"}'
+            } -ParameterFilter { $args -contains 'show' }
+
+            & $script:ScriptPath -WorkItemId 42 -ConfigPath $script:TempDir2 | Out-Null
+            $LASTEXITCODE | Should -BeIn @($null, 0)
+        }
+
+        It 'Exits non-zero on failure (routes to type_loader_error_gate)' {
+            Mock twig {
+                $global:LASTEXITCODE = 1
+                $null
+            } -ParameterFilter { $args -contains 'show' }
+
+            & $script:ScriptPath -WorkItemId 999 2>$null | Out-Null
+            $LASTEXITCODE | Should -Be 1
+        }
+    }
+
+    Context 'Error path — returns error schema' {
+
+        It 'Error output contains error and type keys' {
+            Mock twig {
+                $global:LASTEXITCODE = 1
+                $null
+            } -ParameterFilter { $args -contains 'show' }
+
+            $result = & $script:ScriptPath -WorkItemId 999 2>$null | ConvertFrom-Json
+            $result.PSObject.Properties.Name | Should -Contain 'error' -Because "error key must be present in error output"
+            $result.PSObject.Properties.Name | Should -Contain 'type' -Because "type key must be present in error output"
+            $result.error | Should -Not -BeNullOrEmpty
+            $result.type | Should -Be ''
+        }
+    }
+}

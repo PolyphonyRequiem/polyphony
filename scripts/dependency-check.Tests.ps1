@@ -323,3 +323,148 @@ Describe 'dependency-check.ps1 — output shape' {
         $result.total_count | Should -BeOfType [long]
     }
 }
+
+# ── Output schema compatibility verification (#2779) ─────────────────────────
+
+Describe 'dependency-check.ps1 — output schema compatibility (#2779)' {
+
+    BeforeEach {
+        Mock twig { $global:LASTEXITCODE = 0; '{}' } -ParameterFilter { $args -contains 'sync' }
+    }
+
+    Context 'Required schema keys — all 7 from implement-pg.yaml' {
+
+        BeforeEach {
+            Mock twig {
+                $global:LASTEXITCODE = 0
+                '{"id":100,"fields":{"System.Title":"Test","System.State":"Doing"}}'
+            } -ParameterFilter { $args -contains 'show' }
+        }
+
+        It 'Contains all 7 required top-level keys' {
+            $requiredKeys = @(
+                'blocked', 'status', 'work_item_id', 'blocking_items',
+                'ready_count', 'total_count', 'message'
+            )
+
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+            $outputKeys = $result.PSObject.Properties.Name
+
+            foreach ($key in $requiredKeys) {
+                $outputKeys | Should -Contain $key -Because "required key '$key' must be present"
+            }
+        }
+
+        It 'Uses correct value types for each key' {
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+
+            # Boolean
+            $result.blocked | Should -BeOfType [bool]
+
+            # String — routed on by implement-pg.yaml: {{ dependency_check.output.status == "blocked" }}
+            $result.status | Should -BeOfType [string]
+
+            # Integer
+            $result.work_item_id | Should -BeOfType [long]
+            $result.ready_count | Should -BeOfType [long]
+            $result.total_count | Should -BeOfType [long]
+
+            # String
+            $result.message | Should -BeOfType [string]
+        }
+    }
+
+    Context 'status field compatibility — implement-pg.yaml routing' {
+
+        It 'Returns status=not_blocked when no blockers (routes to reducer_issue)' {
+            Mock twig {
+                $global:LASTEXITCODE = 0
+                '{"id":100,"fields":{"System.Title":"Test","System.State":"Doing"}}'
+            } -ParameterFilter { $args -contains 'show' }
+
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+            $result.status | Should -Be 'not_blocked'
+        }
+
+        It 'Returns status=blocked when blockers exist (routes to dependency_gate)' {
+            Mock twig {
+                $global:LASTEXITCODE = 0
+                @{
+                    id = 100
+                    fields = @{ 'System.Title' = 'Test'; 'System.State' = 'Doing' }
+                    relations = @(
+                        @{
+                            rel = 'System.LinkTypes.Dependency-Reverse'
+                            url = 'https://dev.azure.com/org/project/_apis/wit/workItems/201'
+                            attributes = @{ name = 'Predecessor' }
+                        }
+                    )
+                } | ConvertTo-Json -Depth 5
+            } -ParameterFilter { $args -contains 'show' -and $args -contains '100' }
+            Mock twig {
+                $global:LASTEXITCODE = 0
+                @{ id = 201; fields = @{ 'System.Title' = 'Blocker'; 'System.State' = 'To Do' } } | ConvertTo-Json -Depth 5
+            } -ParameterFilter { $args -contains 'show' -and $args -contains '201' }
+
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+            $result.status | Should -Be 'blocked'
+        }
+
+        It 'status is always one of the expected enum values' {
+            Mock twig {
+                $global:LASTEXITCODE = 0
+                '{"id":100,"fields":{"System.Title":"Test","System.State":"Doing"}}'
+            } -ParameterFilter { $args -contains 'show' }
+
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+            $result.status | Should -BeIn @('blocked', 'not_blocked')
+        }
+    }
+
+    Context 'blocking_items sub-object schema' {
+
+        It 'Each blocking item has id, title, and state sub-keys' {
+            Mock twig {
+                $global:LASTEXITCODE = 0
+                @{
+                    id = 100
+                    fields = @{ 'System.Title' = 'Test'; 'System.State' = 'Doing' }
+                    relations = @(
+                        @{
+                            rel = 'System.LinkTypes.Dependency-Reverse'
+                            url = 'https://dev.azure.com/org/project/_apis/wit/workItems/201'
+                            attributes = @{ name = 'Predecessor' }
+                        }
+                    )
+                } | ConvertTo-Json -Depth 5
+            } -ParameterFilter { $args -contains 'show' -and $args -contains '100' }
+            Mock twig {
+                $global:LASTEXITCODE = 0
+                @{ id = 201; fields = @{ 'System.Title' = 'Blocker'; 'System.State' = 'To Do' } } | ConvertTo-Json -Depth 5
+            } -ParameterFilter { $args -contains 'show' -and $args -contains '201' }
+
+            $result = & $script:ScriptPath -WorkItemId 100 | ConvertFrom-Json
+            $item = $result.blocking_items[0]
+            $itemKeys = $item.PSObject.Properties.Name
+            $itemKeys | Should -Contain 'id'
+            $itemKeys | Should -Contain 'title'
+            $itemKeys | Should -Contain 'state'
+        }
+    }
+
+    Context 'Error path — maintains schema on failure' {
+
+        It 'Error output preserves all required top-level keys' {
+            Mock twig {
+                $global:LASTEXITCODE = 1
+                $null
+            } -ParameterFilter { $args -contains 'show' }
+
+            $result = & $script:ScriptPath -WorkItemId 999 | ConvertFrom-Json
+            $requiredKeys = @('blocked', 'status', 'work_item_id', 'blocking_items', 'ready_count', 'total_count', 'message')
+            foreach ($key in $requiredKeys) {
+                $result.PSObject.Properties.Name | Should -Contain $key -Because "error path must preserve key '$key'"
+            }
+        }
+    }
+}
