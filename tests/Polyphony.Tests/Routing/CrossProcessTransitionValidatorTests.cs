@@ -375,6 +375,121 @@ public sealed class CrossProcessTransitionValidatorTests
         result.Message!.ShouldContain(t.CompletedState);
     }
 
+    // ── begin_implementation: middle type happy paths ──────────────────
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void BeginImplementation_MiddleType_WhenProposed_ReturnsValid(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(2).WithType(t.MiddleType).WithState(t.ProposedState).Build();
+
+        var result = validator.Validate(item, "begin_implementation", []);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe(t.Transitions[t.MiddleType]["begin_implementation"]);
+    }
+
+    // ── implementation_complete: middle type happy path ──────────────
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void ImplementationComplete_MiddleType_WhenInProgress_ReturnsValid(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(2).WithType(t.MiddleType).WithState(t.InProgressState).Build();
+
+        var result = validator.Validate(item, "implementation_complete", []);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe(t.Transitions[t.MiddleType]["implementation_complete"]);
+    }
+
+    // ── all_children_complete: middle type happy path ────────────────
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void AllChildrenComplete_MiddleType_WhenInProgress_AllDone_ReturnsValid(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(2).WithType(t.MiddleType).WithState(t.InProgressState).Build();
+        var child1 = new WorkItemBuilder().WithId(10).WithType(t.LeafType).WithState(t.CompletedState).Build();
+        var child2 = new WorkItemBuilder().WithId(11).WithType(t.LeafType).WithState(t.CompletedState).Build();
+
+        var result = validator.Validate(item, "all_children_complete", [child1, child2]);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe(t.Transitions[t.MiddleType]["all_children_complete"]);
+    }
+
+    // ── begin_planning: when Completed (additional precondition) ────
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void BeginPlanning_WhenCompleted_ReturnsInvalid(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(1).WithType(t.TopType).WithState(t.CompletedState).Build();
+
+        var result = validator.Validate(item, "begin_planning", []);
+
+        result.IsValid.ShouldBeFalse();
+        result.Message!.ShouldContain("begin_planning");
+        result.Message!.ShouldContain("Proposed");
+    }
+
+    // ── event not defined for type ──────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void BeginPlanning_NotDefinedForLeaf_ReturnsUnknownEvent(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(10).WithType(t.LeafType).WithState(t.ProposedState).Build();
+
+        var result = validator.Validate(item, "begin_planning", []);
+
+        result.IsValid.ShouldBeFalse();
+        result.Message!.ShouldContain("Unknown event");
+    }
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void BeginImplementation_NotDefinedForTopLevel_ReturnsUnknownEvent(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(1).WithType(t.TopType).WithState(t.ProposedState).Build();
+
+        var result = validator.Validate(item, "begin_implementation", []);
+
+        result.IsValid.ShouldBeFalse();
+        result.Message!.ShouldContain("Unknown event");
+    }
+
+    // ── unknown work item type ──────────────────────────────────────
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void UnknownWorkItemType_ReturnsStructuredError(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(99).WithType("UnknownType").WithState(t.ProposedState).Build();
+
+        var result = validator.Validate(item, "begin_planning", []);
+
+        result.IsValid.ShouldBeFalse();
+        result.Message!.ShouldContain("UnknownType");
+        result.WorkItemId.ShouldBe(99);
+        result.Event.ShouldBe("begin_planning");
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // Scrum-specific: Three InProgress state variants for transitions
     // (Approved, Committed, In Progress) all satisfy InProgress preconditions
