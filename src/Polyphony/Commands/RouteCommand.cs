@@ -32,13 +32,14 @@ public sealed class RouteCommand(
         var children = await repository.GetChildrenAsync(workItem, ct);
         var decision = phaseDetector.Detect(item, children);
         var workspaceHint = BranchNameResolver.Resolve(processConfig, item);
+        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
 
         var result = new RouteResult
         {
             WorkItemId = workItem,
-            Phase = decision.Phase,
-            Action = decision.Action,
-            Message = decision.Message,
+            Phase = phase,
+            Action = action,
+            Message = message,
             WorkspaceHint = workspaceHint,
         };
 

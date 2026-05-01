@@ -45,9 +45,10 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Epic").WithState("To Do").Build();
 
         var result = detector.Detect(item, []);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsPlanning);
-        result.Action.ShouldBe(SdlcAction.Plan);
+        phase.ShouldBe(SdlcPhase.NeedsPlanning);
+        action.ShouldBe(SdlcAction.Plan);
     }
 
     [Fact]
@@ -57,9 +58,10 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Epic").WithState("Doing").Build();
 
         var result = detector.Detect(item, []);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        result.Action.ShouldBe(SdlcAction.Seed);
+        phase.ShouldBe(SdlcPhase.NeedsSeeding);
+        action.ShouldBe(SdlcAction.Seed);
     }
 
     [Fact]
@@ -71,9 +73,10 @@ public sealed class PhaseDetectorTests
         var child2 = new WorkItemBuilder().WithId(3).WithType("Task").WithState("To Do").Build();
 
         var result = detector.Detect(item, [child1, child2]);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
+        action.ShouldBe(SdlcAction.Implement);
     }
 
     [Fact]
@@ -85,9 +88,10 @@ public sealed class PhaseDetectorTests
         var child2 = new WorkItemBuilder().WithId(3).WithType("Task").WithState("To Do").Build();
 
         var result = detector.Detect(item, [child1, child2]);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        phase.ShouldBe(SdlcPhase.InProgress);
+        action.ShouldBe(SdlcAction.Monitor);
     }
 
     [Fact]
@@ -99,9 +103,10 @@ public sealed class PhaseDetectorTests
         var child2 = new WorkItemBuilder().WithId(3).WithType("Task").WithState("Done").Build();
 
         var result = detector.Detect(item, [child1, child2]);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
+        action.ShouldBe(SdlcAction.Close);
     }
 
     [Fact]
@@ -113,9 +118,10 @@ public sealed class PhaseDetectorTests
         var child2 = new WorkItemBuilder().WithId(3).WithType("Task").WithState("Removed").Build();
 
         var result = detector.Detect(item, [child1, child2]);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
+        action.ShouldBe(SdlcAction.Close);
     }
 
     // --- Implementable (Task) ---
@@ -127,9 +133,10 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Task").WithState("To Do").Build();
 
         var result = detector.Detect(item, []);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
+        action.ShouldBe(SdlcAction.Implement);
     }
 
     [Fact]
@@ -139,9 +146,10 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Task").WithState("Doing").Build();
 
         var result = detector.Detect(item, []);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        phase.ShouldBe(SdlcPhase.InProgress);
+        action.ShouldBe(SdlcAction.Monitor);
     }
 
     // --- Plannable + Implementable (Issue) ---
@@ -153,9 +161,10 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Issue").WithState("To Do").Build();
 
         var result = detector.Detect(item, []);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsPlanning);
-        result.Action.ShouldBe(SdlcAction.Plan);
+        phase.ShouldBe(SdlcPhase.NeedsPlanning);
+        action.ShouldBe(SdlcAction.Plan);
     }
 
     [Fact]
@@ -165,9 +174,10 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Issue").WithState("Doing").Build();
 
         var result = detector.Detect(item, []);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
+        action.ShouldBe(SdlcAction.Implement);
     }
 
     [Fact]
@@ -178,9 +188,10 @@ public sealed class PhaseDetectorTests
         var child = new WorkItemBuilder().WithId(2).WithType("Task").WithState("To Do").Build();
 
         var result = detector.Detect(item, [child]);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
+        action.ShouldBe(SdlcAction.Implement);
     }
 
     [Fact]
@@ -191,9 +202,10 @@ public sealed class PhaseDetectorTests
         var child = new WorkItemBuilder().WithId(2).WithType("Task").WithState("Done").Build();
 
         var result = detector.Detect(item, [child]);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
+        action.ShouldBe(SdlcAction.Close);
     }
 
     // --- Terminal states ---
@@ -205,9 +217,10 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Epic").WithState("Done").Build();
 
         var result = detector.Detect(item, []);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.Done);
-        result.Action.ShouldBe(SdlcAction.None);
+        phase.ShouldBe(SdlcPhase.Done);
+        action.ShouldBe(SdlcAction.None);
     }
 
     [Fact]
@@ -217,9 +230,10 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Task").WithState("Removed").Build();
 
         var result = detector.Detect(item, []);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.Removed);
-        result.Action.ShouldBe(SdlcAction.None);
+        phase.ShouldBe(SdlcPhase.Removed);
+        action.ShouldBe(SdlcAction.None);
     }
 
     // --- Unknown type ---
@@ -236,9 +250,10 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Task").WithState("To Do").Build();
 
         var result = detector.Detect(item, []);
+        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Phase.ShouldBe(SdlcPhase.Unknown);
-        result.Action.ShouldBe(SdlcAction.None);
+        phase.ShouldBe(SdlcPhase.Unknown);
+        action.ShouldBe(SdlcAction.None);
     }
 
     // --- Message populated ---
@@ -250,7 +265,8 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Epic").WithState("To Do").Build();
 
         var result = detector.Detect(item, []);
+        var (_, _, message) = RoutingDecisionMapper.ToComponents(result);
 
-        result.Message.ShouldNotBeNullOrWhiteSpace();
+        message.ShouldNotBeNullOrWhiteSpace();
     }
 }
