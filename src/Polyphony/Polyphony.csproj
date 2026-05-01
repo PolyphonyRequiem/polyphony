@@ -9,6 +9,9 @@
     <StripSymbols>true</StripSymbols>
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- YamlDotNet produces trim (IL2104) and AOT (IL3053) assembly-level warnings that are
+         pre-existing and outside our control. Suppress them so AOT publish succeeds. -->
+    <NoWarn>$(NoWarn);IL2104;IL3053</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
