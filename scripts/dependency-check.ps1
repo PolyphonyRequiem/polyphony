@@ -36,10 +36,13 @@ try {
 
     # ── If no predecessors, not blocked ──────────────────────────────────────
     if ($predecessors.Count -eq 0) {
-        @{
+        [ordered]@{
+            blocked        = $false
             status         = 'not_blocked'
             work_item_id   = $WorkItemId
             blocking_items = @()
+            ready_count    = 0
+            total_count    = 0
             message        = 'No predecessor links found'
         } | ConvertTo-Json -Depth 5
         exit 0
@@ -83,26 +86,37 @@ try {
     }
 
     # ── Emit result ──────────────────────────────────────────────────────────
+    $readyCount = $predecessors.Count - $blockingItems.Count
+
     if ($blockingItems.Count -gt 0) {
-        @{
+        [ordered]@{
+            blocked        = $true
             status         = 'blocked'
             work_item_id   = $WorkItemId
             blocking_items = $blockingItems
+            ready_count    = $readyCount
+            total_count    = $predecessors.Count
             message        = "$($blockingItems.Count) predecessor(s) not in terminal state"
         } | ConvertTo-Json -Depth 5
     } else {
-        @{
+        [ordered]@{
+            blocked        = $false
             status         = 'not_blocked'
             work_item_id   = $WorkItemId
             blocking_items = @()
+            ready_count    = $predecessors.Count
+            total_count    = $predecessors.Count
             message        = "All $($predecessors.Count) predecessor(s) are complete"
         } | ConvertTo-Json -Depth 5
     }
 } catch {
-    @{
+    [ordered]@{
+        blocked        = $false
         status         = 'not_blocked'
         work_item_id   = $WorkItemId
         blocking_items = @()
+        ready_count    = 0
+        total_count    = 0
         message        = "Error checking dependencies: $($_.Exception.Message)"
         error          = $true
     } | ConvertTo-Json -Depth 5
