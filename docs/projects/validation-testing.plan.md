@@ -560,6 +560,91 @@ Test Work Items ──→ WorkItemBuilder ──→ SQLite/Mock ──→│
 
 ---
 
+## Validation Results
+
+> **Last updated:** 2026-05-01 | **Test suite:** 533 tests, 0 failures, 0 skipped | **Duration:** ~3s
+
+### Cross-Process Template Results
+
+All four ADO process templates were validated across unit tests, integration tests, and E2E command tests. The system correctly routes work items using configuration-only changes — zero code modifications were required.
+
+| Template | PhaseDetector | TransitionValidator | Route Command (E2E) | Validate Command (E2E) | Integration Lifecycle | Overall |
+|----------|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Basic** (Epic→Issue→Task) | ✅ Pass | ✅ Pass | ✅ Pass | ✅ Pass | — | ✅ **Pass** |
+| **Agile** (Epic→User Story→Task) | ✅ Pass | ✅ Pass | ✅ Pass | ✅ Pass | ✅ Pass | ✅ **Pass** |
+| **Scrum** (Epic→Product Backlog Item→Task) | ✅ Pass | ✅ Pass | ✅ Pass | ✅ Pass | — | ✅ **Pass** |
+| **CMMI** (Epic→Requirement→Task) | ✅ Pass | ✅ Pass | ✅ Pass | ✅ Pass | — | ✅ **Pass** |
+
+**Key findings:**
+- All 8 SDLC phases route correctly for every template without code changes
+- Scrum-specific state variants (Approved, Committed, In Progress) all resolve correctly via `StateCategoryResolver` fallback
+- CMMI "Resolved" state maps to `StateCategory.Resolved` and routes correctly through all child combinations
+- `WorkItemType.Parse()` accepts all cross-process type names (User Story, Product Backlog Item, Requirement) without restriction
+
+### Hierarchy Tier Results
+
+| Tier | Configuration | Status |
+|------|--------------|:---:|
+| 2-tier | Issue→Task | ✅ Pass |
+| 3-tier | Epic→{Issue\|User Story\|PBI\|Requirement}→Task (parameterized across all 4 templates) | ✅ Pass |
+| 4-tier | Epic→Feature→Issue→Task | ✅ Pass |
+| Depth budget | >4 plannable levels produce correct enforcement behavior | ✅ Pass |
+
+### Test Coverage Summary
+
+| Test File | Tests | Scope |
+|-----------|------:|-------|
+| CrossProcessPhaseDetectorTests | 34 | 8 phases × 4 templates, composite hierarchies, unregistered types |
+| CrossProcessTransitionValidatorTests | 29 | Legal/illegal transitions × 4 templates, Scrum InProgress variants, CMMI resolve event |
+| HierarchyTierTests | 14 | 2-tier, 3-tier (all templates), 4-tier, capability annotation, branching hierarchies |
+| DepthBudgetTests | 12 | Plannable depth counting, deep chains (5 levels), implementable caps, unregistered types |
+| CrossProcessRouteCommandTests | 15 | E2E route per template (×4 = 60 executions), JSON contracts, exit codes |
+| CrossProcessValidateCommandTests | 8 | E2E validate per template (×4 = 32 executions), legal/illegal/unknown events |
+| IntegrationScenarioTests | 13 | Full lifecycle (Agile), StateCategoryResolver authoritative path, 3-tier routing |
+| JsonOutputContractTests | 24 | Exit codes, snake_case, null omission, round-trip deserialization, PascalCase leak detection |
+| **Total (Phase 4 new)** | **149** | |
+
+### Validation Gaps — Postmortem Observations
+
+The following gaps were identified during Phase 4 validation. These should be filed as postmortem observations by the close-out workflow.
+
+#### Gap 1: Conductor YAML Validation Not Automated
+
+**Severity:** Moderate
+**Description:** Task 4.3.1 (`lint-conductor-validate.ps1`) and Task 4.3.2 (Pester tests for the lint script) were planned but not implemented. The 9 workflow YAMLs in `workflows/` have not been validated through an automated `conductor validate` pipeline. Manual validation may have occurred, but there is no automated regression guard.
+**Impact:** Workflow YAML structural regressions could go undetected until conductor runtime. This is the primary planned deliverable from Issue 4.3 that remains unverified in CI.
+**Recommendation:** Create `tests/lint-conductor-validate.ps1` and its Pester test suite as a follow-up task. Consider gating on `conductor` CLI availability via environment variable to handle CI environments where conductor is not installed.
+
+#### Gap 2: Full Lifecycle Coverage Limited to Agile Template
+
+**Severity:** Low
+**Description:** `IntegrationScenarioTests` exercises the complete lifecycle (NeedsPlanning → NeedsSeeding → ReadyForImplementation → InProgress → ReadyForCompletion → Done) only for the Agile template. Basic, Scrum, and CMMI templates are covered at the unit and E2E command level but do not have dedicated lifecycle walkthrough tests.
+**Impact:** Low — the unit and E2E tests cover all templates at the routing layer. The integration lifecycle test primarily validates the *sequencing* of state transitions, which is template-independent (the same PhaseDetector and TransitionValidator code paths execute regardless of template). The Agile test is representative.
+**Recommendation:** No immediate action needed. If org-specific state customizations introduce sequencing differences, add lifecycle tests per template at that time.
+
+#### Gap 3: Freshness Enforcement Not Tested
+
+**Severity:** Low
+**Description:** Cache staleness enforcement is managed by Twig infrastructure, not Polyphony. No tests verify the freshness contract at the Polyphony boundary. Open Question #4 in this plan acknowledges this as a Twig-level concern.
+**Impact:** Minimal — Polyphony is a read-only consumer of cached work item data. Staleness detection and enforcement are architectural responsibilities of the Twig cache layer.
+**Recommendation:** If freshness issues arise in production, add contract tests at the Twig.Infrastructure level to verify staleness detection behavior.
+
+#### Gap 4: Org-Specific State Customizations Not Covered
+
+**Severity:** Low
+**Description:** All tests use standard ADO process template state names. Organizations with customized states (e.g., "In Review" instead of "Active") rely on `ProcessTypeRecord.States` entries seeded from ADO sync. The integration tests exercise this authoritative resolution path for Agile states, but custom state names are not tested.
+**Impact:** Low — the `StateCategoryResolver` two-tier strategy (authoritative entries → hardcoded fallback) handles this by design. The authoritative path is exercised in integration tests. Custom states would use the same authoritative path.
+**Recommendation:** If a specific org customization causes routing failures, add targeted test fixtures with that org's state names and `StateEntry` data.
+
+#### Gap 5: Script Output Contract Verification Incomplete
+
+**Severity:** Low
+**Description:** Task 4.3.3 planned to verify script output contracts (JSON schema, required fields) against workflow expectations across the PowerShell script suite. The existing Pester lint tests (lint-type-agnostic, lint-apex-routing, etc.) validate script behavior but do not systematically verify output contract alignment with conductor workflow input schemas.
+**Impact:** Low — the existing lint tests cover the critical script behaviors. Output contract drift between scripts and workflows would be caught during conductor dry-run or runtime.
+**Recommendation:** Consider adding output contract assertions to existing Pester lint suites in a future maintenance pass.
+
+---
+
 ## References
 
 - [Phase 1 Plan: Polyphony Core Engine](polyphony-core-engine.plan.md)
