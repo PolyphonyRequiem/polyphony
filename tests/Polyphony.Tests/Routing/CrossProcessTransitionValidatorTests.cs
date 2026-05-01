@@ -376,6 +376,95 @@ public sealed class CrossProcessTransitionValidatorTests
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // Scrum-specific: Three InProgress state variants for transitions
+    // (Approved, Committed, In Progress) all satisfy InProgress preconditions
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("Committed")]
+    [InlineData("In Progress")]
+    public void ScrumBeginImplementation_Task_WhenInProgressVariant_ReturnsValid(string state)
+    {
+        var t = GetTemplate("Scrum");
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(10).WithType("Task").WithState(state).Build();
+
+        var result = validator.Validate(item, "begin_implementation", []);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Committed");
+    }
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("Committed")]
+    [InlineData("In Progress")]
+    public void ScrumImplementationComplete_Task_WhenInProgressVariant_ReturnsValid(string state)
+    {
+        var t = GetTemplate("Scrum");
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(10).WithType("Task").WithState(state).Build();
+
+        var result = validator.Validate(item, "implementation_complete", []);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Done");
+    }
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("Committed")]
+    [InlineData("In Progress")]
+    public void ScrumBeginImplementation_PBI_WhenInProgressVariant_ReturnsValid(string state)
+    {
+        var t = GetTemplate("Scrum");
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState(state).Build();
+
+        var result = validator.Validate(item, "begin_implementation", []);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Committed");
+    }
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("Committed")]
+    [InlineData("In Progress")]
+    public void ScrumAllChildrenComplete_PBI_WhenInProgressVariant_AllDone_ReturnsValid(string state)
+    {
+        var t = GetTemplate("Scrum");
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState(state).Build();
+        var child1 = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Done").Build();
+        var child2 = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Done").Build();
+
+        var result = validator.Validate(item, "all_children_complete", [child1, child2]);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Done");
+    }
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("Committed")]
+    [InlineData("In Progress")]
+    public void ScrumAllChildrenComplete_Epic_WhenInProgressVariant_AllDone_ReturnsValid(string state)
+    {
+        var t = GetTemplate("Scrum");
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(1).WithType("Epic").WithState(state).Build();
+        var child1 = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("Done").Build();
+        var child2 = new WorkItemBuilder().WithId(3).WithType("Product Backlog Item").WithState("Done").Build();
+
+        var result = validator.Validate(item, "all_children_complete", [child1, child2]);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Done");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // CMMI-specific: Active → Resolved transition via "resolve" event
     // ═══════════════════════════════════════════════════════════════════
 

@@ -281,6 +281,183 @@ public sealed class CrossProcessPhaseDetectorTests
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // Scrum-specific: Three InProgress state variants
+    // (Approved, Committed, In Progress) all map to StateCategory.InProgress
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("Committed")]
+    [InlineData("In Progress")]
+    public void ScrumInProgressVariant_MapsToStateCategoryInProgress(string state)
+    {
+        var category = StateCategoryResolver.Resolve(state, entries: null);
+
+        category.ShouldBe(StateCategory.InProgress);
+    }
+
+    // --- PBI (plannable+implementable) with Approved state ---
+
+    [Fact]
+    public void ScrumPBI_InApproved_AllChildrenComplete_ReturnsReadyForCompletion()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var pbi = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("Approved").Build();
+        var task1 = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Done").Build();
+        var task2 = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Done").Build();
+
+        var result = detector.Detect(pbi, [task1, task2]);
+
+        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
+        result.Action.ShouldBe(SdlcAction.Close);
+    }
+
+    [Fact]
+    public void ScrumPBI_InApproved_NoChildren_ReturnsReadyForImplementation()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var pbi = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("Approved").Build();
+
+        var result = detector.Detect(pbi, []);
+
+        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
+        result.Action.ShouldBe(SdlcAction.Implement);
+    }
+
+    [Fact]
+    public void ScrumPBI_InApproved_MixedChildren_ReturnsInProgress()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var pbi = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("Approved").Build();
+        var doneTask = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Done").Build();
+        var newTask = new WorkItemBuilder().WithId(11).WithType("Task").WithState("New").Build();
+
+        var result = detector.Detect(pbi, [doneTask, newTask]);
+
+        result.Phase.ShouldBe(SdlcPhase.InProgress);
+        result.Action.ShouldBe(SdlcAction.Monitor);
+    }
+
+    // --- PBI with "In Progress" state (distinct from Committed/Approved) ---
+
+    [Fact]
+    public void ScrumPBI_InInProgress_AllChildrenComplete_ReturnsReadyForCompletion()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var pbi = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("In Progress").Build();
+        var task1 = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Done").Build();
+        var task2 = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Done").Build();
+
+        var result = detector.Detect(pbi, [task1, task2]);
+
+        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
+        result.Action.ShouldBe(SdlcAction.Close);
+    }
+
+    [Fact]
+    public void ScrumPBI_InInProgress_NoChildren_ReturnsReadyForImplementation()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var pbi = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("In Progress").Build();
+
+        var result = detector.Detect(pbi, []);
+
+        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
+        result.Action.ShouldBe(SdlcAction.Implement);
+    }
+
+    // --- Task (implementable-only) with Approved and "In Progress" states ---
+
+    [Fact]
+    public void ScrumTask_InApproved_ReturnsInProgress()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var task = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Approved").Build();
+
+        var result = detector.Detect(task, []);
+
+        result.Phase.ShouldBe(SdlcPhase.InProgress);
+        result.Action.ShouldBe(SdlcAction.Monitor);
+    }
+
+    [Fact]
+    public void ScrumTask_InInProgress_ReturnsInProgress()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var task = new WorkItemBuilder().WithId(10).WithType("Task").WithState("In Progress").Build();
+
+        var result = detector.Detect(task, []);
+
+        result.Phase.ShouldBe(SdlcPhase.InProgress);
+        result.Action.ShouldBe(SdlcAction.Monitor);
+    }
+
+    // --- Epic (plannable-only) with Approved and "In Progress" states ---
+
+    [Fact]
+    public void ScrumEpic_InApproved_AllChildrenComplete_ReturnsReadyForCompletion()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var epic = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("Approved").Build();
+        var pbi1 = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("Done").Build();
+        var pbi2 = new WorkItemBuilder().WithId(3).WithType("Product Backlog Item").WithState("Done").Build();
+
+        var result = detector.Detect(epic, [pbi1, pbi2]);
+
+        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
+        result.Action.ShouldBe(SdlcAction.Close);
+    }
+
+    [Fact]
+    public void ScrumEpic_InApproved_NoChildren_ReturnsNeedsSeeding()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var epic = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("Approved").Build();
+
+        var result = detector.Detect(epic, []);
+
+        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
+        result.Action.ShouldBe(SdlcAction.Seed);
+    }
+
+    [Fact]
+    public void ScrumEpic_InInProgress_AllChildrenComplete_ReturnsReadyForCompletion()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var epic = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("In Progress").Build();
+        var pbi1 = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("Done").Build();
+        var pbi2 = new WorkItemBuilder().WithId(3).WithType("Product Backlog Item").WithState("Done").Build();
+
+        var result = detector.Detect(epic, [pbi1, pbi2]);
+
+        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
+        result.Action.ShouldBe(SdlcAction.Close);
+    }
+
+    [Fact]
+    public void ScrumEpic_InInProgress_NoChildren_ReturnsNeedsSeeding()
+    {
+        var t = GetTemplate("Scrum");
+        var detector = CreateDetector(t);
+        var epic = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("In Progress").Build();
+
+        var result = detector.Detect(epic, []);
+
+        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
+        result.Action.ShouldBe(SdlcAction.Seed);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // CMMI-specific: Resolved state mapping and routing
     // ═══════════════════════════════════════════════════════════════════
 
