@@ -48,6 +48,11 @@ workflow:
       default: ""
       description: Path to the original plan document for remediation context
 
+tools:
+  - twig
+  - gh
+  - filesystem
+
 output:
   merged: "{{ pr_lifecycle_github.output.merged | default(pr_lifecycle_ado.output.merged) | default(remediation_abort.output.merged) | default(false) }}"
   pr_url: "{{ feature_pr_creator.output.pr_url | default('') }}"
@@ -394,7 +399,7 @@ agents:
   - name: remediation_implementer
     type: workflow
     description: Execute remediation PG via implement-pg sub-workflow
-    workflow: workflows/implement-pg.yaml
+    workflow: ./implement-pg.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
       pg_number: "{{ remediation_seeder.output.pg_number }}"
