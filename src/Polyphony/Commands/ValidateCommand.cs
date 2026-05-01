@@ -29,7 +29,28 @@ public sealed class ValidateCommand(
         }
 
         var children = await repository.GetChildrenAsync(workItem, ct);
-        var result = validator.Validate(item, @event, children);
+        var outcome = validator.Validate(item, @event, children);
+
+        var result = outcome switch
+        {
+            ValidTransition v => new ValidateResult
+            {
+                WorkItemId = v.WorkItemId,
+                Event = v.Event,
+                IsValid = true,
+                TargetState = v.TargetState,
+                Message = v.Message,
+            },
+            InvalidTransition iv => new ValidateResult
+            {
+                WorkItemId = iv.WorkItemId,
+                Event = iv.Event,
+                IsValid = false,
+                TargetState = iv.TargetState,
+                Message = iv.Message,
+            },
+            null => throw new InvalidOperationException("TransitionValidator returned null"),
+        };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.ValidateResult));
         return result.IsValid ? ExitCodes.Success : ExitCodes.RoutingFailure;

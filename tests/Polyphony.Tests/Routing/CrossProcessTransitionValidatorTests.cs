@@ -177,8 +177,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_planning", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.Transitions[t.TopType]["begin_planning"]);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.Transitions[t.TopType]["begin_planning"]);
     }
 
     [Theory]
@@ -191,8 +191,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_planning", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.Transitions[t.MiddleType]["begin_planning"]);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.Transitions[t.MiddleType]["begin_planning"]);
     }
 
     // ── begin_planning: precondition failure ─────────────────────────
@@ -207,9 +207,9 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_planning", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("begin_planning");
-        result.Message!.ShouldContain("Proposed");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("begin_planning");
+        invalid.Message.ShouldContain("Proposed");
     }
 
     // ── begin_implementation: happy path ─────────────────────────────
@@ -224,8 +224,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.Transitions[t.LeafType]["begin_implementation"]);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.Transitions[t.LeafType]["begin_implementation"]);
     }
 
     [Theory]
@@ -238,8 +238,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.Transitions[t.LeafType]["begin_implementation"]);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.Transitions[t.LeafType]["begin_implementation"]);
     }
 
     // ── begin_implementation: precondition failure ───────────────────
@@ -254,9 +254,9 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("begin_implementation");
-        result.Message!.ShouldContain("Proposed or InProgress");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("begin_implementation");
+        invalid.Message.ShouldContain("Proposed or InProgress");
     }
 
     // ── implementation_complete: happy path ──────────────────────────
@@ -271,8 +271,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "implementation_complete", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.Transitions[t.LeafType]["implementation_complete"]);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.Transitions[t.LeafType]["implementation_complete"]);
     }
 
     // ── implementation_complete: precondition failure ────────────────
@@ -287,9 +287,9 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "implementation_complete", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("implementation_complete");
-        result.Message!.ShouldContain("InProgress");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("implementation_complete");
+        invalid.Message.ShouldContain("InProgress");
     }
 
     // ── all_children_complete: happy path ────────────────────────────
@@ -306,8 +306,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "all_children_complete", [child1, child2]);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.Transitions[t.TopType]["all_children_complete"]);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.Transitions[t.TopType]["all_children_complete"]);
     }
 
     // ── all_children_complete: precondition failure ──────────────────
@@ -324,8 +324,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "all_children_complete", [child1, child2]);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("child #11");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("child #11");
     }
 
     [Theory]
@@ -338,8 +338,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "all_children_complete", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("no children");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("no children");
     }
 
     // ── unknown event ───────────────────────────────────────────────
@@ -354,8 +354,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "nonexistent_event", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("Unknown event");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("Unknown event");
     }
 
     // ── target state correctness ────────────────────────────────────
@@ -370,9 +370,9 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "implementation_complete", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.CompletedState);
-        result.Message!.ShouldContain(t.CompletedState);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.CompletedState);
+        valid.Message.ShouldContain(t.CompletedState);
     }
 
     // ── begin_implementation: middle type happy paths ──────────────────
@@ -387,8 +387,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.Transitions[t.MiddleType]["begin_implementation"]);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.Transitions[t.MiddleType]["begin_implementation"]);
     }
 
     // ── implementation_complete: middle type happy path ──────────────
@@ -403,8 +403,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "implementation_complete", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.Transitions[t.MiddleType]["implementation_complete"]);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.Transitions[t.MiddleType]["implementation_complete"]);
     }
 
     // ── all_children_complete: middle type happy path ────────────────
@@ -421,8 +421,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "all_children_complete", [child1, child2]);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe(t.Transitions[t.MiddleType]["all_children_complete"]);
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe(t.Transitions[t.MiddleType]["all_children_complete"]);
     }
 
     // ── begin_planning: when Completed (additional precondition) ────
@@ -437,9 +437,9 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_planning", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("begin_planning");
-        result.Message!.ShouldContain("Proposed");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("begin_planning");
+        invalid.Message.ShouldContain("Proposed");
     }
 
     // ── event not defined for type ──────────────────────────────────
@@ -454,8 +454,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_planning", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("Unknown event");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("Unknown event");
     }
 
     [Theory]
@@ -468,8 +468,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("Unknown event");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("Unknown event");
     }
 
     // ── unknown work item type ──────────────────────────────────────
@@ -484,10 +484,10 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_planning", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("UnknownType");
-        result.WorkItemId.ShouldBe(99);
-        result.Event.ShouldBe("begin_planning");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("UnknownType");
+        invalid.WorkItemId.ShouldBe(99);
+        invalid.Event.ShouldBe("begin_planning");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -507,8 +507,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Committed");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Committed");
     }
 
     [Theory]
@@ -523,8 +523,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "implementation_complete", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Done");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Done");
     }
 
     [Theory]
@@ -539,8 +539,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Committed");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Committed");
     }
 
     [Theory]
@@ -557,8 +557,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "all_children_complete", [child1, child2]);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Done");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Done");
     }
 
     [Theory]
@@ -575,8 +575,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "all_children_complete", [child1, child2]);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Done");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Done");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -592,8 +592,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "resolve", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Resolved");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Resolved");
     }
 
     [Fact]
@@ -605,8 +605,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "resolve", []);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Resolved");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Resolved");
     }
 
     [Fact]
@@ -618,8 +618,8 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "resolve", []);
 
-        result.IsValid.ShouldBeFalse();
-        result.Message!.ShouldContain("Unknown event");
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("Unknown event");
     }
 
     [Fact]
@@ -635,7 +635,19 @@ public sealed class CrossProcessTransitionValidatorTests
 
         var result = validator.Validate(item, "all_children_complete", [child1, child2]);
 
-        result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Closed");
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Closed");
+    }
+
+    private static ValidTransition AssertValid(TransitionOutcome outcome)
+    {
+        (outcome is ValidTransition).ShouldBeTrue();
+        return outcome switch { ValidTransition v => v, _ => throw new InvalidOperationException("unreachable") };
+    }
+
+    private static InvalidTransition AssertInvalid(TransitionOutcome outcome)
+    {
+        (outcome is InvalidTransition).ShouldBeTrue();
+        return outcome switch { InvalidTransition iv => iv, _ => throw new InvalidOperationException("unreachable") };
     }
 }
