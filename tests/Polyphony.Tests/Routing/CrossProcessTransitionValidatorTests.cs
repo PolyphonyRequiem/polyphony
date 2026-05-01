@@ -127,12 +127,14 @@ public sealed class CrossProcessTransitionValidatorTests
                 {
                     ["begin_planning"] = "Active",
                     ["begin_implementation"] = "Active",
+                    ["resolve"] = "Resolved",
                     ["implementation_complete"] = "Closed",
                     ["all_children_complete"] = "Closed",
                 },
                 ["Task"] = new(StringComparer.OrdinalIgnoreCase)
                 {
                     ["begin_implementation"] = "Active",
+                    ["resolve"] = "Resolved",
                     ["implementation_complete"] = "Closed",
                 },
             }),
@@ -371,5 +373,65 @@ public sealed class CrossProcessTransitionValidatorTests
         result.IsValid.ShouldBeTrue();
         result.TargetState.ShouldBe(t.CompletedState);
         result.Message!.ShouldContain(t.CompletedState);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // CMMI-specific: Active → Resolved transition via "resolve" event
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void CmmiResolve_Requirement_WhenActive_ReturnsValid()
+    {
+        var t = GetTemplate("CMMI");
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(2).WithType("Requirement").WithState("Active").Build();
+
+        var result = validator.Validate(item, "resolve", []);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Resolved");
+    }
+
+    [Fact]
+    public void CmmiResolve_Task_WhenActive_ReturnsValid()
+    {
+        var t = GetTemplate("CMMI");
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Active").Build();
+
+        var result = validator.Validate(item, "resolve", []);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Resolved");
+    }
+
+    [Fact]
+    public void CmmiResolve_NotDefinedForEpic_ReturnsInvalid()
+    {
+        var t = GetTemplate("CMMI");
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("Active").Build();
+
+        var result = validator.Validate(item, "resolve", []);
+
+        result.IsValid.ShouldBeFalse();
+        result.Message!.ShouldContain("Unknown event");
+    }
+
+    [Fact]
+    public void CmmiAllChildrenComplete_Requirement_InResolved_ReturnsValid()
+    {
+        // CMMI Requirement in Resolved state with all children complete
+        // should allow the all_children_complete transition to Closed.
+        var t = GetTemplate("CMMI");
+        var validator = CreateValidator(t);
+        var item = new WorkItemBuilder().WithId(2).WithType("Requirement").WithState("Resolved").Build();
+        var child1 = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Closed").Build();
+        var child2 = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Closed").Build();
+
+        var result = validator.Validate(item, "all_children_complete", [child1, child2]);
+
+        result.IsValid.ShouldBeTrue();
+        result.TargetState.ShouldBe("Closed");
     }
 }

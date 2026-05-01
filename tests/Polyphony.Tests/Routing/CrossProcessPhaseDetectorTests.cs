@@ -1,6 +1,8 @@
 using Polyphony.Routing;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
+using Twig.Domain.Enums;
+using Twig.Domain.Services.Process;
 using Xunit;
 
 namespace Polyphony.Tests.Routing;
@@ -276,5 +278,110 @@ public sealed class CrossProcessPhaseDetectorTests
 
         result.Phase.ShouldBe(SdlcPhase.Removed);
         result.Action.ShouldBe(SdlcAction.None);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // CMMI-specific: Resolved state mapping and routing
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void CmmiResolvedState_MapsToStateCategoryResolved()
+    {
+        // Explicit verification that the CMMI "Resolved" state name
+        // resolves to StateCategory.Resolved via the fallback heuristic.
+        var category = StateCategoryResolver.Resolve("Resolved", entries: null);
+
+        category.ShouldBe(StateCategory.Resolved);
+    }
+
+    [Fact]
+    public void CmmiRequirement_InResolved_AllChildrenComplete_ReturnsReadyForCompletion()
+    {
+        // Key CMMI edge case: a plannable+implementable Requirement in the
+        // Resolved state with all children complete should route to ReadyForCompletion.
+        var t = GetTemplate("CMMI");
+        var detector = CreateDetector(t);
+        var requirement = new WorkItemBuilder().WithId(2).WithType("Requirement").WithState("Resolved").Build();
+        var task1 = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Closed").Build();
+        var task2 = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Closed").Build();
+
+        var result = detector.Detect(requirement, [task1, task2]);
+
+        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
+        result.Action.ShouldBe(SdlcAction.Close);
+    }
+
+    [Fact]
+    public void CmmiRequirement_InResolved_NoChildren_ReturnsReadyForImplementation()
+    {
+        // Plannable+implementable item in Resolved with no children
+        // behaves like InProgress — routes to direct implementation.
+        var t = GetTemplate("CMMI");
+        var detector = CreateDetector(t);
+        var requirement = new WorkItemBuilder().WithId(2).WithType("Requirement").WithState("Resolved").Build();
+
+        var result = detector.Detect(requirement, []);
+
+        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
+        result.Action.ShouldBe(SdlcAction.Implement);
+    }
+
+    [Fact]
+    public void CmmiRequirement_InResolved_MixedChildren_ReturnsInProgress()
+    {
+        var t = GetTemplate("CMMI");
+        var detector = CreateDetector(t);
+        var requirement = new WorkItemBuilder().WithId(2).WithType("Requirement").WithState("Resolved").Build();
+        var doneTask = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Closed").Build();
+        var proposedTask = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Proposed").Build();
+
+        var result = detector.Detect(requirement, [doneTask, proposedTask]);
+
+        result.Phase.ShouldBe(SdlcPhase.InProgress);
+        result.Action.ShouldBe(SdlcAction.Monitor);
+    }
+
+    [Fact]
+    public void CmmiTask_InResolved_ReturnsInProgress()
+    {
+        // Implementable-only item in Resolved maps to InProgress/Monitor.
+        var t = GetTemplate("CMMI");
+        var detector = CreateDetector(t);
+        var task = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Resolved").Build();
+
+        var result = detector.Detect(task, []);
+
+        result.Phase.ShouldBe(SdlcPhase.InProgress);
+        result.Action.ShouldBe(SdlcAction.Monitor);
+    }
+
+    [Fact]
+    public void CmmiEpic_InResolved_AllChildrenComplete_ReturnsReadyForCompletion()
+    {
+        // Plannable-only Epic in Resolved with all children complete → ReadyForCompletion.
+        var t = GetTemplate("CMMI");
+        var detector = CreateDetector(t);
+        var epic = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("Resolved").Build();
+        var req1 = new WorkItemBuilder().WithId(2).WithType("Requirement").WithState("Closed").Build();
+        var req2 = new WorkItemBuilder().WithId(3).WithType("Requirement").WithState("Closed").Build();
+
+        var result = detector.Detect(epic, [req1, req2]);
+
+        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
+        result.Action.ShouldBe(SdlcAction.Close);
+    }
+
+    [Fact]
+    public void CmmiEpic_InResolved_NoChildren_ReturnsNeedsSeeding()
+    {
+        // Plannable-only Epic in Resolved with no children → NeedsSeeding.
+        var t = GetTemplate("CMMI");
+        var detector = CreateDetector(t);
+        var epic = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("Resolved").Build();
+
+        var result = detector.Detect(epic, []);
+
+        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
+        result.Action.ShouldBe(SdlcAction.Seed);
     }
 }
