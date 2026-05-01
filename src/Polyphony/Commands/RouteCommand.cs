@@ -32,7 +32,18 @@ public sealed class RouteCommand(
         var children = await repository.GetChildrenAsync(workItem, ct);
         var decision = phaseDetector.Detect(item, children);
         var workspaceHint = BranchNameResolver.Resolve(processConfig, item);
-        var (phase, action, message) = RoutingDecisionMapper.ToComponents(decision);
+        var (phase, action, message) = decision switch
+        {
+            NeedsPlanning d            => (SdlcPhase.NeedsPlanning, SdlcAction.Plan, d.Message),
+            NeedsSeeding d             => (SdlcPhase.NeedsSeeding, SdlcAction.Seed, d.Message),
+            ReadyForImplementation d   => (SdlcPhase.ReadyForImplementation, SdlcAction.Implement, d.Message),
+            ImplementationInProgress d => (SdlcPhase.InProgress, SdlcAction.Monitor, d.Message),
+            ReadyForCompletion d       => (SdlcPhase.ReadyForCompletion, SdlcAction.Close, d.Message),
+            RoutingDone d              => (SdlcPhase.Done, SdlcAction.None, d.Message),
+            RoutingRemoved d           => (SdlcPhase.Removed, SdlcAction.None, d.Message),
+            RoutingUnknown d           => (SdlcPhase.Unknown, SdlcAction.None, d.Message),
+            null                       => throw new InvalidOperationException("PhaseDetector returned null"),
+        };
 
         var result = new RouteResult
         {

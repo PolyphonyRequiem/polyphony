@@ -42,12 +42,7 @@ public sealed class CrossProcessPhaseDetectorTests
         Templates.Select(t => new object[]
         {
             t.Name,
-            Array.Exists(t.MiddleCapabilities, c => c == "implementable")
-                ? SdlcPhase.ReadyForImplementation
-                : SdlcPhase.NeedsSeeding,
-            Array.Exists(t.MiddleCapabilities, c => c == "implementable")
-                ? SdlcAction.Implement
-                : SdlcAction.Seed,
+            Array.Exists(t.MiddleCapabilities, c => c == "implementable"),
         });
 
     private static CompositeTemplate GetTemplate(string name) =>
@@ -76,10 +71,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var middle = new WorkItemBuilder().WithId(2).WithType(t.MiddleType).WithState(t.ProposedState).Build();
 
         var result = detector.Detect(epic, [middle]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.NeedsPlanning);
-        action.ShouldBe(SdlcAction.Plan);
+        (result is NeedsPlanning).ShouldBeTrue();
     }
 
     // --- Scenario 2: Intermediate plannable routes based on capabilities ---
@@ -87,17 +80,18 @@ public sealed class CrossProcessPhaseDetectorTests
     [Theory]
     [MemberData(nameof(IntermediateNoChildrenData))]
     public void IntermediatePlannable_InProgress_NoChildren_RoutesBasedOnCapabilities(
-        string templateName, string expectedPhase, string expectedAction)
+        string templateName, bool isImplementable)
     {
         var t = GetTemplate(templateName);
         var detector = CreateDetector(t);
         var middle = new WorkItemBuilder().WithId(2).WithType(t.MiddleType).WithState(t.InProgressState).Build();
 
         var result = detector.Detect(middle, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(expectedPhase);
-        action.ShouldBe(expectedAction);
+        if (isImplementable)
+            (result is ReadyForImplementation).ShouldBeTrue();
+        else
+            (result is NeedsSeeding).ShouldBeTrue();
     }
 
     [Theory]
@@ -111,10 +105,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var leaf2 = new WorkItemBuilder().WithId(11).WithType(t.LeafType).WithState(t.ProposedState).Build();
 
         var result = detector.Detect(middle, [leaf1, leaf2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     // --- Scenario 3: Implementable leaf routes based on its own state ---
@@ -128,10 +120,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var leaf = new WorkItemBuilder().WithId(3).WithType(t.LeafType).WithState(t.ProposedState).Build();
 
         var result = detector.Detect(leaf, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     // --- Scenario 4: All children complete at each level → ReadyForCompletion ---
@@ -147,10 +137,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var middle2 = new WorkItemBuilder().WithId(3).WithType(t.MiddleType).WithState(t.CompletedState).Build();
 
         var result = detector.Detect(epic, [middle1, middle2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Theory]
@@ -164,10 +152,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var leaf2 = new WorkItemBuilder().WithId(11).WithType(t.LeafType).WithState(t.CompletedState).Build();
 
         var result = detector.Detect(middle, [leaf1, leaf2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     // --- Scenario 5: Mixed children states → InProgress ---
@@ -183,10 +169,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var proposedMiddle = new WorkItemBuilder().WithId(3).WithType(t.MiddleType).WithState(t.ProposedState).Build();
 
         var result = detector.Detect(epic, [completedMiddle, proposedMiddle]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.InProgress);
-        action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     [Theory]
@@ -200,10 +184,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var todoLeaf = new WorkItemBuilder().WithId(11).WithType(t.LeafType).WithState(t.ProposedState).Build();
 
         var result = detector.Detect(middle, [doneLeaf, todoLeaf]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.InProgress);
-        action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     // --- Additional: Top-level with all proposed children → ReadyForImplementation ---
@@ -219,10 +201,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var middle2 = new WorkItemBuilder().WithId(3).WithType(t.MiddleType).WithState(t.ProposedState).Build();
 
         var result = detector.Detect(epic, [middle1, middle2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     // --- Scenario 6: Top-level plannable-only in InProgress with no children → NeedsSeeding ---
@@ -236,10 +216,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var epic = new WorkItemBuilder().WithId(1).WithType(t.TopType).WithState(t.InProgressState).Build();
 
         var result = detector.Detect(epic, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        action.ShouldBe(SdlcAction.Seed);
+        (result is NeedsSeeding).ShouldBeTrue();
     }
 
     // --- Scenario 7: Implementable leaf in InProgress → InProgress ---
@@ -253,10 +231,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var leaf = new WorkItemBuilder().WithId(3).WithType(t.LeafType).WithState(t.InProgressState).Build();
 
         var result = detector.Detect(leaf, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.InProgress);
-        action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     // --- Scenario 8: Terminal state — Completed → Done ---
@@ -270,10 +246,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var item = new WorkItemBuilder().WithId(1).WithType(t.TopType).WithState(t.CompletedState).Build();
 
         var result = detector.Detect(item, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.Done);
-        action.ShouldBe(SdlcAction.None);
+        (result is RoutingDone).ShouldBeTrue();
     }
 
     // --- Scenario 9: Terminal state — Removed ---
@@ -287,10 +261,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var item = new WorkItemBuilder().WithId(1).WithType(t.LeafType).WithState("Removed").Build();
 
         var result = detector.Detect(item, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.Removed);
-        action.ShouldBe(SdlcAction.None);
+        (result is RoutingRemoved).ShouldBeTrue();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -321,10 +293,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var task2 = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Done").Build();
 
         var result = detector.Detect(pbi, [task1, task2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -335,10 +305,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var pbi = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("Approved").Build();
 
         var result = detector.Detect(pbi, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     [Fact]
@@ -351,10 +319,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var newTask = new WorkItemBuilder().WithId(11).WithType("Task").WithState("New").Build();
 
         var result = detector.Detect(pbi, [doneTask, newTask]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.InProgress);
-        action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     // --- PBI with "In Progress" state (distinct from Committed/Approved) ---
@@ -369,10 +335,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var task2 = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Done").Build();
 
         var result = detector.Detect(pbi, [task1, task2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -383,10 +347,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var pbi = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState("In Progress").Build();
 
         var result = detector.Detect(pbi, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     // --- Task (implementable-only) with Approved and "In Progress" states ---
@@ -399,10 +361,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var task = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Approved").Build();
 
         var result = detector.Detect(task, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.InProgress);
-        action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     [Fact]
@@ -413,10 +373,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var task = new WorkItemBuilder().WithId(10).WithType("Task").WithState("In Progress").Build();
 
         var result = detector.Detect(task, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.InProgress);
-        action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     // --- Epic (plannable-only) with Approved and "In Progress" states ---
@@ -431,10 +389,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var pbi2 = new WorkItemBuilder().WithId(3).WithType("Product Backlog Item").WithState("Done").Build();
 
         var result = detector.Detect(epic, [pbi1, pbi2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -445,10 +401,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var epic = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("Approved").Build();
 
         var result = detector.Detect(epic, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        action.ShouldBe(SdlcAction.Seed);
+        (result is NeedsSeeding).ShouldBeTrue();
     }
 
     [Fact]
@@ -461,10 +415,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var pbi2 = new WorkItemBuilder().WithId(3).WithType("Product Backlog Item").WithState("Done").Build();
 
         var result = detector.Detect(epic, [pbi1, pbi2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -475,10 +427,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var epic = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("In Progress").Build();
 
         var result = detector.Detect(epic, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        action.ShouldBe(SdlcAction.Seed);
+        (result is NeedsSeeding).ShouldBeTrue();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -507,10 +457,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var task2 = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Closed").Build();
 
         var result = detector.Detect(requirement, [task1, task2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -523,10 +471,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var requirement = new WorkItemBuilder().WithId(2).WithType("Requirement").WithState("Resolved").Build();
 
         var result = detector.Detect(requirement, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     [Fact]
@@ -539,10 +485,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var proposedTask = new WorkItemBuilder().WithId(11).WithType("Task").WithState("Proposed").Build();
 
         var result = detector.Detect(requirement, [doneTask, proposedTask]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.InProgress);
-        action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     [Fact]
@@ -554,10 +498,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var task = new WorkItemBuilder().WithId(10).WithType("Task").WithState("Resolved").Build();
 
         var result = detector.Detect(task, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.InProgress);
-        action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     [Fact]
@@ -571,10 +513,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var req2 = new WorkItemBuilder().WithId(3).WithType("Requirement").WithState("Closed").Build();
 
         var result = detector.Detect(epic, [req1, req2]);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -586,10 +526,8 @@ public sealed class CrossProcessPhaseDetectorTests
         var epic = new WorkItemBuilder().WithId(1).WithType("Epic").WithState("Resolved").Build();
 
         var result = detector.Detect(epic, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        action.ShouldBe(SdlcAction.Seed);
+        (result is NeedsSeeding).ShouldBeTrue();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -606,9 +544,7 @@ public sealed class CrossProcessPhaseDetectorTests
         var item = new WorkItemBuilder().WithId(99).WithType("Bug").WithState(t.InProgressState).Build();
 
         var result = detector.Detect(item, []);
-        var (phase, action, _) = RoutingDecisionMapper.ToComponents(result);
 
-        phase.ShouldBe(SdlcPhase.Unknown);
-        action.ShouldBe(SdlcAction.None);
+        (result is RoutingUnknown).ShouldBeTrue();
     }
 }
