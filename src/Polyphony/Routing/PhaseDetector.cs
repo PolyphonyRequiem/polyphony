@@ -23,10 +23,10 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
 
         // Terminal states apply regardless of type or capabilities
         if (category == StateCategory.Completed)
-            return new RoutingDecision { Phase = SdlcPhase.Done, Action = SdlcAction.None, Message = "Work item is complete." };
+            return new RoutingDone("Work item is complete.");
 
         if (category == StateCategory.Removed)
-            return new RoutingDecision { Phase = SdlcPhase.Removed, Action = SdlcAction.None, Message = "Work item has been removed." };
+            return new RoutingRemoved("Work item has been removed.");
 
         var capabilities = LookupCapabilities(item.Type.Value);
         var isPlannable = Array.Exists(capabilities, c => string.Equals(c, "plannable", StringComparison.OrdinalIgnoreCase));
@@ -39,12 +39,7 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
             return DetectImplementablePhase(category);
 
         // Unknown capability set — fall through to unknown
-        return new RoutingDecision
-        {
-            Phase = SdlcPhase.Unknown,
-            Action = SdlcAction.None,
-            Message = $"No recognized capabilities for type '{item.Type.Value}'.",
-        };
+        return new RoutingUnknown($"No recognized capabilities for type '{item.Type.Value}'.");
     }
 
     private static RoutingDecision DetectPlannablePhase(
@@ -55,12 +50,7 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
     {
         if (category == StateCategory.Proposed)
         {
-            return new RoutingDecision
-            {
-                Phase = SdlcPhase.NeedsPlanning,
-                Action = SdlcAction.Plan,
-                Message = $"{item.Type.Value} '{item.Title}' is in Proposed state and needs planning.",
-            };
+            return new NeedsPlanning($"{item.Type.Value} '{item.Title}' is in Proposed state and needs planning.");
         }
 
         if (category == StateCategory.InProgress || category == StateCategory.Resolved)
@@ -70,62 +60,27 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
                 // Plannable + implementable with no children in InProgress → ready for direct implementation
                 if (isAlsoImplementable)
                 {
-                    return new RoutingDecision
-                    {
-                        Phase = SdlcPhase.ReadyForImplementation,
-                        Action = SdlcAction.Implement,
-                        Message = $"{item.Type.Value} '{item.Title}' is in progress with no children — ready for direct implementation.",
-                    };
+                    return new ReadyForImplementation($"{item.Type.Value} '{item.Title}' is in progress with no children — ready for direct implementation.");
                 }
 
                 // Plannable-only with no children → needs seeding (decomposition)
-                return new RoutingDecision
-                {
-                    Phase = SdlcPhase.NeedsSeeding,
-                    Action = SdlcAction.Seed,
-                    Message = $"{item.Type.Value} '{item.Title}' is in progress but has no children — needs seeding.",
-                };
+                return new NeedsSeeding($"{item.Type.Value} '{item.Title}' is in progress but has no children — needs seeding.");
             }
 
             return ClassifyByChildren(item, children);
         }
 
-        return new RoutingDecision
-        {
-            Phase = SdlcPhase.Unknown,
-            Action = SdlcAction.None,
-            Message = $"Unrecognized state category '{category}' for plannable type '{item.Type.Value}'.",
-        };
+        return new RoutingUnknown($"Unrecognized state category '{category}' for plannable type '{item.Type.Value}'.");
     }
 
     private static RoutingDecision DetectImplementablePhase(StateCategory category)
     {
         return category switch
         {
-            StateCategory.Proposed => new RoutingDecision
-            {
-                Phase = SdlcPhase.ReadyForImplementation,
-                Action = SdlcAction.Implement,
-                Message = "Implementable item is in Proposed state — ready for implementation.",
-            },
-            StateCategory.InProgress => new RoutingDecision
-            {
-                Phase = SdlcPhase.InProgress,
-                Action = SdlcAction.Monitor,
-                Message = "Implementable item is in progress.",
-            },
-            StateCategory.Resolved => new RoutingDecision
-            {
-                Phase = SdlcPhase.InProgress,
-                Action = SdlcAction.Monitor,
-                Message = "Implementable item is resolved, awaiting completion.",
-            },
-            _ => new RoutingDecision
-            {
-                Phase = SdlcPhase.Unknown,
-                Action = SdlcAction.None,
-                Message = $"Unrecognized state category '{category}' for implementable type.",
-            },
+            StateCategory.Proposed => new ReadyForImplementation("Implementable item is in Proposed state — ready for implementation."),
+            StateCategory.InProgress => new ImplementationInProgress("Implementable item is in progress."),
+            StateCategory.Resolved => new ImplementationInProgress("Implementable item is resolved, awaiting completion."),
+            _ => new RoutingUnknown($"Unrecognized state category '{category}' for implementable type."),
         };
     }
 
@@ -147,31 +102,16 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
 
         if (allCompleted)
         {
-            return new RoutingDecision
-            {
-                Phase = SdlcPhase.ReadyForCompletion,
-                Action = SdlcAction.Close,
-                Message = $"All children of {item.Type.Value} '{item.Title}' are complete — ready for close-out.",
-            };
+            return new ReadyForCompletion($"All children of {item.Type.Value} '{item.Title}' are complete — ready for close-out.");
         }
 
         if (allProposed)
         {
-            return new RoutingDecision
-            {
-                Phase = SdlcPhase.ReadyForImplementation,
-                Action = SdlcAction.Implement,
-                Message = $"All children of {item.Type.Value} '{item.Title}' are in Proposed state — ready for implementation.",
-            };
+            return new ReadyForImplementation($"All children of {item.Type.Value} '{item.Title}' are in Proposed state — ready for implementation.");
         }
 
         // Mixed states — work is in progress
-        return new RoutingDecision
-        {
-            Phase = SdlcPhase.InProgress,
-            Action = SdlcAction.Monitor,
-            Message = $"{item.Type.Value} '{item.Title}' has children in mixed states — monitoring progress.",
-        };
+        return new ImplementationInProgress($"{item.Type.Value} '{item.Title}' has children in mixed states — monitoring progress.");
     }
 
     private string[] LookupCapabilities(string typeName)

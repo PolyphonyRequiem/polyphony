@@ -42,12 +42,7 @@ public sealed class CrossProcessPhaseDetectorTests
         Templates.Select(t => new object[]
         {
             t.Name,
-            Array.Exists(t.MiddleCapabilities, c => c == "implementable")
-                ? SdlcPhase.ReadyForImplementation
-                : SdlcPhase.NeedsSeeding,
-            Array.Exists(t.MiddleCapabilities, c => c == "implementable")
-                ? SdlcAction.Implement
-                : SdlcAction.Seed,
+            Array.Exists(t.MiddleCapabilities, c => c == "implementable"),
         });
 
     private static CompositeTemplate GetTemplate(string name) =>
@@ -77,8 +72,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, [middle]);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsPlanning);
-        result.Action.ShouldBe(SdlcAction.Plan);
+        (result is NeedsPlanning).ShouldBeTrue();
     }
 
     // --- Scenario 2: Intermediate plannable routes based on capabilities ---
@@ -86,7 +80,7 @@ public sealed class CrossProcessPhaseDetectorTests
     [Theory]
     [MemberData(nameof(IntermediateNoChildrenData))]
     public void IntermediatePlannable_InProgress_NoChildren_RoutesBasedOnCapabilities(
-        string templateName, string expectedPhase, string expectedAction)
+        string templateName, bool isImplementable)
     {
         var t = GetTemplate(templateName);
         var detector = CreateDetector(t);
@@ -94,8 +88,10 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(middle, []);
 
-        result.Phase.ShouldBe(expectedPhase);
-        result.Action.ShouldBe(expectedAction);
+        if (isImplementable)
+            (result is ReadyForImplementation).ShouldBeTrue();
+        else
+            (result is NeedsSeeding).ShouldBeTrue();
     }
 
     [Theory]
@@ -110,8 +106,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(middle, [leaf1, leaf2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     // --- Scenario 3: Implementable leaf routes based on its own state ---
@@ -126,8 +121,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(leaf, []);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     // --- Scenario 4: All children complete at each level → ReadyForCompletion ---
@@ -144,8 +138,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, [middle1, middle2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Theory]
@@ -160,8 +153,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(middle, [leaf1, leaf2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     // --- Scenario 5: Mixed children states → InProgress ---
@@ -178,8 +170,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, [completedMiddle, proposedMiddle]);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     [Theory]
@@ -194,8 +185,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(middle, [doneLeaf, todoLeaf]);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     // --- Additional: Top-level with all proposed children → ReadyForImplementation ---
@@ -212,8 +202,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, [middle1, middle2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     // --- Scenario 6: Top-level plannable-only in InProgress with no children → NeedsSeeding ---
@@ -228,8 +217,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, []);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        result.Action.ShouldBe(SdlcAction.Seed);
+        (result is NeedsSeeding).ShouldBeTrue();
     }
 
     // --- Scenario 7: Implementable leaf in InProgress → InProgress ---
@@ -244,8 +232,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(leaf, []);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     // --- Scenario 8: Terminal state — Completed → Done ---
@@ -260,8 +247,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.Done);
-        result.Action.ShouldBe(SdlcAction.None);
+        (result is RoutingDone).ShouldBeTrue();
     }
 
     // --- Scenario 9: Terminal state — Removed ---
@@ -276,8 +262,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.Removed);
-        result.Action.ShouldBe(SdlcAction.None);
+        (result is RoutingRemoved).ShouldBeTrue();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -309,8 +294,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(pbi, [task1, task2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -322,8 +306,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(pbi, []);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     [Fact]
@@ -337,8 +320,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(pbi, [doneTask, newTask]);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     // --- PBI with "In Progress" state (distinct from Committed/Approved) ---
@@ -354,8 +336,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(pbi, [task1, task2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -367,8 +348,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(pbi, []);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     // --- Task (implementable-only) with Approved and "In Progress" states ---
@@ -382,8 +362,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(task, []);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     [Fact]
@@ -395,8 +374,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(task, []);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     // --- Epic (plannable-only) with Approved and "In Progress" states ---
@@ -412,8 +390,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, [pbi1, pbi2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -425,8 +402,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, []);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        result.Action.ShouldBe(SdlcAction.Seed);
+        (result is NeedsSeeding).ShouldBeTrue();
     }
 
     [Fact]
@@ -440,8 +416,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, [pbi1, pbi2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -453,8 +428,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, []);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        result.Action.ShouldBe(SdlcAction.Seed);
+        (result is NeedsSeeding).ShouldBeTrue();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -484,8 +458,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(requirement, [task1, task2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -499,8 +472,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(requirement, []);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     [Fact]
@@ -514,8 +486,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(requirement, [doneTask, proposedTask]);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     [Fact]
@@ -528,8 +499,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(task, []);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     [Fact]
@@ -544,8 +514,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, [req1, req2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -558,8 +527,7 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(epic, []);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        result.Action.ShouldBe(SdlcAction.Seed);
+        (result is NeedsSeeding).ShouldBeTrue();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -577,7 +545,6 @@ public sealed class CrossProcessPhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.Unknown);
-        result.Action.ShouldBe(SdlcAction.None);
+        (result is RoutingUnknown).ShouldBeTrue();
     }
 }

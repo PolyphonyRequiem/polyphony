@@ -46,8 +46,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsPlanning);
-        result.Action.ShouldBe(SdlcAction.Plan);
+        (result is NeedsPlanning).ShouldBeTrue();
     }
 
     [Fact]
@@ -58,8 +57,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
-        result.Action.ShouldBe(SdlcAction.Seed);
+        (result is NeedsSeeding).ShouldBeTrue();
     }
 
     [Fact]
@@ -72,8 +70,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, [child1, child2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     [Fact]
@@ -86,8 +83,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, [child1, child2]);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     [Fact]
@@ -100,8 +96,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, [child1, child2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     [Fact]
@@ -114,8 +109,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, [child1, child2]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     // --- Implementable (Task) ---
@@ -128,8 +122,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     [Fact]
@@ -140,8 +133,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.InProgress);
-        result.Action.ShouldBe(SdlcAction.Monitor);
+        (result is ImplementationInProgress).ShouldBeTrue();
     }
 
     // --- Plannable + Implementable (Issue) ---
@@ -154,8 +146,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.NeedsPlanning);
-        result.Action.ShouldBe(SdlcAction.Plan);
+        (result is NeedsPlanning).ShouldBeTrue();
     }
 
     [Fact]
@@ -166,8 +157,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     [Fact]
@@ -179,8 +169,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, [child]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
-        result.Action.ShouldBe(SdlcAction.Implement);
+        (result is ReadyForImplementation).ShouldBeTrue();
     }
 
     [Fact]
@@ -192,8 +181,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, [child]);
 
-        result.Phase.ShouldBe(SdlcPhase.ReadyForCompletion);
-        result.Action.ShouldBe(SdlcAction.Close);
+        (result is ReadyForCompletion).ShouldBeTrue();
     }
 
     // --- Terminal states ---
@@ -206,8 +194,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.Done);
-        result.Action.ShouldBe(SdlcAction.None);
+        (result is RoutingDone).ShouldBeTrue();
     }
 
     [Fact]
@@ -218,8 +205,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.Removed);
-        result.Action.ShouldBe(SdlcAction.None);
+        (result is RoutingRemoved).ShouldBeTrue();
     }
 
     // --- Unknown type ---
@@ -237,8 +223,7 @@ public sealed class PhaseDetectorTests
 
         var result = detector.Detect(item, []);
 
-        result.Phase.ShouldBe(SdlcPhase.Unknown);
-        result.Action.ShouldBe(SdlcAction.None);
+        (result is RoutingUnknown).ShouldBeTrue();
     }
 
     // --- Message populated ---
@@ -250,7 +235,13 @@ public sealed class PhaseDetectorTests
         var item = new WorkItemBuilder().WithType("Epic").WithState("To Do").Build();
 
         var result = detector.Detect(item, []);
+        (result is NeedsPlanning).ShouldBeTrue();
 
-        result.Message.ShouldNotBeNullOrWhiteSpace();
+        var message = result switch
+        {
+            NeedsPlanning d => d.Message,
+            _ => null,
+        };
+        message.ShouldNotBeNullOrWhiteSpace();
     }
 }
