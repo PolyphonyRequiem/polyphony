@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Polyphony.Configuration;
 using Polyphony.Routing;
 using Polyphony.Tests.TestFixtures;
@@ -292,15 +293,9 @@ public sealed class TransitionValidatorTests
         invalid.Message.ShouldContain("child #10");
     }
 
-    private static ValidTransition AssertValid(TransitionOutcome outcome)
-    {
-        (outcome is ValidTransition).ShouldBeTrue();
-        return outcome switch { ValidTransition v => v, _ => throw new InvalidOperationException("unreachable") };
-    }
+    private static ValidTransition AssertValid(TransitionOutcome outcome) =>
+        ((IUnion)outcome).Value.ShouldBeOfType<ValidTransition>();
 
-    private static InvalidTransition AssertInvalid(TransitionOutcome outcome)
-    {
-        (outcome is InvalidTransition).ShouldBeTrue();
-        return outcome switch { InvalidTransition iv => iv, _ => throw new InvalidOperationException("unreachable") };
-    }
+    private static InvalidTransition AssertInvalid(TransitionOutcome outcome) =>
+        ((IUnion)outcome).Value.ShouldBeOfType<InvalidTransition>();
 }
