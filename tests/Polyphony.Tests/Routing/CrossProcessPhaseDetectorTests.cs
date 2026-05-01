@@ -213,4 +213,68 @@ public sealed class CrossProcessPhaseDetectorTests
         result.Phase.ShouldBe(SdlcPhase.ReadyForImplementation);
         result.Action.ShouldBe(SdlcAction.Implement);
     }
+
+    // --- Scenario 6: Top-level plannable-only in InProgress with no children → NeedsSeeding ---
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void TopLevel_InProgress_NoChildren_ReturnsNeedsSeeding(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var detector = CreateDetector(t);
+        var epic = new WorkItemBuilder().WithId(1).WithType(t.TopType).WithState(t.InProgressState).Build();
+
+        var result = detector.Detect(epic, []);
+
+        result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
+        result.Action.ShouldBe(SdlcAction.Seed);
+    }
+
+    // --- Scenario 7: Implementable leaf in InProgress → InProgress ---
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void ImplementableLeaf_InProgress_ReturnsInProgress(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var detector = CreateDetector(t);
+        var leaf = new WorkItemBuilder().WithId(3).WithType(t.LeafType).WithState(t.InProgressState).Build();
+
+        var result = detector.Detect(leaf, []);
+
+        result.Phase.ShouldBe(SdlcPhase.InProgress);
+        result.Action.ShouldBe(SdlcAction.Monitor);
+    }
+
+    // --- Scenario 8: Terminal state — Completed → Done ---
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void AnyItem_InCompleted_ReturnsDone(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var detector = CreateDetector(t);
+        var item = new WorkItemBuilder().WithId(1).WithType(t.TopType).WithState(t.CompletedState).Build();
+
+        var result = detector.Detect(item, []);
+
+        result.Phase.ShouldBe(SdlcPhase.Done);
+        result.Action.ShouldBe(SdlcAction.None);
+    }
+
+    // --- Scenario 9: Terminal state — Removed ---
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void AnyItem_InRemoved_ReturnsRemoved(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var detector = CreateDetector(t);
+        var item = new WorkItemBuilder().WithId(1).WithType(t.LeafType).WithState("Removed").Build();
+
+        var result = detector.Detect(item, []);
+
+        result.Phase.ShouldBe(SdlcPhase.Removed);
+        result.Action.ShouldBe(SdlcAction.None);
+    }
 }
