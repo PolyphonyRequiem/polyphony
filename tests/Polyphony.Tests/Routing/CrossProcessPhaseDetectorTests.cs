@@ -561,4 +561,23 @@ public sealed class CrossProcessPhaseDetectorTests
         result.Phase.ShouldBe(SdlcPhase.NeedsSeeding);
         result.Action.ShouldBe(SdlcAction.Seed);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Unknown phase: type not registered in process config
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Theory]
+    [MemberData(nameof(AllTemplateNames))]
+    public void UnregisteredType_ReturnsUnknown(string templateName)
+    {
+        var t = GetTemplate(templateName);
+        var detector = CreateDetector(t);
+        // "Bug" is not registered in any template config
+        var item = new WorkItemBuilder().WithId(99).WithType("Bug").WithState(t.InProgressState).Build();
+
+        var result = detector.Detect(item, []);
+
+        result.Phase.ShouldBe(SdlcPhase.Unknown);
+        result.Action.ShouldBe(SdlcAction.None);
+    }
 }
