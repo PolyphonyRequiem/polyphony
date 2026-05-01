@@ -1,0 +1,45 @@
+# Scrum process template: Epic → Product Backlog Item → Task
+# States: New, Committed/Approved, In Progress, Done, Removed
+
+process_template: Scrum
+
+types:
+  Epic:
+    capabilities: [plannable]
+    filing_eligible: false
+    max_nesting_depth: 1
+    decomposition_guidance: |
+      Always decompose into Product Backlog Items. Epics are never implemented directly.
+  Product Backlog Item:
+    capabilities: [plannable, implementable]
+    filing_eligible: true
+    max_nesting_depth: 1
+    decomposition_guidance: |
+      Decompose into Tasks when scope exceeds a single PG.
+      Implement directly when the change is focused and fits one PG.
+  Task:
+    capabilities: [implementable]
+    filing_eligible: true
+
+transitions:
+  Epic:
+    begin_planning: In Progress
+    all_children_complete: Done
+    scope_removed: Removed
+  Product Backlog Item:
+    begin_planning: Committed
+    begin_implementation: Committed
+    implementation_complete: Done
+    scope_removed: Removed
+  Task:
+    begin_implementation: In Progress
+    implementation_complete: Done
+    scope_removed: Removed
+
+branch_strategy:
+  feature_branch: "feature/{root_id}-{slug}"
+  planning_branch: "planning/{root_id}"
+  pg_branch: "pg-{n}/{root_id}-{slug}"
+  target: main
+
+platform: github
