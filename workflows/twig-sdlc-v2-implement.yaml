@@ -28,6 +28,10 @@ workflow:
       required: false
       default: resume
       description: "new | redo | resume"
+    feature_branch:
+      type: string
+      required: true
+      description: Feature branch that PG branches target for merge
 
 tools:
   - twig
@@ -35,8 +39,8 @@ tools:
   - filesystem
 
 output:
-  all_pgs_merged: "{{ pg_execution_group.failed_count == 0 }}"
-  completed_pgs: "{{ load_work_tree.output.completed_pgs }}"
+  all_pgs_merged: "{% if pg_execution_group is defined %}{{ pg_execution_group.failed_count == 0 }}{% else %}false{% endif %}"
+  completed_pgs: "{% if load_work_tree is defined %}{{ load_work_tree.output.completed_pgs }}{% else %}[]{% endif %}"
 
 agents:
   # ── Lightweight preflight ──────────────────────────────────────────────
@@ -145,8 +149,7 @@ agents:
       - "-Command"
       - >-
         $tree = '{{ load_work_tree.output | tojson }}' | ConvertFrom-Json;
-        $featureBranch = git rev-parse --abbrev-ref HEAD 2>$null;
-        if (-not $featureBranch) { $featureBranch = 'main' }
+        $featureBranch = '{{ workflow.input.feature_branch }}';
         $pgs = @();
         foreach ($pg in $tree.pr_groups) {
           if (-not $pg.completed) {
