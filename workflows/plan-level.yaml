@@ -74,10 +74,34 @@ agents:
       - "-MaxDepth"
       - "{{ workflow.input.max_depth }}"
     routes:
-      - to: type_loader
+      - to: guidance_loader
         when: "{{ depth_guard.output.allowed == true }}"
       - to: depth_exceeded_gate
         when: "{{ depth_guard.output.allowed == false }}"
+
+  # ── Guidance loader ────────────────────────────────────────────────────
+  #
+  # Loads repo-specific agent guidance markdown from .conductor/agent-guidance/
+  # via load-agent-guidance.ps1. Outputs a JSON role map (keyed by filename
+  # without extension, e.g. "architect", "reviewer"). The architect,
+  # technical_reviewer, and readability_reviewer agents consume their
+  # respective role keys via Jinja2 conditionals so prompts degrade
+  # gracefully when no guidance files exist.
+  #
+  # Invariants:
+  #   Pre:  depth_guard.output.allowed == true.
+  #   Post: output is a JSON object mapping role names to guidance content
+  #         (empty object {} when no agent-guidance directory exists).
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for planning agent prompts
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/load-agent-guidance.ps1"
+    routes:
+      - to: type_loader
 
   # ── Depth exceeded gate ──────────────────────────────────────────────────
   #
@@ -306,6 +330,12 @@ agents:
       | Decomposition | 25% | Are child items well-scoped and appropriately sized? |
       | Alignment | 20% | Does the plan follow type-specific guidance? |
 
+      {% if guidance_loader.output.technical_reviewer is defined and guidance_loader.output.technical_reviewer %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.technical_reviewer }}
+      {% endif %}
+
       ## Output
 
       Return a JSON object:
@@ -355,6 +385,12 @@ agents:
       | Structure | 25% | Does it follow the template structure? |
       | Completeness | 25% | Are acceptance criteria, scope, and goals clear? |
       | Actionability | 20% | Can downstream agents and humans act on it? |
+
+      {% if guidance_loader.output.readability_reviewer is defined and guidance_loader.output.readability_reviewer %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.readability_reviewer }}
+      {% endif %}
 
       ## Output
 
