@@ -8,6 +8,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(HierarchyResult))]
 [JsonSerializable(typeof(HierarchyResult[]))]
 [JsonSerializable(typeof(ConfigValidationResult))]
+[JsonSerializable(typeof(ConfigValidationDiagnostic[]))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

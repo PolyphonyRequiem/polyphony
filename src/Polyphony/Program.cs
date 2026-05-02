@@ -17,5 +17,6 @@ var app = ConsoleApp.Create()
 
 app.Add<RouteCommand>();
 app.Add<ValidateCommand>();
+app.Add<ValidateConfigCommand>();
 app.Add<HierarchyCommand>();
 app.Run(args);
