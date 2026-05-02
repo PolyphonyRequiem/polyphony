@@ -273,3 +273,54 @@ types:
         }
     }
 }
+
+# ── Space-to-dash slug conversion (#2819) ────────────────────────────────────
+
+Describe 'load-type-context.ps1 — space-to-dash slug conversion (#2819)' {
+
+    BeforeEach {
+        $script:TempDir = Join-Path ([System.IO.Path]::GetTempPath()) "load-type-context-slug-$(Get-Random)"
+        New-Item -ItemType Directory -Path (Join-Path $script:TempDir 'work-item-types/templates') -Force | Out-Null
+
+        # File named with dashes, type name has spaces
+        Set-Content -Path (Join-Path $script:TempDir 'work-item-types/task-group.md') -Value 'A Task Group organizes related tasks.'
+        Set-Content -Path (Join-Path $script:TempDir 'work-item-types/templates/task-group-template.md') -Value '## Task Group Template'
+
+        $processConfig = @"
+process_template: Basic
+
+types:
+  Task Group:
+    capabilities: [plannable]
+    filing_eligible: false
+    decomposition_guidance: |
+      Decompose into Tasks.
+"@
+        Set-Content -Path (Join-Path $script:TempDir 'process-config.yaml') -Value $processConfig
+
+        Mock twig {
+            $global:LASTEXITCODE = 0
+            '{"id":77,"title":"My Task Group","type":"Task Group","state":"To Do"}'
+        } -ParameterFilter { $args -contains 'show' }
+    }
+
+    AfterEach {
+        Remove-Item -Path $script:TempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'Loads definition file using dash-separated slug for multi-word type' {
+        $result = & $script:ScriptPath -WorkItemId 77 -ConfigPath $script:TempDir | ConvertFrom-Json
+        $result.type | Should -Be 'Task Group'
+        $result.definition | Should -BeLike '*Task Group organizes*'
+    }
+
+    It 'Loads template file using dash-separated slug for multi-word type' {
+        $result = & $script:ScriptPath -WorkItemId 77 -ConfigPath $script:TempDir | ConvertFrom-Json
+        $result.template | Should -BeLike '*Task Group Template*'
+    }
+
+    It 'Returns decomposition guidance for multi-word type from process-config.yaml' {
+        $result = & $script:ScriptPath -WorkItemId 77 -ConfigPath $script:TempDir | ConvertFrom-Json
+        $result.decomposition_guidance | Should -BeLike '*Decompose into Tasks*'
+    }
+}
