@@ -330,10 +330,10 @@ agents:
       | Decomposition | 25% | Are child items well-scoped and appropriately sized? |
       | Alignment | 20% | Does the plan follow type-specific guidance? |
 
-      {% if guidance_loader.output.technical_reviewer is defined and guidance_loader.output.technical_reviewer %}
+      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
       ## Repo-Specific Guidance
 
-      {{ guidance_loader.output.technical_reviewer }}
+      {{ guidance_loader.output.reviewer }}
       {% endif %}
 
       ## Output
@@ -386,10 +386,10 @@ agents:
       | Completeness | 25% | Are acceptance criteria, scope, and goals clear? |
       | Actionability | 20% | Can downstream agents and humans act on it? |
 
-      {% if guidance_loader.output.readability_reviewer is defined and guidance_loader.output.readability_reviewer %}
+      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
       ## Repo-Specific Guidance
 
-      {{ guidance_loader.output.readability_reviewer }}
+      {{ guidance_loader.output.reviewer }}
       {% endif %}
 
       ## Output
