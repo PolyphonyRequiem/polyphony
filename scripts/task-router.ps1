@@ -101,9 +101,20 @@ try {
 
     $nextItem = $nonDone[0]
 
-    # ── Transition to Doing ───────────────────────────────────────────────────
+    # ── Transition to the per-template "in progress" state ──────────────────
+    # Resolve the state name via polyphony validate (same canonical pattern
+    # used in scripts/scope-closer.ps1:54-60). This is the first live use of
+    # `begin_implementation`; standard template stubs from
+    # scripts/bootstrap-conductor.ps1 already include it for every
+    # implementable type, so a missing-row failure here means the repo's
+    # process-config.yaml was hand-edited to drop the row.
     twig set $nextItem.work_item_id --output json 2>$null | Out-Null
-    twig state Doing --output json 2>$null | Out-Null
+    $validateJson = polyphony validate --work-item $nextItem.work_item_id --event begin_implementation 2>$null
+    $validate = $validateJson | ConvertFrom-Json
+    if (-not $validate.is_valid) {
+        throw "Cannot start task $($nextItem.work_item_id) (event=begin_implementation): $($validate.message)"
+    }
+    twig state $validate.target_state --output json 2>$null | Out-Null
 
     # ── Derive parent container info (nearest plannable ancestor) ─────────────
     $issueId = 0
