@@ -82,7 +82,7 @@ agents:
     routes:
       - to: branch_manager
         when: "{{ pg_router.output.action == 'create_branch' }}"
-      - to: task_router
+      - to: guidance_loader
         when: "{{ pg_router.output.action == 'implement_tasks' }}"
       - to: pr_submit
         when: "{{ pg_router.output.action == 'submit_pr' }}"
@@ -116,6 +116,29 @@ agents:
         }
         if ($LASTEXITCODE -ne 0) { exit 1 }
         @{ branch = $branch; created = ($null -eq $exists) } | ConvertTo-Json
+    routes:
+      - to: guidance_loader
+
+  # ── Guidance loader ────────────────────────────────────────────────────
+  #
+  # Loads repo-specific agent guidance markdown from .conductor/agent-guidance/
+  # via load-agent-guidance.ps1. Outputs a JSON role map (keyed by filename
+  # without extension, e.g. "coder", "reviewer"). The coder and task_reviewer
+  # agents consume their respective role keys via Jinja2 conditionals so
+  # prompts degrade gracefully when no guidance files exist.
+  #
+  # Invariants:
+  #   Pre:  PG branch is checked out.
+  #   Post: output is a JSON object mapping role names to guidance content
+  #         (empty object {} when no agent-guidance directory exists).
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for coder and reviewer prompts
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/load-agent-guidance.ps1"
     routes:
       - to: task_router
 
@@ -195,6 +218,12 @@ agents:
       - Do NOT modify files outside the scope of this task
       - Do NOT skip tests — every implementation must have test coverage
       - Commit messages must reference the ADO work item: `AB#{{ task_router.output.task_id }}`
+
+      {% if guidance_loader.output.coder is defined and guidance_loader.output.coder %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.coder }}
+      {% endif %}
     routes:
       - to: reducer_code
 
@@ -306,6 +335,12 @@ agents:
       - **Approve** if the implementation is correct, well-tested, and meets requirements
       - **Request changes** only for substantive issues (bugs, missing requirements, no tests)
       - Do NOT request changes for style preferences or minor nits
+
+      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.reviewer }}
+      {% endif %}
     routes:
       - to: task_completer
         when: "{{ task_reviewer.output.verdict == 'approved' }}"
