@@ -33,17 +33,17 @@ try {
     if (-not $typeName) {
         throw "Work item $WorkItemId has no type field"
     }
-    $typeLower = $typeName.ToLower()
+    $typeSlug = $typeName.ToLower() -replace '\s+', '-'
 
     # ── Step 2: Read type definition ──────────────────────────────────────
-    $definitionPath = Join-Path $ConfigPath "work-item-types/$typeLower.md"
+    $definitionPath = Join-Path $ConfigPath "work-item-types/$typeSlug.md"
     if (-not (Test-Path $definitionPath)) {
         throw "Type definition not found: $definitionPath"
     }
     $definition = Get-Content $definitionPath -Raw
 
     # ── Step 3: Read plan template (optional) ─────────────────────────────
-    $templatePath = Join-Path $ConfigPath "work-item-types/templates/$typeLower-template.md"
+    $templatePath = Join-Path $ConfigPath "work-item-types/templates/$typeSlug-template.md"
     $template = if (Test-Path $templatePath) {
         Get-Content $templatePath -Raw
     } else {
