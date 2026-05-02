@@ -543,8 +543,8 @@ Configuration is valid.
 
 ```
 Warnings (2):
-  [WRN003] No agent-guidance directory found at '.conductor/agent-guidance'
-  [WRN004] Type 'Task' has no decomposition_guidance (not required for leaf types)
+  [V-9] Type definition file missing: .conductor/work-item-types/task.md
+  [V-11] Agent guidance file missing: .conductor/agent-guidance/architect.md
 Configuration is valid (with warnings).
 ```
 
@@ -555,7 +555,7 @@ address them for better agent behavior.
 
 ```
 Errors (1):
-  [ERR001] process_template is required
+  [V-1] process_template is required.
 Configuration has 1 error(s).
 ```
 
@@ -565,25 +565,25 @@ Errors must be fixed before the workflow will run correctly.
 
 | Rule ID | Meaning | Fix |
 |---------|---------|-----|
-| ERR001 | Missing `process_template` | Add `process_template: <name>` to process-config.yaml |
-| ERR002 | No types defined | Add at least one entry under `types:` |
-| ERR003 | Type has no capabilities | Add `capabilities: [plannable]` or `[implementable]` (or both) |
-| ERR004 | No implementable type | At least one type must have `implementable` capability |
-| ERR005 | No plannable type | At least one type must have `plannable` capability |
-| ERR006 | Missing transitions for type | Add transition mappings under `transitions:` for the type |
-| ERR007 | Transition references unknown type | Ensure all types in `transitions:` exist in `types:` |
-| ERR008 | Missing `branch_strategy` | Add the `branch_strategy:` section |
-| ERR009 | Missing required branch pattern | Include `feature_branch`, `planning_branch`, `pg_branch`, and `target` |
-| ERR010 | Missing `platform` | Add `platform: github` (or `ado`) |
+| V-1 | Missing `process_template` | Add `process_template: <name>` to process-config.yaml |
+| V-2 | No types defined | Add at least one entry under `types:` |
+| V-3 | Type has no capabilities | Add `capabilities: [plannable]` or `[implementable]` (or both) |
+| V-4 | Type has invalid capability value | Use only `plannable` or `implementable` as capability values |
+| V-5 | Type has no transitions | Add transition mappings under `transitions:` for the type |
+| V-6 | Transition references undefined type | Ensure all keys in `transitions:` exist in `types:` |
+| V-7 | Duplicate type name (case-insensitive) | Type names must be unique regardless of case |
+| V-8 | `allowed_child_types` references undefined type | Ensure all `allowed_child_types` values exist in `types:` |
 
 ### Common Validation Warnings
 
 | Rule ID | Meaning | Recommendation |
 |---------|---------|---------------|
-| WRN001 | Missing review policies | Add `review_policies:` for agent/human review control |
-| WRN002 | Type definition file not found | Create the `.md` file in `work-item-types/` |
-| WRN003 | No agent-guidance directory | Create `agent-guidance/` with role-specific guidance |
-| WRN004 | No decomposition guidance | Add `decomposition_guidance:` for plannable types |
+| V-9 | Type definition file missing | Create `.conductor/work-item-types/{slug}.md` for each type |
+| V-10 | Template file missing | Create `.conductor/work-item-types/templates/{slug}-template.md` for each type |
+| V-11 | Architect guidance file missing | Create `.conductor/agent-guidance/architect.md` |
+| V-12 | Coder guidance file missing | Create `.conductor/agent-guidance/coder.md` |
+| V-13 | Reviewer guidance file missing | Create `.conductor/agent-guidance/reviewer.md` |
+| V-14 | Profile file missing | Create `.conductor/profile.yaml` |
 
 ---
 
@@ -636,7 +636,7 @@ and hierarchy analysis. Look for:
 **2. Verify state transitions:**
 
 ```bash
-polyphony validate --work-item <id> --transition <target-state>
+polyphony validate --work-item <id> --event <target-state>
 ```
 
 This checks whether the proposed transition is valid for the work item's type.
