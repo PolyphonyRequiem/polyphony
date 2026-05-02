@@ -358,7 +358,7 @@ agents:
   #   Post: Task is transitioned to Done in ADO; notes added.
   - name: task_completer
     type: script
-    description: Transition completed task to Done and route to next task
+    description: Transition completed task to its template's done state and route to next task
     command: pwsh
     args:
       - "-NoProfile"
@@ -367,8 +367,10 @@ agents:
         $taskId = {{ task_router.output.task_id }};
         twig set $taskId;
         twig note --text 'Task completed and approved by reviewer';
-        twig state Done;
-        @{ task_id = $taskId; completed = $true } | ConvertTo-Json
+        $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
+        if (-not $validate.is_valid) { throw "Cannot transition task ${taskId}: $($validate.message)" };
+        twig state $validate.target_state;
+        @{ task_id = $taskId; completed = $true; target_state = $validate.target_state } | ConvertTo-Json
     routes:
       - to: task_router
 
