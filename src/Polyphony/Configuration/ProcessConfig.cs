@@ -18,6 +18,7 @@ public sealed class TypeConfig
     public int MaxNestingDepth { get; set; } = 1;
     public string? DecompositionGuidance { get; set; }
     public bool SelfReferential { get; set; }
+    public string[] AllowedChildTypes { get; set; } = [];
 }
 
 public sealed class ReviewPolicies
