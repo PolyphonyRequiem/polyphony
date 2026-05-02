@@ -36,6 +36,26 @@ All workflows are registered in the `twig` conductor registry. Use short names �
 | `prompt` | string | — | Natural language description. Creates a new Epic. Forces `intent=new`. |
 | `intent` | string | `resume` | User intent: `new` (fresh start), `redo` (delete and redo), `resume` (pick up where left off). |
 | `plan_path` | string | — | Debugging override: explicit plan file. Only valid with `resume` or `redo`. |
+| `pr_owner` | string | — | **Required.** GitHub owner (org or user) of the PR target repository (e.g. `PolyphonyRequiem`, `azure-core`). Used by every script and prompt that calls the GitHub API or creates PRs — replaces hardcoded values and origin-URL derivation. |
+| `pr_repo_name` | string | — | **Required.** GitHub repository name (without owner) of the PR target (e.g. `twig`, `cloudvault-conductor-registry`). |
+| `gh_user` | string | `""` | Explicit gh CLI user identity (e.g. `dangreen_microsoft`). Pinned via `$env:GH_CONDUCTOR_USER` so the workflow doesn't depend on the (mutable, global) active gh account. Empty = use whichever account is active. |
+
+> **Cross-repo workflows:** when `pr_owner`/`pr_repo_name` differ from your default
+> gh identity (e.g. running against `azure-core/...` while logged in as
+> `PolyphonyRequiem`), pass `gh_user=<account-with-access>` so the workflow uses
+> the right token. `resolve-gh-token.ps1` will fail loudly if the explicit user
+> has no token, instead of silently falling back to the active account and
+> looping forever.
+
+> **MCP server caveat:** the github MCP wrapper reads `$env:GH_CONDUCTOR_USER`
+> from the launching shell's environment (the Copilot SDK has a known bug where
+> MCP server `env:` config doesn't reach the child process). For cross-repo runs,
+> **also export the env var in your shell** before launching:
+>
+> ```powershell
+> $env:GH_CONDUCTOR_USER = "dangreen_microsoft"
+> conductor run twig-sdlc-full@twig --input gh_user=dangreen_microsoft ...
+> ```
 
 > **`skip_plan_review` is removed** — use `intent=resume` instead (default behavior).
 > For new runs from a prompt, `intent=new` is inferred automatically.
@@ -74,14 +94,44 @@ Copy-Item -Recurse ../twig2/.twig .twig
 twig set <ID>
 twig sync
 
-# 4. Run the full SDLC — default intent is "resume"
-conductor run twig-sdlc-full@twig --input work_item_id=<ID> -m tracker=ado -m project_url=https://dev.azure.com/dangreen-msft/Twig -m git_repo=C:\Users\dangreen\projects\twig2 -m workitem_id=<ID> -m worktree_name=twig2-<ID> -m cwd=C:\Users\dangreen\projects\twig2-<ID> --web
+# 4. Pin the gh identity for the MCP server (see "MCP server caveat" above).
+#    Required when the PR target repo isn't accessible from your default gh account.
+$env:GH_CONDUCTOR_USER = "PolyphonyRequiem"
+
+# 5. Run the full SDLC — default intent is "resume"
+conductor run twig-sdlc-full@twig `
+    --input work_item_id=<ID> `
+    --input pr_owner=PolyphonyRequiem `
+    --input pr_repo_name=twig `
+    --input gh_user=PolyphonyRequiem `
+    -m tracker=ado -m project_url=https://dev.azure.com/dangreen-msft/Twig `
+    -m git_repo=C:\Users\dangreen\projects\twig2 -m workitem_id=<ID> `
+    -m worktree_name=twig2-<ID> -m cwd=C:\Users\dangreen\projects\twig2-<ID> --web
 
 # For a brand new work item (no prior work):
-conductor run twig-sdlc-full@twig --input work_item_id=<ID> --input intent=new -m tracker=ado -m project_url=https://dev.azure.com/dangreen-msft/Twig -m git_repo=C:\Users\dangreen\projects\twig2 -m workitem_id=<ID> -m worktree_name=twig2-<ID> -m cwd=C:\Users\dangreen\projects\twig2-<ID> --web
+conductor run twig-sdlc-full@twig `
+    --input work_item_id=<ID> --input intent=new `
+    --input pr_owner=PolyphonyRequiem --input pr_repo_name=twig --input gh_user=PolyphonyRequiem `
+    -m tracker=ado -m project_url=https://dev.azure.com/dangreen-msft/Twig `
+    -m git_repo=C:\Users\dangreen\projects\twig2 -m workitem_id=<ID> `
+    -m worktree_name=twig2-<ID> -m cwd=C:\Users\dangreen\projects\twig2-<ID> --web
 
 # To redo from scratch (deletes existing children/branches):
-conductor run twig-sdlc-full@twig --input work_item_id=<ID> --input intent=redo -m tracker=ado -m project_url=https://dev.azure.com/dangreen-msft/Twig -m git_repo=C:\Users\dangreen\projects\twig2 -m workitem_id=<ID> -m worktree_name=twig2-<ID> -m cwd=C:\Users\dangreen\projects\twig2-<ID> --web
+conductor run twig-sdlc-full@twig `
+    --input work_item_id=<ID> --input intent=redo `
+    --input pr_owner=PolyphonyRequiem --input pr_repo_name=twig --input gh_user=PolyphonyRequiem `
+    -m tracker=ado -m project_url=https://dev.azure.com/dangreen-msft/Twig `
+    -m git_repo=C:\Users\dangreen\projects\twig2 -m workitem_id=<ID> `
+    -m worktree_name=twig2-<ID> -m cwd=C:\Users\dangreen\projects\twig2-<ID> --web
+
+# Cross-repo example: target azure-core/cloudvault-conductor-registry from a
+# PolyphonyRequiem-default checkout. Note the gh_user must have access.
+$env:GH_CONDUCTOR_USER = "dangreen_microsoft"
+conductor run twig-sdlc-full@twig `
+    --input work_item_id=2812 `
+    --input pr_owner=azure-core --input pr_repo_name=cloudvault-conductor-registry `
+    --input gh_user=dangreen_microsoft `
+    -m tracker=ado ... --web
 ```
 
 ## Launching Multiple Runs
