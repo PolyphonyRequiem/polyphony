@@ -40,24 +40,28 @@ $script:TemplateTypes = @{
     'CMMI'  = @('Epic', 'Requirement', 'Task')
 }
 
-# State mappings per template for transitions
+# State mappings per template for transitions.
+# 'removed' is omitted for Basic, which has no Removed state (state set: To Do, Doing, Done).
 $script:TemplateTransitions = @{
     'Basic' = @{
         active = 'Doing'
         done   = 'Done'
     }
     'Agile' = @{
-        active = 'Active'
-        done   = 'Closed'
+        active  = 'Active'
+        done    = 'Closed'
+        removed = 'Removed'
     }
     'Scrum' = @{
-        active = 'In Progress'
-        done   = 'Done'
+        active     = 'In Progress'
+        done       = 'Done'
         mid_active = 'Committed'
+        removed    = 'Removed'
     }
     'CMMI' = @{
-        active = 'Active'
-        done   = 'Closed'
+        active  = 'Active'
+        done    = 'Closed'
+        removed = 'Removed'
     }
 }
 
@@ -114,8 +118,9 @@ function New-ProcessConfigYaml {
     )
 
     $transitions = $script:TemplateTransitions[$Template]
-    $activeState = $transitions.active
-    $doneState   = $transitions.done
+    $activeState  = $transitions.active
+    $doneState    = $transitions.done
+    $removedState = if ($transitions.ContainsKey('removed')) { $transitions.removed } else { $null }
 
     $lines = @()
     $lines += "process_template: $Template"
@@ -161,14 +166,14 @@ function New-ProcessConfigYaml {
             # Top-level
             $lines += "    begin_planning: $activeState"
             $lines += "    all_children_complete: $doneState"
-            $lines += '    scope_removed: Removed'
+            if ($removedState) { $lines += "    scope_removed: $removedState" }
         }
         elseif ($i -eq ($Types.Count - 1)) {
             # Leaf
             $taskActive = if ($transitions.ContainsKey('mid_active')) { $activeState } else { $activeState }
             $lines += "    begin_implementation: $activeState"
             $lines += "    implementation_complete: $doneState"
-            $lines += '    scope_removed: Removed'
+            if ($removedState) { $lines += "    scope_removed: $removedState" }
         }
         else {
             # Mid-level
@@ -176,7 +181,7 @@ function New-ProcessConfigYaml {
             $lines += "    begin_planning: $midActive"
             $lines += "    begin_implementation: $midActive"
             $lines += "    implementation_complete: $doneState"
-            $lines += '    scope_removed: Removed'
+            if ($removedState) { $lines += "    scope_removed: $removedState" }
         }
     }
 
