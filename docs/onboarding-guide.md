@@ -853,3 +853,53 @@ Use this checklist when onboarding a new repo:
 - [ ] Fix any errors, review warnings
 - [ ] Run `twig-sdlc-v2-full@twig --work-item <id>` on a test work item
 - [ ] Verify routing, agent behavior, and PR lifecycle work correctly
+
+---
+
+## E2E Validation Results — Cloudvault (May 2026)
+
+A full end-to-end validation of the type-agnostic SDLC pipeline was run against
+**cloudvault** (CMMI process template) using work items from the `dangreen-msft/Twig`
+ADO project. All validations passed.
+
+### Polyphony Routing Validation (AB#2821)
+
+| Command | Input Type | Expected Capability | Result |
+|---------|-----------|---------------------|--------|
+| `polyphony route` | Scenario | plannable, implementable | ✅ Pass |
+| `polyphony route` | Deliverable | actionable | ✅ Pass |
+| `polyphony route` | Task | implementable | ✅ Pass |
+| `polyphony validate --event begin_planning` | Scenario (Proposed) | transition allowed | ✅ Pass |
+| `polyphony validate --event begin_planning` | Task (To Do → Closed) | transition rejected | ✅ Pass |
+| `polyphony hierarchy --depth 6` | Scenario (composite) | recursive Scenario→Scenario discovery | ✅ Pass |
+| `polyphony hierarchy --depth 6` | Scenario→Deliverable→Task | leaf chain enumeration | ✅ Pass |
+
+Key findings:
+- `self_referential: true` on Scenario correctly enables recursive Scenario→Scenario traversal.
+- `max_nesting_depth: 2` is honored — hierarchy walker stops at depth boundary.
+- TaskGroup under Scenario and TaskGroup under Deliverable both route to `actionable` correctly.
+- No Polyphony routing engine code changes were required for cloudvault compatibility.
+
+### End-to-End SDLC Workflow Run (AB#2822)
+
+A full `twig-sdlc-v2-full@twig` run was executed against a real cloudvault Scenario work item
+with the following phases completing successfully:
+
+| Phase | Workflow | Result |
+|-------|----------|--------|
+| Planning | `plan-level.yaml` — recursive Scenario→Scenario→Deliverable decomposition | ✅ Pass |
+| Seeding | Work tree seeder created cloudvault ADO items from plan | ✅ Pass |
+| Implementation | `implement-pg.yaml` — domain-aware coder with cloudvault agent guidance | ✅ Pass |
+| Close-out | `close-out.yaml` — items closed, filing observations created | ✅ Pass |
+
+Key findings:
+- `load-agent-guidance.ps1` correctly loads cloudvault architect/coder guidance and injects
+  it into agent prompts.
+- `load-type-context.ps1` loads `task-group.md` (space→hyphen slug normalization from
+  PG-4 fix is working correctly).
+- Recursive planning handled variable-depth Scenario decomposition without workflow code
+  changes.
+- PG implementation handled both Deliverable→Task and TaskGroup→Task patterns.
+- All cloudvault work items closed out correctly via the generic close-out workflow.
+- No changes to the Polyphony routing engine or generic v2 scripts were required (only
+  the `load-type-context.ps1` fix from PG-4 was needed).
