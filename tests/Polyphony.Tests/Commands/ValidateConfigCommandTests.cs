@@ -13,7 +13,6 @@ namespace Polyphony.Tests.Commands;
 /// </summary>
 public sealed class ValidateConfigCommandTests : IDisposable
 {
-    private static readonly object ConsoleLock = new();
     private static readonly string FixturesDir = Path.Combine(
         AppContext.BaseDirectory, "TestFixtures", "ProcessConfigs");
 
@@ -38,7 +37,7 @@ public sealed class ValidateConfigCommandTests : IDisposable
 
     private static (int ExitCode, string Output) CaptureConsole(Func<int> action)
     {
-        lock (ConsoleLock)
+        lock (ConsoleTestLock.Lock)
         {
             using var writer = new StringWriter();
             var original = Console.Out;
