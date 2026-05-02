@@ -13,7 +13,6 @@ namespace Polyphony.Tests.Commands;
 /// </summary>
 public abstract class CommandTestBase : IDisposable
 {
-    private static readonly object ConsoleLock = new();
     private static readonly object InitLock = new();
     private static bool s_sqliteInitialized;
 
@@ -35,7 +34,7 @@ public abstract class CommandTestBase : IDisposable
     /// </summary>
     protected static (int ExitCode, string Output) CaptureConsole(Func<int> action)
     {
-        lock (ConsoleLock)
+        lock (ConsoleTestLock.Lock)
         {
             using var writer = new StringWriter();
             var original = Console.Out;
@@ -60,7 +59,7 @@ public abstract class CommandTestBase : IDisposable
     {
         // Acquire the lock synchronously, then run the async action inside it.
         // Safe because command methods are CPU-bound once the walker completes.
-        Monitor.Enter(ConsoleLock);
+        Monitor.Enter(ConsoleTestLock.Lock);
         try
         {
             using var writer = new StringWriter();
@@ -78,7 +77,7 @@ public abstract class CommandTestBase : IDisposable
         }
         finally
         {
-            Monitor.Exit(ConsoleLock);
+            Monitor.Exit(ConsoleTestLock.Lock);
         }
     }
 

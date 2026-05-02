@@ -2,6 +2,7 @@ namespace Polyphony.Configuration;
 
 public sealed class ProcessConfig
 {
+    public int SchemaVersion { get; set; }
     public string ProcessTemplate { get; set; } = "";
     public Dictionary<string, TypeConfig> Types { get; set; } = new();
     public Dictionary<string, Dictionary<string, string>> Transitions { get; set; } = new();
@@ -16,6 +17,8 @@ public sealed class TypeConfig
     public bool FilingEligible { get; set; }
     public int MaxNestingDepth { get; set; } = 1;
     public string? DecompositionGuidance { get; set; }
+    public bool SelfReferential { get; set; }
+    public string[] AllowedChildTypes { get; set; } = [];
 }
 
 public sealed class ReviewPolicies

@@ -18,7 +18,14 @@ public static class ProcessConfigLoader
             .IgnoreUnmatchedProperties()
             .Build();
 
-        return deserializer.Deserialize<ProcessConfig>(yaml)
+        var config = deserializer.Deserialize<ProcessConfig>(yaml)
             ?? throw new InvalidOperationException("Failed to parse process config");
+
+        if (config.SchemaVersion > 1)
+            throw new InvalidOperationException(
+                $"Unsupported process config schema version {config.SchemaVersion}. " +
+                "This version of Polyphony supports schema_version 0 (absent) and 1.");
+
+        return config;
     }
 }

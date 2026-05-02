@@ -31,6 +31,96 @@ public sealed class ProcessConfigLoaderTests
         config.Transitions.ShouldContainKey("Epic");
         config.Transitions["Epic"]["begin_planning"].ShouldBe("Doing");
     }
+
+    [Fact]
+    public void Load_SchemaVersion1_LoadsSuccessfully()
+    {
+        var path = WriteTempConfig("""
+            schema_version: 1
+            process_template: Basic
+            types:
+              Task:
+                capabilities: [implementable]
+            transitions: {}
+            """);
+
+        var config = ProcessConfigLoader.Load(path);
+
+        config.SchemaVersion.ShouldBe(1);
+        config.ProcessTemplate.ShouldBe("Basic");
+    }
+
+    [Fact]
+    public void Load_SchemaVersion99_ThrowsWithDescriptiveMessage()
+    {
+        var path = WriteTempConfig("""
+            schema_version: 99
+            process_template: Basic
+            types: {}
+            transitions: {}
+            """);
+
+        var ex = Should.Throw<InvalidOperationException>(() => ProcessConfigLoader.Load(path));
+        ex.Message.ShouldContain("99");
+        ex.Message.ShouldContain("Unsupported");
+    }
+
+    [Fact]
+    public void Load_AbsentSchemaVersion_DefaultsToZeroAndLoads()
+    {
+        var path = WriteTempConfig("""
+            process_template: Basic
+            types:
+              Task:
+                capabilities: [implementable]
+            transitions: {}
+            """);
+
+        var config = ProcessConfigLoader.Load(path);
+
+        config.SchemaVersion.ShouldBe(0);
+        config.ProcessTemplate.ShouldBe("Basic");
+    }
+
+    [Fact]
+    public void Load_SelfReferential_DefaultsToFalse()
+    {
+        var path = WriteTempConfig("""
+            process_template: Basic
+            types:
+              Task:
+                capabilities: [implementable]
+            transitions: {}
+            """);
+
+        var config = ProcessConfigLoader.Load(path);
+
+        config.Types["Task"].SelfReferential.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Load_SelfReferentialTrue_ParsesCorrectly()
+    {
+        var path = WriteTempConfig("""
+            process_template: Basic
+            types:
+              Scenario:
+                capabilities: [plannable]
+                self_referential: true
+            transitions: {}
+            """);
+
+        var config = ProcessConfigLoader.Load(path);
+
+        config.Types["Scenario"].SelfReferential.ShouldBeTrue();
+    }
+
+    private static string WriteTempConfig(string yaml)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"polyphony-test-{Guid.NewGuid()}.yaml");
+        File.WriteAllText(path, yaml);
+        return path;
+    }
 }
 
 internal static class TestHelpers
