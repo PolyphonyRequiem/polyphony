@@ -33,6 +33,15 @@ polyphony validate --work-item 1234 --event begin_planning
 polyphony hierarchy --work-item 1234 --depth 3
 ```
 
+## Commands Reference
+
+| Command                | Description                                                      |
+|-----------------------|------------------------------------------------------------------|
+| `polyphony health`    | Run environment and configuration diagnostics.                    |
+| `polyphony route`     | Determine routing for a work item.                                |
+| `polyphony validate`  | Validate a state transition for a work item.                      |
+| `polyphony hierarchy` | Display work item hierarchy with role annotations.                |
+
 ## Health Command
 
 The `polyphony health` command runs a suite of diagnostics to verify your environment and configuration. It checks for:
