@@ -16,9 +16,9 @@ Severity legend: ★ nuisance · ★★ silent wrong-answer risk · ★★★ wo
 | ★★★ | `ValidationError: missing field <X>` after the LLM responded with most fields | Every declared `output:` field is required; no optional-field syntax exists | [M2](m02-llm-output-schemas.md) |
 | ★★★ | `TemplateError: no filter named 'from_json'` or `'tojson'` | Neither filter is registered; only `json` and custom `default` are | [M3](m03-eval-context.md) |
 | ★★★ | `for_each source: "{{ ... }}"` rejected at config load with identifier-check error | `source:` is a bare dotted path, not a Jinja expression | [M8](m08-parallel-and-foreach.md) |
-| ★★★ | `for_each` body with inline `type: workflow` rejected by validator | Inline sub-workflow fan-out not supported; needs script wrapper or static parallel block | [M8](m08-parallel-and-foreach.md) |
+| ★★★ | `for_each` body with inline `type: workflow` rejected by validator | Originally unsupported; **fixed in [conductor PR #102](https://github.com/microsoft/conductor/pull/102)** — sub-workflows now allowed in `for_each` with `input_mapping` rendered against loop variables | [M8](m08-parallel-and-foreach.md) |
 | ★★★ | `TemplateError` when reading `group.failed_count` / `succeeded_count` | Groups expose only `outputs`/`errors`/`count`; derive counts as `errors \| length` | [M8](m08-parallel-and-foreach.md) |
-| ★★ | Workflow-scope `output: x: "{{ a == b }}"` arrives at parent as truthy `"True"`/`"False"` string | `_maybe_parse_json` only coerces lowercase; Python booleans render capital | [M7](m07-output-map-vs-schema.md) |
+| ★★ | Workflow-scope `output: x: "{{ a == b }}"` arrives at parent as truthy `"True"`/`"False"` string | `_maybe_parse_json` only coerced lowercase; **fixed in [conductor PR #139](https://github.com/microsoft/conductor/pull/139)** — Python literals (`True`/`False`/`None`) now coerce too | [M7](m07-output-map-vs-schema.md) |
 | ★ | `context_window: 1000000` (or any other non-schema field) on an agent silently ignored | Not a recognized `AgentDef` field; no warning at validate | (no full doc; cite `config/schema.py` AgentDef) |
 | ★★★ | `ValueError: No matching route found.` after a script returns an unexpected value | Routes don't cover the full output domain; no catch-all | [M4](m04-routing-rules.md) |
 | ★★★ | Workflow ends silently at an agent, parent can't read its output | Agent has no `routes:` table → defaults to `$end` | [M4](m04-routing-rules.md) |
@@ -29,6 +29,7 @@ Severity legend: ★ nuisance · ★★ silent wrong-answer risk · ★★★ wo
 | ★★★ | `TemplateError` when reading `parallel_group.output.foo` | Parallel/for-each groups have `outputs:`/`errors:`/`count:`, no `output:` key | [M8](m08-parallel-and-foreach.md) |
 | ★★★ | For-each loop body sees wrong values for `workflow` / `output` / `_index` | Used a reserved name as `as:` — silently shadowed | [M8](m08-parallel-and-foreach.md) |
 | ★★★ | `FileNotFoundError: [WinError 2]` for `command: foo` on Windows | `foo.cmd`/`foo.bat` on PATH; conductor doesn't honor PATHEXT | [M6](m06-cross-platform.md) |
+| ★★★ | `ConfigurationError: Required environment variable '<your PS variable>' is not set` at workflow load | PowerShell `${var}` brace-form variable refs in script step `args:` collide with conductor's `ENV_VAR_PATTERN`. Use `$($var)` subexpression form | [M6](m06-cross-platform.md) |
 | ★★ | `when: "{{ output.notes }}"` fires when `notes == "None"` or whitespace | `evaluate_condition` coerces non-empty strings to `True` | [M3](m03-eval-context.md) |
 | ★★ | Sub-workflow output `version: "1"` arrives at parent as `int(1)` | Workflow-scope `output:` auto-coerces JSON/booleans/numbers | [M7](m07-output-map-vs-schema.md), [M9](m09-limits-retries-checkpoints.md) |
 | ★★ | Sub-workflow's `<sub>.output.field` evaluates to undefined | Sub-workflow forgot to export `field:` in its workflow-scope `output:` map | [M7](m07-output-map-vs-schema.md) |
