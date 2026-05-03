@@ -1,6 +1,6 @@
 ---
 name: conductor-design
-description: Design principles and architectural guidance for conductor SDLC workflows. Load when designing, reviewing, or modifying conductor workflow YAMLs, agent prompts, or deterministic scripts. These principles govern how workflows handle state, routing, re-entry, and human interaction.
+description: Design principles and architectural guidance for conductor SDLC workflows. Load when designing, reviewing, or modifying conductor workflow YAMLs, agent prompts, or deterministic scripts. These principles govern how workflows handle state, routing, re-entry, and human interaction. For runtime/plumbing concerns (output schemas, route mechanics, models, cross-platform invocation), load `conductor-mechanics` instead.
 ---
 
 # Conductor SDLC Workflow Design Principles
@@ -11,6 +11,25 @@ change that violates a principle requires an explicit exception with justificati
 
 For detailed rationale, examples, and implications of each principle, see the
 individual documents in the `references/` directory.
+
+---
+
+## When to load this skill (vs `conductor-mechanics`)
+
+| Change type | Load this | Load `conductor-mechanics` |
+|---|---|---|
+| Should this be a script or an LLM agent? | ✅ | — |
+| Where should a gate go in the flow? | ✅ | — |
+| Should this rubric have 4 or 5 dimensions? | ✅ | — |
+| Is this re-entry pattern correct? | ✅ | — |
+| Adding/editing an agent's `output:` schema | — | ✅ |
+| Changing a route `when:` condition | — | ✅ |
+| Choosing a model | — | ✅ |
+| Setting limits, retries, parallel groups | — | ✅ |
+| Cross-platform script invocation | — | ✅ |
+
+Plumbing changes don't need to re-justify the design. Design changes don't
+need to re-derive the runtime contract. Use the right skill for each.
 
 ---
 
