@@ -136,3 +136,12 @@ Gate prompts are Jinja2 templates rendered as Markdown. Templates own layout (no
 JSON dumps), surface clickable artifact links, and consume structured agent outputs.
 
 → [Full details](references/p13-human-readable-gates.md)
+
+## P14: Resource Placement
+
+Every artifact has exactly one home, determined by who customizes it and who
+consumes it. Workflow scripts live in the registry alongside the workflows that
+invoke them (via `{{ workflow.dir }}/../scripts/`); per-consumer config lives in
+the consumer repo's `.conductor/`. No file lives in two places.
+
+→ [Full details](references/p14-resource-placement.md)

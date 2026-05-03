@@ -244,4 +244,127 @@ public sealed class PhaseDetectorTests
         };
         message.ShouldNotBeNullOrWhiteSpace();
     }
+
+    // --- Tag-aware: polyphony:planned (state-machine bypass for stuck Proposed) ---
+
+    [Fact]
+    public void Detect_EpicInProposedWithPlannedTagAndChildren_ReturnsReadyForImplementation()
+    {
+        // Regression: Epic was planned (children seeded, parent tagged), but
+        // its state never transitioned out of "To Do". Without the tag check,
+        // it would route back to NeedsPlanning forever.
+        var detector = CreateDetector();
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithState("To Do").WithTags("polyphony:planned").Build();
+        var child1 = new WorkItemBuilder().WithId(2).WithType("Task").WithState("To Do").Build();
+        var child2 = new WorkItemBuilder().WithId(3).WithType("Task").WithState("To Do").Build();
+
+        var result = detector.Detect(item, [child1, child2]);
+
+        (result is ReadyForImplementation).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Detect_IssueInProposedWithPlannedTagNoChildren_ReturnsReadyForImplementation()
+    {
+        // Atomic case: Issue is plannable+implementable, architect emitted no
+        // tasks (atomic-by-design), seeder set the tag. State stuck in "To Do".
+        var detector = CreateDetector();
+        var item = new WorkItemBuilder()
+            .WithType("Issue").WithState("To Do").WithTags("polyphony:planned").Build();
+
+        var result = detector.Detect(item, []);
+
+        (result is ReadyForImplementation).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Detect_EpicInProposedWithPlannedTagNoChildren_ReturnsNeedsSeeding()
+    {
+        // Anomaly: plannable-only type (Epic) was tagged but has no children —
+        // architect emitted [] for a type that requires decomposition. Surface
+        // as NeedsSeeding so the bug is visible rather than silently advancing.
+        var detector = CreateDetector();
+        var item = new WorkItemBuilder()
+            .WithType("Epic").WithState("To Do").WithTags("polyphony:planned").Build();
+
+        var result = detector.Detect(item, []);
+
+        (result is NeedsSeeding).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Detect_EpicInProposedWithoutPlannedTag_StillReturnsNeedsPlanning()
+    {
+        // Sanity check: the tag is required — an empty tags field does not
+        // change the legacy NeedsPlanning behavior.
+        var detector = CreateDetector();
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithState("To Do").Build();
+        var child = new WorkItemBuilder().WithId(2).WithType("Task").WithState("To Do").Build();
+
+        var result = detector.Detect(item, [child]);
+
+        (result is NeedsPlanning).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Detect_PlannedTagMixedWithOtherTags_StillRecognized()
+    {
+        // System.Tags is a semicolon-separated string; the planned tag may be
+        // surrounded by other tags (e.g. legacy "twig") with arbitrary spacing.
+        var detector = CreateDetector();
+        var item = new WorkItemBuilder()
+            .WithType("Issue").WithState("To Do")
+            .WithTags("twig; polyphony:planned ; some-other-tag").Build();
+
+        var result = detector.Detect(item, []);
+
+        (result is ReadyForImplementation).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Detect_PlannedTagCaseInsensitive()
+    {
+        var detector = CreateDetector();
+        var item = new WorkItemBuilder()
+            .WithType("Issue").WithState("To Do").WithTags("Polyphony:Planned").Build();
+
+        var result = detector.Detect(item, []);
+
+        (result is ReadyForImplementation).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Detect_PartialTagMatchDoesNotTrigger()
+    {
+        // "polyphony:planned-foo" must not match "polyphony:planned".
+        var detector = CreateDetector();
+        var item = new WorkItemBuilder()
+            .WithType("Epic").WithState("To Do").WithTags("polyphony:planned-foo").Build();
+
+        var result = detector.Detect(item, []);
+
+        (result is NeedsPlanning).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Detect_EpicInDoingWithPlannedTagAndChildren_BehavesIdenticallyToUntagged()
+    {
+        // Once state has transitioned to Doing, the tag is informational only —
+        // existing children-classification logic dominates.
+        var detector = CreateDetector();
+        var taggedItem = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithState("Doing").WithTags("polyphony:planned").Build();
+        var untaggedItem = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithState("Doing").Build();
+        var child1 = new WorkItemBuilder().WithId(2).WithType("Task").WithState("Done").Build();
+        var child2 = new WorkItemBuilder().WithId(3).WithType("Task").WithState("Done").Build();
+
+        var taggedResult = detector.Detect(taggedItem, [child1, child2]);
+        var untaggedResult = detector.Detect(untaggedItem, [child1, child2]);
+
+        taggedResult.GetType().ShouldBe(untaggedResult.GetType());
+        (taggedResult is ReadyForCompletion).ShouldBeTrue();
+    }
 }
