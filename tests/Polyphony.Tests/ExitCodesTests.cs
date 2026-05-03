@@ -41,7 +41,8 @@ public sealed class ExitCodesTests
             ExitCodes.Success,
             ExitCodes.RoutingFailure,
             ExitCodes.ConfigError,
-            ExitCodes.CacheError
+            ExitCodes.CacheError,
+            ExitCodes.HealthCheckFailed
         };
 
         codes.ShouldBeUnique();
@@ -52,6 +53,7 @@ public sealed class ExitCodesTests
     [InlineData(nameof(ExitCodes.RoutingFailure), 1)]
     [InlineData(nameof(ExitCodes.ConfigError), 2)]
     [InlineData(nameof(ExitCodes.CacheError), 3)]
+    [InlineData(nameof(ExitCodes.HealthCheckFailed), 4)]
     public void ExitCode_MatchesDocumentedScheme(string name, int expected)
     {
         var actual = name switch
@@ -60,6 +62,7 @@ public sealed class ExitCodesTests
             nameof(ExitCodes.RoutingFailure) => ExitCodes.RoutingFailure,
             nameof(ExitCodes.ConfigError) => ExitCodes.ConfigError,
             nameof(ExitCodes.CacheError) => ExitCodes.CacheError,
+            nameof(ExitCodes.HealthCheckFailed) => ExitCodes.HealthCheckFailed,
             _ => throw new ArgumentOutOfRangeException(nameof(name))
         };
 
