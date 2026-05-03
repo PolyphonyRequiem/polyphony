@@ -50,7 +50,14 @@ public sealed class JsonOutputContractTests : CommandTestBase
         Directory.CreateDirectory(tempDir);
         var configPath = Path.Combine(tempDir, "process-config.yaml");
         File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
-        var cmd = new HealthCommand();
+        // Inject a healthy tool checker so the success exit code is deterministic
+        // regardless of whether `twig` / `git` are on PATH in the CI runner.
+        var cmd = new HealthCommand(tool => new HealthCheckResult
+        {
+            Name = tool,
+            Success = true,
+            Message = "mocked"
+        });
 
         // Act
         var (exitCode, output) = CaptureConsole(() => cmd.Health(configPath));

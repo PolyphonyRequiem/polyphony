@@ -15,7 +15,14 @@ public sealed class HealthCommandTests
         Directory.CreateDirectory(tempDir);
         var configPath = Path.Combine(tempDir, "process-config.yaml");
         File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
-        var cmd = new HealthCommand();
+        // Inject a tool checker that reports both `twig` and `git` healthy so
+        // the test does not depend on the CI runner having those binaries.
+        var cmd = new HealthCommand(tool => new HealthCheckResult
+        {
+            Name = tool,
+            Success = true,
+            Message = "mocked"
+        });
 
         // Act
         var (exitCode, output) = CaptureConsole(() => cmd.Health(configPath));
@@ -25,8 +32,8 @@ public sealed class HealthCommandTests
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.HealthResult);
         result.ShouldNotBeNull();
         result.Checks.ShouldContain(c => c.Name == "process-config" && c.Success);
-        result.Checks.ShouldContain(c => c.Name == "twig");
-        result.Checks.ShouldContain(c => c.Name == "git");
+        result.Checks.ShouldContain(c => c.Name == "twig" && c.Success);
+        result.Checks.ShouldContain(c => c.Name == "git" && c.Success);
         result.Os.ShouldNotBeNullOrEmpty();
         result.Architecture.ShouldNotBeNullOrEmpty();
         result.DotnetVersion.ShouldNotBeNullOrEmpty();

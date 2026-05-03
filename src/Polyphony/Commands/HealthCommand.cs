@@ -10,6 +10,18 @@ namespace Polyphony.Commands;
 /// </summary>
 public sealed class HealthCommand
 {
+    private readonly Func<string, HealthCheckResult> _checkTool;
+
+    // Single ctor (ConsoleAppFramework CAF011 — Add<T> rejects multiple ctors).
+    // The optional `toolChecker` is a test seam: production calls pass nothing
+    // (DI does not register `Func<string, HealthCheckResult>`, so the default
+    // null falls through to `DefaultCheckTool`), and unit tests can inject a
+    // healthy stub so they don't depend on `twig` / `git` being on PATH in CI.
+    public HealthCommand(Func<string, HealthCheckResult>? toolChecker = null)
+    {
+        _checkTool = toolChecker ?? DefaultCheckTool;
+    }
+
     [Command("health")]
     public int Health(string config = ".conductor/process-config.yaml")
     {
@@ -49,9 +61,9 @@ public sealed class HealthCommand
         }
 
         // Check twig on PATH
-        checks.Add(CheckTool("twig"));
+        checks.Add(_checkTool("twig"));
         // Check git on PATH
-        checks.Add(CheckTool("git"));
+        checks.Add(_checkTool("git"));
 
         // OS/arch/dotnet/polyphony version
         var result = new HealthResult
@@ -67,7 +79,7 @@ public sealed class HealthCommand
         return result.AllCriticalPassed ? ExitCodes.Success : ExitCodes.HealthCheckFailed;
     }
 
-    private static HealthCheckResult CheckTool(string tool)
+    private static HealthCheckResult DefaultCheckTool(string tool)
     {
         try
         {
