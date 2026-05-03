@@ -26,4 +26,9 @@ public static class ExitCodes
     /// Twig SQLite cache is inaccessible or the requested work item is not found.
     /// </summary>
     public const int CacheError = 3;
+
+    /// <summary>
+    /// One or more critical health checks failed (polyphony health).
+    /// </summary>
+    public const int HealthCheckFailed = 4;
 }

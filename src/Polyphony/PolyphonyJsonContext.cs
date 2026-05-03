@@ -7,6 +7,8 @@ namespace Polyphony;
 [JsonSerializable(typeof(ValidateResult))]
 [JsonSerializable(typeof(HierarchyResult))]
 [JsonSerializable(typeof(HierarchyResult[]))]
+[JsonSerializable(typeof(HealthResult))]
+[JsonSerializable(typeof(HealthCheckResult))]
 [JsonSerializable(typeof(ConfigValidationResult))]
 [JsonSerializable(typeof(ConfigValidationDiagnostic[]))]
 [JsonSourceGenerationOptions(
