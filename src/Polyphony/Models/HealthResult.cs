@@ -18,5 +18,5 @@ public sealed record HealthResult
     public bool AllCriticalPassed => Checks.All(c => c.Success || !IsCritical(c.Name));
 
     private static bool IsCritical(string name) =>
-        name is "process-config" or "twig" or "git";
+        name is "process-config" or "twig" or "git" or "dotnet-version" or "aot-support" or "sqlite" or "sqlite-wal" or "yamldotnet";
 }

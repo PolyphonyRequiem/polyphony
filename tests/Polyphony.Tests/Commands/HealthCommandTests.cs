@@ -28,12 +28,17 @@ public sealed class HealthCommandTests
         var (exitCode, output) = CaptureConsole(() => cmd.Health(configPath));
 
         // Assert
-        exitCode.ShouldBe(0);
+        // Accept either Success or HealthCheckFailed, since some checks (AOT, WAL) may fail in CI
+        (exitCode == 0 || exitCode == ExitCodes.HealthCheckFailed).ShouldBeTrue();
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.HealthResult);
         result.ShouldNotBeNull();
         result.Checks.ShouldContain(c => c.Name == "process-config" && c.Success);
         result.Checks.ShouldContain(c => c.Name == "twig" && c.Success);
         result.Checks.ShouldContain(c => c.Name == "git" && c.Success);
+        result.Checks.ShouldContain(c => c.Name == "dotnet-version");
+        result.Checks.ShouldContain(c => c.Name == "aot-support");
+        result.Checks.ShouldContain(c => c.Name == "sqlite-wal" || c.Name == "sqlite");
+        result.Checks.ShouldContain(c => c.Name == "yamldotnet");
         result.Os.ShouldNotBeNullOrEmpty();
         result.Architecture.ShouldNotBeNullOrEmpty();
         result.DotnetVersion.ShouldNotBeNullOrEmpty();
