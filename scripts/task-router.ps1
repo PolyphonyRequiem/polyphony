@@ -10,16 +10,31 @@
 .PARAMETER WorkItemId
     ADO work item ID (root of the hierarchy).
 .PARAMETER PGName
-    PR Group name (e.g., PG-1) to scope task selection to.
+    PR Group name (e.g., PG-1) to scope task selection to. Mutually exclusive
+    with -PgNumber; one of the two must be provided. Preserved for direct
+    invocation, scripted callers, and the existing test suite.
+.PARAMETER PgNumber
+    PR Group number (e.g. 1 for PG-1). Convenience parameter for workflow
+    YAML callers that already track the PG as an integer (see
+    implement-pg.yaml's pg_router/task_router agents). When supplied,
+    PGName is derived as "PG-$PgNumber".
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][int]$WorkItemId,
-    [Parameter(Mandatory)][string]$PGName
+    [Parameter()][string]$PGName,
+    [Parameter()][int]$PgNumber = 0
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/pg-helpers.ps1"
 . "$PSScriptRoot/lib/ado-helpers.ps1"
+
+# ── Resolve PGName from PgNumber if only the latter was supplied ─────────────
+if (-not $PGName -and $PgNumber -gt 0) { $PGName = "PG-$PgNumber" }
+if (-not $PGName) {
+    [ordered]@{ error = 'Either -PGName or -PgNumber must be provided.' } | ConvertTo-Json
+    exit 1
+}
 
 try {
     # ── Sync & fetch hierarchy ────────────────────────────────────────────────

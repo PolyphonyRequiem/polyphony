@@ -8,19 +8,34 @@
 .PARAMETER WorkItemId
     ADO work item ID (root of the hierarchy).
 .PARAMETER PGName
-    PR Group name (e.g., PG-1) to scope closure to.
+    PR Group name (e.g., PG-1) to scope closure to. Mutually exclusive with
+    -PgNumber; one of the two must be provided. Preserved for direct
+    invocation, scripted callers, and the existing test suite.
+.PARAMETER PgNumber
+    PR Group number (e.g. 1 for PG-1). Convenience parameter for workflow
+    YAML callers that already track the PG as an integer (see
+    implement-pg.yaml's scope_closer agent). When supplied, PGName is
+    derived as "PG-$PgNumber".
 .PARAMETER PRNumber
     Pull request number associated with the PG closure.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][int]$WorkItemId,
-    [Parameter(Mandatory)][string]$PGName,
+    [Parameter()][string]$PGName,
+    [Parameter()][int]$PgNumber = 0,
     [Parameter()][int]$PRNumber = 0
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/pg-helpers.ps1"
 . "$PSScriptRoot/lib/ado-helpers.ps1"
+
+# ── Resolve PGName from PgNumber if only the latter was supplied ─────────────
+if (-not $PGName -and $PgNumber -gt 0) { $PGName = "PG-$PgNumber" }
+if (-not $PGName) {
+    [ordered]@{ error = 'Either -PGName or -PgNumber must be provided.' } | ConvertTo-Json
+    exit 1
+}
 
 try {
     twig sync --output json 2>$null | Out-Null

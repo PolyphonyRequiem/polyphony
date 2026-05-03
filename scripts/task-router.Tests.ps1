@@ -198,6 +198,31 @@ Describe 'task-router.ps1 — task routing with polyphony hierarchy (#2664)' {
             $result.error | Should -Not -BeNullOrEmpty
         }
     }
+
+    Context 'PgNumber alias — workflow YAML invocation parity' {
+
+        BeforeEach {
+            # Describe #1's BeforeEach intentionally omits a `polyphony validate`
+            # mock (covered separately in tests that focus on transition logic).
+            # For PgNumber-alias verification we just need the script to reach
+            # successful JSON emission, so stub validate to return a valid
+            # transition. Without this mock the script throws inside the
+            # implement_task path and `current_pg` is never set.
+            Mock polyphony {
+                '{"work_item_id":0,"event":"begin_implementation","is_valid":true,"target_state":"Doing","message":"OK"}'
+            } -ParameterFilter { $args -contains 'validate' }
+        }
+
+        It 'Derives PGName from -PgNumber when -PGName is omitted' {
+            $result = & $script:ScriptPath -WorkItemId 42 -PgNumber 1 | ConvertFrom-Json
+            $result.current_pg | Should -Be 'PG-1'
+        }
+
+        It 'Errors cleanly when neither -PGName nor -PgNumber is provided' {
+            $result = & $script:ScriptPath -WorkItemId 42 2>$null | ConvertFrom-Json
+            $result.error | Should -Match 'PGName|PgNumber'
+        }
+    }
 }
 
 # ── Output schema compatibility verification (#2664) ─────────────────────────
