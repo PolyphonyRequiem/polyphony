@@ -383,6 +383,53 @@ Describe 'pg-router.ps1 — PG routing with polyphony hierarchy (#2663)' {
             $result.error | Should -Not -BeNullOrEmpty
         }
     }
+
+    Context 'PgNumber scoping — parallel for_each dispatch' {
+
+        It 'Returns the requested PG when -PgNumber matches an existing non-completed PG' {
+            $result = & $script:ScriptPath -WorkItemId 42 -PgNumber 2 | ConvertFrom-Json
+            $result.current_pg | Should -Be 'PG-2'
+            $result.action | Should -Be 'create_branch'
+        }
+
+        It 'Returns PG-1 with create_branch when -PgNumber 1 (no PRs)' {
+            $result = & $script:ScriptPath -WorkItemId 42 -PgNumber 1 | ConvertFrom-Json
+            $result.current_pg | Should -Be 'PG-1'
+            $result.action | Should -Be 'create_branch'
+        }
+
+        It 'Returns all_complete when the requested PG is already merged' {
+            Mock gh {
+                '[{"number":10,"headRefName":"pg-1/42-test-epic","url":"https://github.com/PolyphonyRequiem/twig/pull/10"}]'
+            } -ParameterFilter { $args -contains 'merged' }
+            $result = & $script:ScriptPath -WorkItemId 42 -PgNumber 1 | ConvertFrom-Json
+            $result.current_pg | Should -Be 'PG-1'
+            $result.action | Should -Be 'all_complete'
+        }
+
+        It 'Returns submit_pr when the requested PG has an open PR' {
+            Mock gh {
+                '[{"number":55,"headRefName":"pg-2/42-test-epic","url":"https://github.com/PolyphonyRequiem/twig/pull/55"}]'
+            } -ParameterFilter { $args -contains 'open' }
+            $result = & $script:ScriptPath -WorkItemId 42 -PgNumber 2 | ConvertFrom-Json
+            $result.current_pg | Should -Be 'PG-2'
+            $result.action | Should -Be 'submit_pr'
+            $result.pr_number | Should -Be 55
+        }
+
+        It 'Returns all_complete shape when -PgNumber refers to an unknown PG' {
+            $result = & $script:ScriptPath -WorkItemId 42 -PgNumber 99 | ConvertFrom-Json
+            # Falls through to the no-currentPG branch — emits the all_complete envelope
+            $result.action | Should -Be 'all_complete'
+            $result.current_pg | Should -Be ''
+        }
+
+        It 'Default invocation (no -PgNumber) preserves legacy "first non-complete" behaviour' {
+            $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
+            $result.current_pg | Should -Be 'PG-1'
+            $result.action | Should -Be 'create_branch'
+        }
+    }
 }
 
 # ── Output schema compatibility verification (#2663) ─────────────────────────
