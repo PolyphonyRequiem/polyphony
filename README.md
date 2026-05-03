@@ -57,9 +57,18 @@ The `polyphony health` command runs a suite of diagnostics to verify your enviro
 }
 ```
 
-- If any check fails, review the `message` for remediation steps.
+### Interpreting Results
+
+- If any check fails, review the `message` for remediation steps (e.g., missing config, tool not found, invalid YAML).
 - All fields are always present; no nulls.
+- Exit code 0 means all checks passed; exit code 4 means one or more critical health checks failed.
 - Use this command after setup or when troubleshooting environment issues.
+- For failed checks, follow the remediation steps in the `message` field. Common actions:
+  - Reinstall missing tools (`twig`, `git`)
+  - Fix or restore `.conductor/process-config.yaml`
+  - Ensure your PATH includes required binaries
+  - Re-run `polyphony health` after making changes
+- If you are unable to resolve an issue, copy the full output and seek help in the project support channel.
 
 ## Building
 
