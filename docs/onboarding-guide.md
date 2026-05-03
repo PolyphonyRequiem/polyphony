@@ -43,7 +43,10 @@ Verify your setup:
 ```bash
 twig --version        # Confirm twig is installed
 polyphony --version   # Confirm polyphony is installed
+polyphony health      # Run environment diagnostics (recommended)
 ```
+
+The `polyphony health` command checks your environment for required dependencies, configuration files, and permissions. Resolve any `[FAIL]` items before proceeding. See the README for details on interpreting health check results.
 
 ---
 

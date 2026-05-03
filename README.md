@@ -28,7 +28,41 @@ polyphony validate --work-item 1234 --event begin_planning
 
 # Display hierarchy with role annotations
 polyphony hierarchy --work-item 1234 --depth 3
+
+# Check environment health and diagnostics
+polyphony health
 ```
+
+### polyphony health
+
+The `polyphony health` command runs a suite of environment diagnostics to verify that your development setup is compatible with Polyphony's requirements. It checks for:
+
+- .NET runtime version and AOT support
+- Required environment variables
+- Presence and versions of critical dependencies (e.g., twig CLI, YamlDotNet)
+- File system permissions for key directories
+- Configuration file validity (e.g., `.conductor/process-config.yaml`)
+
+#### Example output
+
+```text
+[OK] .NET 10.0.12 (AOT enabled)
+[OK] twig CLI found at ~/.twig/bin/twig
+[OK] YamlDotNet 13.2.1 available
+[OK] .conductor/process-config.yaml present and valid
+[WARN] profile.yaml missing (not required, but recommended)
+[FAIL] Environment variable POLYPHONY_ENV not set
+```
+
+- **[OK]**: All checks passed for this item.
+- **[WARN]**: Non-blocking issue; recommended for best experience.
+- **[FAIL]**: Blocking issue; must be resolved for Polyphony to function.
+
+#### How to interpret results
+- Address all **[FAIL]** items before running workflows.
+- Review **[WARN]** items and resolve as appropriate for your project.
+- If you encounter issues not covered by `health`, consult the onboarding guide or open an issue.
+
 
 ## Building
 
