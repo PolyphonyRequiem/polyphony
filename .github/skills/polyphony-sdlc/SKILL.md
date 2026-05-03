@@ -1,7 +1,7 @@
 ---
 name: polyphony-sdlc
 description: >-
-  v2 type-agnostic SDLC workflow documentation. Covers the twig-sdlc-v2-full@twig
+  Type-agnostic SDLC workflow documentation. Covers the polyphony-full@polyphony
   conductor workflow suite — 9 YAML files with Polyphony-driven phase detection,
   recursive planning, parallel PG execution, feature PR remediation, and platform
   abstraction. Reference when invoking, debugging, or extending the v2 pipeline.
@@ -16,19 +16,45 @@ detects lifecycle phase via `polyphony route`, and drives it through planning,
 implementation, PR review, feature PR remediation, and close-out — all via
 multi-agent orchestration with no hardcoded type names.
 
-> **Replaces** the original `twig-sdlc-full@twig` workflow. The v2 suite is
-> registered as `twig-sdlc-v2-full@twig` and deployed alongside the v1 workflow
-> (pure additive — no existing files modified).
+> **Replaces** the original `twig-sdlc-full@twig` workflow. The polyphony suite
+> is registered as `polyphony-full@polyphony` and lives in the
+> `polyphony-conductor-workflows` repo (separate from `twig-conductor-workflows`).
 
 ## Workflow Inputs
 
-The apex workflow (`twig-sdlc-v2-full.yaml`) accepts three inputs:
+The apex workflow (`polyphony-full.yaml`, registered as `polyphony-full@polyphony`)
+accepts three inputs:
 
 | Input | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `work_item_id` | `number` | **yes** | — | ADO work item ID (any type at any hierarchy level) |
 | `intent` | `string` | no | `resume` | `new` — fresh start · `redo` — delete and redo · `resume` — pick up where left off |
 | `user_plan_path` | `string` | no | `""` | Path to a user-authored plan document; the architect refines rather than discards it |
+
+## Workflow Metadata
+
+All metadata is passed dynamically via `--metadata` / `-m` flags at invocation time.
+The workflow YAMLs contain no metadata — the invoking agent resolves all values for
+the dashboard and event log. **`tracker=ado` is required** so downstream tooling
+(dashboard, observation filer, post-mortem skills) knows which provider's APIs and
+URL conventions to use.
+
+| Field | Example | Description |
+|-------|---------|-------------|
+| `tracker` | `ado` | Work item tracking provider (currently the only supported value) |
+| `project_url` | `https://dev.azure.com/dangreen-msft/Twig` | ADO organization + project URL — used to render work-item links in the dashboard and to construct ADO REST URLs in close-out reports |
+| `git_repo` | `C:\Users\dangreen\projects\polyphony` | Originating git repo path (the source-of-truth checkout, NOT the worktree) |
+| `workitem_id` | `2930` | Target work item ID (numeric, mirror of `--input work_item_id`) |
+| `worktree_name` | `polyphony-2930` | Git worktree directory name (`<repo>-<id>` convention) |
+| `cwd` | `C:\Users\dangreen\projects\polyphony-2930` | Worktree working directory — where conductor is launched from |
+
+> **All values must be resolved** — templates with `{braces}` are skipped by the dashboard.
+
+> **ADO provider note:** Polyphony is currently ADO-only on the work-item side
+> (`twig` is the ADO CLI). GitHub is used only for code/PR hosting via the
+> `github-pr.yaml` sub-workflow. The `tracker=ado` metadata reflects the
+> work-item provider and is independent of the PR platform routing inside
+> `implement-pg.yaml` (`pr_platform_router`).
 
 ## Phase Detection and Routing
 
@@ -51,18 +77,18 @@ workflow picks up where it left off (P3: re-entry by state discovery).
 
 ## Recursion Depth Budget (C3)
 
-The conductor engine enforces a maximum depth of 10. The v2 workflow budget uses 9
+The conductor engine enforces a maximum depth of 10. The polyphony workflow budget uses 9
 levels, leaving 1 level of headroom:
 
 ```
-Depth 0: twig-sdlc-v2-full.yaml              (apex: preflight → detect → route)
-Depth 1: twig-sdlc-v2-planning.yaml           (planning orchestration)
-         OR twig-sdlc-v2-implement.yaml        (implementation orchestration)
-Depth 2: plan-level.yaml                       (recursive planning core)
-Depth 3: plan-level.yaml self-recursion        (child level planning)
-Depth 4-7: plan-level.yaml self-recursion      (up to 6 nested plannable levels)
-Depth 8: github-pr.yaml / ado-pr.yaml          (PR lifecycle — leaf)
-         OR implement-pg.yaml                   (PG lifecycle)
+Depth 0: polyphony-full.yaml                  (apex: preflight → detect → route)
+Depth 1: polyphony-planning.yaml              (planning orchestration)
+         OR polyphony-implement.yaml          (implementation orchestration)
+Depth 2: plan-level.yaml                      (recursive planning core)
+Depth 3: plan-level.yaml self-recursion       (child level planning)
+Depth 4-7: plan-level.yaml self-recursion     (up to 6 nested plannable levels)
+Depth 8: github-pr.yaml / ado-pr.yaml         (PR lifecycle — leaf)
+         OR implement-pg.yaml                  (PG lifecycle)
 ```
 
 The `depth_guard` script in `plan-level.yaml` validates `depth < max_depth` (default
@@ -71,9 +97,9 @@ user can approve going deeper or abort.
 
 ## The 9 YAML Workflow Files
 
-### 1. `twig-sdlc-v2-full.yaml` — Apex Workflow
+### 1. `polyphony-full.yaml` — Apex Workflow
 
-**Registry name:** `twig-sdlc-v2-full@twig`
+**Registry name:** `polyphony-full@polyphony`
 **Responsibility:** Top-level entry point. Accepts any work item type at any hierarchy
 level, runs full preflight validation, detects lifecycle phase via Polyphony, and routes
 to the appropriate sub-workflow.
@@ -83,13 +109,13 @@ to the appropriate sub-workflow.
 | `preflight_check` | script | Full preflight validation (12 checks) via `preflight-check.ps1` |
 | `preflight_gate` | human_gate | Retry / proceed / abort on preflight failure |
 | `state_detector` | script | Detect lifecycle phase via `detect-state.ps1` |
-| `planning` | workflow | Delegates to `twig-sdlc-v2-planning.yaml` |
-| `implementation` | workflow | Delegates to `twig-sdlc-v2-implement.yaml` |
+| `planning` | workflow | Delegates to `polyphony-planning.yaml` |
+| `implementation` | workflow | Delegates to `polyphony-implement.yaml` |
 | `close_out` | workflow | Delegates to `close-out.yaml` |
 
 ---
 
-### 2. `twig-sdlc-v2-planning.yaml` — Planning Orchestration
+### 2. `polyphony-planning.yaml` — Planning Orchestration
 
 **Responsibility:** Planning entry point. Runs lightweight preflight, delegates to
 `plan-level.yaml` for recursive planning, re-checks state, and seeds the work tree.
@@ -131,7 +157,7 @@ and seeds children. Self-recurses for nested plannable levels via `for_each`.
 
 ---
 
-### 4. `twig-sdlc-v2-implement.yaml` — Implementation Orchestration
+### 4. `polyphony-implement.yaml` — Implementation Orchestration
 
 **Responsibility:** Implementation entry point. Loads the work tree hierarchy, discovers
 PG structure, and dispatches pending PGs in parallel via `for_each` to `implement-pg.yaml`.
@@ -310,28 +336,35 @@ controls which sub-workflow is selected. Platform selection is driven by
 ### Prerequisites
 
 1. Install the conductor CLI
-2. Register the twig workflow registry:
+2. Register the polyphony workflow registry:
    ```
-   conductor registry add twig --source github://PolyphonyRequiem/twig-conductor-workflows
+   conductor registry add polyphony --source github://PolyphonyRequiem/polyphony-conductor-workflows
    ```
 3. Ensure `twig`, `gh`, `polyphony`, and `dotnet` are in PATH
+4. The target repo has `.conductor/process-config.yaml` with type definitions, templates, and `polyphony validate-config` passes
 
 ### New Epic with a User Plan
 
 ```powershell
 # Set up a worktree for the Epic
-git worktree add -b sdlc/<ID> ../twig2-<ID> main
-cd ../twig2-<ID>
+git worktree add -b sdlc/<ID> ../polyphony-<ID> main
+cd ../polyphony-<ID>
 dotnet restore
-Copy-Item -Recurse ../twig2/.twig .twig
+Copy-Item -Recurse ../polyphony/.twig .twig
 twig set <ID>
 twig sync
 
-# Launch the v2 workflow with a user-authored plan
-conductor run twig-sdlc-v2-full@twig `
+# Launch the workflow with a user-authored plan
+conductor run polyphony-full@polyphony `
   --input work_item_id=<ID> `
   --input intent=new `
   --input user_plan_path=path/to/plan.md `
+  -m tracker=ado `
+  -m project_url=https://dev.azure.com/dangreen-msft/Twig `
+  -m git_repo=C:\Users\dangreen\projects\polyphony `
+  -m workitem_id=<ID> `
+  -m worktree_name=polyphony-<ID> `
+  -m cwd=C:\Users\dangreen\projects\polyphony-<ID> `
   --web
 ```
 
@@ -339,8 +372,14 @@ conductor run twig-sdlc-v2-full@twig `
 
 ```powershell
 # Resume from wherever the work item left off (default intent)
-conductor run twig-sdlc-v2-full@twig `
+conductor run polyphony-full@polyphony `
   --input work_item_id=<ID> `
+  -m tracker=ado `
+  -m project_url=https://dev.azure.com/dangreen-msft/Twig `
+  -m git_repo=C:\Users\dangreen\projects\polyphony `
+  -m workitem_id=<ID> `
+  -m worktree_name=polyphony-<ID> `
+  -m cwd=C:\Users\dangreen\projects\polyphony-<ID> `
   --web
 ```
 
@@ -348,11 +387,17 @@ conductor run twig-sdlc-v2-full@twig `
 
 ```powershell
 # Delete existing children/branches and start over
-conductor run twig-sdlc-v2-full@twig `
+conductor run polyphony-full@polyphony `
   --input work_item_id=<ID> `
   --input intent=redo `
+  -m tracker=ado `
+  -m project_url=https://dev.azure.com/dangreen-msft/Twig `
+  -m git_repo=C:\Users\dangreen\projects\polyphony `
+  -m workitem_id=<ID> `
+  -m worktree_name=polyphony-<ID> `
+  -m cwd=C:\Users\dangreen\projects\polyphony-<ID> `
   --web
 ```
 
-> **Always launch detached** — use `Start-Process -WindowStyle Hidden` so conductor
-> survives if the parent session drops. Always use `--web` (not `--web-bg`).
+> **Always launch detached** — wrap with `Start-Process -WindowStyle Hidden` so
+> conductor survives if the parent session drops. Always use `--web` (not `--web-bg`).
