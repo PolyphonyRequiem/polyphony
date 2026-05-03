@@ -12,6 +12,14 @@ namespace Polyphony.Routing;
 public sealed class PhaseDetector(ProcessConfig processConfig)
 {
     /// <summary>
+    /// ADO tag stamped on a work item by the seeder once planning has
+    /// completed (atomic or decomposed). Read here so the detector can
+    /// distinguish "never planned" from "planned but state never transitioned" —
+    /// the latter would otherwise route back to NeedsPlanning forever.
+    /// </summary>
+    internal const string PlannedTag = "polyphony:planned";
+
+    /// <summary>
     /// Determines the SDLC phase and recommended action for the given work item.
     /// </summary>
     /// <param name="item">The work item to evaluate.</param>
@@ -48,6 +56,16 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
         StateCategory category,
         bool isAlsoImplementable)
     {
+        // If the planned tag is present, planning has already completed — even
+        // if the work item state was never transitioned out of Proposed
+        // (a common workflow gap). Treat as InProgress so the rest of the
+        // logic classifies by children rather than re-routing to planning.
+        var planned = IsPlanned(item);
+        if (category == StateCategory.Proposed && planned)
+        {
+            category = StateCategory.InProgress;
+        }
+
         if (category == StateCategory.Proposed)
         {
             return new NeedsPlanning($"{item.Type.Value} '{item.Title}' is in Proposed state and needs planning.");
@@ -60,10 +78,15 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
                 // Plannable + implementable with no children in InProgress → ready for direct implementation
                 if (isAlsoImplementable)
                 {
-                    return new ReadyForImplementation($"{item.Type.Value} '{item.Title}' is in progress with no children — ready for direct implementation.");
+                    var atomicSuffix = planned ? " (planned, atomic)" : "";
+                    return new ReadyForImplementation($"{item.Type.Value} '{item.Title}' is in progress with no children — ready for direct implementation{atomicSuffix}.");
                 }
 
-                // Plannable-only with no children → needs seeding (decomposition)
+                // Plannable-only with no children → needs seeding (decomposition).
+                // If the planned tag is set on a plannable-only type with no
+                // children, the architect emitted an empty task list for a type
+                // that requires decomposition — surface as NeedsSeeding so the
+                // anomaly is visible rather than silently advancing.
                 return new NeedsSeeding($"{item.Type.Value} '{item.Title}' is in progress but has no children — needs seeding.");
             }
 
@@ -112,6 +135,26 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
 
         // Mixed states — work is in progress
         return new ImplementationInProgress($"{item.Type.Value} '{item.Title}' has children in mixed states — monitoring progress.");
+    }
+
+    /// <summary>
+    /// Checks whether the work item carries the <see cref="PlannedTag"/>.
+    /// Tags are stored in <c>System.Tags</c> as a semicolon-separated string;
+    /// match is case-insensitive and tolerant of surrounding whitespace.
+    /// </summary>
+    private static bool IsPlanned(WorkItem item)
+    {
+        if (!item.Fields.TryGetValue("System.Tags", out var tags) || string.IsNullOrWhiteSpace(tags))
+            return false;
+
+        var parts = tags.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        for (var i = 0; i < parts.Length; i++)
+        {
+            if (string.Equals(parts[i], PlannedTag, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private string[] LookupCapabilities(string typeName)
