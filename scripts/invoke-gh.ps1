@@ -6,6 +6,8 @@
     Dot-source this script from consuming scripts.
 #>
 
+. "$PSScriptRoot/lib/io-helpers.ps1"
+
 function Invoke-GH {
     [CmdletBinding()]
     param(
@@ -15,7 +17,7 @@ function Invoke-GH {
 
     $result = & gh @Arguments 2>$null
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning "gh command failed with exit code $LASTEXITCODE"
+        Write-StderrWarning "gh command failed with exit code $LASTEXITCODE"
         return $null
     }
     return $result

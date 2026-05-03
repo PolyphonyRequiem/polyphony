@@ -133,9 +133,14 @@ try {
         default     { $routeResult.action }
     }
 
+    # Pass workspace_hint through as a nested object (not a JSON string) so
+    # workflow YAMLs can dot-access fields directly via Jinja, e.g.
+    # `{{ state_detector.output.workspace_hint.feature_branch }}`. Stringifying
+    # forced consumers to either parse JSON in Jinja (no `from_json` filter
+    # exists in conductor) or wire up an extra extraction step.
     $workspaceHint = if ($routeResult.workspace_hint) {
-        $routeResult.workspace_hint | ConvertTo-Json -Compress
-    } else { '{}' }
+        $routeResult.workspace_hint
+    } else { @{} }
 
     # ── Read work item metadata from twig tree (#2632) ────────────────────────
     # twig tree provides type, state, title, and child hierarchy
@@ -267,7 +272,7 @@ try {
         error                   = $errorMsg
     }
 
-    $output | ConvertTo-Json -Depth 3
+    $output | ConvertTo-Json -Depth 4
 }
 catch {
     [ordered]@{

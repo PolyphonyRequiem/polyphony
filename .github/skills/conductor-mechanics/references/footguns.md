@@ -96,7 +96,7 @@ Before merging a workflow YAML change, scan for:
       missing inherits all workflow tools, which is rarely what you want).
 - [ ] No `from_json` or `tojson` filter (neither exists); use script-stdout-merge or `| json` instead.
 - [ ] Every `for_each source:` value: bare dotted path, NOT wrapped in `{{ }}`.
-- [ ] No `for_each` body with inline `type: workflow` (validator rejects).
+- [ ] No `for_each` body keys named `body:` or `inputs:` — the schema uses `agent:` (singular) and `input_mapping:` (sub-workflow fan-out is supported since conductor PR #102).
 - [ ] No `group.failed_count` / `succeeded_count` references (use `errors | length`).
 - [ ] Workflow-scope `output:` values producing booleans: render lowercase
       (`| string | lower`) or use `1`/`0` to avoid capital `"True"`/`"False"`.
@@ -121,7 +121,8 @@ Things `conductor validate` could catch but currently doesn't:
 9. `when:` clauses that depend on string-truthiness against an undeclared
    schema field (i.e., guaranteed to be `False` or guaranteed to fire on `"None"`).
 10. `for_each source:` wrapped in `{{ }}` — should be a bare dotted path.
-11. `for_each` body with inline `type: workflow` — currently rejected;
-    consider whether the validator should suggest a workaround in the error.
+11. `for_each` body using `body:` / `inputs:` keys — schema expects
+    `agent:` (singular) + `input_mapping:`; the inline-sub-workflow
+    pattern itself is supported since conductor PR #102.
 12. Workflow-scope `output:` template strings containing `==`/`!=`/`is`/`and`/`or`/`>`/`<` — render as `"True"`/`"False"`/etc., which `_maybe_parse_json` doesn't coerce. Either extend `_maybe_parse_json` (one-line patch to recognize `"True"`/`"False"`/`"None"`) or warn at validate.
 13. Agent-level fields not in `AgentDef` schema (e.g. `context_window:`) — currently silently ignored; should warn at validate.

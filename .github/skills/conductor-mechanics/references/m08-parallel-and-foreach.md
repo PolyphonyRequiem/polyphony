@@ -111,35 +111,34 @@ source: pg_dispatcher.output.pgs
 If you see `validate_source_format` complaining about an identifier check,
 strip the `{{ }}` wrappers.
 
-## For-each cannot fan out sub-workflows inline (validator limitation)
+## For-each can fan out sub-workflows inline (since conductor PR #102)
 
-You cannot use `type: workflow` for the inner agent of a `for_each` block:
+The intuitive "fan out N sub-workflows from a list" pattern works:
 
 ```yaml
-# ❌ Rejected by validator — inline type: workflow not allowed in for_each
+# ✅ Supported — `agent:` (singular) with `type: workflow` and
+#    `input_mapping:` rendered against loop variables
 - name: dispatch_pgs
   type: for_each
   source: planner.output.pgs
   as: pg
-  body:
-    - name: implement_one
-      type: workflow              # ← rejected
-      workflow: implement-pg.yaml
-      inputs: { pg_id: "{{ pg.id }}" }
+  agent:
+    name: implement_one
+    type: workflow
+    workflow: ./implement-pg.yaml
+    input_mapping:
+      pg_id: "{{ pg.id }}"
 ```
 
-The intuitive "fan out N sub-workflows from a list" pattern doesn't
-work directly. Workarounds:
+This was historically rejected by the validator but is now supported (see
+upstream conductor PR #102). The earlier limitation was real — workflows
+written before the fix used wrapper scripts shelling out to `conductor run`.
+Modern workflows should use the inline form; production example:
+`polyphony-conductor-workflows/workflows/polyphony-implement.yaml:259-278`.
 
-1. Wrap the sub-workflow call in a script that shells out to `conductor run`
-   (loses checkpointing / event-bus integration of native sub-workflow calls).
-2. Generate the parallel block at workflow-load time from a known-fixed list
-   (loses the dynamic-list aspect).
-3. File this as a request against upstream conductor (the limitation is
-   in `config/schema.py` validation; the runtime might support it).
-
-If you hit this, **note it as a real conductor limitation, not just a
-footgun** — the contract may need to change.
+The keys are **`agent:` (singular)** — not `body:` — and **`input_mapping:`**
+— not `inputs:`. The loop variable (named via `as:`) and `_index` / `_key`
+are available inside `input_mapping` Jinja expressions.
 
 ## `key_by:` for dict-keyed outputs
 
@@ -192,7 +191,7 @@ This interacts with the default `max_iterations: 10` — see M9.
   shadows reserved names.
 - ❌ Use a 1-segment `source:` — config load rejects it.
 - ❌ Wrap `source:` in `{{ }}` — it's a bare dotted path.
-- ❌ Use `type: workflow` inside a `for_each` body — validator rejects.
+- ❌ Use `body:` / `inputs:` syntax — the keys are `agent:` (singular) and `input_mapping:`.
 - ❌ Assume `failure_mode` defaults to `continue_on_error` — it doesn't.
 
 ## Dos

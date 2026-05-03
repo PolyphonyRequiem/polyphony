@@ -27,7 +27,7 @@ runtime:
 
 limits:
   max_iterations: 200       # pick a real number for your workflow
-  max_depth: 5
+  timeout_seconds: 1800     # optional total wall-clock cap
 
 agents:
   - name: first_step
@@ -48,12 +48,29 @@ user to extend or abort. With `--no-interactive`, the run fails.
 | Field | Default | Purpose |
 |---|---|---|
 | `max_iterations` | 10 | Total node executions per run |
-| `max_depth` | 5 | Sub-workflow nesting depth |
-| `max_session_seconds` | (none) | Wall-clock cap |
-| `max_agent_iterations` | (none) | Per-agent re-entry cap |
+| `timeout_seconds` | (none) | Total workflow wall-clock cap |
 
-`max_depth` matters for recursive PG-style workflows that spawn child
-workflows that may themselves spawn children.
+**Per-agent timeouts live elsewhere.** `max_session_seconds` (per-agent
+wall clock) and `max_agent_iterations` (per-agent tool-use roundtrips)
+are **runtime fields**, not limits — set them under `workflow.runtime:`
+as workflow defaults (`config/schema.py:RuntimeConfig`) and override
+per-agent on the `agent:` block itself, NOT under `limits:`. See
+[`references/yaml-schema.md`](https://github.com/microsoft/conductor)
+lines 35-36, 130-131 for the canonical placement.
+
+```yaml
+workflow:
+  runtime:
+    max_agent_iterations: 50    # Workflow default; cap per agent
+    max_session_seconds: 120
+  limits:
+    max_iterations: 200         # Total nodes; this IS a limits field
+    timeout_seconds: 1800
+
+agents:
+  - name: long_runner
+    max_session_seconds: 600    # Per-agent override of the runtime default
+```
 
 ## Retry policies (`config/schema.py:351`, `RetryPolicy`)
 

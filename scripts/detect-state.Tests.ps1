@@ -265,11 +265,13 @@ Describe 'detect-state.ps1 — polyphony route integration (#2632)' {
 
     Context 'Workspace hint pass-through' {
 
-        It 'Passes workspace_hint as JSON string in output' {
+        It 'Passes workspace_hint as a nested object in output' {
+            # Nested object lets workflow YAMLs use
+            # `{{ state_detector.output.workspace_hint.feature_branch }}`
+            # directly without parsing a stringified JSON value.
             $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
-            $hint = $result.workspace_hint | ConvertFrom-Json
-            $hint.feature_branch | Should -Be 'feature/42-test'
-            $hint.pg_branch | Should -Be 'feature/42-pg-1'
+            $result.workspace_hint.feature_branch | Should -Be 'feature/42-test'
+            $result.workspace_hint.pg_branch | Should -Be 'feature/42-pg-1'
         }
 
         It 'Returns empty object when workspace_hint is null' {
@@ -278,7 +280,13 @@ Describe 'detect-state.ps1 — polyphony route integration (#2632)' {
             } -ParameterFilter { $args -contains 'route' }
 
             $result = & $script:ScriptPath -WorkItemId 42 | ConvertFrom-Json
-            $result.workspace_hint | Should -Be '{}'
+            # workspace_hint must remain present in the output for downstream
+            # `state_detector.output.workspace_hint.feature_branch | default('')`
+            # patterns to evaluate without StrictUndefined errors.
+            $result.PSObject.Properties.Name | Should -Contain 'workspace_hint'
+            # Empty object — feature_branch lookup yields $null, not a string.
+            $result.workspace_hint.feature_branch | Should -BeNullOrEmpty
+            $result.workspace_hint | Should -Not -BeOfType [string]
         }
     }
 

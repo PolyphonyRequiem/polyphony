@@ -203,6 +203,20 @@ Describe 'scope-closer.ps1 — polyphony validate transition check (#2647)' {
             $result.error | Should -Not -BeNullOrEmpty
         }
     }
+
+    Context 'PgNumber alias — workflow YAML invocation parity' {
+
+        It 'Derives PGName from -PgNumber when -PGName is omitted' {
+            $result = & $script:ScriptPath -WorkItemId 42 -PgNumber 1 | ConvertFrom-Json
+            $result.pg_name | Should -Be 'PG-1'
+            $result.total_closed | Should -Be 2
+        }
+
+        It 'Errors cleanly when neither -PGName nor -PgNumber is provided' {
+            $result = & $script:ScriptPath -WorkItemId 42 2>$null | ConvertFrom-Json
+            $result.error | Should -Match 'PGName|PgNumber'
+        }
+    }
 }
 
 # ── Output schema compatibility verification (#2649) ─────────────────────────

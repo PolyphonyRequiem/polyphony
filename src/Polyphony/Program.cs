@@ -19,4 +19,5 @@ app.Add<RouteCommand>();
 app.Add<ValidateCommand>();
 app.Add<ValidateConfigCommand>();
 app.Add<HierarchyCommand>();
+app.Add<HealthCommand>();
 app.Run(args);

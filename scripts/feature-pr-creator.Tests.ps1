@@ -6,6 +6,10 @@ BeforeAll {
     function global:twig { }
     function global:git { }
     function global:gh { }
+
+    # Pre-declare the io-helpers function so the script's idempotent dot-source
+    # skips redefining it — leaving Pester's mock in effect.
+    function global:Write-StderrWarning { param([string]$Message) }
 }
 
 AfterAll {
@@ -13,6 +17,7 @@ AfterAll {
     Remove-Item Function:\twig -ErrorAction SilentlyContinue
     Remove-Item Function:\git -ErrorAction SilentlyContinue
     Remove-Item Function:\gh -ErrorAction SilentlyContinue
+    Remove-Item Function:\Write-StderrWarning -ErrorAction SilentlyContinue
 }
 
 Describe 'feature-pr-creator.ps1 — successful PR creation' {
@@ -226,12 +231,13 @@ Describe 'feature-pr-creator.ps1 — workspace_hint validation' {
         Mock polyphony {
             '{"workspace_hint":{"feature_branch":"feature/42-other","pg_branch":"pg-{n}/42-other"}}'
         }
-        $result = & $script:ScriptPath -WorkItemId 42 -FeatureBranch 'feature/42-test' -TargetBranch 'main' 3>&1
-        $warnings = @($result | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
-        $warnings.Count | Should -BeGreaterThan 0
+        Mock Write-StderrWarning {}
+        $result = & $script:ScriptPath -WorkItemId 42 -FeatureBranch 'feature/42-test' -TargetBranch 'main'
+        Should -Invoke Write-StderrWarning -Times 1 -ParameterFilter {
+            $Message -like "*differs from supplied FeatureBranch*"
+        }
 
-        $json = @($result | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] }) -join ''
-        $parsed = $json | ConvertFrom-Json
+        $parsed = ($result -join '') | ConvertFrom-Json
         $parsed.created | Should -BeTrue
     }
 

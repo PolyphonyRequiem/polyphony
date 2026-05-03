@@ -8,9 +8,18 @@
     eliminating type-name literals.
 .PARAMETER WorkItemId
     ADO work item ID (root of the hierarchy).
+.PARAMETER PgNumber
+    Optional PG number to scope routing to. When set, $currentPG is the entry
+    whose name extracts to this number (e.g. 'PG-2' -> 2), regardless of whether
+    earlier PGs are still incomplete. Required for parallel for_each dispatch
+    where each implement-pg.yaml invocation must route on a specific PG. When
+    omitted, falls back to legacy "next non-completed PG" sequential behaviour.
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory)][int]$WorkItemId)
+param(
+    [Parameter(Mandatory)][int]$WorkItemId,
+    [Parameter()][int]$PgNumber = 0
+)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/resolve-gh-token.ps1"
 . "$PSScriptRoot/invoke-gh.ps1"
@@ -182,6 +191,31 @@ try {
                 $pg['action'] = 'create_branch'
                 if (-not $currentPG) { $currentPG = $pg }
             }
+        }
+    }
+
+    # ── PG scoping for parallel for_each dispatch ────────────────────────────
+    # When -PgNumber is supplied, override $currentPG with the entry whose
+    # name extracts to that number. The classification loop above sets
+    # $currentPG to the FIRST non-completed PG encountered (sequential bias),
+    # but parallel for_each callers each own a specific PG and must route on
+    # IT, not on whichever happens to be earliest.
+    if ($PgNumber -gt 0) {
+        $scoped = $prGroups | Where-Object {
+            $_.name -match '^PG-(\d+)' -and [int]$Matches[1] -eq $PgNumber
+        } | Select-Object -First 1
+        if ($scoped) {
+            if ($scoped.completed) {
+                # Already merged or all-tasks-Done: signal completion.
+                $scoped['action'] = 'all_complete'
+            } elseif (-not $scoped.Contains('action')) {
+                # Defensive: classification loop should always have set this
+                # for non-completed PGs, but guard against mutation drift.
+                $scoped['action'] = 'create_branch'
+            }
+            $currentPG = $scoped
+        } else {
+            $currentPG = $null
         }
     }
 
