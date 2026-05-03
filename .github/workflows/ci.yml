@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      # Polyphony depends on Twig.Domain and Twig.Infrastructure via relative
+      # ProjectReferences (..\..\..\twig2\src\...). Check out twig as a sibling
+      # at the expected path so the references resolve.
+      - name: Checkout twig (sibling dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: PolyphonyRequiem/twig
+          path: twig2
+          fetch-depth: 0
+          filter: tree:0
+
+      - name: Checkout polyphony
+        uses: actions/checkout@v4
+        with:
+          path: polyphony
+          fetch-depth: 0
+          filter: tree:0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: polyphony/global.json
+
+      - name: Restore
+        working-directory: polyphony
+        run: dotnet restore
+
+      - name: Build
+        working-directory: polyphony
+        run: dotnet build --no-restore
+
+      - name: Test (xUnit)
+        working-directory: polyphony
+        run: dotnet test --no-build
+
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Test (Pester)
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path tests/ -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
