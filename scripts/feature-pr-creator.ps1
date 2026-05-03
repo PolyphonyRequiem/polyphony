@@ -24,6 +24,7 @@ param(
     [Parameter()][string]$Title = ''
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/lib/io-helpers.ps1"
 . "$PSScriptRoot/resolve-gh-token.ps1"
 . "$PSScriptRoot/invoke-gh.ps1"
 . "$PSScriptRoot/lib/gh-helpers.ps1"
@@ -37,7 +38,7 @@ try {
             $hint = $routeResult.workspace_hint
             if ($hint -and $hint.feature_branch) {
                 if ($hint.feature_branch -ne $FeatureBranch) {
-                    Write-Warning "workspace_hint feature_branch '$($hint.feature_branch)' differs from supplied FeatureBranch '$FeatureBranch'"
+                    Write-StderrWarning "workspace_hint feature_branch '$($hint.feature_branch)' differs from supplied FeatureBranch '$FeatureBranch'"
                 }
             }
         }

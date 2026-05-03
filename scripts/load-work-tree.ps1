@@ -7,6 +7,7 @@
 [CmdletBinding()]
 param([Parameter(Mandatory)][int]$WorkItemId)
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/lib/io-helpers.ps1"
 . "$PSScriptRoot/resolve-gh-token.ps1"
 . "$PSScriptRoot/invoke-gh.ps1"
 . "$PSScriptRoot/lib/pg-helpers.ps1"
@@ -60,7 +61,7 @@ if (-not $isFallback) {
         }
     }
 } else {
-    Write-Warning "No PG tags found on work items. Creating single PG-1 with all items."
+    Write-StderrWarning "No PG tags found on work items. Creating single PG-1 with all items."
     $slug = ($hierarchy.title -replace '[^a-zA-Z0-9]+', '-' -replace '-+$', '').ToLower()
     $prGroups += [ordered]@{
         name = "PG-1"

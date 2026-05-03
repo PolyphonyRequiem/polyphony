@@ -10,6 +10,10 @@ BeforeAll {
     function global:twig { }
     function global:git { }
     function global:gh { }
+
+    # Pre-declare the io-helpers function so the script's idempotent dot-source
+    # skips redefining it — leaving Pester's mock in effect.
+    function global:Write-StderrWarning { param([string]$Message) }
 }
 
 AfterAll {
@@ -17,6 +21,7 @@ AfterAll {
     Remove-Item Function:\twig -ErrorAction SilentlyContinue
     Remove-Item Function:\git -ErrorAction SilentlyContinue
     Remove-Item Function:\gh -ErrorAction SilentlyContinue
+    Remove-Item Function:\Write-StderrWarning -ErrorAction SilentlyContinue
 }
 
 # ── pg-helpers.ps1 unit tests ─────────────────────────────────────────────────
@@ -352,10 +357,11 @@ Describe 'load-work-tree.ps1 — PG structure and PR groups (#2661)' {
         }
 
         It 'Emits a warning about no PG tags' {
-            $result = & $script:ScriptPath -WorkItemId 42 3>&1
-            $warnings = @($result | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
-            $warnings.Count | Should -Be 1
-            $warnings[0].Message | Should -BeLike '*No PG tags*'
+            Mock Write-StderrWarning {}
+            & $script:ScriptPath -WorkItemId 42 | Out-Null
+            Should -Invoke Write-StderrWarning -Times 1 -Exactly -ParameterFilter {
+                $Message -like '*No PG tags*'
+            }
         }
     }
 
