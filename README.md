@@ -20,6 +20,9 @@ workflows to work across Basic, Agile, Scrum, CMMI, and custom processes.
 ## Usage
 
 ```bash
+# Run environment and configuration diagnostics
+polyphony health
+
 # Determine routing for a work item
 polyphony route --work-item 1234 --config .conductor/process-config.yaml
 
@@ -29,6 +32,34 @@ polyphony validate --work-item 1234 --event begin_planning
 # Display hierarchy with role annotations
 polyphony hierarchy --work-item 1234 --depth 3
 ```
+
+## Health Command
+
+The `polyphony health` command runs a suite of diagnostics to verify your environment and configuration. It checks for:
+
+- Presence and validity of `.conductor/process-config.yaml`
+- Availability of required tools (`twig`, `git`)
+- OS, architecture, .NET, and Polyphony version
+
+**Sample output:**
+
+```json
+{
+  "checks": [
+    { "name": "process-config", "success": true, "message": "Loaded successfully" },
+    { "name": "twig", "success": true, "message": "Found on PATH: /usr/local/bin/twig" },
+    { "name": "git", "success": true, "message": "Found on PATH: /usr/bin/git" }
+  ],
+  "os": "Windows_NT",
+  "architecture": "x64",
+  "dotnetVersion": "10.0.0",
+  "polyphonyVersion": "1.2.3"
+}
+```
+
+- If any check fails, review the `message` for remediation steps.
+- All fields are always present; no nulls.
+- Use this command after setup or when troubleshooting environment issues.
 
 ## Building
 

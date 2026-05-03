@@ -43,7 +43,36 @@ Verify your setup:
 ```bash
 twig --version        # Confirm twig is installed
 polyphony --version   # Confirm polyphony is installed
+polyphony health      # Run environment and config diagnostics
 ```
+
+### polyphony health
+
+After installing Polyphony, run `polyphony health` to verify your environment and configuration. This command checks:
+
+- That `.conductor/process-config.yaml` exists and is valid
+- That required tools (`twig`, `git`) are available on your PATH
+- OS, architecture, .NET, and Polyphony version
+
+**Example output:**
+
+```json
+{
+  "checks": [
+    { "name": "process-config", "success": true, "message": "Loaded successfully" },
+    { "name": "twig", "success": true, "message": "Found on PATH: /usr/local/bin/twig" },
+    { "name": "git", "success": true, "message": "Found on PATH: /usr/bin/git" }
+  ],
+  "os": "Windows_NT",
+  "architecture": "x64",
+  "dotnetVersion": "10.0.0",
+  "polyphonyVersion": "1.2.3"
+}
+```
+
+- If any check fails, the `message` field will explain what needs to be fixed.
+- All output fields are always present (never null).
+- Use this command after setup or when troubleshooting environment issues.
 
 ---
 
