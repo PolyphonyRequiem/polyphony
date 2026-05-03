@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -6,7 +5,6 @@ namespace Polyphony.Configuration;
 
 public static class ProcessConfigLoader
 {
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "YamlDotNet deserialization targets simple POCO types with no dynamic code generation at runtime for this specific usage.")]
     public static ProcessConfig Load(string path)
     {
         if (!File.Exists(path))

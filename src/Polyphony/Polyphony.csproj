@@ -1,17 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    AOT/trim/single-file publish is intentionally disabled while we work
+    around YamlDotNet's runtime reflection requirements. The code is still
+    written to be AOT-friendly (source-gen JSON, no Activator.CreateInstance,
+    no Type.GetType from strings) so re-enabling AOT later should be a
+    csproj-level change. See agent-guidance/{architect,coder,reviewer}.md
+    for the constraints we keep honouring.
+  -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>polyphony</AssemblyName>
-    <IsAotCompatible>true</IsAotCompatible>
-    <PublishAot>true</PublishAot>
-    <PublishTrimmed>true</PublishTrimmed>
-    <TrimMode>full</TrimMode>
-    <StripSymbols>true</StripSymbols>
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
-    <InvariantGlobalization>true</InvariantGlobalization>
-    <!-- YamlDotNet produces trim (IL2104) and AOT (IL3053) assembly-level warnings that are
-         pre-existing and outside our control. Suppress them so AOT publish succeeds. -->
-    <NoWarn>$(NoWarn);IL2104;IL3053</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
