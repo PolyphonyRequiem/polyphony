@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 using Twig.Infrastructure;
 
@@ -40,6 +41,14 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<PhaseDetector>();
         services.AddSingleton<HierarchyWalker>();
         services.AddSingleton<TransitionValidator>();
+
+        // Process-shell-out infrastructure for verbs that need to talk to
+        // external tools (twig CLI for side-effect operations, git, gh).
+        // All stateless — singletons are safe.
+        services.AddSingleton<IProcessRunner, ProcessRunner>();
+        services.AddSingleton<ITwigClient, TwigClient>();
+        services.AddSingleton<IGitClient, GitClient>();
+        services.AddSingleton<IGhClient, GhClient>();
 
         return services;
     }
