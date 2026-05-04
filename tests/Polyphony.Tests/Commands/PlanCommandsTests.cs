@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Polyphony.Commands;
+using Polyphony.Configuration;
 using Polyphony.Routing;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
@@ -9,12 +10,17 @@ namespace Polyphony.Tests.Commands;
 
 /// <summary>
 /// End-to-end tests for the <c>polyphony plan</c> verb group. Verifies output shape,
-/// routing-script exit-code convention (always 0), and capability filtering for
-/// <c>plan depth-guard</c> and <c>plan next-child</c>.
+/// routing-script exit-code convention (always 0), capability filtering for
+/// <c>plan depth-guard</c> and <c>plan next-child</c>, and the file-IO loaders
+/// <c>plan load-type</c> and <c>plan load-guidance</c>.
 /// </summary>
 public sealed class PlanCommandsTests : CommandTestBase
 {
-    private PlanCommands CreateCommand() => new(new HierarchyWalker(Config, Repository));
+    private PlanCommands CreateCommand() =>
+        new(new HierarchyWalker(Config, Repository), Repository, Config);
+
+    private PlanCommands CreateCommand(ProcessConfig config) =>
+        new(new HierarchyWalker(config, Repository), Repository, config);
 
     // ─────────────────────────────────────────────────────────────────────────
     // depth-guard
@@ -193,5 +199,272 @@ public sealed class PlanCommandsTests : CommandTestBase
         result.PlannableChildren.Length.ShouldBe(3);
         // Titles round-trip — ensures we're populating both id and title correctly.
         result.PlannableChildren.Select(c => c.Title).ShouldBe(new[] { "A", "B", "C" }, ignoreOrder: true);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // load-type
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task LoadType_HappyPath_ReturnsDefinitionTemplateAndGuidance()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteTypeDefinition("issue", "# Issue type\nDescribes a unit of planning.");
+        fx.WriteTypeTemplate("issue", "## Plan template\n- [ ] step");
+
+        var configWithGuidance = new ProcessConfigBuilder()
+            .WithType("Issue", ["plannable", "implementable"], new Dictionary<string, string>
+            {
+                ["begin_planning"] = "Doing",
+                ["implementation_complete"] = "Done",
+            })
+            .WithBranchStrategy()
+            .Build();
+        configWithGuidance.Types["Issue"].DecompositionGuidance = "Decompose into 2-5 tasks.";
+
+        var item = new WorkItemBuilder().WithId(500).WithType("Issue").WithTitle("Item").WithState("New").Build();
+        await SeedAsync(item);
+
+        var cmd = CreateCommand(configWithGuidance);
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadType(500, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadTypeResult);
+        result.ShouldNotBeNull();
+        result.Type.ShouldBe("Issue");
+        result.Definition.ShouldContain("Issue type");
+        result.Template.ShouldContain("Plan template");
+        result.DecompositionGuidance.ShouldBe("Decompose into 2-5 tasks.");
+        result.Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task LoadType_MissingTemplate_ReturnsEmptyTemplateString()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteTypeDefinition("issue", "# Issue");
+
+        var item = new WorkItemBuilder().WithId(501).WithType("Issue").WithTitle("Item").WithState("New").Build();
+        await SeedAsync(item);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadType(501, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadTypeResult);
+        result.ShouldNotBeNull();
+        result.Template.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public async Task LoadType_WorkItemNotFound_ReturnsCacheErrorWithErrorField()
+    {
+        using var fx = new ConductorDirFixture();
+        var cmd = CreateCommand();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadType(99_999, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.CacheError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadTypeResult);
+        result.ShouldNotBeNull();
+        result.Error.ShouldNotBeNullOrEmpty();
+        result.Error.ShouldContain("99999");
+        // Defaults stand in for missing values
+        result.Type.ShouldBe(string.Empty);
+        result.Definition.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public async Task LoadType_DefinitionMissing_ReturnsConfigError()
+    {
+        using var fx = new ConductorDirFixture();
+        // No definition file written.
+
+        var item = new WorkItemBuilder().WithId(502).WithType("Issue").WithTitle("Item").WithState("New").Build();
+        await SeedAsync(item);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadType(502, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadTypeResult);
+        result.ShouldNotBeNull();
+        result.Error.ShouldNotBeNullOrEmpty();
+        result.Error.ShouldContain("issue.md");
+        result.Type.ShouldBe("Issue"); // Type is known even if the file isn't
+    }
+
+    [Fact]
+    public async Task LoadType_MultiwordType_SlugifiesWithDashes()
+    {
+        // "User Story" → "user-story.md" (matches script regex collapse).
+        using var fx = new ConductorDirFixture();
+        fx.WriteTypeDefinition("user-story", "# User Story");
+
+        var configWithUserStory = new ProcessConfigBuilder()
+            .WithType("User Story", ["plannable"], new Dictionary<string, string>
+            {
+                ["begin_planning"] = "Doing",
+                ["implementation_complete"] = "Done",
+            })
+            .WithBranchStrategy()
+            .Build();
+
+        var item = new WorkItemBuilder().WithId(503).WithType("User Story").WithTitle("US-1").WithState("New").Build();
+        await SeedAsync(item);
+
+        var cmd = CreateCommand(configWithUserStory);
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadType(503, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadTypeResult);
+        result.ShouldNotBeNull();
+        result.Type.ShouldBe("User Story");
+        result.Definition.ShouldContain("User Story");
+    }
+
+    [Fact]
+    public async Task LoadType_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteTypeDefinition("issue", "# def");
+
+        var item = new WorkItemBuilder().WithId(504).WithType("Issue").WithTitle("Item").WithState("New").Build();
+        await SeedAsync(item);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.LoadType(504, fx.ConfigDir));
+
+        output.ShouldContain("\"type\"");
+        output.ShouldContain("\"definition\"");
+        output.ShouldContain("\"template\"");
+        output.ShouldContain("\"decomposition_guidance\"");
+        output.ShouldNotContain("\"DecompositionGuidance\"");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // load-guidance
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void LoadGuidance_HappyPath_ReturnsRoleMap()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteAgentGuidance("architect", "Plan it well.");
+        fx.WriteAgentGuidance("reviewer", "Review it well.");
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
+        result.ShouldNotBeNull();
+        result.ShouldContainKey("architect");
+        result.ShouldContainKey("reviewer");
+        result["architect"].ShouldBe("Plan it well.");
+        result["reviewer"].ShouldBe("Review it well.");
+    }
+
+    [Fact]
+    public void LoadGuidance_NoGuidanceDir_ReturnsEmptyObject()
+    {
+        // Guidance directory never created — must degrade gracefully.
+        using var fx = new ConductorDirFixture(createGuidanceDir: false);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        output.Trim().ShouldBe("{}");
+    }
+
+    [Fact]
+    public void LoadGuidance_EmptyGuidanceDir_ReturnsEmptyObject()
+    {
+        using var fx = new ConductorDirFixture();
+        // Directory exists but no .md files.
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        output.Trim().ShouldBe("{}");
+    }
+
+    [Fact]
+    public void LoadGuidance_IgnoresNonMarkdownFiles()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteAgentGuidance("architect", "MD content");
+        fx.WriteRawGuidanceFile("README.txt", "Should be ignored");
+        fx.WriteRawGuidanceFile("notes.json", "Should be ignored");
+
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
+        result.ShouldNotBeNull();
+        result.Keys.ShouldBe(["architect"]);
+    }
+
+    [Fact]
+    public void LoadGuidance_DeterministicOrder_AlphabeticalByFilename()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteAgentGuidance("zeta", "z");
+        fx.WriteAgentGuidance("alpha", "a");
+        fx.WriteAgentGuidance("mu", "m");
+
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+
+        // Raw JSON should list keys in alphabetical order — JSON dicts preserve insertion order.
+        var alphaIdx = output.IndexOf("\"alpha\"", StringComparison.Ordinal);
+        var muIdx = output.IndexOf("\"mu\"", StringComparison.Ordinal);
+        var zetaIdx = output.IndexOf("\"zeta\"", StringComparison.Ordinal);
+        alphaIdx.ShouldBeGreaterThanOrEqualTo(0);
+        muIdx.ShouldBeGreaterThan(alphaIdx);
+        zetaIdx.ShouldBeGreaterThan(muIdx);
+    }
+}
+
+/// <summary>
+/// Disposable fixture for a temporary <c>.conductor</c> directory used by
+/// <c>load-type</c> and <c>load-guidance</c> tests.
+/// </summary>
+internal sealed class ConductorDirFixture : IDisposable
+{
+    public string ConfigDir { get; }
+
+    public ConductorDirFixture(bool createGuidanceDir = true)
+    {
+        ConfigDir = Path.Combine(Path.GetTempPath(), $"polyphony-plan-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(ConfigDir, "work-item-types", "templates"));
+        if (createGuidanceDir)
+            Directory.CreateDirectory(Path.Combine(ConfigDir, "agent-guidance"));
+    }
+
+    public void WriteTypeDefinition(string slug, string content) =>
+        File.WriteAllText(Path.Combine(ConfigDir, "work-item-types", $"{slug}.md"), content);
+
+    public void WriteTypeTemplate(string slug, string content) =>
+        File.WriteAllText(Path.Combine(ConfigDir, "work-item-types", "templates", $"{slug}-template.md"), content);
+
+    public void WriteAgentGuidance(string role, string content) =>
+        File.WriteAllText(Path.Combine(ConfigDir, "agent-guidance", $"{role}.md"), content);
+
+    public void WriteRawGuidanceFile(string fileName, string content) =>
+        File.WriteAllText(Path.Combine(ConfigDir, "agent-guidance", fileName), content);
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(ConfigDir))
+                Directory.Delete(ConfigDir, recursive: true);
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
     }
 }

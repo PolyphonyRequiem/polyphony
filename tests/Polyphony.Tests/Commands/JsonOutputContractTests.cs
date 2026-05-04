@@ -484,22 +484,35 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var routeCmd = CreateRouteCommand();
         var validateCmd = CreateValidateCommand();
         var hierarchyCmd = CreateHierarchyCommand();
+        var planCmd = CreatePlanCommands();
+        using var fx = new ConductorDirFixture();
 
         var (routeExit, routeOutput) = await CaptureConsoleAsync(() => routeCmd.Route(missingId));
         var (validateExit, validateOutput) = await CaptureConsoleAsync(() => validateCmd.Validate(missingId, "begin_planning"));
         var (hierarchyExit, hierarchyOutput) = await CaptureConsoleAsync(() => hierarchyCmd.Hierarchy(missingId));
+        var (loadTypeExit, loadTypeOutput) = await CaptureConsoleAsync(() => planCmd.LoadType(missingId, fx.ConfigDir));
 
-        // All three should return CacheError (3)
+        // All four operator-facing commands should return CacheError (3) on missing work item.
         routeExit.ShouldBe(ExitCodes.CacheError);
         validateExit.ShouldBe(ExitCodes.CacheError);
         hierarchyExit.ShouldBe(ExitCodes.CacheError);
+        loadTypeExit.ShouldBe(ExitCodes.CacheError);
 
-        // All three should produce valid JSON with "error" and "work_item_id" fields
-        foreach (var output in new[] { routeOutput, validateOutput, hierarchyOutput })
+        // All four should produce valid JSON with an "error" field.
+        // Route/Validate/Hierarchy include "work_item_id"; LoadType emits its own shape
+        // (PlanLoadTypeResult with empty type/definition + error), so we only assert the
+        // common "error" string contract here.
+        foreach (var output in new[] { routeOutput, validateOutput, hierarchyOutput, loadTypeOutput })
         {
             var doc = JsonDocument.Parse(output);
             doc.RootElement.TryGetProperty("error", out var errorProp).ShouldBeTrue();
             errorProp.GetString().ShouldNotBeNullOrEmpty();
+        }
+
+        // Route/Validate/Hierarchy additionally guarantee the work_item_id field.
+        foreach (var output in new[] { routeOutput, validateOutput, hierarchyOutput })
+        {
+            var doc = JsonDocument.Parse(output);
             doc.RootElement.TryGetProperty("work_item_id", out var idProp).ShouldBeTrue();
             idProp.GetInt32().ShouldBe(missingId);
         }
@@ -637,13 +650,137 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
+    // Plan load-type — JSON contract
+    // =========================================================================
+
+    [Fact]
+    public async Task LoadType_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteTypeDefinition("epic", "# Epic");
+
+        var item = new WorkItemBuilder().WithId(10_301).WithType(EpicType).WithTitle("Item").WithState(ProposedState).Build();
+        await SeedAsync(item);
+
+        var cmd = CreatePlanCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadType(10_301, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        output.ShouldContain("\"type\"");
+        output.ShouldContain("\"definition\"");
+        output.ShouldContain("\"template\"");
+        output.ShouldContain("\"decomposition_guidance\"");
+        AssertNoPascalCase(output, "DecompositionGuidance");
+    }
+
+    [Fact]
+    public async Task LoadType_NullErrorOmitted_OnSuccess()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteTypeDefinition("epic", "# Epic");
+
+        var item = new WorkItemBuilder().WithId(10_302).WithType(EpicType).WithTitle("Item").WithState(ProposedState).Build();
+        await SeedAsync(item);
+
+        var cmd = CreatePlanCommands();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.LoadType(10_302, fx.ConfigDir));
+
+        output.ShouldNotContain("\"error\"");
+    }
+
+    [Fact]
+    public async Task LoadType_DeserializationRoundTrip_FieldsMapped()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteTypeDefinition("epic", "# Epic body");
+        fx.WriteTypeTemplate("epic", "## Epic template");
+
+        var item = new WorkItemBuilder().WithId(10_303).WithType(EpicType).WithTitle("Item").WithState(ProposedState).Build();
+        await SeedAsync(item);
+
+        var cmd = CreatePlanCommands();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.LoadType(10_303, fx.ConfigDir));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadTypeResult);
+        result.ShouldNotBeNull();
+        result.Type.ShouldBe(EpicType);
+        result.Definition.ShouldContain("Epic body");
+        result.Template.ShouldContain("Epic template");
+        result.Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task LoadType_NotFound_ReturnsCacheErrorWithErrorJson()
+    {
+        using var fx = new ConductorDirFixture();
+        var cmd = CreatePlanCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadType(99_997, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.CacheError);
+        var doc = JsonDocument.Parse(output);
+        doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task LoadType_DefinitionMissing_ReturnsConfigErrorWithErrorJson()
+    {
+        using var fx = new ConductorDirFixture();
+        // No type definition file written.
+
+        var item = new WorkItemBuilder().WithId(10_304).WithType(EpicType).WithTitle("Item").WithState(ProposedState).Build();
+        await SeedAsync(item);
+
+        var cmd = CreatePlanCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadType(10_304, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var doc = JsonDocument.Parse(output);
+        var error = doc.RootElement.GetProperty("error").GetString();
+        error.ShouldNotBeNull();
+        error.ShouldContain("epic.md");
+    }
+
+    // =========================================================================
+    // Plan load-guidance — JSON contract
+    // =========================================================================
+
+    [Fact]
+    public void LoadGuidance_EmptyDir_EmitsEmptyObject()
+    {
+        using var fx = new ConductorDirFixture(createGuidanceDir: false);
+
+        var cmd = CreatePlanCommands();
+        var (exitCode, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        output.Trim().ShouldBe("{}");
+    }
+
+    [Fact]
+    public void LoadGuidance_DeserializationRoundTrip_KeysAreFileBasenames()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteAgentGuidance("architect", "Architect guidance.");
+        fx.WriteAgentGuidance("planning-gate", "Gate guidance.");
+
+        var cmd = CreatePlanCommands();
+        var (_, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
+        result.ShouldNotBeNull();
+        result.Keys.ShouldContain("architect");
+        result.Keys.ShouldContain("planning-gate");
+        result["architect"].ShouldBe("Architect guidance.");
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 
     private PlanCommands CreatePlanCommands()
     {
         var config = CreateConfigBuilder().Build();
-        return new PlanCommands(new HierarchyWalker(config, Repository));
+        return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config);
     }
 
     private RouteCommand CreateRouteCommand()
