@@ -425,6 +425,165 @@ public sealed class PlanCommandsTests : CommandTestBase
         muIdx.ShouldBeGreaterThan(alphaIdx);
         zetaIdx.ShouldBeGreaterThan(muIdx);
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // review (review-router migration)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private static string ReviewerJson(int score, params string[] blockingIssues)
+    {
+        var issues = string.Join(",", blockingIssues.Select(i => $"\"{i}\""));
+        return $$"""{"score":{{score}},"blocking_issues":[{{issues}}]}""";
+    }
+
+    [Fact]
+    public void Review_HighScore_PassesByScore()
+    {
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(95, "minor"), ReviewerJson(92, "nit"), priorCycleCount: 0));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanReviewResult);
+        result.ShouldNotBeNull();
+        result.Passed.ShouldBeTrue();
+        result.ForcedByCap.ShouldBeFalse();
+        result.AverageScore.ShouldBe(93); // (95 + 92) / 2 = 93
+    }
+
+    [Fact]
+    public void Review_NoBlockingIssues_PassesByEmpty()
+    {
+        var cmd = CreateCommand();
+        // Even with low scores, zero blocking issues passes.
+        var (_, output) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(40), ReviewerJson(30), priorCycleCount: 0));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanReviewResult);
+        result.ShouldNotBeNull();
+        result.Passed.ShouldBeTrue();
+        result.ForcedByCap.ShouldBeFalse();
+        result.BlockingIssueCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Review_LowScoreWithBlocking_FailsWhenBelowCap()
+    {
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(50, "needs work"), ReviewerJson(40, "missing acceptance criteria"), priorCycleCount: 1));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanReviewResult);
+        result.ShouldNotBeNull();
+        result.Passed.ShouldBeFalse();
+        result.ForcedByCap.ShouldBeFalse();
+        result.BlockingIssueCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public void Review_CapHit_PassesAsForcedByCap()
+    {
+        var cmd = CreateCommand();
+        // Scores too low and blocking issues present, but cycle count hit cap.
+        var (_, output) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(50, "issue"), ReviewerJson(40, "issue"), priorCycleCount: 5));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanReviewResult);
+        result.ShouldNotBeNull();
+        result.Passed.ShouldBeTrue();
+        result.ForcedByCap.ShouldBeTrue();
+        result.RevisionCyclesCompleted.ShouldBe(5);
+    }
+
+    [Fact]
+    public void Review_CustomMaxCycles_ReplacesHardcodedDefault()
+    {
+        var cmd = CreateCommand();
+        // Cap of 3 — cycle count of 3 should force.
+        var (_, output) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(50, "issue"), ReviewerJson(40, "issue"), priorCycleCount: 3, maxCycles: 3));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanReviewResult);
+        result.ShouldNotBeNull();
+        result.Passed.ShouldBeTrue();
+        result.ForcedByCap.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Review_BlockingIssues_RenderedInCombinedFeedback()
+    {
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(60, "tech-issue-1"), ReviewerJson(70, "read-issue-1"), priorCycleCount: 0));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanReviewResult);
+        result.ShouldNotBeNull();
+        result.CombinedFeedback.ShouldContain("technical reviewer (score: 60)");
+        result.CombinedFeedback.ShouldContain("- tech-issue-1");
+        result.CombinedFeedback.ShouldContain("readability reviewer (score: 70)");
+        result.CombinedFeedback.ShouldContain("- read-issue-1");
+    }
+
+    [Fact]
+    public void Review_NoBlocking_CombinedFeedbackIsEmpty()
+    {
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(95), ReviewerJson(95), priorCycleCount: 0));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanReviewResult);
+        result.ShouldNotBeNull();
+        result.CombinedFeedback.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Review_AlwaysReturnsSuccess_RoutingScriptConvention()
+    {
+        // Routing scripts always exit 0; the workflow routes on JSON payload.
+        var cmd = CreateCommand();
+
+        var (passExit, _) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(95), ReviewerJson(95), priorCycleCount: 0));
+        var (failExit, _) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(40, "x"), ReviewerJson(40, "x"), priorCycleCount: 0));
+        var (capExit, _) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(40, "x"), ReviewerJson(40, "x"), priorCycleCount: 5));
+
+        passExit.ShouldBe(ExitCodes.Success);
+        failExit.ShouldBe(ExitCodes.Success);
+        capExit.ShouldBe(ExitCodes.Success);
+    }
+
+    [Fact]
+    public void Review_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(95), ReviewerJson(95), priorCycleCount: 0));
+
+        output.ShouldContain("\"average_score\"");
+        output.ShouldContain("\"technical_score\"");
+        output.ShouldContain("\"readability_score\"");
+        output.ShouldContain("\"revision_cycles_completed\"");
+        output.ShouldContain("\"blocking_issue_count\"");
+        output.ShouldContain("\"combined_feedback\"");
+        output.ShouldContain("\"passed\"");
+        output.ShouldContain("\"forced_by_cap\"");
+        output.ShouldNotContain("\"AverageScore\"");
+    }
+
+    [Fact]
+    public void Review_ScoreFloorMatchesPowerShellIntegerDivision()
+    {
+        // PowerShell: [math]::Floor((95 + 92) / 2) = 93 (int math, not float)
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() =>
+            cmd.Review(ReviewerJson(95), ReviewerJson(92), priorCycleCount: 0));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanReviewResult);
+        result.ShouldNotBeNull();
+        result.AverageScore.ShouldBe(93);
+    }
 }
 
 /// <summary>

@@ -14,14 +14,16 @@ namespace Polyphony.Commands;
 ///   <item><c>scripts/child-router.ps1</c> → <see cref="NextChild"/></item>
 ///   <item><c>scripts/load-type-context.ps1</c> → <see cref="LoadType"/></item>
 ///   <item><c>scripts/load-agent-guidance.ps1</c> → <see cref="LoadGuidance"/></item>
+///   <item><c>.conductor/registry/scripts/review-router.ps1</c> → <see cref="Review"/></item>
 /// </list>
 /// </summary>
 /// <remarks>
-/// Routing-script verbs (<see cref="DepthGuard"/>, <see cref="NextChild"/>) always
-/// return <see cref="ExitCodes.Success"/>; the workflow routes on the JSON payload.
-/// File-IO verbs (<see cref="LoadType"/>, <see cref="LoadGuidance"/>) follow the
-/// standard exit-code convention: success on happy path, non-zero on failure with
-/// an <c>error</c> field for the gate prompt to surface.
+/// Routing-script verbs (<see cref="DepthGuard"/>, <see cref="NextChild"/>,
+/// <see cref="Review"/>) always return <see cref="ExitCodes.Success"/>; the workflow
+/// routes on the JSON payload. File-IO verbs (<see cref="LoadType"/>,
+/// <see cref="LoadGuidance"/>) follow the standard exit-code convention: success
+/// on happy path, non-zero on failure with an <c>error</c> field for the gate
+/// prompt to surface.
 /// </remarks>
 public sealed class PlanCommands(
     HierarchyWalker walker,
@@ -208,5 +210,143 @@ public sealed class PlanCommands(
         var lowered = typeName.ToLowerInvariant();
         var slug = System.Text.RegularExpressions.Regex.Replace(lowered, @"\s+", "-");
         return slug;
+    }
+
+    /// <summary>
+    /// Aggregates technical and readability reviewer JSON outputs and decides whether
+    /// the plan-level workflow should loop back to the architect or proceed to the
+    /// human plan-approval gate. Routing-script convention: always exits
+    /// <see cref="ExitCodes.Success"/>; the workflow routes on the <c>passed</c> /
+    /// <c>forced_by_cap</c> fields in the JSON payload.
+    ///
+    /// <para>Pass criteria (any one wins):</para>
+    /// <list type="bullet">
+    ///   <item><description><c>average_score &gt;= 90</c></description></item>
+    ///   <item><description><c>blocking_issue_count == 0</c></description></item>
+    ///   <item><description><c>prior_cycle_count &gt;= max-cycles</c> (forced_by_cap=true)</description></item>
+    /// </list>
+    /// </summary>
+    /// <param name="techReviewerJson">Full JSON from the technical_reviewer agent
+    /// (must contain <c>score</c> and <c>blocking_issues</c> fields).</param>
+    /// <param name="readabilityReviewerJson">Same shape from the readability_reviewer.</param>
+    /// <param name="priorCycleCount">Number of times review has already executed in this
+    /// workflow run. Computed by the caller from <c>context.history</c>; current
+    /// invocation does not count.</param>
+    /// <param name="maxCycles">Cycle cap; defaults to 5. When <paramref name="priorCycleCount"/>
+    /// reaches or exceeds this, <c>passed=true, forced_by_cap=true</c> is emitted to
+    /// escape oscillation. Replaces the hardcoded <c>5</c> at review-router.ps1:79.</param>
+    [Command("review")]
+    public int Review(
+        string techReviewerJson,
+        string readabilityReviewerJson,
+        int priorCycleCount,
+        int maxCycles = 5)
+    {
+        var (techScore, techBlocking) = ParseReviewerJson(techReviewerJson);
+        var (readScore, readBlocking) = ParseReviewerJson(readabilityReviewerJson);
+
+        var blockingCount = techBlocking.Count + readBlocking.Count;
+        // [math]::Floor on the sum of two ints is integer division — preserve exactly.
+        var avg = (techScore + readScore) / 2;
+
+        var combined = BuildCombinedFeedback(techScore, techBlocking, readScore, readBlocking);
+
+        var passByScore = avg >= 90;
+        var passByNoBlocking = blockingCount == 0;
+        var capHit = priorCycleCount >= maxCycles;
+        var pass = passByScore || passByNoBlocking || capHit;
+        var forcedByCap = !(passByScore || passByNoBlocking) && capHit;
+
+        var result = new PlanReviewResult
+        {
+            AverageScore = avg,
+            TechnicalScore = techScore,
+            ReadabilityScore = readScore,
+            RevisionCyclesCompleted = priorCycleCount,
+            BlockingIssueCount = blockingCount,
+            CombinedFeedback = combined,
+            Passed = pass,
+            ForcedByCap = forcedByCap,
+        };
+
+        Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PlanReviewResult));
+        return ExitCodes.Success;
+    }
+
+    private static (int Score, List<string> BlockingIssues) ParseReviewerJson(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return (0, []);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var score = 0;
+            if (root.TryGetProperty("score", out var scoreEl))
+            {
+                // Match the PowerShell [int] cast — accept either number or string.
+                score = scoreEl.ValueKind switch
+                {
+                    JsonValueKind.Number => scoreEl.GetInt32(),
+                    JsonValueKind.String when int.TryParse(scoreEl.GetString(), out var s) => s,
+                    _ => 0,
+                };
+            }
+
+            var blocking = new List<string>();
+            if (root.TryGetProperty("blocking_issues", out var blockEl))
+            {
+                if (blockEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in blockEl.EnumerateArray())
+                        blocking.Add(StringifyBlockingItem(item));
+                }
+                else if (blockEl.ValueKind != JsonValueKind.Null)
+                {
+                    // The PowerShell To-Array helper wraps a scalar in a single-element array.
+                    blocking.Add(StringifyBlockingItem(blockEl));
+                }
+            }
+
+            return (score, blocking);
+        }
+        catch (JsonException)
+        {
+            // Malformed reviewer JSON degrades to "no signal" — same as the script,
+            // which would have thrown but the workflow only ever passes valid JSON.
+            return (0, []);
+        }
+    }
+
+    private static string StringifyBlockingItem(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => element.GetString() ?? string.Empty,
+        _ => element.GetRawText(),
+    };
+
+    private static string BuildCombinedFeedback(
+        int techScore, List<string> techBlocking,
+        int readScore, List<string> readBlocking)
+    {
+        if (techBlocking.Count == 0 && readBlocking.Count == 0)
+            return string.Empty;
+
+        var sb = new System.Text.StringBuilder();
+        if (techBlocking.Count > 0)
+        {
+            sb.AppendLine($"### From technical reviewer (score: {techScore})");
+            foreach (var issue in techBlocking)
+                sb.AppendLine($"- {issue.Trim()}");
+            sb.AppendLine();
+        }
+        if (readBlocking.Count > 0)
+        {
+            sb.AppendLine($"### From readability reviewer (score: {readScore})");
+            foreach (var issue in readBlocking)
+                sb.AppendLine($"- {issue.Trim()}");
+        }
+        return sb.ToString().TrimEnd();
     }
 }

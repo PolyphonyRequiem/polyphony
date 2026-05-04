@@ -15,6 +15,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(PlanNextChildResult))]
 [JsonSerializable(typeof(PlannableChild))]
 [JsonSerializable(typeof(PlanLoadTypeResult))]
+[JsonSerializable(typeof(PlanReviewResult))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
