@@ -1,0 +1,37 @@
+workflows:
+  polyphony-full:
+    description: "Type-agnostic SDLC apex — preflight, state detection, planning, implementation, close-out"
+    path: workflows/polyphony-full.yaml
+    versions: ["0.1.0"]
+  polyphony-planning:
+    description: "Planning orchestration sub-workflow — preflight then recursive plan-level"
+    path: workflows/polyphony-planning.yaml
+    versions: ["0.1.0"]
+  polyphony-implement:
+    description: "Implementation orchestration sub-workflow — preflight, work tree load, per-PG dispatch"
+    path: workflows/polyphony-implement.yaml
+    versions: ["0.1.0"]
+  plan-level:
+    description: "Recursive planning core — single hierarchy level (sub-workflow, called by polyphony-planning)"
+    path: workflows/plan-level.yaml
+    versions: ["0.1.0"]
+  implement-pg:
+    description: "Implement a single PR group — coding, review, PR (sub-workflow, called by polyphony-implement)"
+    path: workflows/implement-pg.yaml
+    versions: ["0.1.0"]
+  feature-pr:
+    description: "Feature PR lifecycle — review, fix loop, merge (sub-workflow)"
+    path: workflows/feature-pr.yaml
+    versions: ["0.1.0"]
+  github-pr:
+    description: "GitHub PR lifecycle — review, fix loop, merge (sub-workflow)"
+    path: workflows/github-pr.yaml
+    versions: ["0.1.0"]
+  ado-pr:
+    description: "ADO PR lifecycle stub — human gate for manual PR management (sub-workflow)"
+    path: workflows/ado-pr.yaml
+    versions: ["0.1.0"]
+  close-out:
+    description: "Post-implementation close-out and observation filing (sub-workflow)"
+    path: workflows/close-out.yaml
+    versions: ["0.1.0"]

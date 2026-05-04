@@ -1,0 +1,237 @@
+# polyphony-full — Type-agnostic apex workflow for the polyphony SDLC pipeline.
+#
+# Entry point for any work item type at any hierarchy level. Runs preflight
+# validation, detects lifecycle phase via Polyphony, and routes to the
+# appropriate sub-workflow (planning, implementation, close-out, or end).
+#
+# Invariants:
+#   Pre:  work_item_id exists in ADO and is accessible via twig CLI.
+#   Post: Work item is routed to the correct phase sub-workflow or $end.
+
+workflow:
+  name: polyphony-full
+  description: >-
+    Type-agnostic SDLC apex workflow. Validates prerequisites, detects lifecycle
+    phase, and routes to planning, implementation, close-out, or end.
+  version: "1.0.0"
+  entry_point: preflight_check
+
+  limits:
+    # Apex workflow that orchestrates planning/implementation/close-out
+    # sub-workflows; default 10 is far too low.
+    max_iterations: 200
+
+  input:
+    work_item_id:
+      type: number
+      required: true
+      description: ADO work item ID (any type at any level)
+    intent:
+      type: string
+      required: false
+      default: resume
+      description: "new | redo | resume"
+    user_plan_path:
+      type: string
+      required: false
+      default: ""
+      description: Path to user-authored plan document
+
+agents:
+  # ── Preflight validation ───────────────────────────────────────────────
+  #
+  # Runs preflight-check.ps1 to validate external dependencies (gh auth,
+  # ADO access, .NET SDK, git state, etc.) before expensive LLM work begins.
+  #
+  # Invariants:
+  #   Pre:  work_item_id is a valid integer.
+  #   Post: output.ready is true/false; output contains check details.
+  - name: preflight_check
+    type: script
+    description: Validate external dependencies before expensive LLM work begins
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/preflight-check.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: state_detector
+        when: "{{ preflight_check.output.ready == true }}"
+      - to: preflight_gate
+        when: "{{ preflight_check.output.ready == false }}"
+      # Catch-all: if `ready` is missing or non-boolean, surface to user
+      # rather than ValueError. See conductor-mechanics M4.
+      - to: preflight_gate
+
+  # ── Preflight gate (human decision point) ──────────────────────────────
+  #
+  # Fires only when preflight_check.output.ready == false. Presents the user
+  # with a Jinja2 Markdown summary of failed checks and remediation steps,
+  # then offers three choices: retry, proceed anyway, or abort (P6, P13).
+  #
+  # Invariants:
+  #   Pre:  preflight_check has run and output.ready == false.
+  #   Post: User has chosen retry (loop), proceed (continue), or abort (end).
+  - name: preflight_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Preflight Check Failed
+
+      {{ preflight_check.output.summary }}
+
+      ### Required Checks
+
+      | # | Check | Status | Detail |
+      |---|-------|--------|--------|
+      {% for check in preflight_check.output.required_checks %}
+      | {{ loop.index }} | `{{ check.name }}` | {{ "✅" if check.passed else "❌" }} | {{ check.detail }} |
+      {% endfor %}
+
+      {% if preflight_check.output.advisory_checks %}
+      ### Advisory Checks
+
+      | # | Check | Status | Detail | Remediation |
+      |---|-------|--------|--------|-------------|
+      {% for check in preflight_check.output.advisory_checks %}
+      | {{ loop.index }} | `{{ check.name }}` | {{ "✅" if check.passed else "⚠️" }} | {{ check.detail }} | {{ check.remediation if not check.passed else "—" }} |
+      {% endfor %}
+      {% endif %}
+
+      ---
+
+      **{{ preflight_check.output.failed_count }}** required check(s) failed, **{{ preflight_check.output.warning_count }}** advisory warning(s).
+
+      Choose an action:
+      - **Retry** — fix the issues above and re-run preflight checks
+      - **Proceed Anyway** — continue despite failures (use with caution)
+      - **Abort** — cancel the workflow
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: preflight_check
+      - label: "⏩ Proceed Anyway"
+        value: proceed
+        route: state_detector
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── State detection ────────────────────────────────────────────────────
+  #
+  # Runs detect-state.ps1 to determine the current lifecycle phase via
+  # Polyphony route. Routes to sub-workflows based on phase:
+  #   needs_planning / needs_seeding     → planning
+  #   ready_for_implementation / in_progress → implementation
+  #   ready_for_completion               → close_out
+  #   done / removed                     → $end
+  #
+  # Invariants:
+  #   Pre:  Preflight passed or user chose to proceed anyway.
+  #   Post: output.phase contains the detected lifecycle phase.
+  - name: state_detector
+    type: script
+    description: Detect current lifecycle phase via Polyphony route
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/detect-state.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Intent"
+      - "{{ workflow.input.intent }}"
+    routes:
+      - to: planning
+        when: "{{ state_detector.output.phase == 'needs_planning' }}"
+      - to: planning
+        when: "{{ state_detector.output.phase == 'needs_seeding' }}"
+      - to: implementation
+        when: "{{ state_detector.output.phase == 'ready_for_implementation' }}"
+      - to: implementation
+        when: "{{ state_detector.output.phase == 'in_progress' }}"
+      - to: close_out
+        when: "{{ state_detector.output.phase == 'ready_for_completion' }}"
+      - to: $end
+        when: "{{ state_detector.output.phase == 'done' }}"
+      - to: $end
+        when: "{{ state_detector.output.phase == 'removed' }}"
+      # Catch-all: detect-state.ps1 may return 'error' or an unexpected
+      # phase; route to $end rather than crash with ValueError. See
+      # conductor-mechanics M4 — this is the canonical M4 example.
+      - to: $end
+
+  # ── Planning sub-workflow ─────────────────────────────────────────────
+  #
+  # Invoked when state_detector.output.phase is needs_planning or
+  # needs_seeding. Handles architect planning, plan PR review, and child
+  # seeding for any plannable work item type.
+  #
+  # Invariants:
+  #   Pre:  state_detector.output.phase in {needs_planning, needs_seeding}.
+  #   Post: Work item has an approved plan and seeded children.
+  - name: planning
+    type: workflow
+    description: Planning and seeding sub-workflow for plannable items
+    workflow: ./polyphony-planning.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      intent: "{{ workflow.input.intent }}"
+      user_plan_path: "{{ workflow.input.user_plan_path }}"
+    routes:
+      - to: state_detector
+        # Re-discover phase after planning + seeding. State_detector will see
+        # the new children (Tasks under Issue) and route to implementation.
+        # P3: Re-Entry by State Discovery.
+
+  # ── Implementation sub-workflow ───────────────────────────────────────
+  #
+  # Invoked when state_detector.output.phase is ready_for_implementation
+  # or in_progress. Manages PG lifecycle, coding agents, PR creation and
+  # review for any implementable work item type.
+  #
+  # Invariants:
+  #   Pre:  state_detector.output.phase in {ready_for_implementation, in_progress}.
+  #   Post: All PGs implemented, PRs merged, feature branch complete.
+  - name: implementation
+    type: workflow
+    description: Implementation sub-workflow for implementable items
+    workflow: ./polyphony-implement.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      intent: "{{ workflow.input.intent }}"
+      # `polyphony-implement` declares feature_branch as required. detect-state
+      # exposes the suggested branch via state_detector.output.workspace_hint
+      # (now a nested object — see polyphony#2939 follow-up). Use the `default`
+      # filter so an empty/missing hint renders as "" instead of crashing under
+      # StrictUndefined. See conductor-mechanics M3.
+      feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default('') }}"
+    routes:
+      - to: state_detector
+        # Re-discover phase after implementation. State_detector will see all
+        # PGs done and route to close_out. P3: Re-Entry by State Discovery.
+
+  # ── Close-out sub-workflow ────────────────────────────────────────────
+  #
+  # Invoked when state_detector.output.phase is ready_for_completion.
+  # Performs post-mortem analysis and files observations as new work items
+  # using filing-eligible types from process-config.yaml.
+  #
+  # Invariants:
+  #   Pre:  state_detector.output.phase == ready_for_completion.
+  #   Post: Observations filed; output.filed_count returned.
+  - name: close_out
+    type: workflow
+    description: Post-implementation close-out and observation filing
+    workflow: ./close-out.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      # close-out only uses feature_branch in its summary markdown; declared
+      # `required: false, default: ""` so omission is harmless. We pass the
+      # detected hint anyway so the close-out summary reads sensibly.
+      feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default('') }}"
+    routes:
+      - to: state_detector
+        # Re-discover phase after close-out. State_detector will see phase=done
+        # (or removed) and route to $end. P3: Re-Entry by State Discovery.

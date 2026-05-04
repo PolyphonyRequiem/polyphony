@@ -1,0 +1,16 @@
+# Twig local cache (per-clone state, not source)
+.twig/
+
+# Polyphony bootstrap audit trail (per-repo, gitignored by convention)
+.polyphony/
+
+# Editor / OS noise
+.vs/
+.vscode/
+.idea/
+*.user
+.DS_Store
+Thumbs.db
+
+# Playwright MCP scratch
+.playwright-mcp/

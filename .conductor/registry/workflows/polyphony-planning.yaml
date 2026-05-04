@@ -1,0 +1,162 @@
+# polyphony-planning — Planning orchestration sub-workflow.
+#
+# Invoked by the apex workflow (polyphony-full.yaml) when
+# phase=needs_planning or phase=needs_seeding. Runs a lightweight
+# preflight, delegates to plan-level.yaml for recursive planning, then
+# re-checks state to determine whether seeding is needed.
+#
+# Invariants:
+#   Pre:  work_item_id exists in ADO; phase is needs_planning or needs_seeding.
+#   Post: Planning complete; work item is either seeded or ready for implementation.
+
+workflow:
+  name: polyphony-planning
+  description: >-
+    Planning orchestration entry point. Validates prerequisites with a
+    lightweight preflight, invokes plan-level.yaml for recursive planning,
+    re-checks state, and seeds the work tree if needed.
+  version: "1.0.0"
+  entry_point: preflight_lite
+
+  limits:
+    # Planning workflow invokes plan-level.yaml which performs recursive
+    # planning. Default 10 is far too low.
+    max_iterations: 100
+
+  input:
+    work_item_id:
+      type: number
+      required: true
+      description: ADO work item ID (any plannable type at any level)
+    intent:
+      type: string
+      required: false
+      default: resume
+      description: "new | redo | resume"
+    user_plan_path:
+      type: string
+      required: false
+      default: ""
+      description: Path to user-authored plan document
+
+tools:
+  - twig
+
+agents:
+  # ── Lightweight preflight ──────────────────────────────────────────────
+  #
+  # Quick 3-check validation (twig CLI, polyphony CLI, git repo) before
+  # planning begins. Cheaper than full preflight since planning does not
+  # require gh auth, .NET SDK, or other heavy dependencies.
+  #
+  # Invariants:
+  #   Pre:  work_item_id is a valid integer.
+  #   Post: output.ready is true/false; output contains check details.
+  - name: preflight_lite
+    type: script
+    description: Quick 3-check validation before planning begins
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/preflight-lite.ps1"
+    routes:
+      - to: plan_level
+        when: "{{ preflight_lite.output.ready == true }}"
+      - to: preflight_lite_gate
+        when: "{{ preflight_lite.output.ready == false }}"
+      # Catch-all: if `ready` is missing or non-boolean, surface to user
+      # rather than ValueError. See conductor-mechanics M4.
+      - to: preflight_lite_gate
+
+  # ── Preflight lite gate (human decision point) ─────────────────────────
+  #
+  # Fires only when preflight_lite.output.ready == false. Presents the
+  # user with a Jinja2 Markdown summary of failed checks and remediation
+  # steps, then offers retry or abort (P6, P13).
+  #
+  # Invariants:
+  #   Pre:  preflight_lite has run and output.ready == false.
+  #   Post: User has chosen retry (loop) or abort (end).
+  - name: preflight_lite_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Preflight Lite Check Failed
+
+      {{ preflight_lite.output.summary }}
+
+      ### Checks
+
+      | # | Check | Status | Detail |
+      |---|-------|--------|--------|
+      {% for check in preflight_lite.output.checks %}
+      | {{ loop.index }} | `{{ check.name }}` | {{ "✅" if check.passed else "❌" }} | {{ check.detail }} |
+      {% endfor %}
+
+      ---
+
+      One or more required checks failed. Please fix the issues above and retry.
+
+      Choose an action:
+      - **Retry** — fix the issues above and re-run preflight checks
+      - **Abort** — cancel the planning workflow
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: preflight_lite
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Plan level sub-workflow ────────────────────────────────────────────
+  #
+  # Invokes plan-level.yaml to handle recursive planning. Passes all
+  # required inputs with depth=0 and max_depth=6 to start planning at
+  # the root level.
+  #
+  # Invariants:
+  #   Pre:  preflight_lite.output.ready == true.
+  #   Post: Recursive planning complete; approved plan and seeded children exist.
+  - name: plan_level
+    type: workflow
+    description: Recursive planning core for any plannable hierarchy level
+    workflow: ./plan-level.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      intent: "{{ workflow.input.intent }}"
+      user_plan_path: "{{ workflow.input.user_plan_path }}"
+      depth: "0"
+      max_depth: "6"
+    routes:
+      - to: seed_check
+
+  # ── Seed check ─────────────────────────────────────────────────────────
+  #
+  # Re-checks work item phase after planning completes via detect-state.ps1.
+  # Enables re-entry (P3) by detecting current state rather than assuming
+  # planning was successful.
+  #
+  # Invariants:
+  #   Pre:  plan_level has completed.
+  #   Post: output.phase indicates current lifecycle phase.
+  - name: seed_check
+    type: script
+    description: Re-check work item phase after planning completes
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "scripts/detect-state.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Intent"
+      - "resume"
+    routes:
+      - to: $end
+        when: "{{ seed_check.output.phase == 'ready_for_implementation' }}"
+      # Catch-all: detect-state.ps1 may return other phases (done, removed,
+      # error, needs_planning, needs_seeding, in_progress, etc.); route to
+      # $end rather than crash with ValueError. The outer polyphony-full
+      # loop will re-detect and re-route on the next iteration if state
+      # is still unresolved. See conductor-mechanics M4.
+      - to: $end
