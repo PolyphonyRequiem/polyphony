@@ -126,9 +126,7 @@ The `{n}` placeholder for PG numbers is substituted later by helper scripts
 
 ## Validation rules
 
-`src/Polyphony/Configuration/ConfigValidator.cs` enforces 14 rules. V-1..V-8 are
-**errors** (block execution; exit code `2`). V-9..V-14 are **warnings** (informational;
-exit code stays `0`).
+`src/Polyphony/Configuration/ConfigValidator.cs` enforces 16 rules. V-1..V-8, V-15, V-16 are **errors** (block execution; exit code `2`). V-9..V-14 are **warnings** (informational; exit code stays `0`).
 
 | ID    | Severity | Trigger                                                                                          | Source line |
 |-------|----------|--------------------------------------------------------------------------------------------------|-------------|
@@ -142,10 +140,12 @@ exit code stays `0`).
 | V-8   | Error    | `allowed_child_types` references a type not declared in `types:`.                                  | 77-84       |
 | V-9   | Warning  | `.conductor/work-item-types/<slug>.md` missing.                                                    | 105-110     |
 | V-10  | Warning  | `.conductor/work-item-types/templates/<slug>-template.md` missing.                                 | 113-119     |
-| V-11  | Warning  | `.conductor/agent-guidance/architect.md` missing.                                                  | 122-127     |
-| V-12  | Warning  | `.conductor/agent-guidance/coder.md` missing.                                                      | 130-134     |
-| V-13  | Warning  | `.conductor/agent-guidance/reviewer.md` missing.                                                   | 137-141     |
+| V-11  | Warning  | `.conductor/agent-guidance/{slug}.md` missing for a type.                                         | 139-145     |
+| V-12  |          | *Removed in AB#2995: see V-11 for per-type agent guidance check.*                                  |             |
+| V-13  |          | *Removed in AB#2995: see V-11 for per-type agent guidance check.*                                  |             |
 | V-14  | Warning  | `.conductor/profile.yaml` missing.                                                                 | 144-148     |
+| V-15  | Error    | `parent` references a type not declared in `types:`.                                               | 40-47       |
+| V-16  | Error    | Cycle detected in type parent relationships.                                                       | 40-52       |
 
 V-9..V-14 only fire when `repoRoot` is supplied (i.e. when run via the CLI rather than
 in unit tests). Type-name → file-slug uses `ConfigValidator.ToSlug`

@@ -206,9 +206,9 @@ the `.conductor/` directory reference):
 ├── process-config.yaml                 # Type capabilities, transitions, branch strategy
 ├── profile.yaml                        # Project metadata, tech stack, build commands
 ├── agent-guidance/
-│   ├── architect.md                    # Guidance for the architect agent
-│   ├── coder.md                        # Guidance for the coder agent
-│   └── reviewer.md                     # Guidance for the reviewer agent
+│   ├── epic.md                         # Guidance for Epic type
+│   ├── user-story.md                   # Guidance for User Story type
+│   ├── task.md                         # Guidance for Task type
 └── work-item-types/
     ├── epic.md                         # Epic type definition
     ├── user-story.md                   # Mid-level type definition (Agile stub)
@@ -223,7 +223,9 @@ For kyber you will rename `user-story.md` → `capability.md` and
 `user-story-template.md` → `capability-template.md` after bootstrap, then update
 `process-config.yaml` to reference the renamed type. The bootstrap can't infer
 custom type names; it always generates the standard mid-level type for the
-parent template.
+parent template. 
+
+> **Note:** Agent guidance files are now generated per type (e.g. `agent-guidance/capability.md`). V-11 warnings will reference the slug for each type. Ensure your agent-guidance directory matches your type names.
 
 ### Review and Customize
 
