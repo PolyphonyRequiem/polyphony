@@ -32,7 +32,7 @@ workflow:
     work_item_id:
       type: number
       required: true
-      description: ADO work item ID to plan
+      description: ADO work item ID to plan (type is runtime-injected; do not hardcode type names)
     intent:
       type: string
       required: false
@@ -47,12 +47,12 @@ workflow:
       type: number
       required: false
       default: 0
-      description: Current recursion depth (0 = root level)
+      description: Current recursion depth (0 = root level; type is runtime-injected; do not hardcode type names)
     max_depth:
       type: number
       required: false
       default: 6
-      description: Maximum recursion depth before requiring human approval
+      description: Maximum recursion depth before requiring human approval (type is runtime-injected; do not hardcode type names)
 
 tools:
   - twig
@@ -89,9 +89,9 @@ agents:
   #
   # Loads repo-specific agent guidance markdown from .conductor/agent-guidance/
   # via load-agent-guidance.ps1. Outputs a JSON role map (keyed by filename
-  # without extension, e.g. "architect", "reviewer"). The architect,
+  # without extension, e.g. "epic", "issue", "task"). The architect,
   # technical_reviewer, and readability_reviewer agents consume their
-  # respective role keys via Jinja2 conditionals so prompts degrade
+  # respective per-type keys via Jinja2 conditionals so prompts degrade
   # gracefully when no guidance files exist.
   #
   # Invariants:

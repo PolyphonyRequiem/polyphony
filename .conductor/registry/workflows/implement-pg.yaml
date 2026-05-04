@@ -31,7 +31,7 @@ workflow:
     work_item_id:
       type: number
       required: true
-      description: ADO work item ID of the parent (Issue-level) item for this PG
+      description: ADO work item ID of the parent (type is runtime-injected; do not hardcode type names) for this PG
     pg_number:
       type: number
       required: true
@@ -39,7 +39,7 @@ workflow:
     work_item_ids:
       type: array
       required: true
-      description: Array of task work item IDs in this PG
+      description: Array of child work item IDs in this PG (type is runtime-injected; do not hardcode type names)
     branch_name:
       type: string
       required: true
@@ -157,7 +157,7 @@ agents:
     routes:
       - to: task_router
 
-  # ── Task router ────────────────────────────────────────────────────────
+  # ── Child work item router (type is runtime-injected; do not hardcode type names) ──
   #
   # Determines the next task to implement within this PG via task-router.ps1.
   # Routes to coder for implementation or to dependency_check when all tasks
@@ -258,7 +258,7 @@ agents:
       {% endif %}
 
       {% if issue_reviewer is defined and issue_reviewer.output is defined and issue_reviewer.output.verdict == 'changes_requested' and issue_reviewer.output.feedback %}
-      ## Issue-Level Reviewer Feedback (PG-wide)
+      ## Parent-level Reviewer Feedback (PG-wide) (type is runtime-injected; do not hardcode type names)
 
       The issue-level reviewer flagged the following PG-wide concerns from the previous
       end-of-PG review. These may span multiple tasks — if the current task touches any
@@ -276,7 +276,7 @@ agents:
     routes:
       - to: task_reviewer
 
-  # ── Task reviewer ──────────────────────────────────────────────────────
+  # ── Child work item reviewer (type is runtime-injected; do not hardcode type names) ──
   #
   # Reviews the coder's implementation for correctness, code quality, and
   # alignment with the task requirements. Routes to task_completer if
@@ -366,7 +366,7 @@ agents:
       # `No matching route found`.
       - to: coder
 
-  # ── Task completer ─────────────────────────────────────────────────────
+  # ── Child work item completer (type is runtime-injected; do not hardcode type names) ──
   #
   # Transitions the completed task to Done in ADO and adds a summary note.
   # Then routes back to task_router to pick up the next task, or proceeds
@@ -374,7 +374,7 @@ agents:
   #
   # Invariants:
   #   Pre:  task_reviewer.output.verdict == 'approved'.
-  #   Post: Task is transitioned to Done in ADO; notes added.
+  #   Post: Child work item is transitioned to its template's done state in ADO; notes added. (type is runtime-injected; do not hardcode type names)
   - name: task_completer
     type: script
     description: Transition completed task to its template's done state and route to next task
@@ -385,7 +385,7 @@ agents:
       - >-
         $taskId = {{ task_router.output.primary_id }};
         twig set $taskId;
-        twig note --text 'Task completed and approved by reviewer';
+        twig note --text 'Child work item completed and approved by reviewer'; # type is runtime-injected; do not hardcode type names
         $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
         if (-not $validate.is_valid) { throw "Cannot transition task $($taskId): $($validate.message)" };
         twig state $validate.target_state;
@@ -439,7 +439,7 @@ agents:
   #               user intervention (P3: re-entry by state).
   #   - Override: Proceed to issue review despite unresolved dependencies
   #               (user accepts risk of integration issues).
-  #   - Reassign: End this PG. Tasks should be reassigned to another PG
+  #   - Reassign: End this PG. Child work items should be reassigned to another PG (type is runtime-injected; do not hardcode type names)
   #               or tracked externally outside this workflow.
   #
   # Invariants:
@@ -530,7 +530,7 @@ agents:
       - **PG number:** {{ workflow.input.pg_number }}
       - **Parent work item:** {{ workflow.input.work_item_id }}
       - **PG branch:** {{ workflow.input.branch_name }}
-      - **Tasks in this PG:** {{ workflow.input.work_item_ids | length }}
+      - **Child work items in this PG:** {{ workflow.input.work_item_ids | length }} (type is runtime-injected; do not hardcode type names)
         ({{ workflow.input.work_item_ids | join(', ') }})
 
       ## Instructions
@@ -544,7 +544,7 @@ agents:
          - Read the modified files in full as needed.
       3. Verify:
          - All acceptance criteria from the parent work item are met
-         - Tasks work together cohesively
+         - Child work items work together cohesively (type is runtime-injected; do not hardcode type names)
          - No integration issues between tasks
          - Test coverage is adequate at the integration level
       4. Return your verdict.
@@ -592,7 +592,7 @@ agents:
       All tasks in PG {{ workflow.input.pg_number }} for work item
       **{{ workflow.input.work_item_id }}** have been implemented and reviewed.
 
-      ### Tasks Completed: {{ workflow.input.work_item_ids | length }}
+      ### Child work items Completed: {{ workflow.input.work_item_ids | length }} (type is runtime-injected; do not hardcode type names)
 
       {% for task_id in workflow.input.work_item_ids %}
       - `AB#{{ task_id }}`
