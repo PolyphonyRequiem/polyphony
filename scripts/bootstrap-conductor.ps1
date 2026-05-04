@@ -131,6 +131,12 @@ function New-ProcessConfigYaml {
         $type = $Types[$i]
         $lines += "  $($type):"
 
+        $parent = if ($i -eq 0) { $null } else { $Types[$i - 1] }
+        $child = if ($i -eq ($Types.Count - 1)) { @() } else { @($Types[$i + 1]) }
+        $lines += '    self_referential: false'
+        $lines += "    allowed_child_types: [$(($child -join ', '))]"
+        if ($parent) { $lines += "    parent: $parent" }
+
         if ($i -eq 0) {
             # Top-level: plannable only
             $lines += '    capabilities: [plannable]'

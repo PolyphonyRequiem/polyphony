@@ -5,12 +5,17 @@ process_template: Agile
 
 types:
   Epic:
+    self_referential: false
+    allowed_child_types: [User Story]
     capabilities: [plannable]
     filing_eligible: false
     max_nesting_depth: 1
     decomposition_guidance: |
       Always decompose into User Stories. Epics are never implemented directly.
   User Story:
+    self_referential: false
+    allowed_child_types: [Task]
+    parent: Epic
     capabilities: [plannable, implementable]
     filing_eligible: true
     max_nesting_depth: 1
@@ -18,6 +23,9 @@ types:
       Decompose into Tasks when scope exceeds a single PG.
       Implement directly when the change is focused and fits one PG.
   Task:
+    self_referential: false
+    allowed_child_types: []
+    parent: User Story
     capabilities: [implementable]
     filing_eligible: true
 

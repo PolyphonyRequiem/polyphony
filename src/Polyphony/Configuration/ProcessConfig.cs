@@ -19,7 +19,7 @@ public sealed class TypeConfig
     public string? DecompositionGuidance { get; set; }
     public bool SelfReferential { get; set; }
     public string[] AllowedChildTypes { get; set; } = [];
-    public string? Parent { get; set; } // New: parent type name, if any
+    public string? Parent { get; set; } // Optional: name of the parent type, if this type is a child of another
 }
 
 public sealed class ReviewPolicies
