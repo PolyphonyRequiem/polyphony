@@ -397,7 +397,7 @@ agents:
 
       - **Parent work item:** {{ workflow.input.work_item_id }}
       - **Remediation cycle:** {{ remediation_counter.output.iteration }}
-      - **Child work items to seed:** (type is runtime-injected; do not hardcode type names)
+      - **Child work items to seed:**
 
       {{ remediation_planner.output.work_items | json(indent=2) }}
 

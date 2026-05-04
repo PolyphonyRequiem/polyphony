@@ -258,9 +258,9 @@ agents:
       {% endif %}
 
       {% if issue_reviewer is defined and issue_reviewer.output is defined and issue_reviewer.output.verdict == 'changes_requested' and issue_reviewer.output.feedback %}
-      ## Parent-level Reviewer Feedback (PG-wide) (type is runtime-injected; do not hardcode type names)
+      ## Parent-level Reviewer Feedback (PG-wide)
 
-      The issue-level reviewer flagged the following PG-wide concerns from the previous
+      The parent-level reviewer flagged the following PG-wide concerns from the previous
       end-of-PG review. These may span multiple tasks — if the current task touches any
       of them, address them here. Otherwise note that they will be picked up by the
       task that owns them.
@@ -517,12 +517,12 @@ agents:
         items:
           type: string
     prompt: |
-      You are the issue-level reviewer for the twig SDLC workflow.
+      You are the parent-level reviewer for the twig SDLC workflow.
 
       ## Your Mission
 
       Review the completed PG {{ workflow.input.pg_number }} for work item
-      {{ workflow.input.work_item_id }} at the issue level. Verify that the
+      {{ workflow.input.work_item_id }} at the parent level. Verify that the
       overall solution is cohesive and ready for PR submission.
 
       ## Context
@@ -530,7 +530,7 @@ agents:
       - **PG number:** {{ workflow.input.pg_number }}
       - **Parent work item:** {{ workflow.input.work_item_id }}
       - **PG branch:** {{ workflow.input.branch_name }}
-      - **Child work items in this PG:** {{ workflow.input.work_item_ids | length }} (type is runtime-injected; do not hardcode type names)
+      - **Child work items in this PG:** {{ workflow.input.work_item_ids | length }}
         ({{ workflow.input.work_item_ids | join(', ') }})
 
       ## Instructions
@@ -544,7 +544,7 @@ agents:
          - Read the modified files in full as needed.
       3. Verify:
          - All acceptance criteria from the parent work item are met
-         - Child work items work together cohesively (type is runtime-injected; do not hardcode type names)
+         - Child work items work together cohesively
          - No integration issues between tasks
          - Test coverage is adequate at the integration level
       4. Return your verdict.
@@ -561,7 +561,7 @@ agents:
       ```json
       {
         "verdict": "approved | changes_requested",
-        "feedback": "Issue-level review feedback",
+        "feedback": "Parent-level review feedback",
         "issues": ["List of specific issues if changes_requested"]
       }
       ```
