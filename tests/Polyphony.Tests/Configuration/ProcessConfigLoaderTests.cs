@@ -118,7 +118,7 @@ public sealed class ProcessConfigLoaderTests
     [Fact]
     public void Load_TypeWithParent_ParsesParentCorrectly()
     {
-        var path = WriteTempConfig(@"""
+        var path = WriteTempConfig("""
             process_template: Basic
             types:
               Feature:
