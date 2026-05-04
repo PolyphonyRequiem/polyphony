@@ -83,15 +83,14 @@ agents:
   #   Post: output.action is one of: create_branch, implement_tasks, submit_pr, all_complete.
   - name: pg_router
     type: script
-    description: Determine current PG action via pg-router.ps1
-    command: pwsh
+    description: Determine current PG action via polyphony branch route
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/pg-router.ps1"
-      - "-WorkItemId"
+      - "branch"
+      - "route"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "-PgNumber"
+      - "--pg-number"
       - "{{ workflow.input.pg_number }}"
     routes:
       - to: branch_manager
@@ -151,11 +150,10 @@ agents:
   - name: guidance_loader
     type: script
     description: Load agent guidance markdown files for coder and reviewer prompts
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/load-agent-guidance.ps1"
+      - "plan"
+      - "load-guidance"
     routes:
       - to: task_router
 
@@ -171,14 +169,13 @@ agents:
   - name: task_router
     type: script
     description: Route to next implementable task within this PG
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/task-router.ps1"
-      - "-WorkItemId"
+      - "branch"
+      - "next-task"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "-PgNumber"
+      - "--pg-number"
       - "{{ workflow.input.pg_number }}"
     routes:
       - to: coder
@@ -412,12 +409,11 @@ agents:
   - name: dependency_check
     type: script
     description: Check ADO predecessor links for blocking dependencies
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/dependency-check.ps1"
-      - "-WorkItemId"
+      - "branch"
+      - "check-deps"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: dependency_gate
@@ -788,14 +784,13 @@ agents:
   - name: scope_closer
     type: script
     description: Transition completed PG items to Done in ADO after PR merge
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/scope-closer.ps1"
-      - "-WorkItemId"
+      - "branch"
+      - "close-scope"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "-PgNumber"
+      - "--pg-number"
       - "{{ workflow.input.pg_number }}"
     routes:
       - to: $end

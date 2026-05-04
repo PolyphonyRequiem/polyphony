@@ -49,12 +49,11 @@ agents:
   - name: preflight_check
     type: script
     description: Validate external dependencies before expensive LLM work begins
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/preflight-check.ps1"
-      - "-WorkItemId"
+      - "state"
+      - "preflight"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: state_detector
@@ -133,14 +132,13 @@ agents:
   - name: state_detector
     type: script
     description: Detect current lifecycle phase via Polyphony route
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/detect-state.ps1"
-      - "-WorkItemId"
+      - "state"
+      - "detect"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "-Intent"
+      - "--intent"
       - "{{ workflow.input.intent }}"
     routes:
       - to: planning

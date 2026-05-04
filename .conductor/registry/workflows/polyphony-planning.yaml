@@ -55,11 +55,10 @@ agents:
   - name: preflight_lite
     type: script
     description: Quick 3-check validation before planning begins
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/preflight-lite.ps1"
+      - "state"
+      - "preflight-lite"
     routes:
       - to: plan_level
         when: "{{ preflight_lite.output.ready == true }}"
@@ -142,14 +141,13 @@ agents:
   - name: seed_check
     type: script
     description: Re-check work item phase after planning completes
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/detect-state.ps1"
-      - "-WorkItemId"
+      - "state"
+      - "detect"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "-Intent"
+      - "--intent"
       - "resume"
     routes:
       - to: $end

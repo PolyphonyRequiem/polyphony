@@ -74,11 +74,10 @@ agents:
   - name: preflight_lite
     type: script
     description: Quick 3-check validation before implementation begins
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/preflight-lite.ps1"
+      - "state"
+      - "preflight-lite"
     routes:
       - to: load_work_tree
         when: "{{ preflight_lite.output.ready == true }}"
@@ -140,12 +139,11 @@ agents:
   - name: load_work_tree
     type: script
     description: Load work item hierarchy and PG structure with completion status
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/load-work-tree.ps1"
-      - "-WorkItemId"
+      - "branch"
+      - "load-tree"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: pg_dispatcher

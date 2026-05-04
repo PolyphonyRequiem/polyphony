@@ -71,14 +71,13 @@ agents:
   - name: depth_guard
     type: script
     description: Validate recursion depth against max_depth
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/depth-guard.ps1"
-      - "-Depth"
+      - "plan"
+      - "depth-guard"
+      - "--depth"
       - "{{ workflow.input.depth }}"
-      - "-MaxDepth"
+      - "--max-depth"
       - "{{ workflow.input.max_depth }}"
     routes:
       - to: guidance_loader
@@ -102,11 +101,10 @@ agents:
   - name: guidance_loader
     type: script
     description: Load agent guidance markdown files for planning agent prompts
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/load-agent-guidance.ps1"
+      - "plan"
+      - "load-guidance"
     routes:
       - to: type_loader
 
@@ -151,12 +149,11 @@ agents:
   - name: type_loader
     type: script
     description: Load type-specific context from .conductor/work-item-types/
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/load-type-context.ps1"
-      - "-WorkItemId"
+      - "plan"
+      - "load-type"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: route_check
@@ -600,20 +597,15 @@ agents:
   - name: review_router
     type: script
     description: Aggregate reviewer outputs and decide architect-revise vs plan_approval (5-revision cap, blocking-issue-aware)
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      # workflow.dir resolves to the directory of the running workflow file
-      # (engine/workflow.py:331). Required because conductor invokes pwsh
-      # from its own cwd, not the registry root, so 'scripts/foo.ps1' alone
-      # would not resolve at runtime.
-      - "{{ workflow.dir }}/../scripts/review-router.ps1"
-      - "-TechReviewerJson"
+      - "plan"
+      - "review"
+      - "--tech-reviewer-json"
       - "{{ review_group.outputs.technical_reviewer | tojson }}"
-      - "-ReadabilityReviewerJson"
+      - "--readability-reviewer-json"
       - "{{ review_group.outputs.readability_reviewer | tojson }}"
-      - "-PriorCycleCount"
+      - "--prior-cycle-count"
       - "{{ context.history | select('equalto', 'review_router') | list | length }}"
     routes:
       - to: architect
@@ -713,14 +705,13 @@ agents:
   - name: seeder
     type: script
     description: Idempotent seeder — marker-aware reconciliation, sets polyphony:planned tag (P8, P14)
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "{{ workflow.dir }}/../scripts/seeder.ps1"
-      - "-WorkItemId"
+      - "plan"
+      - "seed-children"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "-TasksJson"
+      - "--tasks-json"
       - "{{ architect.output.tasks | tojson }}"
     routes:
       - to: child_router
@@ -737,12 +728,11 @@ agents:
   - name: child_router
     type: script
     description: Discover plannable children for recursive planning
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/child-router.ps1"
-      - "-WorkItemId"
+      - "plan"
+      - "next-child"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: plan_children_group

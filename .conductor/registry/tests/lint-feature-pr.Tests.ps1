@@ -39,11 +39,10 @@ agents:
   - name: feature_pr_creator
     type: script
     description: Create feature PR
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/feature-pr-creator.ps1"
+      - "pr"
+      - "create-feature-pr"
     routes:
       - to: pr_platform_router
 
