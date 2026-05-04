@@ -38,4 +38,43 @@ public interface IGitClient
     /// usually only care whether the list is non-empty.
     /// </summary>
     Task<IReadOnlyList<string>> LsRemoteHeadsAsync(string remote, string pattern, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git rev-parse --verify refs/heads/{branch}</c>. Returns the commit
+    /// SHA if the local branch exists, null otherwise.
+    /// </summary>
+    Task<string?> RevParseLocalBranchAsync(string branch, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git checkout {branch}</c>. Throws <see cref="ExternalToolException"/>
+    /// on failure (e.g. branch doesn't exist, dirty worktree conflicts).
+    /// </summary>
+    Task CheckoutAsync(string branch, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git checkout -b {branch} [{startPoint}]</c>. Creates a new branch
+    /// at the given start point (defaults to HEAD) and switches to it.
+    /// Throws <see cref="ExternalToolException"/> on failure.
+    /// </summary>
+    Task CreateBranchAsync(string branch, string? startPoint = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git checkout --track origin/{branch}</c>. Creates a local tracking
+    /// branch from the remote and switches to it.
+    /// Throws <see cref="ExternalToolException"/> on failure.
+    /// </summary>
+    Task CheckoutTrackingAsync(string branch, string remote = "origin", CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git push -u {remote} {branch}</c>. Pushes the branch to the remote
+    /// and sets upstream tracking. Throws <see cref="ExternalToolException"/>
+    /// on failure.
+    /// </summary>
+    Task PushAsync(string branch, string remote = "origin", CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git fetch {remote} {refspec}</c>. Fetches a specific branch/ref from
+    /// the remote. Throws <see cref="ExternalToolException"/> on failure.
+    /// </summary>
+    Task FetchAsync(string remote, string refspec, CancellationToken ct = default);
 }

@@ -146,6 +146,19 @@ public sealed partial class StateCommands
                 workspaceHint.FeatureBranch, implementationStatus, ct).ConfigureAwait(false);
         }
 
+        // Check if the feature branch exists on the remote (diagnostic telemetry).
+        var featureBranchExists = false;
+        if (!string.IsNullOrEmpty(workspaceHint?.FeatureBranch))
+        {
+            try
+            {
+                var refs = await git.LsRemoteHeadsAsync("origin", workspaceHint.FeatureBranch, ct)
+                    .ConfigureAwait(false);
+                featureBranchExists = refs.Count > 0;
+            }
+            catch { /* non-fatal — default to false */ }
+        }
+
         var validation = transitionValidator.Validate(item, "begin_planning", children);
         if (validation is ValidTransition v && workItemState == "To Do" && hasSeededChildren)
         {
@@ -198,6 +211,7 @@ public sealed partial class StateCommands
             AdoWorkspace = adoWorkspace,
             IntentConflict = intentConflict,
             NeedsCleanup = needsCleanup,
+            FeatureBranchExists = featureBranchExists,
             Error = errorMsg,
         };
 
@@ -321,6 +335,7 @@ public sealed partial class StateCommands
             AdoWorkspace = "",
             IntentConflict = false,
             NeedsCleanup = false,
+            FeatureBranchExists = false,
             Error = message,
         };
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.StateDetectResult));

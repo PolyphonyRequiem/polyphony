@@ -176,13 +176,13 @@ agents:
       - "--intent"
       - "{{ workflow.input.intent }}"
     routes:
-      - to: planning
+      - to: ensure_feature_branch
         when: "{{ state_detector.output.phase == 'needs_planning' }}"
-      - to: planning
+      - to: ensure_feature_branch
         when: "{{ state_detector.output.phase == 'needs_seeding' }}"
-      - to: implementation
+      - to: ensure_feature_branch
         when: "{{ state_detector.output.phase == 'ready_for_implementation' }}"
-      - to: implementation
+      - to: ensure_feature_branch
         when: "{{ state_detector.output.phase == 'in_progress' }}"
       - to: close_out
         when: "{{ state_detector.output.phase == 'ready_for_completion' }}"
@@ -195,6 +195,33 @@ agents:
       # conductor-mechanics M4 — this is the canonical M4 example.
       - to: $end
 
+  # ── Feature branch management ──────────────────────────────────────────
+  #
+  # The apex owns the feature branch lifecycle. This step idempotently
+  # ensures the feature branch exists locally and on the remote before
+  # routing to planning or implementation. Sub-workflows receive the
+  # branch name as an input and trust it exists.
+  #
+  # Invariants:
+  #   Pre:  state_detector has run; workspace_hint.feature_branch is set.
+  #   Post: Feature branch exists locally (checked out) and on remote.
+  - name: ensure_feature_branch
+    type: script
+    description: Create or check out the feature branch for this work item
+    command: polyphony
+    args:
+      - "branch"
+      - "ensure-feature"
+      - "--branch"
+      - "{{ state_detector.output.workspace_hint.feature_branch | default('feature/' ~ workflow.input.work_item_id) }}"
+    routes:
+      - to: planning
+        when: "{{ state_detector.output.phase in ['needs_planning', 'needs_seeding'] }}"
+      - to: implementation
+        # Remaining phases that routed here are implementation phases.
+        # Catch-all handles any edge case.
+      - to: implementation
+
   # ── Planning sub-workflow ─────────────────────────────────────────────
   #
   # Invoked when state_detector.output.phase is needs_planning or
@@ -203,6 +230,7 @@ agents:
   #
   # Invariants:
   #   Pre:  state_detector.output.phase in {needs_planning, needs_seeding}.
+  #         Feature branch exists (created by ensure_feature_branch).
   #   Post: Work item has an approved plan and seeded children.
   - name: planning
     type: workflow
@@ -212,6 +240,7 @@ agents:
       work_item_id: "{{ workflow.input.work_item_id }}"
       intent: "{{ workflow.input.intent }}"
       user_plan_path: "{{ workflow.input.user_plan_path }}"
+      feature_branch: "{{ ensure_feature_branch.output.branch }}"
     routes:
       - to: state_detector
         # Re-discover phase after planning + seeding. State_detector will see
@@ -226,6 +255,7 @@ agents:
   #
   # Invariants:
   #   Pre:  state_detector.output.phase in {ready_for_implementation, in_progress}.
+  #         Feature branch exists (created by ensure_feature_branch).
   #   Post: All PGs implemented, PRs merged, feature branch complete.
   - name: implementation
     type: workflow
@@ -234,12 +264,7 @@ agents:
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
       intent: "{{ workflow.input.intent }}"
-      # `polyphony-implement` declares feature_branch as required. detect-state
-      # exposes the suggested branch via state_detector.output.workspace_hint
-      # (now a nested object — see polyphony#2939 follow-up). Use the `default`
-      # filter so an empty/missing hint renders as "" instead of crashing under
-      # StrictUndefined. See conductor-mechanics M3.
-      feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default('') }}"
+      feature_branch: "{{ ensure_feature_branch.output.branch }}"
     routes:
       - to: state_detector
         # Re-discover phase after implementation. State_detector will see all
@@ -260,10 +285,7 @@ agents:
     workflow: ./close-out.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
-      # close-out only uses feature_branch in its summary markdown; declared
-      # `required: false, default: ""` so omission is harmless. We pass the
-      # detected hint anyway so the close-out summary reads sensibly.
-      feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default('') }}"
+      feature_branch: "{{ ensure_feature_branch.output.branch | default('') }}"
     routes:
       - to: state_detector
         # Re-discover phase after close-out. State_detector will see phase=done

@@ -49,6 +49,9 @@ public sealed record StateDetectResult
     public required bool IntentConflict { get; init; }
     public required bool NeedsCleanup { get; init; }
 
+    /// <summary>Whether the feature branch exists on the remote.</summary>
+    public required bool FeatureBranchExists { get; init; }
+
     public required string Error { get; init; }
 }
 
