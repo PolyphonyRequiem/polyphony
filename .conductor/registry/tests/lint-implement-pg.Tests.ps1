@@ -51,9 +51,9 @@ agents:
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
       - to: coder
-        when: "{{ task_router.output.action == 'implement_task' }}"
+        when: "{{ task_router.output.action == 'implement_item' }}"
       - to: dependency_check
-        when: "{{ task_router.output.action == 'all_tasks_done' }}"
+        when: "{{ task_router.output.action == 'all_items_done' }}"
   - name: coder
     type: agent
     model: claude-opus-4.7-1m-internal
