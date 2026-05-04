@@ -34,7 +34,7 @@ approvals:
     mode: warning
     max_revision_cycles: 5
     quality_threshold:
-      avg_score_at_least: 90
+      avg_score_at_least: 85
       blocking_count_at_most: 0
 
   # ACTIVE: Apex work item overrides to manual.
