@@ -309,3 +309,6 @@ If there are no open questions, return an empty array: `"open_questions": []`
 - Keep the plan actionable — downstream agents will implement from it
 - If a user plan exists, preserve its design decisions unless they conflict
   with type constraints (raise as open questions in that case)
+- Use markdown link syntax for all file references in the plan (e.g.,
+  `[docs/projects/foo.plan.md](docs/projects/foo.plan.md)`) so they render
+  as clickable links in the approval gate UI
