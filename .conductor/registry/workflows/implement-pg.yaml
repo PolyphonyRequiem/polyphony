@@ -268,10 +268,10 @@ agents:
       {{ issue_reviewer.output.feedback }}
       {% endif %}
 
-      {% if guidance_loader.output.coder is defined and guidance_loader.output.coder %}
+      {% if guidance_loader.output.issue is defined and guidance_loader.output.issue %}
       ## Repo-Specific Guidance
 
-      {{ guidance_loader.output.coder }}
+      {{ guidance_loader.output.issue }}
       {% endif %}
     routes:
       - to: task_reviewer
@@ -351,10 +351,10 @@ agents:
       - **Request changes** only for substantive issues (bugs, missing requirements, no tests)
       - Do NOT request changes for style preferences or minor nits
 
-      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
+      {% if guidance_loader.output.task is defined and guidance_loader.output.task %}
       ## Repo-Specific Guidance
 
-      {{ guidance_loader.output.reviewer }}
+      {{ guidance_loader.output.task }}
       {% endif %}
     routes:
       - to: task_completer
