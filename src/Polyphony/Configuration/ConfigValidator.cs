@@ -1,8 +1,8 @@
 namespace Polyphony.Configuration;
 
 /// <summary>
-/// Validates a <see cref="ProcessConfig"/> against 14 rules (V-1 through V-14).
-/// Rules V-1–V-8 produce errors (block execution).
+/// Validates a <see cref="ProcessConfig"/> against 16 rules (V-1 through V-16).
+/// Rules V-1–V-8, V-15, V-16 produce errors (block execution).
 /// Rules V-9–V-14 produce warnings (informational, file-existence checks).
 /// </summary>
 public static class ConfigValidator
@@ -36,6 +36,20 @@ public static class ConfigValidator
         }
 
         var definedTypes = new HashSet<string>(config.Types.Keys, StringComparer.OrdinalIgnoreCase);
+
+        // V-15/V-16: parent-exists and cycle-detection
+        var parentErrors = ProcessConfigValidator.ValidateParentRules(config);
+        foreach (var err in parentErrors)
+        {
+            if (err.StartsWith("V-15"))
+            {
+                errors.Add(Error("V-15", err.Substring(6)));
+            }
+            else if (err.StartsWith("V-16"))
+            {
+                errors.Add(Error("V-16", err.Substring(6)));
+            }
+        }
 
         // V-7: no duplicate type names (case-insensitive)
         // Dictionary keys are unique by exact match, but we check case-insensitive collisions.

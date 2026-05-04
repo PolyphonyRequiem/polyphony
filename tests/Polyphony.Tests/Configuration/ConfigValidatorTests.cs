@@ -251,6 +251,59 @@ public sealed class ConfigValidatorTests
 
     #endregion
 
+    #region V-15/V-16: parent-exists and cycle-detection
+
+    [Fact]
+    public void V15_MissingParent_ProducesError()
+    {
+        var config = ValidConfig();
+        config.Types["Task"] = new TypeConfig { Capabilities = ["implementable"], Parent = "NonExistent" };
+
+        var result = ConfigValidator.Validate(config);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(d => d.RuleId == "V-15" && d.Message.Contains("NonExistent"));
+    }
+
+    [Fact]
+    public void V16_CycleDetected_ProducesError()
+    {
+        var config = ValidConfig();
+        config.Types["Epic"] = new TypeConfig { Capabilities = ["plannable"], Parent = "Task" };
+        config.Types["Task"] = new TypeConfig { Capabilities = ["implementable"], Parent = "Epic" };
+
+        var result = ConfigValidator.Validate(config);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(d => d.RuleId == "V-16" && d.Message.Contains("Cycle"));
+    }
+
+    [Fact]
+    public void V15_ParentExists_NoError()
+    {
+        var config = ValidConfig();
+        config.Types["Epic"] = new TypeConfig { Capabilities = ["plannable"] };
+        config.Types["Task"] = new TypeConfig { Capabilities = ["implementable"], Parent = "Epic" };
+
+        var result = ConfigValidator.Validate(config);
+
+        result.Errors.ShouldNotContain(d => d.RuleId == "V-15");
+    }
+
+    [Fact]
+    public void V16_NoCycle_NoError()
+    {
+        var config = ValidConfig();
+        config.Types["Epic"] = new TypeConfig { Capabilities = ["plannable"] };
+        config.Types["Task"] = new TypeConfig { Capabilities = ["implementable"], Parent = "Epic" };
+
+        var result = ConfigValidator.Validate(config);
+
+        result.Errors.ShouldNotContain(d => d.RuleId == "V-16");
+    }
+
+    #endregion
+
     #region V-8: allowed_child_types reference defined types
 
     [Fact]

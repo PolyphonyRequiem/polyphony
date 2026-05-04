@@ -13,12 +13,13 @@ public static class ProcessConfigValidator
     {
         var errors = new List<string>();
         var types = config.Types;
-        // V-15: parent-exists
+        // V-15: parent-exists (case-insensitive lookup, but do not create new dict)
         foreach (var (typeName, typeConfig) in types)
         {
             if (!string.IsNullOrWhiteSpace(typeConfig.Parent))
             {
-                if (!types.ContainsKey(typeConfig.Parent!))
+                var parentExists = types.Keys.Any(k => string.Equals(k, typeConfig.Parent, StringComparison.OrdinalIgnoreCase));
+                if (!parentExists)
                 {
                     errors.Add($"V-15: Type '{typeName}' declares parent '{typeConfig.Parent}', which does not exist in config.");
                 }
