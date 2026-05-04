@@ -23,4 +23,5 @@ app.Add<HealthCommand>();
 app.Add<PlanCommands>("plan");
 app.Add<PolicyCommands>("policy");
 app.Add<BranchCommands>("branch");
+app.Add<StateCommands>("state");
 app.Run(args);

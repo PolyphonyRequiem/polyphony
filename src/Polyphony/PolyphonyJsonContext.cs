@@ -35,6 +35,10 @@ namespace Polyphony;
 [JsonSerializable(typeof(PgReconciliation))]
 [JsonSerializable(typeof(BranchNextTaskResult))]
 [JsonSerializable(typeof(BranchRouteResult))]
+[JsonSerializable(typeof(StatePreflightLiteResult))]
+[JsonSerializable(typeof(StatePreflightResult))]
+[JsonSerializable(typeof(PreflightCheck))]
+[JsonSerializable(typeof(PreflightDetails))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
