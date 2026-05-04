@@ -1,0 +1,79 @@
+schema_version: 1
+
+# .conductor/policy.yaml — polyphony's own SDLC policy.
+#
+# Loaded by `polyphony policy load` at the start of every workflow run
+# (apex `polyphony-full.yaml`). Consumed at decision points via
+# `polyphony policy resolve --scope <root|type:Name|default> --domain <approvals|pr>`.
+#
+# CURRENT CONFIGURATION:
+# • Apex work items (Epic-level): manual approval gate — always requires sign-off
+# • All other items: warning mode — gates only when quality bar is missed or fix loop cap hit
+# • PR merge: warning mode — auto-merges unless major issues remain at fix-loop cap
+# • Planning parallelism: up to 3 concurrent child workflows per recursion frame
+# • Implementation parallelism: up to 3 concurrent PG implementations per feature
+#
+# HOW IT WORKS:
+# Policy resolution uses three scopes (most-specific-wins):
+#   root          — the apex work item passed via -i work_item_id=<N>
+#   type:<Name>   — any item of that type (e.g. type:Issue, type:Task)
+#   defaults      — fallback for everything else
+#
+# Gate modes (both approvals and pr):
+#   auto     — never gate. Auto-approves or auto-merges if quality bar clears.
+#              If revision/fix-loop cap hits, gates only if threshold is missed (or issues remain).
+#   warning  — gates only when human attention needed (threshold miss at cap, or issues at cap).
+#   manual   — always gates; requires explicit human sign-off.
+
+approvals:
+  # ACTIVE DEFAULTS: Warning mode gates for all items.
+  # — Allows 5 revision cycles before gating
+  # — Gates only when reviewer score < 90 OR violations remain at cap
+  # — No gate if score ≥ 90 and no blocking issues
+  defaults:
+    mode: warning
+    max_revision_cycles: 5
+    quality_threshold:
+      avg_score_at_least: 90
+      blocking_count_at_most: 0
+
+  # ACTIVE: Apex work item overrides to manual.
+  # — Ensures Epic-level items always require explicit human sign-off
+  # — Prevents automatic approval regardless of score
+  root:
+    mode: manual
+
+  # ACTIVE OVERRIDE: Tasks auto-approve when score ≥ 90.
+  # — Speeds up routine task planning by skipping gate for clean reviews
+  # — Still gates if score < 90 or blocking issues at revision cap
+  by_type:
+  # Epic: (inherits root: manual — always gates)
+    Task:
+      mode: auto
+
+pr:
+  # ACTIVE DEFAULTS: Warning mode for all PRs.
+  # — Allows 10 fix loops and 3 remediation cycles before gating
+  # — Auto-merges if no major issues remain at fix-loop cap
+  # — Gates only if major issues unresolved at cap
+  defaults:
+    mode: warning
+    max_fix_loops: 10
+    max_remediation_cycles: 3
+
+  # Per-scope overrides (commented out — use to apply different gates to specific items).
+  # Example: uncomment root to require manual merge approval for apex PRs.
+  root:
+    mode: manual
+  # by_type:
+  #   Task:
+  #     mode: auto
+
+concurrency:
+  # ACTIVE: Planning and implementation parallelism limits.
+  # — Up to 3 child workflows planned concurrently per recursion frame
+  #   (prevents overwhelming the orchestrator with too many simultaneous plans)
+  # — Up to 3 PG implementations executed in parallel per feature
+  #   (balances throughput against resource utilization and feedback loops)
+  max_concurrent_children: 3
+  max_concurrent_pgs: 3
