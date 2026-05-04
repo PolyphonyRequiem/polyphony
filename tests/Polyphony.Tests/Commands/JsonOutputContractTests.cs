@@ -762,7 +762,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
     public void LoadGuidance_DeserializationRoundTrip_KeysAreFileBasenames()
     {
         using var fx = new ConductorDirFixture();
-        fx.WriteAgentGuidance("architect", "Architect guidance.");
+        fx.WriteAgentGuidance("epic", "Epic guidance.");
         fx.WriteAgentGuidance("planning-gate", "Gate guidance.");
 
         var cmd = CreatePlanCommands();
@@ -770,9 +770,9 @@ public sealed class JsonOutputContractTests : CommandTestBase
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
         result.ShouldNotBeNull();
-        result.Keys.ShouldContain("architect");
+        result.Keys.ShouldContain("epic");
         result.Keys.ShouldContain("planning-gate");
-        result["architect"].ShouldBe("Architect guidance.");
+        result["epic"].ShouldBe("Epic guidance.");
     }
 
     // =========================================================================

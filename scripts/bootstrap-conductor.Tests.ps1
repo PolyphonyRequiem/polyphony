@@ -293,28 +293,15 @@ Describe 'bootstrap-conductor.ps1 — agent guidance' {
         Remove-Item -Path $script:TempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    It 'Creates architect.md guidance' {
-        $path = Join-Path $script:TempDir '.conductor' 'agent-guidance' 'architect.md'
-        Test-Path $path | Should -BeTrue
-        $content = Get-Content $path -Raw
-        $content | Should -Match 'Architect Guidance'
-        $content | Should -Match 'TODO'
-    }
-
-    It 'Creates coder.md guidance' {
-        $path = Join-Path $script:TempDir '.conductor' 'agent-guidance' 'coder.md'
-        Test-Path $path | Should -BeTrue
-        $content = Get-Content $path -Raw
-        $content | Should -Match 'Coder Guidance'
-        $content | Should -Match 'TODO'
-    }
-
-    It 'Creates reviewer.md guidance' {
-        $path = Join-Path $script:TempDir '.conductor' 'agent-guidance' 'reviewer.md'
-        Test-Path $path | Should -BeTrue
-        $content = Get-Content $path -Raw
-        $content | Should -Match 'Reviewer Guidance'
-        $content | Should -Match 'TODO'
+    It 'Creates agent-guidance files for all types' {
+        $types = @('epic', 'issue', 'task')
+        foreach ($type in $types) {
+            $path = Join-Path $script:TempDir '.conductor' 'agent-guidance' ("$type.md")
+            Test-Path $path | Should -BeTrue
+            $content = Get-Content $path -Raw
+            $content | Should -Match ($type.Substring(0,1).ToUpper() + $type.Substring(1) + ' Guidance')
+            $content | Should -Match 'TODO'
+        }
     }
 }
 

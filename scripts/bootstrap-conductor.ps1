@@ -375,11 +375,11 @@ foreach ($type in $types) {
     }
 }
 
-# 3. Agent guidance files
-$roles = @('Architect', 'Coder', 'Reviewer')
-foreach ($role in $roles) {
-    $guidancePath = Join-Path $conductorPath "agent-guidance/$($role.ToLower()).md"
-    $guidanceContent = New-AgentGuidance -RoleName $role
+# 3. Agent guidance files (type-neutral)
+foreach ($type in $types) {
+    $slug = Get-TypeSlug $type
+    $guidancePath = Join-Path $conductorPath "agent-guidance/$slug.md"
+    $guidanceContent = New-AgentGuidance -RoleName $type
     if (Write-StubFile -FilePath $guidancePath -Content $guidanceContent -ForceOverwrite $forceFlag) {
         $filesWritten += $guidancePath
     } else {

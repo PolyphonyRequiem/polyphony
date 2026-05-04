@@ -133,25 +133,16 @@ public static class ConfigValidator
                 }
             }
 
-            // V-11: agent-guidance/architect.md
-            if (!File.Exists(Path.Combine(repoRoot, ".conductor", "agent-guidance", "architect.md")))
+            // V-11–V-13: agent-guidance/<type>.md for each type
+            foreach (var typeName in config.Types.Keys)
             {
-                warnings.Add(Warning("V-11",
-                    "Agent guidance file missing: .conductor/agent-guidance/architect.md"));
-            }
-
-            // V-12: agent-guidance/coder.md
-            if (!File.Exists(Path.Combine(repoRoot, ".conductor", "agent-guidance", "coder.md")))
-            {
-                warnings.Add(Warning("V-12",
-                    "Agent guidance file missing: .conductor/agent-guidance/coder.md"));
-            }
-
-            // V-13: agent-guidance/reviewer.md
-            if (!File.Exists(Path.Combine(repoRoot, ".conductor", "agent-guidance", "reviewer.md")))
-            {
-                warnings.Add(Warning("V-13",
-                    "Agent guidance file missing: .conductor/agent-guidance/reviewer.md"));
+                var slug = ToSlug(typeName);
+                var guidancePath = Path.Combine(repoRoot, ".conductor", "agent-guidance", $"{slug}.md");
+                if (!File.Exists(guidancePath))
+                {
+                    warnings.Add(Warning("V-11",
+                        $"Agent guidance file missing: .conductor/agent-guidance/{slug}.md"));
+                }
             }
 
             // V-14: profile.yaml
