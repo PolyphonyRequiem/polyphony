@@ -31,7 +31,7 @@ public sealed class BranchCommandsCheckDepsTests : CommandTestBase
         var validator = new TransitionValidator(config);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new BranchCommands(twig, walker, repo, validator, git, gh), runner);
+        return (new BranchCommands(twig, walker, repo, validator, git, gh, config), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)

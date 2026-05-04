@@ -22,7 +22,7 @@ public sealed class BranchCommandsLoadTreeTests : CommandTestBase
         var ghClient = new GhClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
         var validator = new TransitionValidator(Config);
-        return (new BranchCommands(twigClient, walker, Repository, validator, gitClient, ghClient), runner);
+        return (new BranchCommands(twigClient, walker, Repository, validator, gitClient, ghClient, Config), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)

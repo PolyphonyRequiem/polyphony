@@ -1,0 +1,262 @@
+using System.Text.Json;
+using Polyphony.Commands;
+using Polyphony.Configuration;
+using Polyphony.Infrastructure.Processes;
+using Polyphony.Routing;
+using Polyphony.Tests.Infrastructure.Processes;
+using Polyphony.Tests.TestFixtures;
+using Shouldly;
+using Twig.Domain.Services;
+using Twig.Infrastructure.Persistence;
+using Xunit;
+
+namespace Polyphony.Tests.Commands;
+
+public sealed class BranchCommandsNextTaskTests : CommandTestBase
+{
+    private (BranchCommands Command, FakeProcessRunner Runner) CreateCommand(ProcessConfig? cfg = null)
+    {
+        var runner = new FakeProcessRunner();
+        var twig = new TwigClient(runner);
+        var git = new GitClient(runner);
+        var gh = new GhClient(runner);
+        var c = cfg ?? Config;
+        var walker = new HierarchyWalker(c, Repository);
+        var validator = new TransitionValidator(c);
+        return (new BranchCommands(twig, walker, Repository, validator, git, gh, c), runner);
+    }
+
+    private static void StubSync(FakeProcessRunner runner)
+        => runner.WhenExact("twig", ["sync", "--output", "json"], new ProcessResult(0, "{}", ""));
+
+    private static void StubConfig(FakeProcessRunner runner, string org = "org", string project = "proj")
+    {
+        runner.WhenExact("twig", ["config", "organization", "--output", "json"],
+            new ProcessResult(0, $$"""{"info":"{{org}}"}""", ""));
+        runner.WhenExact("twig", ["config", "project", "--output", "json"],
+            new ProcessResult(0, $$"""{"info":"{{project}}"}""", ""));
+    }
+
+    private static void StubBranch(FakeProcessRunner runner, string current)
+        => runner.WhenExact("git", ["branch", "--show-current"],
+            new ProcessResult(0, current, ""));
+
+    private static void ExpectStateTransition(FakeProcessRunner runner, int id, string state)
+    {
+        runner.WhenExact("twig", ["set", id.ToString(), "--output", "json"],
+            new ProcessResult(0, "{}", ""));
+        runner.WhenExact("twig", ["state", state, "--output", "json"],
+            new ProcessResult(0, "{}", ""));
+    }
+
+    [Fact]
+    public async Task NextTask_NoPgIdentifier_EmitsError()
+    {
+        var (cmd, _) = CreateCommand();
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextTask(workItem: 100));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Deserialize(output);
+        result.Action.ShouldBe("error");
+        result.Error.ShouldNotBeNull();
+        result.Error.ShouldContain("--pg-name");
+    }
+
+    [Fact]
+    public async Task NextTask_HappyPath_TransitionsFirstNonDoneTask()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+        StubBranch(runner, "");
+        ExpectStateTransition(runner, 300, "Doing");
+
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("My Epic").WithState("Doing");
+        var issue = new WorkItemBuilder().WithId(200).WithType("Issue").WithTitle("Issue 1")
+            .WithState("Doing").WithParentId(100);
+        var t1 = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("First Task")
+            .WithState("To Do").WithTags("PG-1").WithParentId(200);
+        var t2 = new WorkItemBuilder().WithId(301).WithType("Task").WithTitle("Second Task")
+            .WithState("To Do").WithTags("PG-1").WithParentId(200);
+        await SeedAsync(epic.Build(), issue.Build(), t1.Build(), t2.Build());
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Deserialize(output);
+        result.Action.ShouldBe("implement_task");
+        result.TaskId.ShouldBe(300);
+        result.TaskTitle.ShouldBe("First Task");
+        result.IssueId.ShouldBe(200);
+        result.IssueTitle.ShouldBe("Issue 1");
+        result.RemainingCount.ShouldBe(2);
+        result.CurrentPg.ShouldBe("PG-1");
+        result.AdoWorkspace.ShouldBe("org/proj");
+        result.BranchName.ShouldStartWith("feature/100-");
+    }
+
+    [Fact]
+    public async Task NextTask_AllDone_EmitsAllTasksDone()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithState("Doing");
+        var issue = new WorkItemBuilder().WithId(200).WithType("Issue")
+            .WithState("Doing").WithParentId(100);
+        var done = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("Done")
+            .WithState("Done").WithTags("PG-1").WithParentId(200);
+        await SeedAsync(epic.Build(), issue.Build(), done.Build());
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+        var result = Deserialize(output);
+
+        result.Action.ShouldBe("all_tasks_done", $"Output was: {output}");
+        result.TaskId.ShouldBe(0);
+        result.RemainingCount.ShouldBe(0);
+        result.BranchName.ShouldBe("");
+    }
+
+    [Fact]
+    public async Task NextTask_PgNumberDerivesPgName()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+        StubBranch(runner, "");
+        ExpectStateTransition(runner, 300, "Doing");
+
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing");
+        var issue = new WorkItemBuilder().WithId(200).WithType("Issue")
+            .WithState("Doing").WithParentId(100);
+        var task = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("T")
+            .WithState("To Do").WithTags("PG-3").WithParentId(200);
+        await SeedAsync(epic.Build(), issue.Build(), task.Build());
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.NextTask(workItem: 100, pgNumber: 3));
+        var result = Deserialize(output);
+
+        result.CurrentPg.ShouldBe("PG-3");
+        result.TaskId.ShouldBe(300);
+    }
+
+    [Fact]
+    public async Task NextTask_ContainerTaggedNotTask_PicksImplementableUnderContainer()
+    {
+        // Use an Issue config that is plannable-only (container) so the
+        // primary tag-filter doesn't pick it as a task. This forces the
+        // fallback "find tasks under PG-tagged container" branch.
+        var cfg = new ProcessConfigBuilder()
+            .WithType("Epic", ["plannable"], new Dictionary<string, string>())
+            .WithType("Issue", ["plannable"], new Dictionary<string, string>())
+            .WithType("Task", ["implementable"], new Dictionary<string, string>
+            {
+                ["begin_implementation"] = "Doing",
+            })
+            .WithBranchStrategy()
+            .Build();
+        var (cmd, runner) = CreateCommand(cfg);
+        StubSync(runner);
+        StubConfig(runner);
+        StubBranch(runner, "");
+        ExpectStateTransition(runner, 300, "Doing");
+
+        // Issue is tagged PG-1; tasks are NOT tagged. Fallback ladder kicks in.
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithState("Doing");
+        var issue = new WorkItemBuilder().WithId(200).WithType("Issue").WithTitle("I1")
+            .WithState("Doing").WithTags("PG-1").WithParentId(100);
+        var task = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("T1")
+            .WithState("To Do").WithParentId(200);
+        await SeedAsync(epic.Build(), issue.Build(), task.Build());
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+        var result = Deserialize(output);
+
+        result.Action.ShouldBe("implement_task", $"Output was: {output}");
+        result.TaskId.ShouldBe(300);
+        result.IssueId.ShouldBe(200);
+    }
+
+    [Fact]
+    public async Task NextTask_BranchHintFromConfig_UsedWhenAvailable()
+    {
+        // Set a branch strategy that produces feature/{id}-pg-{n}
+        var cfg = new ProcessConfigBuilder()
+            .WithType("Epic", ["plannable"], new Dictionary<string, string>())
+            .WithType("Task", ["implementable"], new Dictionary<string, string>
+            {
+                ["begin_implementation"] = "Doing",
+            })
+            .WithBranchStrategy(featureBranch: "feature/{id}", pgBranch: "feature/{id}-pg-{n}")
+            .Build();
+        var (cmd, runner) = CreateCommand(cfg);
+        StubSync(runner);
+        StubConfig(runner);
+        StubBranch(runner, "");
+        ExpectStateTransition(runner, 300, "Doing");
+
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing");
+        var task = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("T")
+            .WithState("To Do").WithTags("PG-2").WithParentId(100);
+        await SeedAsync(epic.Build(), task.Build());
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.NextTask(workItem: 100, pgName: "PG-2"));
+        var result = Deserialize(output);
+
+        result.BranchName.ShouldBe("feature/100-pg-2");
+    }
+
+    [Fact]
+    public async Task NextTask_AlreadyOnExpectedBranch_KeepsCurrent()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+        StubBranch(runner, "feature/100-pg-1");
+        ExpectStateTransition(runner, 300, "Doing");
+
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing");
+        var task = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("T")
+            .WithState("To Do").WithTags("PG-1").WithParentId(100);
+        await SeedAsync(epic.Build(), task.Build());
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+        var result = Deserialize(output);
+
+        result.BranchName.ShouldBe("feature/100-pg-1");
+    }
+
+    [Fact]
+    public async Task NextTask_OutputIsSnakeCaseJson()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+        await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithState("Doing").Build());
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+
+        output.ShouldContain("\"task_id\"");
+        output.ShouldContain("\"task_title\"");
+        output.ShouldContain("\"issue_id\"");
+        output.ShouldContain("\"remaining_count\"");
+        output.ShouldContain("\"current_pg\"");
+        output.ShouldContain("\"branch_name\"");
+        output.ShouldContain("\"ado_workspace\"");
+        output.ShouldNotContain("\"TaskId\"");
+        output.ShouldNotContain("\"BranchName\"");
+    }
+
+    private static BranchNextTaskResult Deserialize(string output)
+        => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchNextTaskResult)
+            ?? throw new InvalidOperationException("Failed to deserialize next-task output");
+}

@@ -33,6 +33,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(WorkTreeTask))]
 [JsonSerializable(typeof(PullRequestGroup))]
 [JsonSerializable(typeof(PgReconciliation))]
+[JsonSerializable(typeof(BranchNextTaskResult))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,

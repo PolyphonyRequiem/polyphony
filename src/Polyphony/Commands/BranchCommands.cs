@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ConsoleAppFramework;
+using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 using Twig.Domain.Enums;
@@ -24,7 +25,8 @@ public sealed partial class BranchCommands(
     IWorkItemRepository repository,
     TransitionValidator validator,
     IGitClient git,
-    IGhClient gh)
+    IGhClient gh,
+    ProcessConfig processConfig)
 {
     /// <summary>
     /// Check ADO predecessor links for blocking dependencies on a work item.
