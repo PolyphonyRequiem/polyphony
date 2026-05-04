@@ -102,11 +102,13 @@ public sealed partial class BranchCommands
             {
                 result = new BranchNextTaskResult
                 {
-                    Action = "all_tasks_done",
-                    TaskId = 0,
-                    TaskTitle = "",
-                    IssueId = 0,
-                    IssueTitle = "",
+                    Action = "all_items_done",
+                    PrimaryId = 0,
+                    PrimaryTitle = "",
+                    PrimaryType = "",
+                    ContainerId = 0,
+                    ContainerTitle = "",
+                    ContainerType = "",
                     RemainingCount = 0,
                     CurrentPg = resolvedPg,
                     BranchName = "",
@@ -130,17 +132,17 @@ public sealed partial class BranchCommands
                     break;
                 case InvalidTransition iv:
                     throw new InvalidOperationException(
-                        $"Cannot start task {next.Node.WorkItemId} (event=begin_implementation): {iv.Message}");
+                        $"Cannot start item {next.Node.WorkItemId} (event=begin_implementation): {iv.Message}");
                 default:
                     throw new InvalidOperationException(
-                        $"Cannot start task {next.Node.WorkItemId} (event=begin_implementation): validator returned null");
+                        $"Cannot start item {next.Node.WorkItemId} (event=begin_implementation): validator returned null");
             }
 
             await twig.SetActiveAsync(next.Node.WorkItemId, ct).ConfigureAwait(false);
             await twig.SetStateAsync(targetState, ct).ConfigureAwait(false);
 
-            // Walk up to find the nearest plannable ancestor (the issue).
-            var (issueId, issueTitle) = FindNearestPlannableAncestor(next);
+            // Walk up to find the nearest plannable ancestor (the container).
+            var (containerId, containerTitle, containerType) = FindNearestPlannableAncestorWithType(next);
 
             // Resolve branch name: prefer config-driven workspace_hint.pg_branch
             // pattern, fall back to feature/{rootId}-{slug-of-pg}.
@@ -151,11 +153,13 @@ public sealed partial class BranchCommands
 
             result = new BranchNextTaskResult
             {
-                Action = "implement_task",
-                TaskId = next.Node.WorkItemId,
-                TaskTitle = next.Node.Title,
-                IssueId = issueId,
-                IssueTitle = issueTitle,
+                Action = "implement_item",
+                PrimaryId = next.Node.WorkItemId,
+                PrimaryTitle = next.Node.Title,
+                PrimaryType = next.Node.Type,
+                ContainerId = containerId,
+                ContainerTitle = containerTitle,
+                ContainerType = containerType,
                 RemainingCount = nonTerminal.Count,
                 CurrentPg = resolvedPg,
                 BranchName = branchName,
@@ -209,22 +213,22 @@ public sealed partial class BranchCommands
         return "1";
     }
 
-    private static (int Id, string Title) FindNearestPlannableAncestor(NodeWithParent start)
+    private static (int Id, string Title, string Type) FindNearestPlannableAncestorWithType(NodeWithParent start)
     {
         // Walk up the parent chain stored on each NodeWithParent. The
-        // canonical 3-deep epic→issue→task tree resolves on the first hop
-        // (issue is plannable); a deeper tree continues until we exhaust
+        // canonical 3-deep epic→container→item tree resolves on the first hop
+        // (container is plannable); a deeper tree continues until we exhaust
         // the chain.
         var current = start.Parent;
         while (current is not null)
         {
             if (current.Node.Capabilities.Contains("plannable"))
             {
-                return (current.Node.WorkItemId, current.Node.Title);
+                return (current.Node.WorkItemId, current.Node.Title, current.Node.Type);
             }
             current = current.Parent;
         }
-        return (0, "");
+        return (0, "", "");
     }
 
     private static IEnumerable<NodeWithParent> FlattenWithParents(HierarchyResult node, NodeWithParent? parent = null)
@@ -246,10 +250,12 @@ public sealed partial class BranchCommands
     private static BranchNextTaskResult EmptyNextTaskResult(string error, string pg, string adoWorkspace) => new()
     {
         Action = "error",
-        TaskId = 0,
-        TaskTitle = "",
-        IssueId = 0,
-        IssueTitle = "",
+        PrimaryId = 0,
+        PrimaryTitle = "",
+        PrimaryType = "",
+        ContainerId = 0,
+        ContainerTitle = "",
+        ContainerType = "",
         RemainingCount = 0,
         CurrentPg = pg,
         BranchName = "",
