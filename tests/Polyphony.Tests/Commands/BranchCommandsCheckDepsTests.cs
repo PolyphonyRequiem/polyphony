@@ -1,9 +1,13 @@
 using System.Text.Json;
 using Polyphony.Commands;
+using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
-using Polyphony.Tests.Commands;
+using Polyphony.Routing;
 using Polyphony.Tests.Infrastructure.Processes;
+using Polyphony.Tests.TestFixtures;
 using Shouldly;
+using Twig.Domain.Services;
+using Twig.Infrastructure.Persistence;
 using Xunit;
 
 namespace Polyphony.Tests.Commands;
@@ -16,7 +20,16 @@ public sealed class BranchCommandsCheckDepsTests : CommandTestBase
     {
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
-        return (new BranchCommands(twig), runner);
+        // CheckDeps doesn't touch HierarchyWalker / TransitionValidator / Repository,
+        // but the primary ctor still requires them. Pass minimal real instances.
+        var config = new ProcessConfigBuilder()
+            .WithType("Issue", ["plannable", "implementable"], new Dictionary<string, string>())
+            .Build();
+        var store = new SqliteCacheStore("Data Source=:memory:");
+        var repo = new SqliteWorkItemRepository(store, new WorkItemMapper());
+        var walker = new HierarchyWalker(config, repo);
+        var validator = new TransitionValidator(config);
+        return (new BranchCommands(twig, walker, repo, validator), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)

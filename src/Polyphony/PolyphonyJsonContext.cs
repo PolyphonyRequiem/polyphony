@@ -24,6 +24,9 @@ namespace Polyphony;
 [JsonSerializable(typeof(ResolvedRule))]
 [JsonSerializable(typeof(BranchCheckDepsResult))]
 [JsonSerializable(typeof(BlockingItem))]
+[JsonSerializable(typeof(BranchCloseScopeResult))]
+[JsonSerializable(typeof(ClosedItem))]
+[JsonSerializable(typeof(FailedClosure))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
