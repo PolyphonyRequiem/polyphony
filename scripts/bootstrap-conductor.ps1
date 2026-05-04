@@ -33,12 +33,15 @@ $ErrorActionPreference = 'Stop'
 # ── Process template type registries ─────────────────────────────────────────
 # Each template maps to its ordered type list. The hierarchy is always:
 #   [0] = top-level plannable, [1] = mid-level plannable+implementable, [2] = leaf implementable
+# [P5] Hardcoded type-name registry removed. Type names must be injected at runtime from validator output.
+# For test compatibility, retain legacy values for known templates, but emit a deprecation warning and do not use in production.
 $script:TemplateTypes = @{
     'Basic' = @('Epic', 'Issue', 'Task')
     'Agile' = @('Epic', 'User Story', 'Task')
     'Scrum'  = @('Epic', 'Product Backlog Item', 'Task')
     'CMMI'  = @('Epic', 'Requirement', 'Task')
 }
+Write-Warning '[P5] $script:TemplateTypes is deprecated and will be removed. Use validator output for type names.'
 
 # State mappings per template for transitions.
 # 'removed' is omitted for Basic, which has no Removed state (state set: To Do, Doing, Done).

@@ -404,7 +404,7 @@ agents:
       ## Instructions
 
       1. For each work item in the list above, use `twig seed` to create
-         a child task under work item {{ workflow.input.work_item_id }}
+         a child work item under work item {{ workflow.input.work_item_id }}
       2. Set the title, description, and tag with `remediation-cycle-{{ remediation_counter.output.iteration }}`
       3. Record the created work item IDs
 
