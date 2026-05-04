@@ -506,8 +506,145 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
+    // Plan depth-guard — JSON contract
+    //
+    // Routing-script convention: exit code is always Success; routing happens on
+    // payload field `allowed`. NotFound is not applicable (verb takes no work item).
+    // =========================================================================
+
+    [Fact]
+    public void DepthGuard_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        var cmd = CreatePlanCommands();
+        var (exitCode, output) = CaptureConsole(() => cmd.DepthGuard(depth: 1, maxDepth: 6));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+
+        output.ShouldContain("\"allowed\"");
+        output.ShouldContain("\"depth\"");
+        output.ShouldContain("\"max_depth\"");
+        output.ShouldContain("\"remaining\"");
+        output.ShouldContain("\"message\"");
+
+        AssertNoPascalCase(output, "Allowed");
+        AssertNoPascalCase(output, "Depth");
+        AssertNoPascalCase(output, "MaxDepth");
+        AssertNoPascalCase(output, "Remaining");
+        AssertNoPascalCase(output, "Message");
+    }
+
+    [Fact]
+    public void DepthGuard_DeserializationRoundTrip_FieldsMapped()
+    {
+        var cmd = CreatePlanCommands();
+        var (_, output) = CaptureConsole(() => cmd.DepthGuard(depth: 3, maxDepth: 5));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanDepthGuardResult);
+        result.ShouldNotBeNull();
+        result.Allowed.ShouldBeTrue();
+        result.Depth.ShouldBe(3);
+        result.MaxDepth.ShouldBe(5);
+        result.Remaining.ShouldBe(2);
+        result.Message.ShouldNotBeNullOrEmpty();
+    }
+
+    // =========================================================================
+    // Plan next-child — JSON contract
+    //
+    // Routing-script convention: not-found is Success exit + populated payload
+    // (HasPlannableChildren=false, empty array, error inline). The workflow YAML
+    // routes on the JSON payload, not the exit code.
+    // =========================================================================
+
+    [Fact]
+    public async Task NextChild_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        await SeedAsync(
+            new WorkItemBuilder()
+                .WithId(10_201).WithType(EpicType).WithTitle("Plan Contract").WithState(InProgressState)
+                .Build());
+
+        var cmd = CreatePlanCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.NextChild(10_201));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+
+        output.ShouldContain("\"has_plannable_children\"");
+        output.ShouldContain("\"plannable_children\"");
+        output.ShouldContain("\"parent_id\"");
+        output.ShouldContain("\"count\"");
+
+        AssertNoPascalCase(output, "HasPlannableChildren");
+        AssertNoPascalCase(output, "PlannableChildren");
+        AssertNoPascalCase(output, "ParentId");
+        AssertNoPascalCase(output, "Count");
+        AssertNoPascalCase(output, "Error");
+    }
+
+    [Fact]
+    public async Task NextChild_NullErrorOmitted_WhenSuccess()
+    {
+        await SeedAsync(
+            new WorkItemBuilder()
+                .WithId(10_202).WithType(EpicType).WithTitle("Happy Path").WithState(InProgressState)
+                .Build());
+
+        var cmd = CreatePlanCommands();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.NextChild(10_202));
+
+        // Error is nullable and unset on the success path → must be omitted from JSON.
+        output.ShouldNotContain("\"error\"");
+    }
+
+    [Fact]
+    public async Task NextChild_DeserializationRoundTrip_FieldsMapped()
+    {
+        await SeedAsync(
+            new WorkItemBuilder()
+                .WithId(10_203).WithType(EpicType).WithTitle("Roundtrip Epic").WithState(InProgressState)
+                .Build());
+
+        var cmd = CreatePlanCommands();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.NextChild(10_203));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanNextChildResult);
+        result.ShouldNotBeNull();
+        result.ParentId.ShouldBe(10_203);
+        result.HasPlannableChildren.ShouldBeFalse();
+        result.Count.ShouldBe(0);
+        result.PlannableChildren.ShouldNotBeNull();
+        result.PlannableChildren.ShouldBeEmpty();
+        result.Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task NextChild_NotFound_RoutingScriptConvention_SuccessExitWithErrorField()
+    {
+        // Routing scripts intentionally exit 0 even on not-found, so the workflow
+        // can route to the "no plannable children" branch without breaking.
+        var cmd = CreatePlanCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.NextChild(99_998));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        exitCode.ShouldBe(0);
+
+        var doc = JsonDocument.Parse(output);
+        doc.RootElement.GetProperty("has_plannable_children").GetBoolean().ShouldBeFalse();
+        doc.RootElement.GetProperty("count").GetInt32().ShouldBe(0);
+        doc.RootElement.GetProperty("parent_id").GetInt32().ShouldBe(99_998);
+        doc.RootElement.GetProperty("plannable_children").GetArrayLength().ShouldBe(0);
+        doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
+
+    private PlanCommands CreatePlanCommands()
+    {
+        var config = CreateConfigBuilder().Build();
+        return new PlanCommands(new HierarchyWalker(config, Repository));
+    }
 
     private RouteCommand CreateRouteCommand()
     {

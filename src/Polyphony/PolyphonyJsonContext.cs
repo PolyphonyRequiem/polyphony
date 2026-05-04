@@ -11,6 +11,9 @@ namespace Polyphony;
 [JsonSerializable(typeof(HealthCheckResult))]
 [JsonSerializable(typeof(ConfigValidationResult))]
 [JsonSerializable(typeof(ConfigValidationDiagnostic[]))]
+[JsonSerializable(typeof(PlanDepthGuardResult))]
+[JsonSerializable(typeof(PlanNextChildResult))]
+[JsonSerializable(typeof(PlannableChild))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

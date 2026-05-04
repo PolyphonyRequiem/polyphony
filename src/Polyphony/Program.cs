@@ -20,4 +20,5 @@ app.Add<ValidateCommand>();
 app.Add<ValidateConfigCommand>();
 app.Add<HierarchyCommand>();
 app.Add<HealthCommand>();
+app.Add<PlanCommands>("plan");
 app.Run(args);
