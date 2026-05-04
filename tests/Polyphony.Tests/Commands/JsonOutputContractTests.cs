@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Polyphony.Commands;
+using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
+using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
@@ -780,7 +782,8 @@ public sealed class JsonOutputContractTests : CommandTestBase
     private PlanCommands CreatePlanCommands()
     {
         var config = CreateConfigBuilder().Build();
-        return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config);
+        var twig = new TwigClient(new FakeProcessRunner());
+        return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config, twig);
     }
 
     private RouteCommand CreateRouteCommand()

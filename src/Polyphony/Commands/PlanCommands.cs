@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 using Twig.Domain.Interfaces;
 
@@ -25,10 +26,11 @@ namespace Polyphony.Commands;
 /// on happy path, non-zero on failure with an <c>error</c> field for the gate
 /// prompt to surface.
 /// </remarks>
-public sealed class PlanCommands(
+public sealed partial class PlanCommands(
     HierarchyWalker walker,
     IWorkItemRepository repository,
-    ProcessConfig processConfig)
+    ProcessConfig processConfig,
+    ITwigClient twig)
 {
     /// <summary>
     /// Validates current recursion depth against a configured maximum. Always exits 0.

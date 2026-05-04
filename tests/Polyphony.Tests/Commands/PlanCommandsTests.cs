@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
+using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
@@ -17,10 +19,10 @@ namespace Polyphony.Tests.Commands;
 public sealed class PlanCommandsTests : CommandTestBase
 {
     private PlanCommands CreateCommand() =>
-        new(new HierarchyWalker(Config, Repository), Repository, Config);
+        new(new HierarchyWalker(Config, Repository), Repository, Config, new TwigClient(new FakeProcessRunner()));
 
     private PlanCommands CreateCommand(ProcessConfig config) =>
-        new(new HierarchyWalker(config, Repository), Repository, config);
+        new(new HierarchyWalker(config, Repository), Repository, config, new TwigClient(new FakeProcessRunner()));
 
     // ─────────────────────────────────────────────────────────────────────────
     // depth-guard
