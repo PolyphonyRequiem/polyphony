@@ -430,3 +430,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Playwright MCP transient page snapshots
+.playwright-mcp/
