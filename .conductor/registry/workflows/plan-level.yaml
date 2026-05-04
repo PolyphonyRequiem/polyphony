@@ -157,9 +157,8 @@ agents:
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: route_check
-        when: "{{ type_loader.output.exit_code == 0 }}"
+        when: "{{ type_loader.output.type is defined and type_loader.output.type != '' }}"
       - to: type_loader_error_gate
-        when: "{{ type_loader.output.exit_code != 0 }}"
 
   # ── Type loader error gate ───────────────────────────────────────────────
   #
@@ -177,7 +176,7 @@ agents:
       Planning for work item **{{ workflow.input.work_item_id }}** cannot continue
       because the type context could not be loaded.
 
-      **Error:** {{ type_loader.output.error | default("Unknown error — check that .conductor/work-item-types/ is configured and the work item exists in ADO.") }}
+      **Error:** {{ type_loader.output.error if type_loader.output.error is defined else "Unknown error — check that .conductor/work-item-types/ is configured and the work item exists in ADO." }}
 
       ---
 
