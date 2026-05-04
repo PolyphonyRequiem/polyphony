@@ -1,7 +1,10 @@
 using System.Reflection;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Routing;
+using Twig.Domain.Interfaces;
 
 namespace Polyphony.Commands;
 
@@ -12,20 +15,26 @@ namespace Polyphony.Commands;
 /// <list type="bullet">
 ///   <item><c>scripts/preflight-lite.ps1</c> → <see cref="PreflightLite"/></item>
 ///   <item><c>scripts/preflight-check.ps1</c> → <see cref="Preflight"/></item>
-///   <item><c>scripts/detect-state.ps1</c> → (forthcoming) <c>state detect</c></item>
+///   <item><c>scripts/detect-state.ps1</c> → <see cref="Detect"/></item>
 /// </list>
 /// </summary>
 /// <remarks>
 /// All preflight verbs follow the routing-style exit contract: ALWAYS
 /// return <see cref="ExitCodes.Success"/>; the workflow gates on the JSON
 /// payload's <c>ready</c> flag. Errors are reported via the payload, not
-/// via process exit code.
+/// via process exit code. <see cref="Detect"/> returns a structured error
+/// payload on unexpected failure with <c>phase = "error"</c>.
 /// </remarks>
 public sealed partial class StateCommands(
     ITwigClient twig,
     IGitClient git,
     IGhClient gh,
-    IProcessRunner runner)
+    IProcessRunner runner,
+    PhaseDetector phaseDetector,
+    TransitionValidator transitionValidator,
+    HierarchyWalker hierarchyWalker,
+    IWorkItemRepository repository,
+    ProcessConfig processConfig)
 {
     private const string DotnetExe = "dotnet";
 

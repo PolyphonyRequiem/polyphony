@@ -34,6 +34,8 @@ namespace Polyphony;
 [JsonSerializable(typeof(PullRequestGroup))]
 [JsonSerializable(typeof(PgReconciliation))]
 [JsonSerializable(typeof(BranchNextTaskResult))]
+[JsonSerializable(typeof(StateDetectResult))]
+[JsonSerializable(typeof(ChildrenStateCounts))]
 [JsonSerializable(typeof(BranchRouteResult))]
 [JsonSerializable(typeof(StatePreflightLiteResult))]
 [JsonSerializable(typeof(StatePreflightResult))]
