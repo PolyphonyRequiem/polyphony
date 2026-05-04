@@ -242,7 +242,7 @@ agents:
         workflow iterations; sweeping them in pollutes the commit, breaks
         AB# traceability, and creates phantom changes in PR review.
 
-      {% if task_reviewer.output is defined and task_reviewer.output.verdict == 'changes_requested' and task_reviewer.output.feedback %}
+      {% if task_reviewer is defined and task_reviewer.output is defined and task_reviewer.output.verdict == 'changes_requested' and task_reviewer.output.feedback %}
       ## Previous Reviewer Feedback (this task)
 
       Your previous attempt at this task was rejected by `task_reviewer`. Address the
@@ -257,7 +257,7 @@ agents:
       {{ task_reviewer.output.feedback }}
       {% endif %}
 
-      {% if issue_reviewer.output is defined and issue_reviewer.output.verdict == 'changes_requested' and issue_reviewer.output.feedback %}
+      {% if issue_reviewer is defined and issue_reviewer.output is defined and issue_reviewer.output.verdict == 'changes_requested' and issue_reviewer.output.feedback %}
       ## Issue-Level Reviewer Feedback (PG-wide)
 
       The issue-level reviewer flagged the following PG-wide concerns from the previous
