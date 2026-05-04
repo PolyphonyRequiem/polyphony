@@ -33,6 +33,23 @@ public sealed class ProcessConfigBuilder
         return this;
     }
 
+    /// <summary>
+    /// Adds a work item type with a parent relationship.
+    /// </summary>
+    public ProcessConfigBuilder WithTypeWithParent(
+        string name,
+        string[] capabilities,
+        string parent,
+        Dictionary<string, string>? transitions = null)
+    {
+        _types[name] = new TypeConfig { Capabilities = capabilities, Parent = parent };
+
+        if (transitions is not null)
+            _transitions[name] = new Dictionary<string, string>(transitions, StringComparer.OrdinalIgnoreCase);
+
+        return this;
+    }
+
     /// <summary>Configures the branch naming strategy.</summary>
     public ProcessConfigBuilder WithBranchStrategy(
         string featureBranch = "feature/{id}",

@@ -115,6 +115,25 @@ public sealed class ProcessConfigLoaderTests
         config.Types["Scenario"].SelfReferential.ShouldBeTrue();
     }
 
+    [Fact]
+    public void Load_TypeWithParent_ParsesParentCorrectly()
+    {
+        var path = WriteTempConfig(@"""
+            process_template: Basic
+            types:
+              Feature:
+                capabilities: [plannable]
+              Story:
+                capabilities: [implementable]
+                parent: Feature
+            transitions: {}
+            """);
+
+        var config = ProcessConfigLoader.Load(path);
+        config.Types["Story"].Parent.ShouldBe("Feature");
+        config.Types["Feature"].Parent.ShouldBeNull();
+    }
+
     private static string WriteTempConfig(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"polyphony-test-{Guid.NewGuid()}.yaml");
