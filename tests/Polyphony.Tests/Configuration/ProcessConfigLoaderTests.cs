@@ -134,6 +134,31 @@ public sealed class ProcessConfigLoaderTests
         config.Types["Feature"].Parent.ShouldBeNull();
     }
 
+    [Fact]
+    public void GetParentTypeName_ReturnsParentOrNull()
+    {
+        var config = new ProcessConfig
+        {
+            Types = new Dictionary<string, TypeConfig>
+            {
+                ["Epic"] = new TypeConfig { Capabilities = new[] { "plannable" } },
+                ["Feature"] = new TypeConfig { Capabilities = new[] { "plannable" }, Parent = "Epic" },
+                ["Task"] = new TypeConfig { Capabilities = new[] { "implementable" }, Parent = "Feature" }
+            }
+        };
+
+        ProcessConfigLoader.GetParentTypeName(config, "Epic").ShouldBeNull();
+        ProcessConfigLoader.GetParentTypeName(config, "Feature").ShouldBe("Epic");
+        ProcessConfigLoader.GetParentTypeName(config, "Task").ShouldBe("Feature");
+    }
+
+    [Fact]
+    public void GetParentTypeName_ThrowsForUnknownType()
+    {
+        var config = new ProcessConfig { Types = new() };
+        Should.Throw<ArgumentException>(() => ProcessConfigLoader.GetParentTypeName(config, "Unknown"));
+    }
+
     private static string WriteTempConfig(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"polyphony-test-{Guid.NewGuid()}.yaml");
