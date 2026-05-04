@@ -5,6 +5,11 @@ using Twig.Infrastructure.Config;
 
 SQLitePCL.Batteries.Init();
 
+// Prevent gh CLI from hanging on credential prompts in non-TTY environments
+// (e.g. when spawned by conductor). See invoke-gh.ps1 in the twig registry
+// for the original pattern and AB#3000 for the hang this prevents.
+Environment.SetEnvironmentVariable("GH_PROMPT_DISABLED", "1");
+
 var app = ConsoleApp.Create()
     .ConfigureServices(services =>
     {
