@@ -179,9 +179,9 @@ agents:
       - "{{ workflow.input.pg_number }}"
     routes:
       - to: coder
-        when: "{{ task_router.output.action == 'implement_task' }}"
+        when: "{{ task_router.output.action == 'implement_item' }}"
       - to: dependency_check
-        when: "{{ task_router.output.action == 'all_tasks_done' }}"
+        when: "{{ task_router.output.action == 'all_items_done' }}"
       # Catch-all per M4: unknown action from task-router.ps1 should fail
       # safely to dependency_check (the natural "we're done with tasks"
       # path) rather than raise `No matching route found`.
@@ -215,26 +215,26 @@ agents:
 
       ## Context
 
-      - **Task ID:** {{ task_router.output.task_id }}
-      - **Task title:** {{ task_router.output.task_title }}
+      - **Task ID:** {{ task_router.output.primary_id }}
+      - **Task title:** {{ task_router.output.primary_title }}
       - **PG branch:** {{ workflow.input.branch_name }}
       - **Parent work item:** {{ workflow.input.work_item_id }}
 
       ## Instructions
 
-      1. Read the full task description from ADO using `twig show {{ task_router.output.task_id }}`
+      1. Read the full task description from ADO using `twig show {{ task_router.output.primary_id }}`
       2. Understand the codebase context — read related files, understand patterns
       3. Implement the changes required by the task
       4. Write tests covering the new functionality
       5. Run the build and tests to verify correctness
-      6. Commit and push your changes with a descriptive message including `AB#{{ task_router.output.task_id }}`
+      6. Commit and push your changes with a descriptive message including `AB#{{ task_router.output.primary_id }}`
 
       ## Constraints
 
       - Follow existing code conventions and patterns
       - Do NOT modify files outside the scope of this task
       - Do NOT skip tests — every implementation must have test coverage
-      - Commit messages must reference the ADO work item: `AB#{{ task_router.output.task_id }}`
+      - Commit messages must reference the ADO work item: `AB#{{ task_router.output.primary_id }}`
       - Stage only the files you actually modified for this task. Use
         `git add <path1> <path2>` with explicit paths — never `git add -A`,
         `git add .`, or `git add --all`. The working tree may contain
@@ -311,18 +311,18 @@ agents:
 
       ## Your Mission
 
-      Review the implementation of task {{ task_router.output.task_id }} for
+      Review the implementation of item {{ task_router.output.primary_id }} for
       correctness, code quality, and alignment with the task requirements.
 
       ## Context
 
-      - **Task ID:** {{ task_router.output.task_id }}
-      - **Task title:** {{ task_router.output.task_title }}
+      - **Task ID:** {{ task_router.output.primary_id }}
+      - **Task title:** {{ task_router.output.primary_title }}
       - **PG branch:** {{ workflow.input.branch_name }}
 
       ## Instructions
 
-      1. Read the task description from ADO: `twig show {{ task_router.output.task_id }}`
+      1. Read the item description from ADO: `twig show {{ task_router.output.primary_id }}`
       2. Inspect the latest commit on this PG branch — start with
          `git log --oneline -5` and `git diff HEAD~1` to see what the
          coder actually changed for this task.
@@ -383,7 +383,7 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        $taskId = {{ task_router.output.task_id }};
+        $taskId = {{ task_router.output.primary_id }};
         twig set $taskId;
         twig note --text 'Task completed and approved by reviewer';
         $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
