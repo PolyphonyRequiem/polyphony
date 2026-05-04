@@ -1,0 +1,100 @@
+namespace Polyphony.Policy;
+
+/// <summary>
+/// Resolves an effective <see cref="ScopeRule"/> for a given scope + domain by layering
+/// rules most-specific-wins: <c>Root</c> &gt; <c>ByType[name]</c> &gt; <c>Defaults</c>.
+/// Each field is resolved independently — a more specific scope can override only
+/// <c>mode</c> while inheriting all caps from defaults.
+/// </summary>
+public static class PolicyResolver
+{
+    /// <summary>
+    /// Resolves the effective rule for <paramref name="scope"/> within
+    /// <paramref name="domain"/>. Returns a fully-populated <see cref="ResolvedRule"/>
+    /// suitable for downstream JSON consumption by workflow route conditions.
+    /// </summary>
+    /// <param name="config">A <see cref="PolicyConfig"/> with built-in defaults already
+    /// applied (via <see cref="PolicyLoader.LoadOrDefault"/> or
+    /// <see cref="PolicyLoader.ApplyBuiltInDefaults"/>).</param>
+    /// <param name="domain">Approvals or PR.</param>
+    /// <param name="scope">A scope token: <c>root</c>, <c>default</c>, or
+    /// <c>type:Name</c> (e.g. <c>type:Issue</c>). Case-sensitive on the type name.</param>
+    public static ResolvedRule Resolve(PolicyConfig config, PolicyDomain domain, string scope)
+    {
+        var domainPolicy = domain switch
+        {
+            PolicyDomain.Approvals => config.Approvals,
+            PolicyDomain.Pr => config.Pr,
+            _ => throw new ArgumentOutOfRangeException(nameof(domain)),
+        };
+
+        if (domainPolicy is null)
+            throw new InvalidOperationException(
+                $"Policy config has no '{domain.ToString().ToLowerInvariant()}' domain after defaults applied — bug.");
+
+        var defaults = domainPolicy.Defaults
+            ?? throw new InvalidOperationException(
+                $"Policy domain '{domain}' has no defaults after defaults applied — bug.");
+
+        var resolvedScope = scope switch
+        {
+            "root" => "root",
+            "default" => "default",
+            _ when scope.StartsWith("type:", StringComparison.Ordinal) => scope,
+            _ => throw new ArgumentException(
+                $"Unknown scope '{scope}'. Expected 'root', 'default', or 'type:<TypeName>'.", nameof(scope)),
+        };
+
+        ScopeRule? specific = null;
+        if (resolvedScope == "root")
+        {
+            specific = domainPolicy.Root;
+        }
+        else if (resolvedScope.StartsWith("type:", StringComparison.Ordinal))
+        {
+            var typeName = resolvedScope["type:".Length..];
+            domainPolicy.ByType?.TryGetValue(typeName, out specific);
+        }
+
+        var quality = MergeQuality(specific?.QualityThreshold, defaults.QualityThreshold);
+
+        return new ResolvedRule
+        {
+            Domain = domain.ToString().ToLowerInvariant(),
+            Scope = resolvedScope,
+            Mode = (specific?.Mode ?? defaults.Mode ?? PolicyMode.Warning).ToString().ToLowerInvariant(),
+            MaxRevisionCycles = specific?.MaxRevisionCycles ?? defaults.MaxRevisionCycles,
+            MaxFixLoops = specific?.MaxFixLoops ?? defaults.MaxFixLoops,
+            MaxRemediationCycles = specific?.MaxRemediationCycles ?? defaults.MaxRemediationCycles,
+            QualityAvgScoreAtLeast = quality?.AvgScoreAtLeast,
+            QualityBlockingCountAtMost = quality?.BlockingCountAtMost,
+        };
+    }
+
+    private static QualityThreshold? MergeQuality(QualityThreshold? specific, QualityThreshold? defaults)
+    {
+        if (specific is null) return defaults;
+        if (defaults is null) return specific;
+        return new QualityThreshold
+        {
+            AvgScoreAtLeast = specific.AvgScoreAtLeast ?? defaults.AvgScoreAtLeast,
+            BlockingCountAtMost = specific.BlockingCountAtMost ?? defaults.BlockingCountAtMost,
+        };
+    }
+}
+
+/// <summary>
+/// Output shape from <see cref="PolicyResolver.Resolve"/> — fully resolved rule
+/// suitable for downstream JSON consumption by workflow route conditions.
+/// </summary>
+public sealed record ResolvedRule
+{
+    public required string Domain { get; init; }
+    public required string Scope { get; init; }
+    public required string Mode { get; init; }
+    public int? MaxRevisionCycles { get; init; }
+    public int? MaxFixLoops { get; init; }
+    public int? MaxRemediationCycles { get; init; }
+    public int? QualityAvgScoreAtLeast { get; init; }
+    public int? QualityBlockingCountAtMost { get; init; }
+}

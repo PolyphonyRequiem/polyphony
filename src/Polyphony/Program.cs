@@ -21,4 +21,5 @@ app.Add<ValidateConfigCommand>();
 app.Add<HierarchyCommand>();
 app.Add<HealthCommand>();
 app.Add<PlanCommands>("plan");
+app.Add<PolicyCommands>("policy");
 app.Run(args);

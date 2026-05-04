@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Polyphony.Configuration;
+using Polyphony.Policy;
 
 namespace Polyphony;
 
@@ -16,6 +17,11 @@ namespace Polyphony;
 [JsonSerializable(typeof(PlannableChild))]
 [JsonSerializable(typeof(PlanLoadTypeResult))]
 [JsonSerializable(typeof(PlanReviewResult))]
+[JsonSerializable(typeof(PolicyLoadResult))]
+[JsonSerializable(typeof(PolicyValidateResult))]
+[JsonSerializable(typeof(PolicyDomainSnapshot))]
+[JsonSerializable(typeof(PolicyConcurrencySnapshot))]
+[JsonSerializable(typeof(ResolvedRule))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
