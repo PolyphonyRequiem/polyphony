@@ -49,6 +49,7 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<ITwigClient, TwigClient>();
         services.AddSingleton<IGitClient, GitClient>();
         services.AddSingleton<IGhClient, GhClient>();
+        services.AddSingleton<GhTokenResolver>();
 
         return services;
     }

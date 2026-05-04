@@ -42,13 +42,28 @@ public sealed class GhClient(IProcessRunner runner) : IGhClient
         }
         args.AddRange(["--json", "number,headRefName,url,mergedAt"]);
 
-        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
-        if (!result.Succeeded)
+        // Retry with backoff (3 attempts, 10s timeout each) to handle
+        // transient gh hangs from credential helpers or network.
+        for (int attempt = 1; attempt <= 3; attempt++)
         {
-            return [];
-        }
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(10));
 
-        return ParsePrList(result.Stdout);
+                var result = await runner.RunAsync(Exe, args, timeout.Token).ConfigureAwait(false);
+                if (result.Succeeded)
+                    return ParsePrList(result.Stdout);
+                return [];
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Timeout — retry
+                if (attempt < 3)
+                    await Task.Delay(1000 * (1 << (attempt - 1)), ct).ConfigureAwait(false);
+            }
+        }
+        return [];
     }
 
     public async Task<string> CreatePullRequestAsync(

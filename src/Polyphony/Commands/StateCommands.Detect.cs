@@ -67,6 +67,9 @@ public sealed partial class StateCommands
     private async Task<int> DetectInternalAsync(
         int workItem, string intent, string planPath, string planRoot, CancellationToken ct)
     {
+        // Resolve GH_TOKEN early so all downstream gh calls use the correct identity.
+        await ghTokenResolver.ResolveAsync(ct).ConfigureAwait(false);
+
         var adoOrg = await SafeConfigReadAsync("organization", ct).ConfigureAwait(false) ?? "";
         var adoProject = await SafeConfigReadAsync("project", ct).ConfigureAwait(false) ?? "";
         var adoWorkspace = (string.IsNullOrEmpty(adoOrg) || string.IsNullOrEmpty(adoProject))
