@@ -236,11 +236,16 @@ public sealed partial class StateCommands
             var heads = await git.LsRemoteHeadsAsync("origin", $"{featureBranch}*", ct).ConfigureAwait(false);
             if (heads.Count == 0) return currentImpl;
 
+            // Timeout the gh call to prevent indefinite hangs (e.g. auth
+            // issues, network, rate limits). Degrade gracefully on timeout.
+            using var ghTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            ghTimeout.CancelAfter(TimeSpan.FromSeconds(30));
+
             var openPrs = await gh.ListPullRequestsAsync(
-                slug, new PrListFilters(Head: featureBranch, State: "open"), ct).ConfigureAwait(false);
+                slug, new PrListFilters(Head: featureBranch, State: "open"), ghTimeout.Token).ConfigureAwait(false);
             if (openPrs.Count > 0 && currentImpl != "done") return "in_progress";
         }
-        catch { /* non-fatal */ }
+        catch { /* non-fatal — timeout or network error degrades to current status */ }
         return currentImpl;
     }
 
