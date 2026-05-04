@@ -1,0 +1,93 @@
+using YamlDotNet.Core;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
+
+namespace Polyphony.Policy;
+
+/// <summary>
+/// Loads <c>.conductor/policy.yaml</c> into a <see cref="PolicyConfig"/> with
+/// sensible built-in defaults applied when a file is missing or partial.
+/// Defaults match the plan-of-record:
+/// <list type="bullet">
+///   <item><description>approvals.defaults.mode = warning</description></item>
+///   <item><description>approvals.defaults.max_revision_cycles = 5</description></item>
+///   <item><description>approvals.defaults.quality_threshold.avg_score_at_least = 90</description></item>
+///   <item><description>approvals.defaults.quality_threshold.blocking_count_at_most = 0</description></item>
+///   <item><description>pr.defaults.mode = warning</description></item>
+///   <item><description>pr.defaults.max_fix_loops = 10</description></item>
+///   <item><description>pr.defaults.max_remediation_cycles = 3</description></item>
+///   <item><description>concurrency.max_concurrent_children = 3</description></item>
+///   <item><description>concurrency.max_concurrent_pgs = 3</description></item>
+/// </list>
+/// </summary>
+public static class PolicyLoader
+{
+    /// <summary>
+    /// Loads a policy config from <paramref name="path"/>. When the file does not
+    /// exist, returns a fully-defaulted config (no exception). When the file exists
+    /// but parses cleanly, defaults are merged into any missing fields so callers
+    /// always see a complete config.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">YAML is malformed or unsupported schema.</exception>
+    public static PolicyConfig LoadOrDefault(string path)
+    {
+        var config = File.Exists(path) ? Parse(File.ReadAllText(path), path) : new PolicyConfig();
+        ApplyBuiltInDefaults(config);
+        return config;
+    }
+
+    /// <summary>
+    /// Parses YAML text into a <see cref="PolicyConfig"/> WITHOUT applying built-in
+    /// defaults. Used by <c>polyphony policy validate</c> to flag missing fields.
+    /// </summary>
+    public static PolicyConfig Parse(string yaml, string sourcePath = "<inline>")
+    {
+        var deserializer = new DeserializerBuilder()
+            .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            .IgnoreUnmatchedProperties()
+            .WithEnumNamingConvention(UnderscoredNamingConvention.Instance)
+            .Build();
+
+        try
+        {
+            var config = deserializer.Deserialize<PolicyConfig>(yaml)
+                ?? throw new InvalidOperationException($"Empty policy config: {sourcePath}");
+
+            if (config.SchemaVersion > 1)
+                throw new InvalidOperationException(
+                    $"Unsupported policy schema version {config.SchemaVersion} in {sourcePath}. " +
+                    "This version of Polyphony supports schema_version 1.");
+
+            return config;
+        }
+        catch (YamlException ex)
+        {
+            throw new InvalidOperationException($"Failed to parse policy YAML at {sourcePath}: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Merges built-in defaults into any null leaves in <paramref name="config"/>.
+    /// Idempotent — safe to call repeatedly.
+    /// </summary>
+    public static void ApplyBuiltInDefaults(PolicyConfig config)
+    {
+        config.Approvals ??= new DomainPolicy();
+        config.Approvals.Defaults ??= new ScopeRule();
+        config.Approvals.Defaults.Mode ??= PolicyMode.Warning;
+        config.Approvals.Defaults.MaxRevisionCycles ??= 5;
+        config.Approvals.Defaults.QualityThreshold ??= new QualityThreshold();
+        config.Approvals.Defaults.QualityThreshold.AvgScoreAtLeast ??= 90;
+        config.Approvals.Defaults.QualityThreshold.BlockingCountAtMost ??= 0;
+
+        config.Pr ??= new DomainPolicy();
+        config.Pr.Defaults ??= new ScopeRule();
+        config.Pr.Defaults.Mode ??= PolicyMode.Warning;
+        config.Pr.Defaults.MaxFixLoops ??= 10;
+        config.Pr.Defaults.MaxRemediationCycles ??= 3;
+
+        config.Concurrency ??= new ConcurrencyPolicy();
+        config.Concurrency.MaxConcurrentChildren ??= 3;
+        config.Concurrency.MaxConcurrentPgs ??= 3;
+    }
+}

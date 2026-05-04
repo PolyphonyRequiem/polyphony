@@ -157,7 +157,8 @@ public sealed class HealthCommandTests
 
     private static (int ExitCode, string Output) CaptureConsole(Func<int> action)
     {
-        lock (ConsoleTestLock.Lock)
+        ConsoleTestLock.AsyncLock.Wait();
+        try
         {
             using var writer = new StringWriter();
             var original = Console.Out;
@@ -171,6 +172,10 @@ public sealed class HealthCommandTests
             {
                 Console.SetOut(original);
             }
+        }
+        finally
+        {
+            ConsoleTestLock.AsyncLock.Release();
         }
     }
 }

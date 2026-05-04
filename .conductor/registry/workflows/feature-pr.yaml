@@ -76,16 +76,15 @@ agents:
   - name: feature_pr_creator
     type: script
     description: Create feature PR from feature branch to target branch
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/feature-pr-creator.ps1"
-      - "-WorkItemId"
+      - "pr"
+      - "create-feature-pr"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "-FeatureBranch"
+      - "--feature-branch"
       - "{{ workflow.input.feature_branch }}"
-      - "-TargetBranch"
+      - "--target-branch"
       - "{{ workflow.input.target_branch }}"
     routes:
       - to: pr_platform_router

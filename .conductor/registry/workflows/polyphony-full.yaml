@@ -14,7 +14,7 @@ workflow:
     Type-agnostic SDLC apex workflow. Validates prerequisites, detects lifecycle
     phase, and routes to planning, implementation, close-out, or end.
   version: "1.0.0"
-  entry_point: preflight_check
+  entry_point: policy_loader
 
   limits:
     # Apex workflow that orchestrates planning/implementation/close-out
@@ -36,8 +36,43 @@ workflow:
       required: false
       default: ""
       description: Path to user-authored plan document
+    policy:
+      type: string
+      required: false
+      default: .conductor/policy.yaml
+      description: Path to .conductor/policy.yaml (override via -i policy=<path>)
 
 agents:
+  # ── Policy load (apex resolution) ──────────────────────────────────────
+  #
+  # Loads .conductor/policy.yaml (or the override supplied via
+  # -i policy=<path>) at start-of-run. Surfaces the fully-resolved snapshot
+  # for operator visibility AND fails fast when policy.yaml is malformed —
+  # before any LLM work begins. When no policy file exists, emits a
+  # defaults-only snapshot with used_defaults=true.
+  #
+  # Sub-workflows that need scope-aware mode/cap resolution call
+  # `polyphony policy resolve` themselves rather than threading the apex
+  # snapshot through every input_mapping (see Phase 7 follow-up notes in
+  # docs/decisions/polyphony-verb-migration.md).
+  #
+  # Invariants:
+  #   Pre:  workflow.input.policy is a path string (defaults to
+  #         .conductor/policy.yaml).
+  #   Post: output.schema_version is set; output.used_defaults indicates
+  #         whether a policy file was found.
+  - name: policy_loader
+    type: script
+    description: Load and validate .conductor/policy.yaml at start-of-run
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+      - "--path"
+      - "{{ workflow.input.policy }}"
+    routes:
+      - to: preflight_check
+
   # ── Preflight validation ───────────────────────────────────────────────
   #
   # Runs preflight-check.ps1 to validate external dependencies (gh auth,
@@ -49,12 +84,11 @@ agents:
   - name: preflight_check
     type: script
     description: Validate external dependencies before expensive LLM work begins
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/preflight-check.ps1"
-      - "-WorkItemId"
+      - "state"
+      - "preflight"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
       - to: state_detector
@@ -133,14 +167,13 @@ agents:
   - name: state_detector
     type: script
     description: Detect current lifecycle phase via Polyphony route
-    command: pwsh
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-File"
-      - "scripts/detect-state.ps1"
-      - "-WorkItemId"
+      - "state"
+      - "detect"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "-Intent"
+      - "--intent"
       - "{{ workflow.input.intent }}"
     routes:
       - to: planning

@@ -30,11 +30,14 @@ public abstract class CommandTestBase : IDisposable
 
     /// <summary>
     /// Executes a synchronous command while capturing stdout.
-    /// Uses a lock to prevent parallel test interference with <see cref="Console.Out"/>.
+    /// Uses the shared <see cref="ConsoleTestLock.AsyncLock"/> semaphore so sync and async
+    /// tests serialize against each other (two separate primitives would let parallel
+    /// test classes race on <see cref="Console.Out"/>).
     /// </summary>
     protected static (int ExitCode, string Output) CaptureConsole(Func<int> action)
     {
-        lock (ConsoleTestLock.Lock)
+        ConsoleTestLock.AsyncLock.Wait();
+        try
         {
             using var writer = new StringWriter();
             var original = Console.Out;
@@ -49,17 +52,21 @@ public abstract class CommandTestBase : IDisposable
                 Console.SetOut(original);
             }
         }
+        finally
+        {
+            ConsoleTestLock.AsyncLock.Release();
+        }
     }
 
     /// <summary>
     /// Executes an asynchronous command while capturing stdout.
-    /// Uses a lock to prevent parallel test interference with <see cref="Console.Out"/>.
+    /// Uses a <see cref="SemaphoreSlim"/> (not <see cref="Monitor"/>) because real async
+    /// I/O inside the action (e.g. <c>File.ReadAllTextAsync</c>) can resume on a different
+    /// thread, which would break <c>Monitor.Exit</c>'s thread-affinity requirement.
     /// </summary>
     protected static async Task<(int ExitCode, string Output)> CaptureConsoleAsync(Func<Task<int>> action)
     {
-        // Acquire the lock synchronously, then run the async action inside it.
-        // Safe because command methods are CPU-bound once the walker completes.
-        Monitor.Enter(ConsoleTestLock.Lock);
+        await ConsoleTestLock.AsyncLock.WaitAsync();
         try
         {
             using var writer = new StringWriter();
@@ -77,7 +84,7 @@ public abstract class CommandTestBase : IDisposable
         }
         finally
         {
-            Monitor.Exit(ConsoleTestLock.Lock);
+            ConsoleTestLock.AsyncLock.Release();
         }
     }
 
