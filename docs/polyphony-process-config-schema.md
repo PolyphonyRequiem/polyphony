@@ -27,6 +27,7 @@ types:
       Decompose into Tasks when …
     self_referential: false
     allowed_child_types: [Task]
+    # parent: <ParentTypeName>             # (optional) Name of the parent type, if this type is a child
 
 transitions:
   <TypeName>:
@@ -69,7 +70,7 @@ YAML loading uses `UnderscoredNamingConvention` and `IgnoreUnmatchedProperties`
 
 ### `types[<TypeName>]`
 
-(`src/Polyphony/Configuration/ProcessConfig.cs:14-22`)
+(`src/Polyphony/Configuration/ProcessConfig.cs:14-23`)
 
 | Key                       | Type      | Default | Notes                                                                                  |
 |---------------------------|-----------|---------|----------------------------------------------------------------------------------------|
@@ -79,6 +80,7 @@ YAML loading uses `UnderscoredNamingConvention` and `IgnoreUnmatchedProperties`
 | `decomposition_guidance`  | string?   | null    | Free-form; consumed by planning agents.                                                |
 | `self_referential`        | bool      | `false` | Free-form.                                                                             |
 | `allowed_child_types`     | string[]  | `[]`    | Each entry must reference a type defined in `types:`. V-8.                             |
+| `parent`                  | string?   | null    | Optional. Name of the parent type, if this type is a child of another.                 |
 
 `capabilities` is the only field that drives engine behavior:
 - `plannable` → routed to planning sub-workflows; needs decomposition.
