@@ -22,6 +22,8 @@ namespace Polyphony;
 [JsonSerializable(typeof(PolicyDomainSnapshot))]
 [JsonSerializable(typeof(PolicyConcurrencySnapshot))]
 [JsonSerializable(typeof(ResolvedRule))]
+[JsonSerializable(typeof(BranchCheckDepsResult))]
+[JsonSerializable(typeof(BlockingItem))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,

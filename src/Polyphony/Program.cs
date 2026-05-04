@@ -22,4 +22,5 @@ app.Add<HierarchyCommand>();
 app.Add<HealthCommand>();
 app.Add<PlanCommands>("plan");
 app.Add<PolicyCommands>("policy");
+app.Add<BranchCommands>("branch");
 app.Run(args);
