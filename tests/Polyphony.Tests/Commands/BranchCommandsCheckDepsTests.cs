@@ -29,7 +29,9 @@ public sealed class BranchCommandsCheckDepsTests : CommandTestBase
         var repo = new SqliteWorkItemRepository(store, new WorkItemMapper());
         var walker = new HierarchyWalker(config, repo);
         var validator = new TransitionValidator(config);
-        return (new BranchCommands(twig, walker, repo, validator), runner);
+        var git = new GitClient(runner);
+        var gh = new GhClient(runner);
+        return (new BranchCommands(twig, walker, repo, validator, git, gh), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)

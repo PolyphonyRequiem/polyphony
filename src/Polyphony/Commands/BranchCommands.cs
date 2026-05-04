@@ -18,11 +18,13 @@ namespace Polyphony.Commands;
 /// Routing-style verbs ALWAYS exit 0; callers route on the JSON payload
 /// (see <c>docs/decisions/polyphony-verb-migration.md</c>).
 /// </summary>
-public sealed class BranchCommands(
+public sealed partial class BranchCommands(
     ITwigClient twig,
     HierarchyWalker walker,
     IWorkItemRepository repository,
-    TransitionValidator validator)
+    TransitionValidator validator,
+    IGitClient git,
+    IGhClient gh)
 {
     /// <summary>
     /// Check ADO predecessor links for blocking dependencies on a work item.

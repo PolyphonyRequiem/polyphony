@@ -27,6 +27,12 @@ namespace Polyphony;
 [JsonSerializable(typeof(BranchCloseScopeResult))]
 [JsonSerializable(typeof(ClosedItem))]
 [JsonSerializable(typeof(FailedClosure))]
+[JsonSerializable(typeof(BranchLoadTreeResult))]
+[JsonSerializable(typeof(WorkTree))]
+[JsonSerializable(typeof(WorkTreeIssue))]
+[JsonSerializable(typeof(WorkTreeTask))]
+[JsonSerializable(typeof(PullRequestGroup))]
+[JsonSerializable(typeof(PgReconciliation))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,

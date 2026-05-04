@@ -19,7 +19,9 @@ public sealed class BranchCommandsCloseScopeTests : CommandTestBase
         var cfg = config ?? Config;
         var walker = new HierarchyWalker(cfg, Repository);
         var validator = new TransitionValidator(cfg);
-        return (new BranchCommands(twig, walker, Repository, validator), runner);
+        var git = new GitClient(runner);
+        var gh = new GhClient(runner);
+        return (new BranchCommands(twig, walker, Repository, validator, git, gh), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)
