@@ -86,11 +86,13 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Deserialize(output);
-        result.Action.ShouldBe("implement_task");
-        result.TaskId.ShouldBe(300);
-        result.TaskTitle.ShouldBe("First Task");
-        result.IssueId.ShouldBe(200);
-        result.IssueTitle.ShouldBe("Issue 1");
+        result.Action.ShouldBe("implement_item");
+        result.PrimaryId.ShouldBe(300);
+        result.PrimaryTitle.ShouldBe("First Task");
+        result.PrimaryType.ShouldBe("Task");
+        result.ContainerId.ShouldBe(200);
+        result.ContainerTitle.ShouldBe("Issue 1");
+        result.ContainerType.ShouldBe("Issue");
         result.RemainingCount.ShouldBe(2);
         result.CurrentPg.ShouldBe("PG-1");
         result.AdoWorkspace.ShouldBe("org/proj");
@@ -115,8 +117,8 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
             () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
         var result = Deserialize(output);
 
-        result.Action.ShouldBe("all_tasks_done", $"Output was: {output}");
-        result.TaskId.ShouldBe(0);
+        result.Action.ShouldBe("all_items_done", $"Output was: {output}");
+        result.PrimaryId.ShouldBe(0);
         result.RemainingCount.ShouldBe(0);
         result.BranchName.ShouldBe("");
     }
@@ -142,7 +144,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         var result = Deserialize(output);
 
         result.CurrentPg.ShouldBe("PG-3");
-        result.TaskId.ShouldBe(300);
+        result.PrimaryId.ShouldBe(300);
     }
 
     [Fact]
@@ -178,9 +180,9 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
             () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
         var result = Deserialize(output);
 
-        result.Action.ShouldBe("implement_task", $"Output was: {output}");
-        result.TaskId.ShouldBe(300);
-        result.IssueId.ShouldBe(200);
+        result.Action.ShouldBe("implement_item", $"Output was: {output}");
+        result.PrimaryId.ShouldBe(300);
+        result.ContainerId.ShouldBe(200);
     }
 
     [Fact]
@@ -245,9 +247,12 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
 
-        output.ShouldContain("\"task_id\"");
-        output.ShouldContain("\"task_title\"");
-        output.ShouldContain("\"issue_id\"");
+        output.ShouldContain("\"primary_id\"");
+        output.ShouldContain("\"primary_title\"");
+        output.ShouldContain("\"primary_type\"");
+        output.ShouldContain("\"container_id\"");
+        output.ShouldContain("\"container_title\"");
+        output.ShouldContain("\"container_type\"");
         output.ShouldContain("\"remaining_count\"");
         output.ShouldContain("\"current_pg\"");
         output.ShouldContain("\"branch_name\"");

@@ -33,7 +33,7 @@ workflow:
     work_item_id:
       type: number
       required: true
-      description: ADO work item ID of the root (Epic/Feature-level) item
+      description: ADO work item ID of the root (top-level) item (type is runtime-injected; do not hardcode type names)
     feature_branch:
       type: string
       required: true
@@ -397,14 +397,14 @@ agents:
 
       - **Parent work item:** {{ workflow.input.work_item_id }}
       - **Remediation cycle:** {{ remediation_counter.output.iteration }}
-      - **Tasks to seed:**
+      - **Child work items to seed:**
 
       {{ remediation_planner.output.work_items | json(indent=2) }}
 
       ## Instructions
 
       1. For each work item in the list above, use `twig seed` to create
-         a child task under work item {{ workflow.input.work_item_id }}
+         a child work item under work item {{ workflow.input.work_item_id }}
       2. Set the title, description, and tag with `remediation-cycle-{{ remediation_counter.output.iteration }}`
       3. Record the created work item IDs
 

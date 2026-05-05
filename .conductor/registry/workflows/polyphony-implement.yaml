@@ -180,7 +180,7 @@ agents:
             $pgs += [ordered]@{
               number = $num;
               name = $pg.name;
-              work_item_ids = @($pg.task_ids);
+              work_item_ids = @($pg.work_item_ids);
               branch_name = $pg.branch_name_suggestion;
               feature_branch = $featureBranch;
             }

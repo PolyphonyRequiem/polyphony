@@ -26,4 +26,16 @@ public static class ProcessConfigLoader
 
         return config;
     }
+
+    /// <summary>
+    /// Returns the parent type name for the given type, or null if none is set.
+    /// </summary>
+    public static string? GetParentTypeName(ProcessConfig config, string typeName)
+    {
+        if (config is null) throw new ArgumentNullException(nameof(config));
+        if (typeName is null) throw new ArgumentNullException(nameof(typeName));
+        if (!config.Types.TryGetValue(typeName, out var typeConfig))
+            throw new ArgumentException($"Type '{typeName}' not found in process config.", nameof(typeName));
+        return typeConfig.Parent;
+    }
 }

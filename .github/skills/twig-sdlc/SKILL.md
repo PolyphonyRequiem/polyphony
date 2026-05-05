@@ -372,7 +372,7 @@ closure; `task_manager` (inner) owns task execution within a PR group. Issues ar
 closed after their PR is merged — structurally preventing "code complete ≠ code merged".
 
 ```
-pr_group_manager ──→ task_manager ──→ coder → reducer_code → task_reviewer
+pr_group_manager ──→ task_manager ──→ coder → reducer_code → primary_reviewer
       ▲                   ▲                                       │
       │                   │         ┌── REQUEST_CHANGES ──────────┘
       │                   │         ↓
@@ -380,7 +380,7 @@ pr_group_manager ──→ task_manager ──→ coder → reducer_code → tas
       │                   │         │
       │                   ├── task approved, more tasks ──────────┘
       │                   │
-      │                   ├── all tasks done → reducer_issue → issue_reviewer
+      │                   ├── all tasks done → reducer_issue → scope_reviewer
       │                   │                                       │
       │                   │                  ┌── REQUEST_CHANGES ─┘
       │                   │                  ↓
@@ -407,9 +407,9 @@ pr_group_manager ──→ task_manager ──→ coder → reducer_code → tas
 - **task_manager** (Sonnet) — inner orchestrator: manages task lifecycle within a PR group, routes to coder/reviewers, returns `pr_group_ready` when done (CANNOT close Issues)
 - **coder** (Opus 1M) — implements one task at a time with incremental commits and twig notes; has pre-review checklist to avoid round-trips
 - **reducer_code** (Sonnet) — simplifies each task's implementation
-- **task_reviewer** (Sonnet) — per-task quality gate
+- **primary_reviewer** (Sonnet) — per-child quality gate
 - **reducer_issue** (Sonnet) — post-issue code sweep across all tasks in completed issue
-- **issue_reviewer** (Opus 1M) — per-issue acceptance criteria, cross-cutting concerns, integration
+- **scope_reviewer** (Opus 1M) — per-scope acceptance criteria, cross-cutting concerns, integration
 - **user_acceptance** — human gate, conditional per-issue when user-facing changes are flagged
 - **reducer_pr** (Sonnet) — pre-PR reduction sweep (stale references, dead code, cross-task duplication)
 - **pr_submit** (Sonnet) — validates build + tests, then creates GitHub PR via `gh pr create`
@@ -442,9 +442,9 @@ pr_group_manager ──→ task_manager ──→ coder → reducer_code → tas
 | task_manager | Sonnet | Inner orchestrator: task lifecycle + routing |
 | coder | Opus 1M | Task implementation |
 | reducer_code | Sonnet | Per-task code simplification |
-| task_reviewer | Sonnet | Per-task quality gate |
+| primary_reviewer | Sonnet | Per-child quality gate |
 | reducer_issue | Sonnet | Post-issue cross-task code sweep |
-| issue_reviewer | Opus 1M | Per-issue acceptance criteria check |
+| scope_reviewer | Opus 1M | Per-scope acceptance criteria check |
 | user_acceptance | Human Gate | Conditional per-issue acceptance |
 | reducer_pr | Sonnet | Pre-PR reduction sweep |
 | pr_submit | Sonnet | Build validation + GitHub PR creation |

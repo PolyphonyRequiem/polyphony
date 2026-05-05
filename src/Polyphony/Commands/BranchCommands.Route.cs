@@ -85,8 +85,8 @@ public sealed partial class BranchCommands
                     Action = "all_complete",
                     CurrentPg = "",
                     BranchName = "",
-                    IssueIds = [],
-                    TaskIds = [],
+                    WorkItemIds = [],
+                    ChildIds = [],
                     PrNumber = 0,
                     PrUrl = "",
                     CompletedPgs = completedPgs,
@@ -102,8 +102,8 @@ public sealed partial class BranchCommands
                     Action = current.Action,
                     CurrentPg = current.Group.Name,
                     BranchName = current.Group.BranchName,
-                    IssueIds = current.Group.IssueIds,
-                    TaskIds = current.Group.TaskIds,
+                    WorkItemIds = current.Group.WorkItemIds,
+                    ChildIds = current.Group.ChildIds,
                     PrNumber = current.PrNumber,
                     PrUrl = current.PrUrl,
                     CompletedPgs = completedPgs,
@@ -181,8 +181,8 @@ public sealed partial class BranchCommands
             groups.Add(new RoutePgGroup(
                 Name: "PG-1",
                 BranchName: ResolveFeatureBranch(hint, rootId, root.Title),
-                TaskIds: taskIds,
-                IssueIds: issueIds));
+                ChildIds: taskIds,
+                WorkItemIds: issueIds));
         }
         else
         {
@@ -192,8 +192,8 @@ public sealed partial class BranchCommands
                 groups.Add(new RoutePgGroup(
                     Name: name,
                     BranchName: ResolvePgBranch(hint, rootId, name),
-                    TaskIds: bucket.Implementable,
-                    IssueIds: bucket.Container));
+                    ChildIds: bucket.Implementable,
+                    WorkItemIds: bucket.Container));
             }
         }
 
@@ -220,8 +220,8 @@ public sealed partial class BranchCommands
                 // Stale-branch defense: a merged PR with all containers still
                 // in the proposed/initial category is most likely a leftover
                 // from a prior failed run.
-                var stale = pg.IssueIds.Count > 0
-                    && !pg.IssueIds.Any(id =>
+                var stale = pg.WorkItemIds.Count > 0
+                    && !pg.WorkItemIds.Any(id =>
                     {
                         var item = allItems.FirstOrDefault(i => i.WorkItemId == id);
                         if (item is null) return false;
@@ -249,9 +249,9 @@ public sealed partial class BranchCommands
 
             // No merged or open PR — fall back to ADO-state-only completion.
             // Prefer issue states when present; else use task states.
-            var allDone = pg.IssueIds.Count > 0
-                ? pg.IssueIds.All(id => IsItemTerminal(id, allItems))
-                : pg.TaskIds.Count > 0 && pg.TaskIds.All(id => IsItemTerminal(id, allItems));
+            var allDone = pg.WorkItemIds.Count > 0
+                ? pg.WorkItemIds.All(id => IsItemTerminal(id, allItems))
+                : pg.ChildIds.Count > 0 && pg.ChildIds.All(id => IsItemTerminal(id, allItems));
 
             if (allDone)
             {
@@ -340,8 +340,8 @@ public sealed partial class BranchCommands
         Action = "error",
         CurrentPg = "",
         BranchName = "",
-        IssueIds = [],
-        TaskIds = [],
+        WorkItemIds = [],
+        ChildIds = [],
         PrNumber = 0,
         PrUrl = "",
         CompletedPgs = [],
@@ -358,8 +358,8 @@ public sealed partial class BranchCommands
     private sealed record RoutePgGroup(
         string Name,
         string BranchName,
-        IReadOnlyList<int> TaskIds,
-        IReadOnlyList<int> IssueIds);
+        IReadOnlyList<int> ChildIds,
+        IReadOnlyList<int> WorkItemIds);
 
     private sealed record ClassifiedPg(
         RoutePgGroup Group,
