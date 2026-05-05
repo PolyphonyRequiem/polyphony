@@ -23,6 +23,9 @@ public sealed record PolicyLoadResult
     /// <summary>Resolved PR defaults (mode + caps).</summary>
     public required PolicyDomainSnapshot Pr { get; init; }
 
+    /// <summary>Resolved open-questions defaults (mode + severity + loops).</summary>
+    public required PolicyDomainSnapshot OpenQuestions { get; init; }
+
     /// <summary>Resolved concurrency caps.</summary>
     public required PolicyConcurrencySnapshot Concurrency { get; init; }
 }
@@ -37,6 +40,8 @@ public sealed record PolicyDomainSnapshot
     public int? DefaultsMaxRevisionCycles { get; init; }
     public int? DefaultsMaxFixLoops { get; init; }
     public int? DefaultsMaxRemediationCycles { get; init; }
+    public string? DefaultsMinSeverity { get; init; }
+    public int? DefaultsMaxQuestionLoops { get; init; }
     public int? DefaultsQualityAvgScoreAtLeast { get; init; }
     public int? DefaultsQualityBlockingCountAtMost { get; init; }
     public string? RootMode { get; init; }

@@ -18,6 +18,9 @@ public sealed class PolicyConfig
     /// <summary>PR-merge policy (github-pr feature/PG, ado-pr stub).</summary>
     public DomainPolicy? Pr { get; set; }
 
+    /// <summary>Open-questions policy (question loop gating during implementation).</summary>
+    public DomainPolicy? OpenQuestions { get; set; }
+
     /// <summary>Concurrency knobs (orthogonal to mode/scope).</summary>
     public ConcurrencyPolicy? Concurrency { get; set; }
 }
@@ -61,6 +64,12 @@ public sealed class ScopeRule
 
     /// <summary>Feature-PR cap — outer-loop remediation cycles before escalating.</summary>
     public int? MaxRemediationCycles { get; set; }
+
+    /// <summary>Minimum severity threshold for open-question filtering. Used by open_questions domain.</summary>
+    public Severity? MinSeverity { get; set; }
+
+    /// <summary>Maximum question loops before escalating. Used by open_questions domain.</summary>
+    public int? MaxQuestionLoops { get; set; }
 }
 
 /// <summary>Quality threshold for considering a review "clean" before mode-based routing.</summary>
