@@ -37,15 +37,15 @@ public sealed record WorkTree
 /// <summary>A discovered PR group with completion + reconciliation metadata.</summary>
 public sealed record PullRequestGroup
 {
-    [JsonPropertyName("task_ids")]
+    [JsonPropertyName("child_ids")]
     public required IReadOnlyList<int> ChildIds { get; init; }
-    [JsonPropertyName("issue_ids")]
+    [JsonPropertyName("work_item_ids")]
     public required IReadOnlyList<int> WorkItemIds { get; init; }
-    [JsonPropertyName("non_done_task_ids")]
+    [JsonPropertyName("non_done_child_ids")]
     public required IReadOnlyList<int> NonDoneChildIds { get; init; }
-    [JsonPropertyName("stale_doing_task_ids")]
+    [JsonPropertyName("stale_doing_child_ids")]
     public required IReadOnlyList<int> StaleDoingChildIds { get; init; }
-    [JsonPropertyName("non_done_issue_ids")]
+    [JsonPropertyName("non_done_work_item_ids")]
     public required IReadOnlyList<int> NonDoneWorkItemIds { get; init; }
     public required string Name { get; init; }
     public required string BranchNameSuggestion { get; init; }
@@ -57,11 +57,11 @@ public sealed record PullRequestGroup
 /// <summary>Reconciliation summary for a PG that has a merged PR but stale items.</summary>
 public sealed record PgReconciliation
 {
-    [JsonPropertyName("non_done_task_ids")]
+    [JsonPropertyName("non_done_child_ids")]
     public required IReadOnlyList<int> NonDoneChildIds { get; init; }
-    [JsonPropertyName("stale_doing_task_ids")]
+    [JsonPropertyName("stale_doing_child_ids")]
     public required IReadOnlyList<int> StaleDoingChildIds { get; init; }
-    [JsonPropertyName("non_done_issue_ids")]
+    [JsonPropertyName("non_done_work_item_ids")]
     public required IReadOnlyList<int> NonDoneWorkItemIds { get; init; }
     public required string Name { get; init; }
 

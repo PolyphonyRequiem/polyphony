@@ -165,7 +165,7 @@ agents:
   #
   # Invariants:
   #   Pre:  PG branch is checked out; work_item_ids are valid task IDs.
-  #   Post: output.action is implement_item or all_items_done; output.task_id set if implementing.
+  #   Post: output.action is implement_item or all_items_done; output.child_id set if implementing.
   - name: task_router
     type: script
     description: Route to next implementable task within this PG
@@ -194,7 +194,7 @@ agents:
   # then produces code changes committed to the PG branch.
   #
   # Invariants:
-  #   Pre:  task_router.output.action == 'implement_task'; task_id is valid.
+  #   Pre:  task_router.output.action == 'implement_task'; child_id is valid.
   #   Post: Code changes are committed to the PG branch for the task.
   - name: coder
     type: agent

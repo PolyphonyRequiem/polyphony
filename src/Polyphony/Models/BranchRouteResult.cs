@@ -27,11 +27,11 @@ public sealed record BranchRouteResult
     public required string BranchName { get; init; }
 
     /// <summary>Container item IDs (issues, etc.) belonging to the PG.</summary>
-    [JsonPropertyName("issue_ids")]
+    [JsonPropertyName("work_item_ids")]
     public required IReadOnlyList<int> WorkItemIds { get; init; }
 
-    /// <summary>Implementable item IDs (tasks) belonging to the PG.</summary>
-    [JsonPropertyName("task_ids")]
+    /// <summary>Implementable item IDs (children) belonging to the PG.</summary>
+    [JsonPropertyName("child_ids")]
     public required IReadOnlyList<int> ChildIds { get; init; }
 
     /// <summary>Existing PR number associated with the PG branch (0 when none).</summary>

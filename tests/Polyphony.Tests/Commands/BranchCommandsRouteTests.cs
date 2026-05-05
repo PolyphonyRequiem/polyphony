@@ -240,8 +240,8 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         output.ShouldContain("\"action\"");
         output.ShouldContain("\"current_pg\"");
         output.ShouldContain("\"branch_name\"");
-        output.ShouldContain("\"issue_ids\"");
-        output.ShouldContain("\"task_ids\"");
+        output.ShouldContain("\"work_item_ids\"");
+        output.ShouldContain("\"child_ids\"");
         output.ShouldContain("\"pr_number\"");
         output.ShouldContain("\"pr_url\"");
         output.ShouldContain("\"completed_pgs\"");

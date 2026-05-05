@@ -26,7 +26,7 @@ public sealed record PlanSeedChildrenResult
 
 public sealed record SeedReconciliation
 {
-    [JsonPropertyName("task_id")]
+    [JsonPropertyName("child_id")]
     public required string ChildId { get; init; }
     public required int WorkItemId { get; init; }
 
@@ -36,7 +36,7 @@ public sealed record SeedReconciliation
 
 public sealed record SeedError
 {
-    [JsonPropertyName("task_id")]
+    [JsonPropertyName("child_id")]
     public string? ChildId { get; init; }
     public string? Title { get; init; }
     public required string Error { get; init; }

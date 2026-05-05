@@ -338,7 +338,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         result.WorkItemId.ShouldBe(10_014);
         result.Event.ShouldBe("begin_planning");
         result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Active");
+        result.TargetState.ShouldBe(InProgressState);
     }
 
     // =========================================================================
@@ -538,26 +538,26 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var routeResultJson = JsonSerializer.Serialize(routeResult, PolyphonyJsonContext.Default.BranchRouteResult);
 
         // Assert: JSON field names are stable and correct
-        prGroupJson.ShouldContain("\"task_ids\"");
-        prGroupJson.ShouldContain("\"issue_ids\"");
-        prGroupJson.ShouldContain("\"non_done_task_ids\"");
-        prGroupJson.ShouldContain("\"stale_doing_task_ids\"");
-        prGroupJson.ShouldContain("\"non_done_issue_ids\"");
-        pgReconJson.ShouldContain("\"non_done_task_ids\"");
-        pgReconJson.ShouldContain("\"stale_doing_task_ids\"");
-        pgReconJson.ShouldContain("\"non_done_issue_ids\"");
-        seedReconJson.ShouldContain("\"task_id\"");
-        seedErrorJson.ShouldContain("\"task_id\"");
-        routeResultJson.ShouldContain("\"issue_ids\"");
-        routeResultJson.ShouldContain("\"task_ids\"");
+        prGroupJson.ShouldContain("\"child_ids\"");
+        prGroupJson.ShouldContain("\"work_item_ids\"");
+        prGroupJson.ShouldContain("\"non_done_child_ids\"");
+        prGroupJson.ShouldContain("\"stale_doing_child_ids\"");
+        prGroupJson.ShouldContain("\"non_done_work_item_ids\"");
+        pgReconJson.ShouldContain("\"non_done_child_ids\"");
+        pgReconJson.ShouldContain("\"stale_doing_child_ids\"");
+        pgReconJson.ShouldContain("\"non_done_work_item_ids\"");
+        seedReconJson.ShouldContain("\"child_id\"");
+        seedErrorJson.ShouldContain("\"child_id\"");
+        routeResultJson.ShouldContain("\"work_item_ids\"");
+        routeResultJson.ShouldContain("\"child_ids\"");
         // Assert: C# property names are not leaked
-        prGroupJson.ShouldNotContain("NonDoneTaskIds");
-        prGroupJson.ShouldNotContain("NonDoneIssueIds");
-        prGroupJson.ShouldNotContain("StaleDoingTaskIds");
+        prGroupJson.ShouldNotContain("NonDoneChildIds");
+        prGroupJson.ShouldNotContain("NonDoneWorkItemIds");
+        prGroupJson.ShouldNotContain("StaleDoingChildIds");
         prGroupJson.ShouldNotContain("ChildIds");
         prGroupJson.ShouldNotContain("WorkItemIds");
-        routeResultJson.ShouldNotContain("IssueIds");
-        routeResultJson.ShouldNotContain("TaskIds");
+        routeResultJson.ShouldNotContain("WorkItemIds");
+        routeResultJson.ShouldNotContain("ChildIds");
         routeResultJson.ShouldNotContain("ChildIds");
         routeResultJson.ShouldNotContain("WorkItemIds");
     }

@@ -256,15 +256,15 @@ agents:
         type: array
         description: >-
           Structured list of child work items to seed. Each task has a stable
-          task_id (task-1, task-2, ...) the seeder uses for idempotent
+          child_id (task-1, task-2, ...) the seeder uses for idempotent
           reconciliation across re-plans. Empty array means atomic — no
           children to seed.
         items:
           type: object
           properties:
-            task_id:
+            child_id:
               type: string
-              description: Stable identifier (task-1, task-2, ...). Preserved across re-plans for the same logical task.
+              description: Stable identifier (task-1, task-2, ...). Preserved across re-plans for the same logical child.
             title:
               type: string
               description: Work item title (one line)
@@ -284,7 +284,7 @@ agents:
               description: PG group name for implementation ordering (optional)
             depends_on:
               type: array
-              description: task_ids this task depends on (optional)
+              description: child_ids this child depends on (optional)
               items:
                 type: string
       open_questions:

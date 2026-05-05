@@ -89,13 +89,13 @@ public sealed partial class PlanCommands
                 continue;
             }
 
-            var taskId = task["task_id"]?.GetValue<string>();
+            var taskId = task["child_id"]?.GetValue<string>();
             var title = task["title"]?.GetValue<string>();
             var type = task["type"]?.GetValue<string>();
 
             if (string.IsNullOrWhiteSpace(taskId))
             {
-                errors.Add(new SeedError { Title = title, Error = "task missing required task_id" });
+                errors.Add(new SeedError { Title = title, Error = "task missing required child_id" });
                 continue;
             }
             if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(type))
