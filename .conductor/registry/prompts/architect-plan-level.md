@@ -146,10 +146,10 @@ Create a comprehensive implementation plan for the given work item, using
 type-specific definitions and decomposition guidance to produce a well-structured
 plan that can be reviewed and approved by humans and downstream agents.
 
-{% if guidance_loader.output.architect is defined and guidance_loader.output.architect %}
+{% if guidance_loader.output.epic is defined and guidance_loader.output.epic %}
 ## Repo-Specific Guidance
 
-{{ guidance_loader.output.architect }}
+{{ guidance_loader.output.epic }}
 {% endif %}
 
 ## Context

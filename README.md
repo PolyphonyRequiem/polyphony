@@ -142,6 +142,6 @@ dotnet test
 ## Architecture
 
 - References `Twig.Domain` and `Twig.Infrastructure` for work item models and SQLite cache access
-- Reads `.conductor/process-config.yaml` for type capabilities and transition mappings
+- Reads `.conductor/process-config.yaml` for type capabilities (must be `plannable` and/or `implementable`) and transition mappings
 - Outputs structured JSON to stdout; uses exit codes for conductor routing
 - Fully deterministic — no AI/LLM in routing decisions

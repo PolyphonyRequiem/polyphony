@@ -29,7 +29,7 @@ namespace Polyphony.Commands;
 public sealed partial class PlanCommands
 {
     private static readonly Regex MarkerRegex =
-        new(@"<!--\s*polyphony:plan-task-id=(task-\d+)\s*-->", RegexOptions.Compiled);
+        new(@"<!--\s*polyphony:plan-child-id=(task-\d+)\s*-->", RegexOptions.Compiled);
 
     /// <summary>
     /// Idempotently seed the architect's task list as children of
@@ -37,7 +37,7 @@ public sealed partial class PlanCommands
     /// </summary>
     /// <param name="workItem">Parent work item ID.</param>
     /// <param name="tasksJson">JSON array of task objects from <c>architect.output.tasks</c>.
-    /// Each task requires <c>task_id</c>, <c>title</c>, <c>type</c>, <c>description</c>.</param>
+    /// Each task requires <c>child_id</c>, <c>title</c>, <c>type</c>, <c>description</c>.</param>
     /// <param name="plannedTag">Tag value to apply to the parent on success
     /// (defaults to <c>polyphony:planned</c>).</param>
     /// <param name="ct">Cancellation token.</param>
@@ -89,18 +89,18 @@ public sealed partial class PlanCommands
                 continue;
             }
 
-            var taskId = task["task_id"]?.GetValue<string>();
+            var taskId = task["child_id"]?.GetValue<string>();
             var title = task["title"]?.GetValue<string>();
             var type = task["type"]?.GetValue<string>();
 
             if (string.IsNullOrWhiteSpace(taskId))
             {
-                errors.Add(new SeedError { Title = title, Error = "task missing required task_id" });
+                errors.Add(new SeedError { Title = title, Error = "task missing required child_id" });
                 continue;
             }
             if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(type))
             {
-                errors.Add(new SeedError { TaskId = taskId, Title = title, Error = "task missing required title or type" });
+                errors.Add(new SeedError { ChildId = taskId, Title = title, Error = "task missing required title or type" });
                 continue;
             }
 
@@ -108,7 +108,7 @@ public sealed partial class PlanCommands
             {
                 if (markerIndex.TryGetValue(taskId, out var hit))
                 {
-                    reused.Add(new SeedReconciliation { TaskId = taskId, WorkItemId = hit.Id, MatchedBy = "marker" });
+                    reused.Add(new SeedReconciliation { ChildId = taskId, WorkItemId = hit.Id, MatchedBy = "marker" });
                     continue;
                 }
 
@@ -116,7 +116,7 @@ public sealed partial class PlanCommands
                 if (titleTypeIndex.TryGetValue(key, out var fallbackHit))
                 {
                     warnings.Add($"task {taskId} matched #{fallbackHit.Id} by title fallback (marker damaged or missing)");
-                    reused.Add(new SeedReconciliation { TaskId = taskId, WorkItemId = fallbackHit.Id, MatchedBy = "title" });
+                    reused.Add(new SeedReconciliation { ChildId = taskId, WorkItemId = fallbackHit.Id, MatchedBy = "title" });
                     continue;
                 }
 
@@ -125,15 +125,15 @@ public sealed partial class PlanCommands
                 var newId = created["id"]?.GetValue<int>() ?? 0;
                 if (newId == 0)
                 {
-                    errors.Add(new SeedError { TaskId = taskId, Title = title, Error = "twig new returned no id" });
+                    errors.Add(new SeedError { ChildId = taskId, Title = title, Error = "twig new returned no id" });
                     continue;
                 }
-                seeded.Add(new SeedReconciliation { TaskId = taskId, WorkItemId = newId, MatchedBy = "created" });
+                seeded.Add(new SeedReconciliation { ChildId = taskId, WorkItemId = newId, MatchedBy = "created" });
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                errors.Add(new SeedError { TaskId = taskId, Title = title, Error = ex.Message });
+                errors.Add(new SeedError { ChildId = taskId, Title = title, Error = ex.Message });
             }
         }
 
@@ -235,7 +235,7 @@ public sealed partial class PlanCommands
             if (sb.Length > 0 && sb[^1] == '\n') sb.Length--;
         }
 
-        sb.Append("\n\n<!-- polyphony:plan-task-id=").Append(taskId).Append(" -->");
+        sb.Append("\n\n<!-- polyphony:plan-child-id=").Append(taskId).Append(" -->");
         return sb.ToString();
     }
 

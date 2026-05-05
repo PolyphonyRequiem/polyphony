@@ -1,0 +1,6 @@
+{
+  "Basic": ["Epic", "Issue", "Task"],
+  "Agile": ["Epic", "User Story", "Task"],
+  "Scrum": ["Epic", "Product Backlog Item", "Task"],
+  "CMMI": ["Epic", "Requirement", "Task"]
+}

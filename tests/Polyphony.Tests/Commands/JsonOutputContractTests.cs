@@ -338,7 +338,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         result.WorkItemId.ShouldBe(10_014);
         result.Event.ShouldBe("begin_planning");
         result.IsValid.ShouldBeTrue();
-        result.TargetState.ShouldBe("Active");
+        result.TargetState.ShouldBe(InProgressState);
     }
 
     // =========================================================================
@@ -475,7 +475,90 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
-    // Cross-command error format consistency
+    // Schema renames — JSON contract
+    // =========================================================================
+
+    [Fact]
+    public void SchemaRenames_JsonContract_FieldsPresent()
+    {
+        // Arrange: create dummy objects for serialization
+        var prGroup = new Polyphony.PullRequestGroup
+        {
+            ChildIds = new[] { 1, 2 },
+            WorkItemIds = new[] { 10, 20 },
+            NonDoneChildIds = new[] { 3 },
+            StaleDoingChildIds = new[] { 4 },
+            NonDoneWorkItemIds = new[] { 30 },
+            Name = "PG-1",
+            BranchNameSuggestion = "feature/pg-1",
+            MergedPr = 123,
+            Completed = true,
+            NeedsReconciliation = false
+        };
+        var pgRecon = new Polyphony.PgReconciliation
+        {
+            NonDoneChildIds = new[] { 5 },
+            StaleDoingChildIds = new[] { 6 },
+            NonDoneWorkItemIds = new[] { 40 },
+            Name = "PG-1"
+        };
+        var seedRecon = new Polyphony.SeedReconciliation
+        {
+            ChildId = "c1",
+            WorkItemId = 100,
+            MatchedBy = "marker"
+        };
+        var seedError = new Polyphony.SeedError
+        {
+            ChildId = "c2",
+            Title = "err",
+            Error = "fail"
+        };
+        var routeResult = new Polyphony.BranchRouteResult
+        {
+            Action = "create_branch",
+            CurrentPg = "PG-1",
+            BranchName = "feature/pg-1",
+            WorkItemIds = new[] { 10, 20 },
+            ChildIds = new[] { 1, 2 },
+            PrNumber = 1,
+            PrUrl = "url",
+            CompletedPgs = new[] { "PG-1" },
+            RemainingPgs = new[] { "PG-2" },
+            TotalPgs = 2,
+            AdoWorkspace = "org/proj",
+            Error = null
+        };
+
+        // Act
+        var prGroupJson = JsonSerializer.Serialize(prGroup, PolyphonyJsonContext.Default.PullRequestGroup);
+        var pgReconJson = JsonSerializer.Serialize(pgRecon, PolyphonyJsonContext.Default.PgReconciliation);
+        var seedReconJson = JsonSerializer.Serialize(seedRecon, PolyphonyJsonContext.Default.SeedReconciliation);
+        var seedErrorJson = JsonSerializer.Serialize(seedError, PolyphonyJsonContext.Default.SeedError);
+        var routeResultJson = JsonSerializer.Serialize(routeResult, PolyphonyJsonContext.Default.BranchRouteResult);
+
+        // Assert: JSON field names are stable and correct
+        prGroupJson.ShouldContain("\"child_ids\"");
+        prGroupJson.ShouldContain("\"work_item_ids\"");
+        prGroupJson.ShouldContain("\"non_done_child_ids\"");
+        prGroupJson.ShouldContain("\"stale_doing_child_ids\"");
+        prGroupJson.ShouldContain("\"non_done_work_item_ids\"");
+        pgReconJson.ShouldContain("\"non_done_child_ids\"");
+        pgReconJson.ShouldContain("\"stale_doing_child_ids\"");
+        pgReconJson.ShouldContain("\"non_done_work_item_ids\"");
+        seedReconJson.ShouldContain("\"child_id\"");
+        seedErrorJson.ShouldContain("\"child_id\"");
+        routeResultJson.ShouldContain("\"work_item_ids\"");
+        routeResultJson.ShouldContain("\"child_ids\"");
+        // Assert: C# property names are not leaked
+        prGroupJson.ShouldNotContain("NonDoneChildIds");
+        prGroupJson.ShouldNotContain("NonDoneWorkItemIds");
+        prGroupJson.ShouldNotContain("StaleDoingChildIds");
+        prGroupJson.ShouldNotContain("ChildIds");
+        routeResultJson.ShouldNotContain("WorkItemIds");
+        routeResultJson.ShouldNotContain("ChildIds");
+    }
+
     // =========================================================================
 
     [Fact]
@@ -762,7 +845,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
     public void LoadGuidance_DeserializationRoundTrip_KeysAreFileBasenames()
     {
         using var fx = new ConductorDirFixture();
-        fx.WriteAgentGuidance("architect", "Architect guidance.");
+        fx.WriteAgentGuidance("epic", "Epic guidance.");
         fx.WriteAgentGuidance("planning-gate", "Gate guidance.");
 
         var cmd = CreatePlanCommands();
@@ -770,9 +853,9 @@ public sealed class JsonOutputContractTests : CommandTestBase
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
         result.ShouldNotBeNull();
-        result.Keys.ShouldContain("architect");
+        result.Keys.ShouldContain("epic");
         result.Keys.ShouldContain("planning-gate");
-        result["architect"].ShouldBe("Architect guidance.");
+        result["epic"].ShouldBe("Epic guidance.");
     }
 
     // =========================================================================

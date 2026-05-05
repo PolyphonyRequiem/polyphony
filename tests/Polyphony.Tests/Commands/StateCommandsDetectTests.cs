@@ -6,6 +6,7 @@ using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
+using NSubstitute;
 
 namespace Polyphony.Tests.Commands;
 
@@ -25,6 +26,7 @@ public sealed class StateCommandsDetectTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
+        var ghTokenResolver = new GhTokenResolver(Substitute.For<IGitClient>());
         var phaseDetector = new PhaseDetector(Config);
         var validator = new TransitionValidator(Config);
         var walker = new HierarchyWalker(Config, Repository);
@@ -33,8 +35,11 @@ public sealed class StateCommandsDetectTests : CommandTestBase
         runner.WhenStartsWith("twig", new[] { "sync" }, new ProcessResult(0, "{}", ""));
         runner.WhenStartsWith("twig", new[] { "set" }, new ProcessResult(0, "{}", ""));
         runner.WhenStartsWith("twig", new[] { "state" }, new ProcessResult(0, "{}", ""));
-        return (new StateCommands(twig, git, gh, runner, phaseDetector, validator, walker, Repository, Config), runner);
-    }
+        return (new StateCommands(twig, git, gh, runner, ghTokenResolver, phaseDetector, validator, walker, Repository, Config), runner);
+    } // End of CreateCommand
+
+    // (Removed duplicate orphaned block)
+
 
     private static void StubTwigConfig(FakeProcessRunner runner, string key, string? value)
     {

@@ -23,9 +23,41 @@ public sealed class ProcessConfigBuilder
     public ProcessConfigBuilder WithType(
         string name,
         string[] capabilities,
-        Dictionary<string, string>? transitions = null)
+        Dictionary<string, string>? transitions = null,
+        bool selfReferential = false,
+        string[]? allowedChildTypes = null,
+        string? parent = null)
     {
-        _types[name] = new TypeConfig { Capabilities = capabilities };
+        _types[name] = new TypeConfig {
+            Capabilities = capabilities,
+            SelfReferential = selfReferential,
+            AllowedChildTypes = allowedChildTypes ?? System.Array.Empty<string>(),
+            Parent = parent
+        };
+
+        if (transitions is not null)
+            _transitions[name] = new Dictionary<string, string>(transitions, StringComparer.OrdinalIgnoreCase);
+
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a work item type with a parent relationship (legacy, prefer WithType overload).
+    /// </summary>
+    public ProcessConfigBuilder WithTypeWithParent(
+        string name,
+        string[] capabilities,
+        string parent,
+        Dictionary<string, string>? transitions = null,
+        bool selfReferential = false,
+        string[]? allowedChildTypes = null)
+    {
+        _types[name] = new TypeConfig {
+            Capabilities = capabilities,
+            Parent = parent,
+            SelfReferential = selfReferential,
+            AllowedChildTypes = allowedChildTypes ?? System.Array.Empty<string>()
+        };
 
         if (transitions is not null)
             _transitions[name] = new Dictionary<string, string>(transitions, StringComparer.OrdinalIgnoreCase);
