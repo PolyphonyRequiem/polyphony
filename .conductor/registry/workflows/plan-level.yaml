@@ -235,7 +235,7 @@ agents:
   #   Post: output.plan contains the plan artifact; output.open_questions may be non-empty.
   - name: architect
     type: agent
-    model: gpt-4.1
+    model: claude-sonnet-4.6
     description: Create or refine a plan using type-specific context and decomposition guidance
     tools:
       - twig
