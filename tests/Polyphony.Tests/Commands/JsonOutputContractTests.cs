@@ -51,7 +51,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-health-contract-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
         var configPath = Path.Combine(tempDir, "process-config.yaml");
-        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
+        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { facets: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
         // Inject a healthy tool checker so the success exit code is deterministic
         // regardless of whether `twig` / `git` are on PATH in the CI runner.
         var cmd = new HealthCommand(tool => new HealthCheckResult
@@ -362,7 +362,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         output.ShouldContain("\"work_item_id\"");
         output.ShouldContain("\"title\"");
         output.ShouldContain("\"type\"");
-        output.ShouldContain("\"capabilities\"");
+        output.ShouldContain("\"facets\"");
         output.ShouldContain("\"state\"");
         output.ShouldContain("\"children\"");
 
@@ -370,7 +370,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         AssertNoPascalCase(output, "WorkItemId");
         AssertNoPascalCase(output, "Title");
         AssertNoPascalCase(output, "Type");
-        AssertNoPascalCase(output, "Capabilities");
+        AssertNoPascalCase(output, "Facets");
         AssertNoPascalCase(output, "State");
         AssertNoPascalCase(output, "Children");
         AssertNoPascalCase(output, "Tags");
@@ -470,7 +470,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         result.Title.ShouldBe("Roundtrip Hierarchy");
         result.Type.ShouldBe(EpicType);
         result.State.ShouldBe(InProgressState);
-        result.Capabilities.ShouldContain("plannable");
+        result.Facets.ShouldContain("plannable");
         result.Children.ShouldNotBeNull();
     }
 
@@ -925,3 +925,4 @@ public sealed class JsonOutputContractTests : CommandTestBase
         return count;
     }
 }
+

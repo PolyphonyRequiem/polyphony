@@ -9,7 +9,7 @@ namespace Polyphony.Tests.Commands;
 
 /// <summary>
 /// End-to-end tests for <see cref="HierarchyCommand"/> using an in-memory SQLite database.
-/// Tests verify JSON tree output, depth limits, capability annotations, error handling,
+/// Tests verify JSON tree output, depth limits, facet annotations, error handling,
 /// and that children arrays are never null in the output.
 /// </summary>
 public sealed class HierarchyCommandTests : CommandTestBase
@@ -61,7 +61,7 @@ public sealed class HierarchyCommandTests : CommandTestBase
     }
 
     [Fact]
-    public async Task Hierarchy_SingleItem_AnnotatesCapabilities()
+    public async Task Hierarchy_SingleItem_AnnotatesFacets()
     {
         var epic = new WorkItemBuilder()
             .WithId(100)
@@ -76,7 +76,7 @@ public sealed class HierarchyCommandTests : CommandTestBase
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.HierarchyResult);
         result.ShouldNotBeNull();
-        result.Capabilities.ShouldContain("plannable");
+        result.Facets.ShouldContain("plannable");
     }
 
     [Fact]
@@ -194,7 +194,7 @@ public sealed class HierarchyCommandTests : CommandTestBase
 
         output.ShouldContain("\"work_item_id\"");
         output.ShouldContain("\"children\"");
-        output.ShouldContain("\"capabilities\"");
+        output.ShouldContain("\"facets\"");
     }
 
     [Fact]
@@ -229,3 +229,5 @@ public sealed class HierarchyCommandTests : CommandTestBase
         output.ShouldNotContain("\"tags\"");
     }
 }
+
+

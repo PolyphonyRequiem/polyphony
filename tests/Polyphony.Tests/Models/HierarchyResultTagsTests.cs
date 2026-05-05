@@ -15,7 +15,7 @@ public sealed class HierarchyResultTagsTests
         WorkItemId = 1,
         Title = "Test Item",
         Type = "Epic",
-        Capabilities = ["plannable"],
+        Facets = ["plannable"],
         State = "Doing",
         Tags = tags,
     };
@@ -28,7 +28,7 @@ public sealed class HierarchyResultTagsTests
             WorkItemId = 1,
             Title = "Test",
             Type = "Epic",
-            Capabilities = [],
+            Facets = [],
             State = "New",
         };
 
@@ -76,10 +76,11 @@ public sealed class HierarchyResultTagsTests
     [Fact]
     public void Tags_DeserializesFromJsonWithoutTags()
     {
-        var json = """{"work_item_id":1,"title":"Test","type":"Epic","capabilities":[],"state":"New"}""";
+        var json = """{"work_item_id":1,"title":"Test","type":"Epic","facets":[],"state":"New"}""";
         var result = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.HierarchyResult);
 
         result.ShouldNotBeNull();
         result.Tags.ShouldBeNull();
     }
 }
+

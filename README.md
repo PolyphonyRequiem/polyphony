@@ -191,7 +191,7 @@ the following layout. Polyphony's own `.conductor/` is the dogfood example.
 
 ```
 .conductor/
-├── process-config.yaml      # types, capabilities, transitions, review policy
+├── process-config.yaml      # types, facets, transitions, review policy
 ├── policy.yaml              # (optional) implementation modes + per-scope caps
 ├── profile.yaml             # default agent + workflow tuning per repo
 ├── work-item-types/         # one .md per type — definition + template
@@ -215,7 +215,7 @@ example using a custom `KyberAgile` process template — is in
 A short tour of each file:
 
 - **`process-config.yaml`** — the heart of type-agnosticism. Declares your
-  ADO process template name, every work-item type with its `capabilities`
+  ADO process template name, every work-item type with its `facets`
   (`plannable` / `implementable`), nesting depth, decomposition guidance, and
   the state transitions for SDLC events (`begin_planning`,
   `implementation_complete`, etc.). Schema lives at
@@ -280,7 +280,7 @@ The tables below are the quick-reference index.
 | `polyphony branch route`        | PG lifecycle — pick the next PG action.                       |
 | `polyphony branch load-tree`    | Hierarchy → PG-grouped tree with completion + branch state.   |
 | `polyphony branch ensure-feature` | Idempotently ensure the feature branch exists.              |
-| `polyphony branch next-task`    | Within-PG task selection via capability filtering.            |
+| `polyphony branch next-task`    | Within-PG task selection via facet filtering.            |
 | `polyphony branch check-deps`   | ADO predecessor link check.                                   |
 | `polyphony branch close-scope`  | Validate then transition leaf items at scope close.           |
 
@@ -383,7 +383,7 @@ launch a run against a polyphony Epic in this repo.
 
 The CLI references `Twig.Domain` and `Twig.Infrastructure` for work-item
 models and SQLite cache reads, reads `.conductor/process-config.yaml` (and
-optionally `policy.yaml`) for type capabilities and transition mappings,
+optionally `policy.yaml`) for type facets and transition mappings,
 emits structured JSON to stdout, and uses exit codes to signal routing
 outcomes. **Routing decisions are fully deterministic** — no AI, no LLM, no
 non-determinism. AI lives in the *agent* layer of the workflow suite (the
@@ -391,4 +391,5 @@ architect, coder, reviewer roles); polyphony is the calm rules engine
 underneath that gives those agents a stable contract surface to route on.
 
 For more, see [`docs/polyphony-architecture.md`](docs/polyphony-architecture.md).
+
 

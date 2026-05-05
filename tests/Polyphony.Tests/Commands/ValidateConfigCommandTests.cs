@@ -105,9 +105,9 @@ public sealed class ValidateConfigCommandTests : IDisposable
             process_template: Basic
             types:
               Epic:
-                capabilities: [plannable]
+                facets: [plannable]
               Task:
-                capabilities: [implementable]
+                facets: [implementable]
             transitions:
               Epic:
                 begin_planning: Doing
@@ -127,9 +127,9 @@ public sealed class ValidateConfigCommandTests : IDisposable
             process_template: Basic
             types:
               Epic:
-                capabilities: [plannable]
+                facets: [plannable]
               Task:
-                capabilities: [implementable]
+                facets: [implementable]
             transitions:
               Epic:
                 begin_planning: Doing
@@ -158,7 +158,7 @@ public sealed class ValidateConfigCommandTests : IDisposable
             process_template: Basic
             types:
               Task:
-                capabilities: [implementable]
+                facets: [implementable]
             transitions:
               Task:
                 begin_implementation: Doing
@@ -179,7 +179,7 @@ public sealed class ValidateConfigCommandTests : IDisposable
             process_template: Basic
             types:
               Task:
-                capabilities: [implementable]
+                facets: [implementable]
             transitions:
               Task:
                 begin_implementation: Doing
@@ -292,7 +292,7 @@ public sealed class ValidateConfigCommandTests : IDisposable
             process_template: Basic
             types:
               Epic:
-                capabilities: [plannable]
+                facets: [plannable]
             transitions: {}
             """;
         var configDir = CreateConfigDir(yaml);
@@ -332,3 +332,4 @@ public sealed class ValidateConfigCommandTests : IDisposable
         }
     }
 }
+

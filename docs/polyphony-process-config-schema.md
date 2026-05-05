@@ -2,7 +2,7 @@
 
 Schema and validation rules for the process configuration file consumed by every
 Polyphony command. This file is the single point where work-item types, their
-capabilities, lifecycle event → state-name transitions, and review/branch policies are
+facets, lifecycle event → state-name transitions, and review/branch policies are
 declared.
 
 The schema is the C# class graph in `src/Polyphony/Configuration/ProcessConfig.cs`. The
@@ -20,7 +20,7 @@ platform: github                           # str, default "github"; "github" | "
 
 types:
   <TypeName>:                              # one entry per work-item type
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     filing_eligible: true
     max_nesting_depth: 1
     decomposition_guidance: |              # multi-line free text
@@ -64,7 +64,7 @@ YAML loading uses `UnderscoredNamingConvention` and `IgnoreUnmatchedProperties`
 | `process_template` | string  | **yes**  | Free-form, but conventionally `Basic` / `Agile` / `Scrum` / `CMMI`. Validation V-1.                |
 | `platform`         | string  | no       | Default `"github"`. Read by workflow `pr_platform_router` nodes; values today: `github`, `ado`.    |
 | `types`            | map     | **yes**  | At least one entry. Validation V-2.                                                                |
-| `transitions`      | map     | yes      | One entry per type with capabilities. Validation V-5, V-6.                                         |
+| `transitions`      | map     | yes      | One entry per type with facets. Validation V-5, V-6.                                         |
 | `review_policies`  | object  | no       | Optional; consumed by workflow review-loop nodes.                                                  |
 | `branch_strategy`  | object  | no       | When present, drives `polyphony route`'s `workspace_hint`. When absent, `workspace_hint` is null.  |
 
@@ -74,7 +74,7 @@ YAML loading uses `UnderscoredNamingConvention` and `IgnoreUnmatchedProperties`
 
 | Key                       | Type      | Default | Notes                                                                                  |
 |---------------------------|-----------|---------|----------------------------------------------------------------------------------------|
-| `capabilities`            | string[]  | `[]`    | Must contain at least one of `plannable`, `implementable` (case-insensitive). V-3, V-4. |
+| `facets`            | string[]  | `[]`    | Must contain at least one of `plannable`, `implementable` (case-insensitive). V-3, V-4. |
 | `filing_eligible`         | bool      | `false` | Free-form; not enforced by ConfigValidator.                                            |
 | `max_nesting_depth`       | int       | `1`     | Free-form; not enforced by ConfigValidator.                                            |
 | `decomposition_guidance`  | string?   | null    | Free-form; consumed by planning agents.                                                |
@@ -82,7 +82,7 @@ YAML loading uses `UnderscoredNamingConvention` and `IgnoreUnmatchedProperties`
 | `allowed_child_types`     | string[]  | `[]`    | Each entry must reference a type defined in `types:`. V-8.                             |
 | `parent`                  | string?   | null    | Optional. Name of the parent type, if this type is a child of another.                 |
 
-`capabilities` is the only field that drives engine behavior:
+`facets` is the only field that drives engine behavior:
 - `plannable` → routed to planning sub-workflows; needs decomposition.
 - `implementable` → routed to implementation sub-workflows; counted as a leaf.
 - Both → "issue-as-task" form (`PhaseDetector.cs:35-43`).
@@ -132,8 +132,8 @@ The `{n}` placeholder for PG numbers is substituted later by helper scripts
 |-------|----------|--------------------------------------------------------------------------------------------------|-------------|
 | V-1   | Error    | `process_template` missing or whitespace.                                                         | 27          |
 | V-2   | Error    | `types` is empty.                                                                                  | 33          |
-| V-3   | Error    | A type has no capabilities.                                                                        | 56          |
-| V-4   | Error    | A type lists a capability other than `plannable` / `implementable`.                                | 60-67       |
+| V-3   | Error    | A type has no facets.                                                                        | 56          |
+| V-4   | Error    | A type lists a facet other than `plannable` / `implementable`.                                | 60-67       |
 | V-5   | Error    | A type has no `transitions:` entry.                                                                | 71-74       |
 | V-6   | Error    | `transitions:` references a type not declared in `types:`.                                         | 88-95       |
 | V-7   | Error    | Duplicate type name (case-insensitive).                                                            | 42-49       |
@@ -208,13 +208,13 @@ platform: github
 
 types:
   Epic:
-    capabilities: [plannable]
+    facets: [plannable]
     allowed_child_types: [Issue]
   Issue:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     allowed_child_types: [Task]
   Task:
-    capabilities: [implementable]
+    facets: [implementable]
 
 transitions:
   Epic:
@@ -240,19 +240,19 @@ platform: ado
 
 types:
   Epic:
-    capabilities: [plannable]
+    facets: [plannable]
     allowed_child_types: [Feature]
   Feature:
-    capabilities: [plannable]
+    facets: [plannable]
     allowed_child_types: [User Story, Bug]
   User Story:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     allowed_child_types: [Task]
   Bug:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     allowed_child_types: [Task]
   Task:
-    capabilities: [implementable]
+    facets: [implementable]
 
 transitions:
   Epic:
@@ -289,19 +289,19 @@ platform: ado
 
 types:
   Epic:
-    capabilities: [plannable]
+    facets: [plannable]
     allowed_child_types: [Feature]
   Feature:
-    capabilities: [plannable]
+    facets: [plannable]
     allowed_child_types: [Product Backlog Item, Bug]
   Product Backlog Item:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     allowed_child_types: [Task]
   Bug:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     allowed_child_types: [Task]
   Task:
-    capabilities: [implementable]
+    facets: [implementable]
 
 transitions:
   Epic:
@@ -337,19 +337,19 @@ platform: ado
 
 types:
   Epic:
-    capabilities: [plannable]
+    facets: [plannable]
     allowed_child_types: [Feature]
   Feature:
-    capabilities: [plannable]
+    facets: [plannable]
     allowed_child_types: [Requirement]
   Requirement:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     allowed_child_types: [Task]
   Bug:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     allowed_child_types: [Task]
   Task:
-    capabilities: [implementable]
+    facets: [implementable]
 
 transitions:
   Epic:
@@ -433,3 +433,4 @@ The CLI surfaces this as a `CONFIG`-rule load error with exit code `2`
 
 `ProcessConfigLoader.Load` throws `FileNotFoundException`
 (`ProcessConfigLoader.cs:12-13`); caught and surfaced the same way as above.
+

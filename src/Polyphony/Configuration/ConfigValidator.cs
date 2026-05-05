@@ -7,8 +7,8 @@ namespace Polyphony.Configuration;
 /// </summary>
 public static class ConfigValidator
 {
-    private static readonly HashSet<string> ValidCapabilities =
-        new(StringComparer.OrdinalIgnoreCase) { "plannable", "implementable" };
+    private static readonly HashSet<string> ValidFacets =
+        new(StringComparer.OrdinalIgnoreCase) { "plannable", "actionable", "implementable" };
 
     /// <summary>
     /// Validates the given <paramref name="config"/> and returns a structured result.
@@ -64,20 +64,20 @@ public static class ConfigValidator
 
         foreach (var (typeName, typeConfig) in config.Types)
         {
-            // V-3: each type has at least one capability
-            if (typeConfig.Capabilities.Length == 0)
+            // V-3: each type has at least one facet
+            if (typeConfig.Facets.Length == 0)
             {
-                errors.Add(Error("V-3", $"Type '{typeName}' must have at least one capability."));
+                errors.Add(Error("V-3", $"Type '{typeName}' must have at least one facet."));
             }
 
-            // V-4: capability values are valid (plannable, implementable)
-            foreach (var capability in typeConfig.Capabilities)
+            // V-4: facet values are valid (plannable, implementable)
+            foreach (var facet in typeConfig.Facets)
             {
-                if (!ValidCapabilities.Contains(capability))
+                if (!ValidFacets.Contains(facet))
                 {
                     errors.Add(Error("V-4",
-                        $"Type '{typeName}' has invalid capability '{capability}'. " +
-                        "Valid values: plannable, implementable."));
+                        $"Type '{typeName}' has invalid facet '{facet}'. " +
+                        "Valid values: plannable, actionable, implementable."));
                 }
             }
 
@@ -173,3 +173,5 @@ public static class ConfigValidator
     private static ConfigValidationDiagnostic Warning(string ruleId, string message) =>
         new() { RuleId = ruleId, Message = message, Severity = ConfigValidationSeverity.Warning };
 }
+
+

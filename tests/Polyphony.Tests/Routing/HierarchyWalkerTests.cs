@@ -11,7 +11,7 @@ namespace Polyphony.Tests.Routing;
 
 /// <summary>
 /// Unit tests for <see cref="HierarchyWalker"/> using NSubstitute mocks.
-/// Covers depth limiting, capability annotation, missing items, and multi-level trees.
+/// Covers depth limiting, facet annotation, missing items, and multi-level trees.
 /// </summary>
 public sealed class HierarchyWalkerTests
 {
@@ -162,7 +162,7 @@ public sealed class HierarchyWalkerTests
     }
 
     [Fact]
-    public async Task WalkAsync_AnnotatesCapabilitiesFromProcessConfig()
+    public async Task WalkAsync_AnnotatesFacetsFromProcessConfig()
     {
         var epic = new WorkItemBuilder()
             .WithId(1).WithType("Epic").WithTitle("Epic").WithState("Doing").Build();
@@ -179,15 +179,15 @@ public sealed class HierarchyWalkerTests
         var result = await walker.WalkAsync(1, maxDepth: 1, CancellationToken.None);
 
         result.ShouldNotBeNull();
-        result.Capabilities.ShouldBe(["plannable"]);
+        result.Facets.ShouldBe(["plannable"]);
 
         result.Children.ShouldNotBeNull();
-        result.Children[0].Capabilities.ShouldBe(["plannable", "implementable"]);
-        result.Children[1].Capabilities.ShouldBe(["implementable"]);
+        result.Children[0].Facets.ShouldBe(["plannable", "implementable"]);
+        result.Children[1].Facets.ShouldBe(["implementable"]);
     }
 
     [Fact]
-    public async Task WalkAsync_UnknownType_ReturnsEmptyCapabilities()
+    public async Task WalkAsync_UnknownType_ReturnsEmptyFacets()
     {
         var item = new WorkItemBuilder()
             .WithId(1).WithType("Bug").WithTitle("A Bug").WithState("New").Build();
@@ -199,7 +199,7 @@ public sealed class HierarchyWalkerTests
 
         result.ShouldNotBeNull();
         result.Type.ShouldBe("Bug");
-        result.Capabilities.ShouldBeEmpty();
+        result.Facets.ShouldBeEmpty();
     }
 
     [Fact]
@@ -320,3 +320,5 @@ public sealed class HierarchyWalkerTests
         result.Children[0].Tags.ShouldBe("PG-1; Sprint 5");
     }
 }
+
+

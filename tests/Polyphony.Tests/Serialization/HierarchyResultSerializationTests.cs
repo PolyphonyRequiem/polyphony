@@ -17,7 +17,7 @@ public sealed class HierarchyResultSerializationTests
         var result = new HierarchyResult
         {
             WorkItemId = 1, Title = "Test", Type = "Epic",
-            Capabilities = ["plannable"], State = "Doing",
+            Facets = ["plannable"], State = "Doing",
             Tags = "PG-1; Sprint 5"
         };
 
@@ -32,7 +32,7 @@ public sealed class HierarchyResultSerializationTests
         var result = new HierarchyResult
         {
             WorkItemId = 1, Title = "Test", Type = "Epic",
-            Capabilities = ["plannable"], State = "Doing"
+            Facets = ["plannable"], State = "Doing"
         };
 
         var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.HierarchyResult);
@@ -40,3 +40,4 @@ public sealed class HierarchyResultSerializationTests
         json.ShouldNotContain("\"tags\"");
     }
 }
+

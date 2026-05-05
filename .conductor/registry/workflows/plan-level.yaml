@@ -810,7 +810,7 @@ agents:
   # ── Child router ─────────────────────────────────────────────────────────
   #
   # Discovers plannable children of the current work item using polyphony
-  # hierarchy. Filters by 'plannable' capability to determine which children
+  # hierarchy. Filters by 'plannable' facet to determine which children
   # need their own planning sub-workflow invocation.
   #
   # Invariants:

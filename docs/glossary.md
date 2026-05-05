@@ -34,7 +34,7 @@ A **facet** is a kind of work an item needs done. An item carries a SET of facet
 
 | Term | Definition |
 |---|---|
-| **Facet** | A kind of work the item carries. Replaces "capability". |
+| **Facet** | A kind of work the item carries. Replaces "facet". |
 | **Plannable facet** | The item needs decomposition into a plan and (optionally) child items before its other facets can begin. |
 | **Implementable facet** | The item carries code changes that land via PRs. |
 | **Actionable facet** | The item carries work that is done and recorded as evidence (e.g., infra change, approval, configuration), with or without code. Carries an **executor** property: `polyphony` (polyphony performs the action — evidence required) or `human` (action is outside polyphony's authority — no evidence required, only satisfaction recorded). |
@@ -145,3 +145,4 @@ Edges enter the dependency graph through three distinct sources. Each source has
 ## Open glossary questions
 
 _All initial questions resolved. New questions surfacing during plan drafting will land here._
+

@@ -98,10 +98,10 @@ $LASTEXITCODE
 ```powershell
 polyphony hierarchy --work-item $WI --depth 1 |
   ConvertFrom-Json |
-  Format-List work_item_id, type, state, capabilities
+  Format-List work_item_id, type, state, facets
 ```
 
-If `capabilities` is `[]`, the work item's type is missing from your
+If `facets` is `[]`, the work item's type is missing from your
 `types:` map. Fix by adding the type to `process-config.yaml`. Without a
 match, downstream workflows treat the item as neither plannable nor
 implementable and skip it silently.
@@ -230,10 +230,10 @@ Source: `ValidateConfigCommand.cs:20-22`, `RouteCommand.cs:23`,
 `validate-config` or a directory to the others fails noisily — easy to miss
 when copying commands between docs.
 
-### 5d · Invalid capability values
+### 5d · Invalid facet values
 
 V-4 (`ConfigValidator.cs:60-67`) accepts only `plannable` and
-`implementable`. There is **no** `actionable` capability. Capabilities like
+`implementable`. There is **no** `actionable` facet. Facets like
 `coordination`, `actionable`, `grouping` will fail validation. If you need
 a coordination-only type, give it `[plannable]` (parent types are
 inherently grouping containers) and document the convention in its
@@ -271,3 +271,4 @@ config emits 10 of those warnings before V-11..V-14. Recommended order:
 ```
 
 If every line passes, the repo is bootstrapped.
+

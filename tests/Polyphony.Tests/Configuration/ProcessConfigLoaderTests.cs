@@ -26,8 +26,8 @@ public sealed class ProcessConfigLoaderTests
         config.Types.ShouldContainKey("Epic");
         config.Types.ShouldContainKey("Issue");
         config.Types.ShouldContainKey("Task");
-        config.Types["Epic"].Capabilities.ShouldContain("plannable");
-        config.Types["Task"].Capabilities.ShouldContain("implementable");
+        config.Types["Epic"].Facets.ShouldContain("plannable");
+        config.Types["Task"].Facets.ShouldContain("implementable");
         config.Transitions.ShouldContainKey("Epic");
         config.Transitions["Epic"]["begin_planning"].ShouldBe("Doing");
     }
@@ -40,7 +40,7 @@ public sealed class ProcessConfigLoaderTests
             process_template: Basic
             types:
               Task:
-                capabilities: [implementable]
+                facets: [implementable]
             transitions: {}
             """);
 
@@ -72,7 +72,7 @@ public sealed class ProcessConfigLoaderTests
             process_template: Basic
             types:
               Task:
-                capabilities: [implementable]
+                facets: [implementable]
             transitions: {}
             """);
 
@@ -89,7 +89,7 @@ public sealed class ProcessConfigLoaderTests
             process_template: Basic
             types:
               Task:
-                capabilities: [implementable]
+                facets: [implementable]
             transitions: {}
             """);
 
@@ -105,7 +105,7 @@ public sealed class ProcessConfigLoaderTests
             process_template: Basic
             types:
               Scenario:
-                capabilities: [plannable]
+                facets: [plannable]
                 self_referential: true
             transitions: {}
             """);
@@ -122,9 +122,9 @@ public sealed class ProcessConfigLoaderTests
             process_template: Basic
             types:
               Feature:
-                capabilities: [plannable]
+                facets: [plannable]
               Story:
-                capabilities: [implementable]
+                facets: [implementable]
                 parent: Feature
             transitions: {}
             """);
@@ -141,9 +141,9 @@ public sealed class ProcessConfigLoaderTests
         {
             Types = new Dictionary<string, TypeConfig>
             {
-                ["Epic"] = new TypeConfig { Capabilities = new[] { "plannable" } },
-                ["Feature"] = new TypeConfig { Capabilities = new[] { "plannable" }, Parent = "Epic" },
-                ["Task"] = new TypeConfig { Capabilities = new[] { "implementable" }, Parent = "Feature" }
+                ["Epic"] = new TypeConfig { Facets = new[] { "plannable" } },
+                ["Feature"] = new TypeConfig { Facets = new[] { "plannable" }, Parent = "Epic" },
+                ["Task"] = new TypeConfig { Facets = new[] { "implementable" }, Parent = "Feature" }
             }
         };
 
@@ -186,3 +186,4 @@ internal static class TestHelpers
         return Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..", "..", "..", repoName));
     }
 }
+

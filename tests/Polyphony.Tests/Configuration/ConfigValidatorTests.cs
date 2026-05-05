@@ -70,13 +70,13 @@ public sealed class ConfigValidatorTests
 
     #endregion
 
-    #region V-3: each type has at least one capability
+    #region V-3: each type has at least one facet
 
     [Fact]
-    public void V3_TypeWithNoCapabilities_ProducesError()
+    public void V3_TypeWithNoFacets_ProducesError()
     {
         var config = ValidConfig();
-        config.Types["Task"] = new TypeConfig { Capabilities = [] };
+        config.Types["Task"] = new TypeConfig { Facets = [] };
 
         var result = ConfigValidator.Validate(config);
 
@@ -85,7 +85,7 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
-    public void V3_TypeWithCapabilities_NoError()
+    public void V3_TypeWithFacets_NoError()
     {
         var config = ValidConfig();
 
@@ -96,13 +96,13 @@ public sealed class ConfigValidatorTests
 
     #endregion
 
-    #region V-4: capability values are valid
+    #region V-4: facet values are valid
 
     [Fact]
-    public void V4_InvalidCapability_ProducesError()
+    public void V4_InvalidFacet_ProducesError()
     {
         var config = ValidConfig();
-        config.Types["Task"] = new TypeConfig { Capabilities = ["invalid_cap"] };
+        config.Types["Task"] = new TypeConfig { Facets = ["invalid_cap"] };
 
         var result = ConfigValidator.Validate(config);
 
@@ -111,10 +111,10 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
-    public void V4_PlannableCapability_NoError()
+    public void V4_PlannableFacet_NoError()
     {
         var config = ValidConfig();
-        config.Types["Task"] = new TypeConfig { Capabilities = ["plannable"] };
+        config.Types["Task"] = new TypeConfig { Facets = ["plannable"] };
 
         var result = ConfigValidator.Validate(config);
 
@@ -122,7 +122,7 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
-    public void V4_ImplementableCapability_NoError()
+    public void V4_ImplementableFacet_NoError()
     {
         var config = ValidConfig();
 
@@ -132,10 +132,10 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
-    public void V4_CaseInsensitiveCapability_NoError()
+    public void V4_CaseInsensitiveFacet_NoError()
     {
         var config = ValidConfig();
-        config.Types["Task"] = new TypeConfig { Capabilities = ["Plannable", "IMPLEMENTABLE"] };
+        config.Types["Task"] = new TypeConfig { Facets = ["Plannable", "IMPLEMENTABLE"] };
 
         var result = ConfigValidator.Validate(config);
 
@@ -229,8 +229,8 @@ public sealed class ConfigValidatorTests
         // Case-insensitive duplicates require an ordinal-comparer dict
         var types = new Dictionary<string, TypeConfig>(StringComparer.Ordinal)
         {
-            ["Task"] = new TypeConfig { Capabilities = ["implementable"] },
-            ["task"] = new TypeConfig { Capabilities = ["implementable"] },
+            ["Task"] = new TypeConfig { Facets = ["implementable"] },
+            ["task"] = new TypeConfig { Facets = ["implementable"] },
         };
         var transitions = new Dictionary<string, string> { ["begin_implementation"] = "Doing" };
         var config = new ProcessConfig
@@ -257,7 +257,7 @@ public sealed class ConfigValidatorTests
     public void V15_MissingParent_ProducesError()
     {
         var config = ValidConfig();
-        config.Types["Task"] = new TypeConfig { Capabilities = ["implementable"], Parent = "NonExistent" };
+        config.Types["Task"] = new TypeConfig { Facets = ["implementable"], Parent = "NonExistent" };
 
         var result = ConfigValidator.Validate(config);
 
@@ -269,8 +269,8 @@ public sealed class ConfigValidatorTests
     public void V16_CycleDetected_ProducesError()
     {
         var config = ValidConfig();
-        config.Types["Epic"] = new TypeConfig { Capabilities = ["plannable"], Parent = "Task" };
-        config.Types["Task"] = new TypeConfig { Capabilities = ["implementable"], Parent = "Epic" };
+        config.Types["Epic"] = new TypeConfig { Facets = ["plannable"], Parent = "Task" };
+        config.Types["Task"] = new TypeConfig { Facets = ["implementable"], Parent = "Epic" };
 
         var result = ConfigValidator.Validate(config);
 
@@ -282,8 +282,8 @@ public sealed class ConfigValidatorTests
     public void V15_ParentExists_NoError()
     {
         var config = ValidConfig();
-        config.Types["Epic"] = new TypeConfig { Capabilities = ["plannable"] };
-        config.Types["Task"] = new TypeConfig { Capabilities = ["implementable"], Parent = "Epic" };
+        config.Types["Epic"] = new TypeConfig { Facets = ["plannable"] };
+        config.Types["Task"] = new TypeConfig { Facets = ["implementable"], Parent = "Epic" };
 
         var result = ConfigValidator.Validate(config);
 
@@ -294,8 +294,8 @@ public sealed class ConfigValidatorTests
     public void V16_NoCycle_NoError()
     {
         var config = ValidConfig();
-        config.Types["Epic"] = new TypeConfig { Capabilities = ["plannable"] };
-        config.Types["Task"] = new TypeConfig { Capabilities = ["implementable"], Parent = "Epic" };
+        config.Types["Epic"] = new TypeConfig { Facets = ["plannable"] };
+        config.Types["Task"] = new TypeConfig { Facets = ["implementable"], Parent = "Epic" };
 
         var result = ConfigValidator.Validate(config);
 
@@ -312,7 +312,7 @@ public sealed class ConfigValidatorTests
         var config = ValidConfig();
         config.Types["Epic"] = new TypeConfig
         {
-            Capabilities = ["plannable"],
+            Facets = ["plannable"],
             AllowedChildTypes = ["Task"],
         };
 
@@ -327,7 +327,7 @@ public sealed class ConfigValidatorTests
         var config = ValidConfig();
         config.Types["Epic"] = new TypeConfig
         {
-            Capabilities = ["plannable"],
+            Facets = ["plannable"],
             AllowedChildTypes = ["NonExistent"],
         };
 
@@ -611,8 +611,8 @@ public sealed class ConfigValidatorTests
             ProcessTemplate = "Basic",
             Types = new Dictionary<string, TypeConfig>
             {
-                ["Epic"] = new TypeConfig { Capabilities = ["plannable"] },
-                ["Task"] = new TypeConfig { Capabilities = ["implementable"] },
+                ["Epic"] = new TypeConfig { Facets = ["plannable"] },
+                ["Task"] = new TypeConfig { Facets = ["implementable"] },
             },
             Transitions = new Dictionary<string, Dictionary<string, string>>
             {
@@ -637,7 +637,7 @@ public sealed class ConfigValidatorTests
             ProcessTemplate = "Basic",
             Types = new Dictionary<string, TypeConfig>
             {
-                [typeName] = new TypeConfig { Capabilities = ["implementable"] },
+                [typeName] = new TypeConfig { Facets = ["implementable"] },
             },
             Transitions = new Dictionary<string, Dictionary<string, string>>
             {
@@ -666,3 +666,5 @@ public sealed class ConfigValidatorTests
 
     #endregion
 }
+
+

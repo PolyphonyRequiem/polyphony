@@ -109,7 +109,7 @@ CLI.
 | top-level | `route` | Detect SDLC phase + recommended action for a work item | twig cache | — |
 | top-level | `validate` | Check whether a lifecycle event is legal; return `target_state` | twig cache | — |
 | top-level | `validate-config` | Schema-validate `process-config.yaml` against rules V-1..V-14 | config file | — |
-| top-level | `hierarchy` | Walk the work-item tree; annotate each node with capabilities | twig cache | — |
+| top-level | `hierarchy` | Walk the work-item tree; annotate each node with facets | twig cache | — |
 | top-level | `health` | Diagnostic checks (SQLite, dotnet, twig on PATH, etc.) | environment | — |
 | `state` | `preflight` | Full SDLC entry gate: 4 required + 3 advisory checks | git, twig, gh, ado | — |
 | `state` | `preflight-lite` | Quick 3-check entry gate for the planning sub-workflow | git, twig | — |
@@ -196,8 +196,8 @@ take** for a given work item. There are two levels of this decision:
   (`implement-pg.yaml`) makes per PG.
 
 Both share a key design rule: **routing is computed from `StateCategory`
-plus `capabilities`, never from a hardcoded type name.** Polyphony does not
-have an `if (typeName == "Epic")` anywhere — it reads the type's capabilities
+plus `facets`, never from a hardcoded type name.** Polyphony does not
+have an `if (typeName == "Epic")` anywhere — it reads the type's facets
 from `process-config.yaml` and decides on those. This is what makes the system
 type-agnostic across Basic / Agile / Scrum / CMMI process templates and
 across whatever custom hierarchy a repo defines.
@@ -217,7 +217,7 @@ Returns the SDLC phase the item is in, plus a recommended `action`. The
 decision is made by `PhaseDetector.cs:20-43`, which reads:
 
 - The item's `StateCategory` (from `Twig.Domain.Services.Process.StateCategoryResolver`)
-- The item's type's `capabilities` from `process-config.yaml`
+- The item's type's `facets` from `process-config.yaml`
 - Any `polyphony:planned` tag on `System.Tags` (which short-circuits "needs
   planning" once children have been seeded — see
   `PhaseDetector.cs:60-67`)
@@ -233,7 +233,7 @@ Phase constants (`src/Polyphony/Routing/SdlcPhase.cs`):
 | `ready_for_completion` | All children complete; item itself not yet closed |
 | `done` | In a terminal state (Completed) |
 | `removed` | In Removed category |
-| `unknown` | Type has no capabilities, or work item not found |
+| `unknown` | Type has no facets, or work item not found |
 
 Action constants (`src/Polyphony/Routing/SdlcAction.cs`):
 `plan` · `seed` · `implement` · `monitor` · `close` · `none`.
@@ -404,7 +404,7 @@ polyphony validate-config [--config <dir>] [--output json|human]
 
 | Range | Severity | What it checks |
 |---|---|---|
-| V-1..V-8 | error | schema_version, type list, capabilities, transitions, branch_strategy syntax, etc. |
+| V-1..V-8 | error | schema_version, type list, facets, transitions, branch_strategy syntax, etc. |
 | V-9..V-14 | warning | companion files exist (`work-item-types/<slug>.md`, templates, `agent-guidance/*.md`, `profile.yaml`) |
 
 Returns `0` on valid (warnings allowed) or `2` on any error.
@@ -434,7 +434,7 @@ defaults will paper over. Returns `0` on valid, `2` on errors.
 Hierarchy is the *tree-walking* primitive. Multiple verbs lean on it:
 
 - `polyphony hierarchy` is the raw walker — give it a root, get a tree with
-  capabilities annotated on each node.
+  facets annotated on each node.
 - `polyphony plan next-child` filters the immediate children to the
   `plannable` ones.
 - `polyphony branch route` and `polyphony branch load-tree` walk the tree,
@@ -444,10 +444,10 @@ Hierarchy is the *tree-walking* primitive. Multiple verbs lean on it:
 
 The shared engine is `HierarchyWalker` (`src/Polyphony/Routing/HierarchyWalker.cs`).
 It reads from `IWorkItemRepository` (twig SQLite cache), and for each node it
-annotates `capabilities` from the type's entry in `process-config.yaml`.
-**Capabilities are the universal classifier** — every routing decision is
-written against `Capabilities.Contains("plannable")` /
-`Capabilities.Contains("implementable")`, never against a type name.
+annotates `facets` from the type's entry in `process-config.yaml`.
+**Facets are the universal classifier** — every routing decision is
+written against `Facets.Contains("plannable")` /
+`Facets.Contains("implementable")`, never against a type name.
 
 ### `polyphony hierarchy`
 
@@ -466,18 +466,18 @@ nulls):
   "work_item_id": 1234,
   "title":        "Some Epic",
   "type":         "Epic",
-  "capabilities": ["plannable"],
+  "facets": ["plannable"],
   "state":        "Doing",
   "tags":         "PG-1; release-blocker",
   "children": [
     { "work_item_id": 1235, "title": "…", "type": "Issue",
-      "capabilities": ["plannable","implementable"],
+      "facets": ["plannable","implementable"],
       "state": "To Do", "children": [] }
   ]
 }
 ```
 
-**Use when:** A script needs to flatten + filter by capability or tag without
+**Use when:** A script needs to flatten + filter by facet or tag without
 re-implementing the walker. Typical pattern:
 
 ```powershell
@@ -486,7 +486,7 @@ function Flatten($n) {
     @($n) + ($n.children | ForEach-Object { Flatten $_ })
 }
 $implementable = Flatten $tree |
-    Where-Object { $_.capabilities -contains 'implementable' }
+    Where-Object { $_.facets -contains 'implementable' }
 ```
 
 **Don't use when:** You need ADO field metadata beyond `state` and `tags`
@@ -914,7 +914,7 @@ else:
 
 | Verb | Why it justifies a typed binary |
 |---|---|
-| `route` / `state detect` | Type-agnostic phase detection over `StateCategory` × `capabilities`. Doing this correctly across Basic/Agile/Scrum/CMMI templates needs the `Twig.Domain` resolvers — and PowerShell calling into .NET assemblies is awkward enough that owning the call here pays for itself. |
+| `route` / `state detect` | Type-agnostic phase detection over `StateCategory` × `facets`. Doing this correctly across Basic/Agile/Scrum/CMMI templates needs the `Twig.Domain` resolvers — and PowerShell calling into .NET assemblies is awkward enough that owning the call here pays for itself. |
 | `validate` | Returns `target_state` so PowerShell never types `"Done"` literally. This single field is the seam that makes the SDLC process-template-agnostic. |
 | `validate-config` | 14 schema rules are far easier to author and test as C# than as a YAML linter. |
 | `branch route` | Stale-PR defense, parallel-PG dispatch via `--pg-number`, type-agnostic terminal-state checks via `StateCategoryResolver` — three subtle ratchets that previously bit us in the PowerShell version. |
@@ -1004,4 +1004,5 @@ home. Otherwise, the script registry is where it belongs.
   call when, with worked examples).
 - **CLI authoring conventions:** `.github/skills/polyphony-cli-developer/SKILL.md`
   (when adding a new verb).
+
 

@@ -14,8 +14,8 @@ public sealed class ProcessConfigValidatorTests
         {
             Types = new Dictionary<string, TypeConfig>
             {
-                ["Epic"] = new TypeConfig { Capabilities = new[] { "plannable" } },
-                ["Task"] = new TypeConfig { Capabilities = new[] { "implementable" } }
+                ["Epic"] = new TypeConfig { Facets = new[] { "plannable" } },
+                ["Task"] = new TypeConfig { Facets = new[] { "implementable" } }
             }
         };
         var errors = ProcessConfigValidator.ValidateParentRules(config);
@@ -29,8 +29,8 @@ public sealed class ProcessConfigValidatorTests
         {
             Types = new Dictionary<string, TypeConfig>
             {
-                ["Epic"] = new TypeConfig { Capabilities = new[] { "plannable" } },
-                ["Task"] = new TypeConfig { Capabilities = new[] { "implementable" }, Parent = "Epic" }
+                ["Epic"] = new TypeConfig { Facets = new[] { "plannable" } },
+                ["Task"] = new TypeConfig { Facets = new[] { "implementable" }, Parent = "Epic" }
             }
         };
         var errors = ProcessConfigValidator.ValidateParentRules(config);
@@ -44,7 +44,7 @@ public sealed class ProcessConfigValidatorTests
         {
             Types = new Dictionary<string, TypeConfig>
             {
-                ["Task"] = new TypeConfig { Capabilities = new[] { "implementable" }, Parent = "Epic" }
+                ["Task"] = new TypeConfig { Facets = new[] { "implementable" }, Parent = "Epic" }
             }
         };
         var errors = ProcessConfigValidator.ValidateParentRules(config);
@@ -58,8 +58,8 @@ public sealed class ProcessConfigValidatorTests
         {
             Types = new Dictionary<string, TypeConfig>
             {
-                ["Epic"] = new TypeConfig { Capabilities = new[] { "plannable" }, Parent = "Task" },
-                ["Task"] = new TypeConfig { Capabilities = new[] { "implementable" }, Parent = "Epic" }
+                ["Epic"] = new TypeConfig { Facets = new[] { "plannable" }, Parent = "Task" },
+                ["Task"] = new TypeConfig { Facets = new[] { "implementable" }, Parent = "Epic" }
             }
         };
         var errors = ProcessConfigValidator.ValidateParentRules(config);
@@ -73,12 +73,13 @@ public sealed class ProcessConfigValidatorTests
         {
             Types = new Dictionary<string, TypeConfig>
             {
-                ["Epic"] = new TypeConfig { Capabilities = new[] { "plannable" }, Parent = "Task" },
-                ["Task"] = new TypeConfig { Capabilities = new[] { "implementable" }, Parent = "Story" },
-                ["Story"] = new TypeConfig { Capabilities = new[] { "implementable" }, Parent = "Epic" }
+                ["Epic"] = new TypeConfig { Facets = new[] { "plannable" }, Parent = "Task" },
+                ["Task"] = new TypeConfig { Facets = new[] { "implementable" }, Parent = "Story" },
+                ["Story"] = new TypeConfig { Facets = new[] { "implementable" }, Parent = "Epic" }
             }
         };
         var errors = ProcessConfigValidator.ValidateParentRules(config);
         errors.ShouldContain(e => e.Contains("V-16"));
     }
 }
+

@@ -36,5 +36,6 @@ public sealed record RoutingDone(string Message);
 /// <summary>Work item has been removed (terminal state).</summary>
 public sealed record RoutingRemoved(string Message);
 
-/// <summary>Work item is in an unrecognized state or has unknown capabilities.</summary>
+/// <summary>Work item is in an unrecognized state or has unknown facets.</summary>
 public sealed record RoutingUnknown(string Message);
+

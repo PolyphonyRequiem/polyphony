@@ -7,7 +7,7 @@ namespace Polyphony.Routing;
 
 /// <summary>
 /// Core state machine that determines the SDLC phase and next action
-/// for a work item based on its type, capabilities, state, and children.
+/// for a work item based on its type, facets, state, and children.
 /// </summary>
 public sealed class PhaseDetector(ProcessConfig processConfig)
 {
@@ -29,16 +29,16 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
     {
         var category = StateCategoryResolver.Resolve(item.State, entries: null);
 
-        // Terminal states apply regardless of type or capabilities
+        // Terminal states apply regardless of type or facets
         if (category == StateCategory.Completed)
             return new RoutingDone("Work item is complete.");
 
         if (category == StateCategory.Removed)
             return new RoutingRemoved("Work item has been removed.");
 
-        var capabilities = LookupCapabilities(item.Type.Value);
-        var isPlannable = Array.Exists(capabilities, c => string.Equals(c, "plannable", StringComparison.OrdinalIgnoreCase));
-        var isImplementable = Array.Exists(capabilities, c => string.Equals(c, "implementable", StringComparison.OrdinalIgnoreCase));
+        var facets = LookupFacets(item.Type.Value);
+        var isPlannable = Array.Exists(facets, c => string.Equals(c, "plannable", StringComparison.OrdinalIgnoreCase));
+        var isImplementable = Array.Exists(facets, c => string.Equals(c, "implementable", StringComparison.OrdinalIgnoreCase));
 
         if (isPlannable)
             return DetectPlannablePhase(item, children, category, isImplementable);
@@ -46,8 +46,8 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
         if (isImplementable)
             return DetectImplementablePhase(category);
 
-        // Unknown capability set — fall through to unknown
-        return new RoutingUnknown($"No recognized capabilities for type '{item.Type.Value}'.");
+        // Unknown facet set — fall through to unknown
+        return new RoutingUnknown($"No recognized facets for type '{item.Type.Value}'.");
     }
 
     private static RoutingDecision DetectPlannablePhase(
@@ -157,11 +157,13 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
         return false;
     }
 
-    private string[] LookupCapabilities(string typeName)
+    private string[] LookupFacets(string typeName)
     {
         if (processConfig.Types.TryGetValue(typeName, out var typeConfig))
-            return typeConfig.Capabilities;
+            return typeConfig.Facets;
 
         return [];
     }
 }
+
+

@@ -47,11 +47,11 @@ The current `twig-sdlc-full` workflow has this structure:
 |--------|---------|----------------------|
 | `detect-state.ps1` | Root state detection: phase, plan, seeds, intent | `polyphony route` + `polyphony validate` |
 | `pg-router.ps1` | Route to next PG action | `polyphony hierarchy` + `Group-ByPG` |
-| `task-router.ps1` | Route to next implementable task within a PG | `polyphony hierarchy` + capability filter |
+| `task-router.ps1` | Route to next implementable task within a PG | `polyphony hierarchy` + facet filter |
 | `scope-closer.ps1` | Close items in a PG after PR merge | `polyphony validate` per item |
 | `load-work-tree.ps1` | Load full hierarchy with PG completion status | `polyphony hierarchy` + PR status |
 
-### Conductor YAML Capabilities
+### Conductor YAML Facets
 
 Conductor workflow YAMLs support the following agent types and constructs relevant to this design (confirmed from conductor source in `~/projects/conductor-fix/`):
 
@@ -89,7 +89,7 @@ The v2 workflow supports `user_plan_path` as a first-class input. When provided,
 |-----------|----------------------------------|
 | P1: Work Items Are Source of Truth | Routing decisions come from Polyphony (which reads ADO state), not from workflow-embedded logic |
 | P3: Re-Entry by State Discovery | All sub-workflows must be resumable — `detect-state.ps1` and `pg-router.ps1` discover current state |
-| P5: Type-Agnostic Structure | No type names in YAML routing conditions — Polyphony capabilities drive branching |
+| P5: Type-Agnostic Structure | No type names in YAML routing conditions — Polyphony facets drive branching |
 | P6: Human Gates for Genuine Decisions | Gates only at plan approval, open questions, user acceptance — not routine checkpoints |
 | P8: Scripts Over Agents | Routing, state detection, PG management are scripts; agents do judgment work |
 | P10: Explicit Invariants | Every node documents preconditions and postconditions |
@@ -219,7 +219,7 @@ state_detector (script: detect-state.ps1)
   → phase=removed → $end
 ```
 
-**Key difference from v1:** No type-specific routing. The `detect-state.ps1` script calls `polyphony route` which returns capability-based phase decisions. The root workflow routes purely on phase, not type.
+**Key difference from v1:** No type-specific routing. The `detect-state.ps1` script calls `polyphony route` which returns facet-based phase decisions. The root workflow routes purely on phase, not type.
 
 #### 2. `twig-sdlc-v2-planning.yaml` — Planning Orchestration
 
@@ -459,7 +459,7 @@ detect-state.ps1 ──→ polyphony route ──→ { phase, action, workspace_
   │
   ├── needs_planning ──→ plan-level.yaml
   │     │
-  │     ├── polyphony hierarchy ──→ { type, capabilities, children }
+  │     ├── polyphony hierarchy ──→ { type, facets, children }
   │     ├── .conductor/work-item-types/<type>.md ──→ architect prompt context
   │     ├── architect agent ──→ .plan.md artifact
   │     ├── seeder agent ──→ ADO work items created
@@ -745,7 +745,8 @@ All four PR groups are self-contained. The work is purely additive (no existing 
 - [Type-Agnostic SDLC Plan](type-agnostic-sdlc.plan.md) — Parent Epic implementation plan with full architecture
 - [Polyphony Core Engine Plan](polyphony-core-engine.plan.md) — Phase 1 implementation (completed)
 - [Conductor Design Principles](../../.github/skills/conductor-design/SKILL.md) — P1-P13 governing workflow design
-- [Process Config](../../.conductor/process-config.yaml) — Type capabilities, transitions, review policies, branch strategy
+- [Process Config](../../.conductor/process-config.yaml) — Type facets, transitions, review policies, branch strategy
 - [Work Item Type Definitions](../../.conductor/work-item-types/) — Epic, Issue, Task semantic definitions
 - [twig-conductor-workflows repo](https://github.com/PolyphonyRequiem/twig-conductor-workflows) — Target repo for v2 YAML files
+
 

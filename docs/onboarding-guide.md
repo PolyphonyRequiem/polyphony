@@ -34,7 +34,7 @@ Before starting, ensure the following are in place:
 - **Polyphony CLI installed** — The AOT-compiled `polyphony` binary is available on
   your PATH (typically at `~/.twig/bin/polyphony`). Build it with `publish-local.ps1`
   from the polyphony repo if not already installed.
-- **Type capabilities configured** — Every type in `.conductor/process-config.yaml` must declare a `capabilities` field with at least one of `plannable` or `implementable` (case-insensitive). Only these two values are valid.
+- **Type facets configured** — Every type in `.conductor/process-config.yaml` must declare a `facets` field with at least one of `plannable` or `implementable` (case-insensitive). Only these two values are valid.
 - **ADO workspace configured** — Your repo has a `.twig/config` file pointing to the
   correct ADO organization and project. If not, run `twig init`.
 - **Git repository** — Your repo uses git with a `main` branch as the default target.
@@ -113,7 +113,7 @@ auto-detect it from the `process_template` field.
 
 > **Kyber example:** Kyber uses a **custom** process template called
 > `KyberAgile`, derived from the standard Agile template. Its hierarchy is
-> Epic → **Capability** → Task (plus Bug → Task), where `Capability` is a
+> Epic → **Primitive** → Task (plus Bug → Task), where `Primitive` is a
 > custom mid-level type that replaces `User Story` for a crypto-primitives
 > domain. We'll cover how to declare custom types in
 > [Section 4](#4-type-definitions).
@@ -145,7 +145,7 @@ against ADO's actual catalog. So `process_template: KyberAgile`, or
 concerned.
 
 What *does* matter is that the **state names** you use on the right-hand side
-of `transitions:` actually exist for each type in your process template, and that every type has a valid `capabilities` field. The `capabilities` field is required for every type and must contain at least one of `plannable` or `implementable` (case-insensitive). Any other value will fail validation (see V-3, V-4).
+of `transitions:` actually exist for each type in your process template, and that every type has a valid `facets` field. The `facets` field is required for every type and must contain at least one of `plannable` or `implementable` (case-insensitive). Any other value will fail validation (see V-3, V-4).
 Polyphony will not catch a mismatch — `polyphony validate-config` does not
 cross-reference state names against the template's state set. The failure
 surfaces later, when twig tries to write the state and `StateResolver.ResolveByName`
@@ -154,8 +154,8 @@ rejects it with `Unknown state '<X>'. Valid states: ...`.
 > **Kyber example:** `KyberAgile` is derived from Agile and uses the standard
 > Agile state names (`New`, `Active`, `Resolved`, `Closed`, `Removed`) per
 > `twig2/tests/Twig.TestKit/ProcessConfigBuilder.cs:48-96`. The only
-> customisations are the addition of the `Capability` type and the
-> `Capability` → `Task` decomposition rule. No state names are renamed.
+> customisations are the addition of the `Primitive` type and the
+> `Primitive` → `Task` decomposition rule. No state names are renamed.
 
 ---
 
@@ -193,7 +193,7 @@ From your repository root:
 > ```
 > The bootstrap stamps `process_template: KyberAgile` into
 > `process-config.yaml` and uses the Agile state set for the generated
-> transitions. You then edit the file to add the custom `Capability` type and
+> transitions. You then edit the file to add the custom `Primitive` type and
 > drop `User Story`.
 
 ### What Gets Generated
@@ -203,7 +203,7 @@ the `.conductor/` directory reference):
 
 ```
 .conductor/
-├── process-config.yaml                 # Type capabilities, transitions, branch strategy
+├── process-config.yaml                 # Type facets, transitions, branch strategy
 ├── profile.yaml                        # Project metadata, tech stack, build commands
 ├── agent-guidance/
 │   ├── epic.md                         # Guidance for Epic type
@@ -219,13 +219,13 @@ the `.conductor/` directory reference):
         └── task-template.md            # Task description template
 ```
 
-For kyber you will rename `user-story.md` → `capability.md` and
-`user-story-template.md` → `capability-template.md` after bootstrap, then update
+For kyber you will rename `user-story.md` → `primitive.md` and
+`user-story-template.md` → `primitive-template.md` after bootstrap, then update
 `process-config.yaml` to reference the renamed type. The bootstrap can't infer
 custom type names; it always generates the standard mid-level type for the
 parent template. 
 
-> **Note:** Agent guidance files are now generated per type (e.g. `agent-guidance/capability.md`). V-11 warnings will reference the slug for each type. Ensure your agent-guidance directory matches your type names.
+> **Note:** Agent guidance files are now generated per type (e.g. `agent-guidance/primitive.md`). V-11 warnings will reference the slug for each type. Ensure your agent-guidance directory matches your type names.
 
 ### Review and Customize
 
@@ -254,7 +254,7 @@ which is what the warnings V-9 and V-10 use to look for the file:
 | Product Backlog Item | `product-backlog-item.md` |
 | Requirement | `requirement.md` |
 | Task | `task.md` |
-| Capability | `capability.md` |
+| Primitive | `primitive.md` |
 | Bug | `bug.md` |
 
 ### Required Sections
@@ -291,42 +291,42 @@ Add these when relevant:
 
 - **Ownership** — Who creates, assigns, and reviews items of this type.
 - **In Scope / Out of Scope** — What belongs and doesn't belong in this type.
-- **Hierarchy Rules** — Parent/child constraints (e.g., "Epics contain only Capabilities").
+- **Hierarchy Rules** — Parent/child constraints (e.g., "Epics contain only Primitives").
 - **Language Guidelines** — Tone and detail expectations per description section.
 - **Relationship to Plan Documents** — Whether this type gets a plan doc.
 
-### Kyber Example: Capability Type Definition
+### Kyber Example: Primitive Type Definition
 
-Kyber uses a custom `Capability` type that acts as a mid-level dual-capability
+Kyber uses a custom `Primitive` type that acts as a mid-level dual-facet
 container — analogous to `User Story` in Agile or `Requirement` in CMMI, but
 named for the unit of work that's natural in a crypto-primitives codebase.
-A Capability is a **focused crypto primitive or operation**: small enough that
+A Primitive is a **focused crypto primitive or operation**: small enough that
 a single contributor can hold it in their head, large enough that it usually
 decomposes into a handful of Tasks (spec read, reference-vector port,
 constant-time implementation, fuzz harness).
 
 ```markdown
-# Capability — Work Item Type Definition (KyberAgile Process)
+# Primitive — Work Item Type Definition (KyberAgile Process)
 
 ## Definition
 
-A Capability represents a single self-contained crypto primitive or operation
-inside the kyber library. Capabilities are the unit at which we plan,
+A Primitive represents a single self-contained crypto primitive or operation
+inside the kyber library. Primitives are the unit at which we plan,
 review, and ship cryptographic functionality. They sit between strategic
 Epics (e.g. "ML-KEM-768 reference implementation") and tactical Tasks
 (e.g. "wire NTT into Encaps loop").
 
 ## Purpose
 
-A Capability answers: **"What primitive or operation are we delivering, and
+A Primitive answers: **"What primitive or operation are we delivering, and
 how will we verify it matches the NIST PQC reference implementation?"**
 
 ## Audience
 
-| Role | How They Use Capabilities |
+| Role | How They Use Primitives |
 |------|---------------------|
-| **Project Owner** | Creates Capabilities, defines acceptance vectors and constant-time requirements. |
-| **Contributor** | Implements Capabilities or their child Tasks. |
+| **Project Owner** | Creates Primitives, defines acceptance vectors and constant-time requirements. |
+| **Contributor** | Implements Primitives or their child Tasks. |
 | **AI Agent** | Plans decomposition into Tasks; implements directly when scope is small (e.g. single primitive with reference vectors already in tree). |
 
 ## Naming Conventions
@@ -338,14 +338,14 @@ how will we verify it matches the NIST PQC reference implementation?"**
 - Good: "Constant-time conditional move (cmov) helper"
 - Bad: "Implement crypto" — no primitive named, not verifiable
 
-## In Scope for a Capability
+## In Scope for a Primitive
 
 - A single primitive (Encaps, Decaps, NTT, CBD sampler, cmov, ...)
 - Constant-time guarantees and the test that verifies them
 - Test vectors imported from the NIST PQC reference implementation
 - Performance budget (cycles per operation) when relevant
 
-## Out of Scope for a Capability
+## Out of Scope for a Primitive
 
 - Multi-primitive workflows — those are Epics
 - Build-system or CI changes — those are Tasks under an "Infrastructure" Epic
@@ -353,18 +353,18 @@ how will we verify it matches the NIST PQC reference implementation?"**
 
 ## Description Template
 
-See: `templates/capability-template.md`
+See: `templates/primitive-template.md`
 
 ## Hierarchy Rules
 
-- Capabilities live under Epics
-- Capabilities decompose into Tasks
-- Capabilities are NOT self-referential — no nested Capabilities
-- Bugs filed against a shipped Capability live as siblings of it under the
+- Primitives live under Epics
+- Primitives decompose into Tasks
+- Primitives are NOT self-referential — no nested Primitives
+- Bugs filed against a shipped Primitive live as siblings of it under the
   same Epic, and decompose into Tasks the same way
 ```
 
-This single file is the V-9 fix for the `Capability` type
+This single file is the V-9 fix for the `Primitive` type
 (`ConfigValidator.cs:105-110`). One V-9 warning is emitted per type declared
 in `process-config.yaml` that is missing its `<slug>.md`.
 
@@ -385,7 +385,7 @@ Follow the pattern `{type-slug}-template.md`. This matches
 | Type | Template File |
 |------|--------------|
 | Epic | `epic-template.md` |
-| Capability | `capability-template.md` |
+| Primitive | `primitive-template.md` |
 | Task | `task-template.md` |
 | Bug | `bug-template.md` |
 
@@ -436,7 +436,7 @@ instructions. Here's the general pattern:
 <Dependencies, gotchas, related code paths.>
 ```
 
-**For dual-capability types** (Issue, User Story, Requirement, Capability):
+**For dual-facet types** (Issue, User Story, Requirement, Primitive):
 
 ```markdown
 ## Summary
@@ -460,11 +460,11 @@ instructions. Here's the general pattern:
 <Plan document link, architecture references, related code paths>
 ```
 
-### Kyber Example: Capability Template
+### Kyber Example: Primitive Template
 
-`Capability` is a dual-capability type (`plannable, implementable`), so its
-template follows the dual-capability pattern but with crypto-specific
-acceptance criteria pre-baked. From `templates/capability-template.md`:
+`Primitive` is a dual-facet type (`plannable, implementable`), so its
+template follows the dual-facet pattern but with crypto-specific
+acceptance criteria pre-baked. From `templates/primitive-template.md`:
 
 ```markdown
 ## Summary
@@ -488,7 +488,7 @@ the upstream NIST PQC spec section.>
 - [ ] New public API documented with `///` doc comments and one example
 
 ## Child Tasks (if decomposed)
-<Populated during decomposition — omit for directly-implemented Capabilities>
+<Populated during decomposition — omit for directly-implemented Primitives>
 
 ## Context (optional)
 **Plan:** `docs/projects/<slug>.plan.md`
@@ -549,7 +549,7 @@ V-11..V-13 are warnings, not errors (`ConfigValidator.cs:122-141`). This means:
 
 ## Responsibilities
 
-- Decompose Capabilities into Tasks
+- Decompose Primitives into Tasks
 - Estimate effort using a Task = ½ – 1 day model (kyber Tasks are small)
 - Ensure each Task is self-contained and verifiable against a reference vector
   or a constant-time test
@@ -580,7 +580,7 @@ V-11..V-13 are warnings, not errors (`ConfigValidator.cs:122-141`). This means:
   with reference-vector checkpoints.
 - Include `dudect` constant-time test runtime in estimates (~5 minutes per
   primitive on CI hardware).
-- Capabilities touching `kyber-asm/` need extra review time — assembly
+- Primitives touching `kyber-asm/` need extra review time — assembly
   changes are security-sensitive.
 ```
 
@@ -721,21 +721,21 @@ The full V-rule table is enforced in
 |---------|-------------|---------|-----|
 | V-1 | `ConfigValidator.cs:27` | Missing `process_template` | Add `process_template: <name>` to process-config.yaml |
 | V-2 | `ConfigValidator.cs:33` | No types defined | Add at least one entry under `types:` |
-| V-3 | `ConfigValidator.cs:56` | Type has no capabilities | Add `capabilities: [plannable]` or `[implementable]` (or both) — this field is required for every type. |
-| V-4 | `ConfigValidator.cs:60-67` | Type has invalid capability value | **Use only `plannable` or `implementable`** — these are the only two values in the whitelist. Any other value will fail validation. |
+| V-3 | `ConfigValidator.cs:56` | Type has no facets | Add `facets: [plannable]` or `[implementable]` (or both) — this field is required for every type. |
+| V-4 | `ConfigValidator.cs:60-67` | Type has invalid facet value | **Use only `plannable` or `implementable`** — these are the only two values in the whitelist. Any other value will fail validation. |
 | V-5 | `ConfigValidator.cs:71-74` | Type has no transitions | Add transition mappings under `transitions:` for the type |
 | V-6 | `ConfigValidator.cs:88-95` | Transition references undefined type | Ensure all keys in `transitions:` exist in `types:` |
 | V-7 | `ConfigValidator.cs:42-49` | Duplicate type name (case-insensitive) | Type names must be unique regardless of case |
 | V-8 | `ConfigValidator.cs:77-84` | `allowed_child_types` references undefined type | Ensure all `allowed_child_types` values exist in `types:` |
 
-> **Capability whitelist callout (V-4):** The valid capability values are
+> **Primitive whitelist callout (V-4):** The valid facet values are
 > *exactly* `plannable` and `implementable`
-> (`ConfigValidator.cs:60-67`, where the `ValidCapabilities` HashSet is
+> (`ConfigValidator.cs:60-67`, where the `ValidFacets` HashSet is
 > `{ "plannable", "implementable" }`). Anything else — `actionable`,
 > `reviewable`, `coordinatable`, etc. — fails V-4 with `Type '<name>' has
-> invalid capability '<x>'. Valid values: plannable, implementable.` If you
+> invalid facet '<x>'. Valid values: plannable, implementable.` If you
 > need a parent that only groups children without being implemented directly,
-> use `capabilities: [plannable]` and rely on the parent type being
+> use `facets: [plannable]` and rely on the parent type being
 > inherently a grouping construct.
 
 ### Common Validation Warnings
@@ -802,7 +802,7 @@ it for routing decisions. If no config is found, it falls back to the legacy
 
 1. **Phase Detection** — Polyphony reads the work item tree and determines the
    current SDLC phase (planning, implementation, review, etc.).
-2. **Routing** — Based on type capabilities and current state, Polyphony decides
+2. **Routing** — Based on type facets and current state, Polyphony decides
    the next action (plan, decompose, implement, review).
 3. **Agent Execution** — The appropriate agent (architect, coder, reviewer) runs
    with your type definitions and guidance injected into its prompt.
@@ -826,7 +826,7 @@ and hierarchy analysis. Look for:
 
 - `phase` — Is it what you expect?
 - `action` — Is the right action being taken?
-- `type_capabilities` — Are your types correctly configured?
+- `type_facets` — Are your types correctly configured?
 
 **2. Verify state transitions:**
 
@@ -842,15 +842,15 @@ This checks whether the proposed transition is valid for the work item's type.
 polyphony hierarchy --work-item <id> --depth 3
 ```
 
-This shows the work item tree with type capabilities at each level.
+This shows the work item tree with type facets at each level.
 
 **4. Common routing problems:**
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| Work item skipped | Type missing `implementable` capability | Add `implementable` to the type's capabilities |
+| Work item skipped | Type missing `implementable` facet | Add `implementable` to the type's facets |
 | Infinite recursion | `max_nesting_depth` too high or self-referential without bound | Set a reasonable `max_nesting_depth` (1–3) |
-| Wrong agent runs | Type capabilities misconfigured | Check that plannable types get architect, implementable get coder |
+| Wrong agent runs | Type facets misconfigured | Check that plannable types get architect, implementable get coder |
 | PR not auto-merging | Review policy requires human review | Update `review_policies` to set `auto_merge: true` for PG PRs |
 | Branch name wrong | Branch strategy pattern incorrect | Fix patterns in `branch_strategy` section |
 | `Unknown state '<X>'` from twig | State name in `transitions:` doesn't exist in the template's state set for that type | Cross-check state names against `twig2/tests/Twig.TestKit/ProcessConfigBuilder.cs:48-96` |
@@ -876,12 +876,12 @@ kyber/
     │   └── reviewer.md
     └── work-item-types/
         ├── epic.md
-        ├── capability.md
+        ├── primitive.md
         ├── bug.md
         ├── task.md
         └── templates/
             ├── epic-template.md
-            ├── capability-template.md
+            ├── primitive-template.md
             ├── bug-template.md
             └── task-template.md
 ```
@@ -899,41 +899,41 @@ process_template: KyberAgile
 # Schema version for forward compatibility.
 schema_version: 1
 
-# Type definitions with capabilities.
-# Capabilities — the ONLY two valid values:
+# Type definitions with facets.
+# Primitives — the ONLY two valid values:
 # - plannable: gets architect/decomposition
 # - implementable: leaf-level, directly coded
-# (Source of truth: ConfigValidator.cs:60-67 — the ValidCapabilities HashSet.)
+# (Source of truth: ConfigValidator.cs:60-67 — the ValidFacets HashSet.)
 types:
   Epic:
-    capabilities: [plannable]
+    facets: [plannable]
     filing_eligible: false           # Epics don't receive closeout observations
     max_nesting_depth: 1
-    allowed_child_types: [Capability, Bug]
+    allowed_child_types: [Primitive, Bug]
     decomposition_guidance: |
-      Always decompose into Capabilities (or Bugs, when fixing a regression in
-      a shipped Capability). Epics are never implemented directly.
-      Each Capability should represent a single crypto primitive or operation.
+      Always decompose into Primitives (or Bugs, when fixing a regression in
+      a shipped Primitive). Epics are never implemented directly.
+      Each Primitive should represent a single crypto primitive or operation.
 
-  Capability:
-    capabilities: [plannable, implementable]
+  Primitive:
+    facets: [plannable, implementable]
     filing_eligible: true
-    self_referential: false          # No nested Capabilities
+    self_referential: false          # No nested Primitives
     max_nesting_depth: 1
     allowed_child_types: [Task]
     decomposition_guidance: |
-      Decompose into Tasks for any Capability touching `kyber-asm/`,
+      Decompose into Tasks for any Primitive touching `kyber-asm/`,
       requiring a new dudect harness, or estimated > 1 day.
       Implement directly when the change is a single primitive with reference
       vectors already present in `kyber-test-vectors/`.
 
   Bug:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     filing_eligible: true
     allowed_child_types: [Task]
 
   Task:
-    capabilities: [implementable]
+    facets: [implementable]
     filing_eligible: true            # Tasks receive closeout observations
 
 # State transitions — maps workflow events to ADO state names.
@@ -941,13 +941,13 @@ types:
 # (twig2/tests/Twig.TestKit/ProcessConfigBuilder.cs:48-96), since KyberAgile
 # is derived from Agile and does not rename any states. Note that User Story
 # in standard Agile uses `Resolved` for implementation_complete; we mirror
-# that for Capability since the meanings are equivalent.
+# that for Primitive since the meanings are equivalent.
 transitions:
   Epic:
     begin_planning: Active
     all_children_complete: Closed
     scope_removed: Removed
-  Capability:
+  Primitive:
     begin_planning: Active
     begin_implementation: Active
     implementation_complete: Resolved
@@ -1038,12 +1038,12 @@ estimation:
 | Aspect | Basic (twig) | KyberAgile (kyber) |
 |--------|-------------|---------------------|
 | Process template | `Basic` (standard) | `KyberAgile` (custom, derived from Agile) |
-| Mid-level type | Issue | **Capability** (custom name; same `[plannable, implementable]` capability set) |
+| Mid-level type | Issue | **Primitive** (custom name; same `[plannable, implementable]` facet set) |
 | Active state | `Doing` | `Active` |
-| Done state | `Done` | `Closed` (Tasks) / `Resolved` (Capability, Bug) |
+| Done state | `Done` | `Closed` (Tasks) / `Resolved` (Primitive, Bug) |
 | `Removed` state available? | No | Yes (Agile state set) |
-| Self-referential mid-level | No | No (Capability does not nest) |
-| Bug type | — | Yes; sibling of Capability under Epic |
+| Self-referential mid-level | No | No (Primitive does not nest) |
+| Bug type | — | Yes; sibling of Primitive under Epic |
 | Platform | github | github |
 | Custom guidance | Minimal | Full architect/coder/reviewer (crypto-specific) |
 
@@ -1058,7 +1058,7 @@ Use this checklist when onboarding a new repo:
       bootstrap stub source)
 - [ ] Run `bootstrap-conductor.ps1 -ProcessTemplate <template>` (add
       `-CustomName <name>` for a custom template)
-- [ ] Customize `process-config.yaml` — types, capabilities (only `plannable`
+- [ ] Customize `process-config.yaml` — types, facets (only `plannable`
       and `implementable` are valid per V-4), transitions, branch strategy
 - [ ] Cross-check every state name in `transitions:` against the template's
       state set per `ProcessConfigBuilder.cs:48-96` (Polyphony will not catch
@@ -1073,4 +1073,6 @@ Use this checklist when onboarding a new repo:
 - [ ] Fix any errors, review warnings
 - [ ] Run `conductor run twig-sdlc-v2-full@twig --input work_item_id=<id> --web` on a test work item
 - [ ] Verify routing, agent behavior, and PR lifecycle work correctly
+
+
 

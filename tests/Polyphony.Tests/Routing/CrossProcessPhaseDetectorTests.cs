@@ -21,7 +21,7 @@ public sealed class CrossProcessPhaseDetectorTests
         string Name,
         string TopType,
         string MiddleType,
-        string[] MiddleCapabilities,
+        string[] MiddleFacets,
         string LeafType,
         string ProposedState,
         string InProgressState,
@@ -42,7 +42,7 @@ public sealed class CrossProcessPhaseDetectorTests
         Templates.Select(t => new object[]
         {
             t.Name,
-            Array.Exists(t.MiddleCapabilities, c => c == "implementable"),
+            Array.Exists(t.MiddleFacets, c => c == "implementable"),
         });
 
     private static CompositeTemplate GetTemplate(string name) =>
@@ -53,7 +53,7 @@ public sealed class CrossProcessPhaseDetectorTests
         var config = new ProcessConfigBuilder()
             .WithProcessTemplate(template.Name)
             .WithType(template.TopType, ["plannable"])
-            .WithType(template.MiddleType, template.MiddleCapabilities)
+            .WithType(template.MiddleType, template.MiddleFacets)
             .WithType(template.LeafType, ["implementable"])
             .Build();
         return new PhaseDetector(config);
@@ -75,11 +75,11 @@ public sealed class CrossProcessPhaseDetectorTests
         (result is NeedsPlanning).ShouldBeTrue();
     }
 
-    // --- Scenario 2: Intermediate plannable routes based on capabilities ---
+    // --- Scenario 2: Intermediate plannable routes based on facets ---
 
     [Theory]
     [MemberData(nameof(IntermediateNoChildrenData))]
-    public void IntermediatePlannable_InProgress_NoChildren_RoutesBasedOnCapabilities(
+    public void IntermediatePlannable_InProgress_NoChildren_RoutesBasedOnFacets(
         string templateName, bool isImplementable)
     {
         var t = GetTemplate(templateName);
@@ -548,3 +548,5 @@ public sealed class CrossProcessPhaseDetectorTests
         (result is RoutingUnknown).ShouldBeTrue();
     }
 }
+
+

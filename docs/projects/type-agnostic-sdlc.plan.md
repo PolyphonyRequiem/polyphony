@@ -48,18 +48,18 @@ reason about **hierarchy levels and roles** rather than specific type names.
 │  3. PER-REPO CONFIGURATION (.conductor/ in target repo)    │
 │     Process-specific definitions and templates             │
 │     - profile.yaml: tech stack, build, estimation          │
-│     - process-config.yaml: type capabilities, transitions  │
+│     - process-config.yaml: type facets, transitions  │
 │     - work-item-types/*.md: type definitions               │
 │     - work-item-types/templates/*.md: description formats  │
 └────────────────────────────────────────────────────────────┘
 ```
 
-### Type Capabilities Model
+### Type Facets Model
 
-Instead of static role assignments, types declare **capabilities**. The "root" is always
+Instead of static role assignments, types declare **facets**. The "root" is always
 the invocation target — ANY type can be root depending on what the user passes to the workflow.
 
-| Capability | Meaning | Examples |
+| Facet | Meaning | Examples |
 |-----------|---------|---------|
 | **plannable** | Gets architect/decomposition, may be recursive | Epic, Scenario, Issue, User Story, PBI |
 | **actionable** | Coordination/supplementary work, grouped steps | Task Group, Deliverable |
@@ -67,17 +67,17 @@ the invocation target — ANY type can be root depending on what the user passes
 
 **Key principles:**
 - **Any type can be root.** The workflow invocation target is always root — no static assignment.
-- **Capabilities are per-type, not per-position.** A type's capabilities don't change based on
+- **Facets are per-type, not per-position.** A type's facets don't change based on
   where it sits in the hierarchy.
-- **Multiple capabilities are allowed.** An Issue can be both `plannable` AND `implementable` —
+- **Multiple facets are allowed.** An Issue can be both `plannable` AND `implementable` —
   the routing engine decides which path based on size/children/state.
 - **Self-containment is auto-discovered.** If ADO's `AllowedChildTypes` includes the type itself,
   it can recurse. The config only specifies `max_nesting_depth` and `decomposition_guidance`.
 - **Filing eligibility.** Types that can receive closeout observations are marked `filing_eligible`.
 
-**Routing logic for multi-capability types:**
+**Routing logic for multi-facet types:**
 1. Focus item is always "root" (the invocation target)
-2. If focus has children → recurse into children based on THEIR capabilities
+2. If focus has children → recurse into children based on THEIR facets
 3. If focus has no children AND is `plannable` → plan/decompose it
 4. If focus has no children AND is `implementable` → implement it directly
 5. If focus is `plannable + implementable` → architect agent decides (guided by type definition)
@@ -94,7 +94,7 @@ the invocation target — ANY type can be root depending on what the user passes
 - .NET 10 stable (DU preview deferred to Phase 5 — C4)
 - References `Twig.Domain` and `Twig.Infrastructure` via ProjectReference
 - Reads twig's local SQLite cache for work item data
-- Reads `.conductor/` config for type capabilities and transition mappings
+- Reads `.conductor/` config for type facets and transition mappings
 - Outputs structured JSON to stdout, uses exit codes for conductor routing
 - Includes `workspace_hint` in routing output (branch names for scripts to use)
 - AOT-compiled, single-file binary deployed to ~/.twig/bin/
@@ -229,7 +229,7 @@ the user plan is context.
 ```
 <target-repo>/.conductor/
   profile.yaml                      # Tech stack, build, estimation
-  process-config.yaml               # Type capabilities, transitions, review policies, branches
+  process-config.yaml               # Type facets, transitions, review policies, branches
   work-item-types/
     epic.md                         # Type definition (semantics, scoping guidance)
     issue.md                        # Type definition (or scenario.md, user-story.md, etc.)
@@ -248,20 +248,20 @@ process_template: Basic
 
 types:
   Epic:
-    capabilities: [plannable]
+    facets: [plannable]
     filing_eligible: false
     max_nesting_depth: 1
     decomposition_guidance: |
       Always decompose into Issues. Epics are never implemented directly.
   Issue:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     filing_eligible: true
     max_nesting_depth: 1
     decomposition_guidance: |
       Decompose into Tasks when scope exceeds a single PG (~2000 LoC).
       Implement directly when the change is focused and fits one PG.
   Task:
-    capabilities: [implementable]
+    facets: [implementable]
     filing_eligible: true
 
 # Semantic state mapping — maps lifecycle events to concrete state names per type.
@@ -281,7 +281,7 @@ transitions:
     implementation_complete: Done
     scope_removed: Removed
 
-# Review policies are bound to WORKFLOW PHASES, not type capabilities.
+# Review policies are bound to WORKFLOW PHASES, not type facets.
 review_policies:
   planning:
     plan_pr: { agent_review: true, human_review: true, auto_merge: false }
@@ -692,7 +692,7 @@ The existing hardcoded workflow is preserved as a fallback:
 | Polyphony packaging | Standalone binary via publish-local.ps1 to ~/.twig/bin/ | Consistent with twig deployment model |
 | Routing AI | Fully deterministic | AI judgment belongs in agents; ambiguous routing escalates to human gate |
 | ADO PR support | GitHub primary, ADO stub (interfaces defined) | Prove on GitHub first; ADO implementation deferred |
-| Type capabilities | Declared per-type, not per-position | Any type can be root; capabilities don't change based on hierarchy position |
+| Type facets | Declared per-type, not per-position | Any type can be root; facets don't change based on hierarchy position |
 | Self-containment | Auto-discovered from ADO AllowedChildTypes | Config only specifies max_nesting_depth and decomposition_guidance |
 | Closeout filing | AI classification + human gate for ambiguous cases | Types marked filing_eligible; type definitions guide classification |
 | User plan input | First-class `user_plan_path` input, architect refines rather than discards | User's design intent preserved; disagreements raised as open questions |
@@ -702,11 +702,11 @@ The existing hardcoded workflow is preserved as a fallback:
 All previously open questions have been resolved:
 
 1. **Polyphony packaging:** Standalone binary deployed alongside twig via `publish-local.ps1` to `~/.twig/bin/`.
-2. **Config inheritance / role overlap:** Eliminated — review policies bind to workflow phases, not type capabilities.
+2. **Config inheritance / role overlap:** Eliminated — review policies bind to workflow phases, not type facets.
    Any type can be root; the review policy is determined by which phase the workflow is in (planning, implementation, remediation).
 3. **Parallel PGs:** Full parallel support in v1. Merge conflicts resolved by implementing agent via rebase.
 4. **ADO PR support:** GitHub primary with ADO stub. Interfaces defined for platform abstraction, ADO implementation deferred.
-5. **Polyphony AI capability:** Fully deterministic. AI judgment belongs in agents (architects, code reviewers).
+5. **Polyphony AI facet:** Fully deterministic. AI judgment belongs in agents (architects, code reviewers).
    Genuinely ambiguous routing scenarios escalate to human gates (P6).
 
 ---
@@ -731,4 +731,5 @@ All previously open questions have been resolved:
 - Git (branch operations)
 - gh CLI (PR operations — GitHub primary)
 - az repos (PR operations — ADO stub, deferred implementation)
+
 

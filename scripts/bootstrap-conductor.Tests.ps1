@@ -195,7 +195,7 @@ Describe 'bootstrap-conductor.ps1 — Scrum template' {
         # Find a mid-level type structurally (plannable + implementable)
         $typeKeys = $yaml.types.Keys
         $midType = $typeKeys | Where-Object {
-            $caps = $yaml.types[$_].capabilities
+            $caps = $yaml.types[$_].facets
             $caps -contains 'plannable' -and $caps -contains 'implementable'
         } | Select-Object -First 1
         $midType | Should -Not -BeNullOrEmpty
@@ -520,3 +520,4 @@ Describe 'bootstrap-conductor.ps1 — JSON output' {
         $result.types.Count | Should -Be 3
     }
 }
+

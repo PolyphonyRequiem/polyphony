@@ -61,7 +61,7 @@ public sealed partial class PlanCommands(
 
     /// <summary>
     /// Lists immediate children of a work item that have the <c>plannable</c>
-    /// capability in the process config. Drives the <c>for_each</c> recursion in
+    /// facet in the process config. Drives the <c>for_each</c> recursion in
     /// <c>plan-level.yaml</c>. Always exits 0; surfaces any error inline.
     /// </summary>
     /// <param name="workItem">ADO work item ID whose children to discover.</param>
@@ -86,7 +86,7 @@ public sealed partial class PlanCommands(
         }
 
         var children = (hierarchy.Children ?? [])
-            .Where(c => c.Capabilities.Contains("plannable"))
+            .Where(c => c.Facets.Contains("plannable"))
             .Select(c => new PlannableChild { Id = c.WorkItemId, Type = c.Type, Title = c.Title })
             .ToArray();
 
@@ -352,3 +352,4 @@ public sealed partial class PlanCommands(
         return sb.ToString().TrimEnd();
     }
 }
+
