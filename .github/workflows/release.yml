@@ -149,14 +149,25 @@ jobs:
           VERSION: ${{ needs.preflight.outputs.version }}
           RID: ${{ matrix.rid }}
           EXT: ${{ matrix.ext }}
+        # Cross-runner SHA256 dispatch — none of sha256sum / shasum are
+        # available on all 3 platforms:
+        #   * sha256sum  → ubuntu YES, windows-Git-Bash YES, macOS NO
+        #   * shasum -a 256 → ubuntu YES, windows-Git-Bash NO, macOS YES
+        # Try them in order; prefer sha256sum because its output format
+        # ("hash  file") matches what `sha256sum -c` and `shasum -a 256 -c`
+        # both accept, so the .sha256 sidecar is verifiable on any platform
+        # regardless of which tool computed it.
         run: |
           cd "out/${RID}"
           file="polyphony-${VERSION}-${RID}${EXT}"
-          # `shasum -a 256` is available on all three runners (Linux, macOS,
-          # and Git-Bash on Windows runners — Git-Bash ships Perl). Output
-          # line ends with the bare filename so consumers can
-          # `shasum -a 256 -c <file>.sha256`.
-          shasum -a 256 "$file" > "${file}.sha256"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$file" > "${file}.sha256"
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$file" > "${file}.sha256"
+          else
+            echo "::error::Neither sha256sum nor shasum available on $RUNNER_OS"
+            exit 1
+          fi
           cat "${file}.sha256"
 
       - name: Smoke test (--version)
