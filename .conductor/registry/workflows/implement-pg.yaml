@@ -31,7 +31,7 @@ workflow:
     work_item_id:
       type: number
       required: true
-      description: ADO work item ID of the parent (type is runtime-injected; do not hardcode type names) for this PG
+      description: ADO work item ID of the parent for this PG # type is runtime-injected; do not hardcode type names
     pg_number:
       type: number
       required: true
@@ -39,7 +39,7 @@ workflow:
     work_item_ids:
       type: array
       required: true
-      description: Array of child work item IDs in this PG (type is runtime-injected; do not hardcode type names)
+      description: Array of child work item IDs in this PG # type is runtime-injected; do not hardcode type names
     branch_name:
       type: string
       required: true
@@ -157,7 +157,7 @@ agents:
     routes:
       - to: task_router
 
-  # ── Child work item router (type is runtime-injected; do not hardcode type names) ──
+  # ── Child work item router ── # type is runtime-injected; do not hardcode type names
   #
   # Determines the next task to implement within this PG via task-router.ps1.
   # Routes to coder for implementation or to dependency_check when all tasks
@@ -276,7 +276,7 @@ agents:
     routes:
       - to: task_reviewer
 
-  # ── Child work item reviewer (type is runtime-injected; do not hardcode type names) ──
+  # ── Child work item reviewer ── # type is runtime-injected; do not hardcode type names
   #
   # Reviews the coder's implementation for correctness, code quality, and
   # alignment with the task requirements. Routes to task_completer if
@@ -366,7 +366,7 @@ agents:
       # `No matching route found`.
       - to: coder
 
-  # ── Child work item completer (type is runtime-injected; do not hardcode type names) ──
+  # ── Child work item completer ── # type is runtime-injected; do not hardcode type names
   #
   # Transitions the completed task to Done in ADO and adds a summary note.
   # Then routes back to task_router to pick up the next task, or proceeds
@@ -374,7 +374,7 @@ agents:
   #
   # Invariants:
   #   Pre:  task_reviewer.output.verdict == 'approved'.
-  #   Post: Child work item is transitioned to its template's done state in ADO; notes added. (type is runtime-injected; do not hardcode type names)
+  #   Post: Child work item is transitioned to its template's done state in ADO; notes added. # type is runtime-injected; do not hardcode type names
   - name: task_completer
     type: script
     description: Transition completed task to its template's done state and route to next task
@@ -439,7 +439,7 @@ agents:
   #               user intervention (P3: re-entry by state).
   #   - Override: Proceed to issue review despite unresolved dependencies
   #               (user accepts risk of integration issues).
-  #   - Reassign: End this PG. Child work items should be reassigned to another PG (type is runtime-injected; do not hardcode type names)
+  #   - Reassign: End this PG. Child work items should be reassigned to another PG # type is runtime-injected; do not hardcode type names
   #               or tracked externally outside this workflow.
   #
   # Invariants:
@@ -592,7 +592,7 @@ agents:
       All tasks in PG {{ workflow.input.pg_number }} for work item
       **{{ workflow.input.work_item_id }}** have been implemented and reviewed.
 
-      ### Child work items Completed: {{ workflow.input.work_item_ids | length }} (type is runtime-injected; do not hardcode type names)
+      ### Child work items Completed: {{ workflow.input.work_item_ids | length }}
 
       {% for task_id in workflow.input.work_item_ids %}
       - `AB#{{ task_id }}`

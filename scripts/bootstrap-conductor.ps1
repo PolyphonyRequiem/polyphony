@@ -337,7 +337,7 @@ else {
 
 # Validate template name
 if (-not ($script:TemplateTypes.PSObject.Properties.Name -contains $resolvedTemplate)) {
-    $valid = ($script:TemplateTypes.Keys | Sort-Object) -join ', '
+    $valid = ($script:TemplateTypes.PSObject.Properties.Name | Sort-Object) -join ', '
     Write-Error "Unknown process template '$resolvedTemplate'. Valid templates: $valid"
     exit 1
 }
