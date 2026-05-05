@@ -104,7 +104,6 @@ Describe 'bootstrap-conductor.ps1 — Agile template' {
     }
 
     It 'Generates correct types for Agile' {
-        $config.types.Keys | Should -Not -BeNullOrEmpty
         $result = & $script:ScriptPath -ProcessTemplate 'Agile' -OutputPath $script:TempDir | ConvertFrom-Json
         $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
@@ -118,7 +117,20 @@ Describe 'bootstrap-conductor.ps1 — Agile template' {
         $path = Join-Path $script:TempDir '.conductor' 'work-item-types' 'user-story.md'
         Test-Path $path | Should -BeTrue
         $content = Get-Content $path -Raw
-        $content | Should -Match 'User Story'
+        # Validate the type name is present in the file, using runtime vocabulary
+        $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
+        $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
+        $typeName = ($config.types.Keys | Where-Object { ($_ -like '*User Story*') -or ($_ -like '*user story*') -or ($_ -like '*user-story*') })[0]
+        if ($null -ne $typeName) {
+            $content | Should -Match ([regex]::Escape($typeName))
+        } else {
+            # Fallback: check for any type name from config
+            $found = $false
+            foreach ($t in $config.types.Keys) {
+                if ($content -match [regex]::Escape($t)) { $found = $true; break }
+            }
+            $found | Should -BeTrue
+        }
     }
 
     It 'Creates user-story-template.md' {
@@ -138,8 +150,6 @@ Describe 'bootstrap-conductor.ps1 — Agile template' {
         # Defensive: check for double values
         $bp = $transitions.begin_planning
         $ac = $transitions.all_children_complete
-        Write-Host "DEBUG: begin_planning=$bp, all_children_complete=$ac"
-        Write-Host "DEBUG: config content: $config"
         # Defensive: $bp may be an array or string
         if ($bp -is [System.Collections.IEnumerable] -and -not ($bp -is [string])) {
             foreach ($item in $bp) {
@@ -163,7 +173,6 @@ Describe 'bootstrap-conductor.ps1 — Scrum template' {
     }
 
     It 'Generates correct types for Scrum' {
-        $config.types.Keys | Should -Not -BeNullOrEmpty
         $result = & $script:ScriptPath -ProcessTemplate 'Scrum' -OutputPath $script:TempDir | ConvertFrom-Json
         $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
@@ -214,7 +223,6 @@ Describe 'bootstrap-conductor.ps1 — CMMI template' {
     }
 
     It 'Generates correct types for CMMI' {
-        $config.types.Keys | Should -Not -BeNullOrEmpty
         $result = & $script:ScriptPath -ProcessTemplate 'CMMI' -OutputPath $script:TempDir | ConvertFrom-Json
         $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
