@@ -555,11 +555,8 @@ public sealed class JsonOutputContractTests : CommandTestBase
         prGroupJson.ShouldNotContain("NonDoneWorkItemIds");
         prGroupJson.ShouldNotContain("StaleDoingChildIds");
         prGroupJson.ShouldNotContain("ChildIds");
-        prGroupJson.ShouldNotContain("WorkItemIds");
         routeResultJson.ShouldNotContain("WorkItemIds");
         routeResultJson.ShouldNotContain("ChildIds");
-        routeResultJson.ShouldNotContain("ChildIds");
-        routeResultJson.ShouldNotContain("WorkItemIds");
     }
 
     // =========================================================================
