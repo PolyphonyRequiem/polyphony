@@ -13,10 +13,10 @@ workflow:
   description: >-
     Type-agnostic SDLC apex workflow. Validates prerequisites, detects lifecycle
     phase, and routes to planning, implementation, close-out, or end.
-  version: "1.0.0"
+  version: "1.0.1"
   entry_point: policy_loader
   metadata:
-    min_polyphony_version: "1.0.0"
+    min_polyphony_version: "1.0.1"
 
   limits:
     # Apex workflow that orchestrates planning/implementation/close-out

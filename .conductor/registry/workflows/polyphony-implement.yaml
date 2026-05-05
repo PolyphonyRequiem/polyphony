@@ -15,10 +15,10 @@ workflow:
     Implementation orchestration entry point. Validates prerequisites with a
     lightweight preflight, loads the work tree to discover PG structure and
     completion status, then dispatches pending PGs in parallel via for_each.
-  version: "1.0.0"
+  version: "1.0.1"
   entry_point: preflight_lite
   metadata:
-    min_polyphony_version: "1.0.0"
+    min_polyphony_version: "1.0.1"
 
   limits:
     # Implementation workflow runs a parallel for_each (max_concurrent: 3)

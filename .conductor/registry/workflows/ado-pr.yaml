@@ -20,10 +20,10 @@ workflow:
     ADO PR lifecycle stub. Presents a structured error indicating ADO PR
     automation is not yet implemented, then offers a human gate for manual
     PR management or abort.
-  version: "1.0.0"
+  version: "1.0.1"
   entry_point: ado_pr_error
   metadata:
-    min_polyphony_version: "1.0.0"
+    min_polyphony_version: "1.0.1"
 
   limits:
     max_iterations: 50

@@ -18,10 +18,10 @@ workflow:
     Recursive planning core. Plans a single hierarchy level by loading
     type-specific context, running the architect agent with review pipeline,
     and seeding child work items from the approved plan.
-  version: "1.0.0"
+  version: "1.0.1"
   entry_point: depth_guard
   metadata:
-    min_polyphony_version: "1.0.0"
+    min_polyphony_version: "1.0.1"
 
   limits:
     # Recursive planning: each level fans out plan_children_group (for_each)

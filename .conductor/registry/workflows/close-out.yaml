@@ -16,10 +16,10 @@ workflow:
   description: >-
     Post-implementation close-out. Generates structured observations from the
     completed work item hierarchy and returns them as workflow output.
-  version: "1.0.0"
+  version: "1.0.1"
   entry_point: close_out
   metadata:
-    min_polyphony_version: "1.0.0"
+    min_polyphony_version: "1.0.1"
 
   limits:
     max_iterations: 50
