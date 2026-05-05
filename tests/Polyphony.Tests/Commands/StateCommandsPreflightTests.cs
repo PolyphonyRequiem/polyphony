@@ -5,6 +5,7 @@ using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
+using NSubstitute;
 
 namespace Polyphony.Tests.Commands;
 
@@ -16,11 +17,15 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
+        var ghTokenResolver = new GhTokenResolver(Substitute.For<IGitClient>());
         var phaseDetector = new Polyphony.Routing.PhaseDetector(Config);
         var validator = new Polyphony.Routing.TransitionValidator(Config);
         var walker = new Polyphony.Routing.HierarchyWalker(Config, Repository);
-        return (new StateCommands(twig, git, gh, runner, phaseDetector, validator, walker, Repository, Config), runner);
-    }
+        return (new StateCommands(twig, git, gh, runner, ghTokenResolver, phaseDetector, validator, walker, Repository, Config), runner);
+    } // End of CreateCommand
+
+    // (Removed duplicate orphaned block)
+
 
     private static void StubGitTopLevel(FakeProcessRunner runner, string? path)
         => runner.WhenExact("git", ["rev-parse", "--show-toplevel"],
