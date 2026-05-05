@@ -11,7 +11,8 @@ These describe an item's position in the work hierarchy of one run. They are REL
 
 | Term | Definition |
 |---|---|
-| **Root** | The work item the user passed to the entry-point workflow (`polyphony-full`). Defines the scope of *this run*. **Replaces the previously-used "apex"** — drop "apex" everywhere. |
+| **Root** | The work item the user passed to the entry-point workflow (`polyphony-full`). Defines the scope of *this run*. The term **`apex`** is forbidden — use `root` everywhere. |
+| **Tree-walker** | The orchestrator inside `polyphony-full` that walks the in-scope tree of the root, builds the worklist, and dispatches items as their requirements become `ready`. Replaces the previous single-item phase router. (Phase 7 deliverable.) |
 | **Parent** | The immediate ancestor of the current work item in the work hierarchy. |
 | **Current** | The work item the active workflow step is operating on. |
 | **Child** | An immediate descendant of the current item. |
