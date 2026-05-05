@@ -199,4 +199,170 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         output.ShouldNotContain("\"RequiredChecks\"", Case.Sensitive);
         output.ShouldNotContain("\"AdoOrg\"", Case.Sensitive);
     }
+
+    // ---- WI-3: --workflow-yaml / --required-version flag wiring ----
+
+    [Fact]
+    public async Task PreflightLite_NoVersionFlags_SkipsVersionCheck()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitTopLevel(runner, "/repo");
+        StubTwigVersion(runner, "twig 0.42.0");
+
+        var (_, output) = await CaptureConsoleAsync(() => cmd.PreflightLite());
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
+
+        result.Checks.Any(c => c.Name == "polyphony_version").ShouldBeFalse(
+            "version check is opt-in — without flags it must not appear");
+        result.Checks.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task PreflightLite_RequiredVersionBelowCurrent_PassesWithCheck()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitTopLevel(runner, "/repo");
+        StubTwigVersion(runner, "twig 0.42.0");
+
+        // 0.0.1 will pass against any 1.x.y polyphony build (and the test
+        // host always runs >= 1.0.0 thanks to MinVerMinimumMajorMinor).
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PreflightLite(workflowYaml: null, requiredVersion: "0.0.1"));
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
+
+        result.Ready.ShouldBeTrue($"Output was: {output}");
+        var versionCheck = result.Checks.FirstOrDefault(c => c.Name == "polyphony_version");
+        versionCheck.ShouldNotBeNull();
+        versionCheck.Passed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task PreflightLite_RequiredVersionAboveCurrent_FailsWithRemediation()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitTopLevel(runner, "/repo");
+        StubTwigVersion(runner, "twig 0.42.0");
+
+        // 99.0.0 cannot be satisfied by any realistic build.
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PreflightLite(workflowYaml: null, requiredVersion: "99.0.0"));
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
+
+        result.Ready.ShouldBeFalse();
+        var versionCheck = result.Checks.First(c => c.Name == "polyphony_version");
+        versionCheck.Passed.ShouldBeFalse();
+        versionCheck.Remediation.ShouldNotBeNullOrWhiteSpace();
+        versionCheck.Remediation!.ShouldContain("Update polyphony CLI");
+    }
+
+    [Fact]
+    public async Task PreflightLite_WorkflowYamlPath_ReadsMetadata()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitTopLevel(runner, "/repo");
+        StubTwigVersion(runner, "twig 0.42.0");
+
+        var path = WriteTempWorkflowYaml("0.0.1");
+        try
+        {
+            var (_, output) = await CaptureConsoleAsync(
+                () => cmd.PreflightLite(workflowYaml: path, requiredVersion: null));
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
+
+            var versionCheck = result.Checks.FirstOrDefault(c => c.Name == "polyphony_version");
+            versionCheck.ShouldNotBeNull("metadata.min_polyphony_version should be picked up from the YAML");
+            versionCheck.Passed.ShouldBeTrue($"Output was: {output}");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task PreflightLite_BothFlags_RequiredVersionWins()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitTopLevel(runner, "/repo");
+        StubTwigVersion(runner, "twig 0.42.0");
+
+        // YAML says 0.0.1 (would pass), explicit flag says 99.0.0 (fails).
+        // The explicit flag must win — testing seam contract.
+        var path = WriteTempWorkflowYaml("0.0.1");
+        try
+        {
+            var (_, output) = await CaptureConsoleAsync(
+                () => cmd.PreflightLite(workflowYaml: path, requiredVersion: "99.0.0"));
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
+
+            result.Ready.ShouldBeFalse("--required-version 99.0.0 must override the YAML's 0.0.1");
+            result.Checks.First(c => c.Name == "polyphony_version").Passed.ShouldBeFalse();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task PreflightLite_WorkflowYamlMissingMetadata_SkipsCheck()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitTopLevel(runner, "/repo");
+        StubTwigVersion(runner, "twig 0.42.0");
+
+        var path = Path.Combine(Path.GetTempPath(),
+            $"polyphony-state-test-{Guid.NewGuid():N}.yaml");
+        File.WriteAllText(path, "workflow:\n  name: test\n  version: \"1.0.0\"\nagents: []\n");
+        try
+        {
+            var (_, output) = await CaptureConsoleAsync(
+                () => cmd.PreflightLite(workflowYaml: path, requiredVersion: null));
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
+
+            result.Ready.ShouldBeTrue($"Output was: {output}");
+            result.Checks.Any(c => c.Name == "polyphony_version").ShouldBeFalse(
+                "missing metadata is opt-in skip, not failure");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Preflight_VersionMismatch_AppendedToRequiredChecks()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitTopLevel(runner, "/repo");
+        StubTwigVersion(runner, "twig 0.42.0");
+        StubTwigConfig(runner, "organization", "myorg");
+        StubTwigConfig(runner, "project", "myproj");
+        StubTwigShow(runner, 100, "Hello");
+        StubGhAuth(runner, true);
+        StubDotnetVersion(runner, "9.0.100");
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.Preflight(workItem: 100, workflowYaml: null, requiredVersion: "99.0.0"));
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightResult)!;
+
+        result.Ready.ShouldBeFalse();
+        result.RequiredChecks.Count.ShouldBe(5, "version check appended to the required-checks list");
+        result.RequiredChecks.First(c => c.Name == "polyphony_version").Passed.ShouldBeFalse();
+    }
+
+    private static string WriteTempWorkflowYaml(string minPolyphonyVersion)
+    {
+        var path = Path.Combine(Path.GetTempPath(),
+            $"polyphony-state-test-{Guid.NewGuid():N}.yaml");
+        File.WriteAllText(path, $"""
+            workflow:
+              name: test
+              version: "{minPolyphonyVersion}"
+              metadata:
+                min_polyphony_version: "{minPolyphonyVersion}"
+            agents: []
+            """);
+        return path;
+    }
 }
