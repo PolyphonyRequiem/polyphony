@@ -198,7 +198,7 @@ agents:
   #   Post: Code changes are committed to the PG branch for the task.
   - name: coder
     type: agent
-    model: claude-sonnet-4.6
+    model: claude-opus-4.6
     description: Implement a single task with code changes committed to the PG branch
     tools:
       - twig
@@ -287,7 +287,7 @@ agents:
   #   Post: output.verdict is 'approved' or 'changes_requested'.
   - name: task_reviewer
     type: agent
-    model: claude-sonnet-4.6
+    model: claude-opus-4.6
     description: Review task implementation for correctness and quality
     tools:
       - twig
@@ -497,7 +497,7 @@ agents:
   #   Post: output.verdict is 'approved' or 'changes_requested'.
   - name: issue_reviewer
     type: agent
-    model: claude-sonnet-4.6
+    model: claude-opus-4.7
     description: Review completed PG at the issue level for cohesion and completeness
     tools:
       - twig

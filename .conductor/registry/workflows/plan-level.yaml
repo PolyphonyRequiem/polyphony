@@ -235,7 +235,7 @@ agents:
   #   Post: output.plan contains the plan artifact; output.open_questions may be non-empty.
   - name: architect
     type: agent
-    model: claude-sonnet-4.6
+    model: claude-opus-4.7
     description: Create or refine a plan using type-specific context and decomposition guidance
     tools:
       - twig
@@ -374,7 +374,7 @@ agents:
   #   Post: output.score (0-100) and output.feedback (string) are set.
   - name: technical_reviewer
     type: agent
-    model: claude-sonnet-4.6
+    model: claude-opus-4.7
     description: Review plan for technical soundness and feasibility
     output:
       # Schema mirrors the JSON contract in this agent's prompt below.

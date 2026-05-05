@@ -296,7 +296,7 @@ agents:
   #         the work needed.
   - name: remediation_planner
     type: agent
-    model: claude-sonnet-4.6
+    model: claude-opus-4.7
     description: Create addendum plan from review feedback for remediation
     tools:
       - twig

@@ -70,7 +70,7 @@ agents:
   #         output.feedback contains detailed review comments.
   - name: pr_reviewer
     type: agent
-    model: claude-sonnet-4.6
+    model: claude-opus-4.6
     description: Review PR for correctness, quality, and requirement alignment
     tools:
       - gh

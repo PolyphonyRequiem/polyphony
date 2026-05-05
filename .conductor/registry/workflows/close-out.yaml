@@ -59,7 +59,7 @@ agents:
   #   Post: output.observations contains a structured array of observations.
   - name: close_out
     type: agent
-    model: claude-sonnet-4.6
+    model: claude-opus-4.6
     description: Post-mortem analysis generating structured observations from the completed hierarchy
     tools:
       - twig
