@@ -340,3 +340,44 @@ shape.) Files to touch, in order:
    shell out by name.
 
 That's the entire diff shape for any new verb.
+
+---
+
+## Version reporting and min-version enforcement
+
+The CLI reports its own version via `AssemblyInformationalVersion` (where
+MinVer writes the real SemVer including pre-release / build-metadata),
+**not** `Assembly.GetName().Version` (the numeric AssemblyVersion that
+MinVer pins to a stable `X.Y.Z.0` for binder-stability). Two places read
+this:
+
+- `Commands/StateCommands.CheckPolyphonyCli()` — the canonical pattern.
+- `Commands/HealthCommand.ResolvePolyphonyVersion()` — mirrors the same
+  shape.
+
+If you need the CLI version anywhere new, copy that 3-line pattern; do
+not reach for `Assembly.GetName().Version`.
+
+### `state preflight` / `state preflight-lite` own min-version enforcement
+
+`polyphony state preflight` and `polyphony state preflight-lite` accept
+two optional flags that drive workflow-vs-CLI version compatibility:
+
+- `--workflow-yaml <path>` — when supplied, the verb reads
+  `workflow.metadata.min_polyphony_version` from the YAML and uses it as
+  the required floor.
+- `--required-version <semver>` — explicit override (testing seam). Wins
+  when both are supplied.
+
+Comparison is SemVer-aware and ignores `+build-metadata`. Mismatch
+manifests as a preflight check with `passed: false` and a `detail`
+message; the existing `preflight_gate` routes a failed preflight to
+retry/abort. **There is no Proceed Anyway.**
+
+This deliberately lives in `state preflight*` rather than `health`
+because `preflight_gate` already understands the preflight JSON shape,
+and because sub-workflows that invoke `preflight-lite` standalone get
+coverage too (no apex-only hole).
+
+See [`docs/decisions/versioning-strategy.md`](../../../docs/decisions/versioning-strategy.md)
+for the full rationale.
