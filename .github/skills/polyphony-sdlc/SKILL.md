@@ -238,31 +238,41 @@ Capped at **3 remediation cycles**; after that, a human gate fires for escalatio
 
 | Agent | Type | Description |
 |-------|------|-------------|
-| `feature_pr_creator` | agent (Sonnet) | Create feature PR via `gh pr create` |
-| `feature_pr_review` | agent (Opus 1M) | Feature-level review for completeness and quality |
+| `feature_pr_creator` | script | Create feature PR via `polyphony pr create-feature-pr` (reuses an existing open PR for the same head/base pair if one exists) |
+| `pr_platform_router` | script | Route to `github-pr.yaml` or `ado-pr.yaml` based on `platform` input |
+| `pr_lifecycle_github` | workflow | Delegates to `github-pr.yaml` for review/fix/merge |
+| `pr_lifecycle_ado` | workflow | Delegates to `ado-pr.yaml` (stub — human gate) |
 | `remediation_counter` | script | Track remediation cycle count (max 3) |
 | `remediation_cap_gate` | human_gate | Escalate when 3 remediation cycles exceeded |
 | `remediation_abort` | script | Handle abort from cap gate |
 | `remediation_planner` | agent (Opus 1M) | Plan fixes for reviewer feedback as an addendum |
 | `remediation_seeder` | agent (Sonnet) | Seed new remediation PG from the addendum plan |
 | `remediation_implementer` | workflow | Delegates to `implement-pg.yaml` for the remediation PG |
-| `feature_pr_merger` | agent (Sonnet) | Merge approved feature PR |
+| `feature_pr_updater` | agent (Sonnet) | Re-request review on the feature PR after a remediation cycle merges |
+
+> **Platform abstraction parity:** Like `implement-pg.yaml`, the feature PR lifecycle
+> goes through `pr_platform_router` → `pr_lifecycle_github` / `pr_lifecycle_ado`. The
+> review/fix/merge logic lives in `github-pr.yaml` (or the ADO stub) — not duplicated
+> in `feature-pr.yaml`.
 
 **Remediation cycle flow:**
 
 ```
-feature_pr_review ──→ approved ──→ feature_pr_merger → $end
-       │
-       └── changes_requested ──→ remediation_counter
-                                      │
-                                      ├── under limit ──→ remediation_planner
-                                      │                       → remediation_seeder
-                                      │                       → remediation_implementer
-                                      │                       → feature_pr_review (loop)
-                                      │
-                                      └── cap reached ──→ remediation_cap_gate
-                                                              ├── retry → remediation_planner
-                                                              └── abort → $end
+feature_pr_creator → pr_platform_router → pr_lifecycle_github (or _ado)
+                                                    │
+                                                    ├── merged=true ──→ $end
+                                                    │
+                                                    └── merged=false ──→ remediation_counter
+                                                                              │
+                                                                              ├── under limit ──→ remediation_planner
+                                                                              │                       → remediation_seeder
+                                                                              │                       → remediation_implementer
+                                                                              │                       → feature_pr_updater
+                                                                              │                       → pr_platform_router (loop)
+                                                                              │
+                                                                              └── cap reached ──→ remediation_cap_gate
+                                                                                                       ├── retry → remediation_planner
+                                                                                                       └── abort → $end
 ```
 
 ---
