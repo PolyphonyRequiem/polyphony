@@ -351,8 +351,9 @@ public sealed class PlanCommandsTests : CommandTestBase
     public void LoadGuidance_HappyPath_ReturnsRoleMap()
     {
         using var fx = new ConductorDirFixture();
-        fx.WriteAgentGuidance("architect", "Plan it well.");
-        fx.WriteAgentGuidance("reviewer", "Review it well.");
+        fx.WriteAgentGuidance("epic", "Epic guidance.");
+        fx.WriteAgentGuidance("issue", "Issue guidance.");
+        fx.WriteAgentGuidance("task", "Task guidance.");
 
         var cmd = CreateCommand();
         var (exitCode, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
@@ -360,10 +361,12 @@ public sealed class PlanCommandsTests : CommandTestBase
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
         result.ShouldNotBeNull();
-        result.ShouldContainKey("architect");
-        result.ShouldContainKey("reviewer");
-        result["architect"].ShouldBe("Plan it well.");
-        result["reviewer"].ShouldBe("Review it well.");
+        result.ShouldContainKey("epic");
+        result.ShouldContainKey("issue");
+        result.ShouldContainKey("task");
+        result["epic"].ShouldBe("Epic guidance.");
+        result["issue"].ShouldBe("Issue guidance.");
+        result["task"].ShouldBe("Task guidance.");
     }
 
     [Fact]
@@ -396,7 +399,7 @@ public sealed class PlanCommandsTests : CommandTestBase
     public void LoadGuidance_IgnoresNonMarkdownFiles()
     {
         using var fx = new ConductorDirFixture();
-        fx.WriteAgentGuidance("architect", "MD content");
+        fx.WriteAgentGuidance("epic", "MD content");
         fx.WriteRawGuidanceFile("README.txt", "Should be ignored");
         fx.WriteRawGuidanceFile("notes.json", "Should be ignored");
 
@@ -405,7 +408,7 @@ public sealed class PlanCommandsTests : CommandTestBase
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
         result.ShouldNotBeNull();
-        result.Keys.ShouldBe(["architect"]);
+        result.Keys.ShouldBe(["epic"]);
     }
 
     [Fact]

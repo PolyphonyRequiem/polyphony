@@ -129,7 +129,7 @@ public sealed class BranchCommandsLoadTreeTests : CommandTestBase
         result.NextPg.ShouldBe("PG-1");
         result.TaggedItems.ShouldBe(4);
         result.WorkTree.EpicId.ShouldBe(100);
-        result.WorkTree.Issues.Count.ShouldBe(2);
+        result.WorkTree.WorkItems.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -176,9 +176,9 @@ public sealed class BranchCommandsLoadTreeTests : CommandTestBase
         var pg = result.PrGroups.Single();
         pg.Completed.ShouldBeTrue();
         pg.NeedsReconciliation.ShouldBeTrue();
-        pg.StaleDoingTaskIds.ShouldContain(300);
+        pg.StaleDoingChildIds.ShouldContain(300);
         result.PgsNeedingReconciliation.Count.ShouldBe(1);
-        result.PgsNeedingReconciliation[0].StaleDoingTaskIds.ShouldContain(300);
+        result.PgsNeedingReconciliation[0].StaleDoingChildIds.ShouldContain(300);
     }
 
     [Fact]

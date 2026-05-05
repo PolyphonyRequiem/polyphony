@@ -99,11 +99,11 @@ args:
   - "-NoProfile"
   - "-Command"
   - >-
-    $taskId = {{ task_router.output.task_id }};
+    $taskId = {{ primary_router.output.primary_id }};
     twig set $taskId;
     twig note --text 'Task completed and approved by reviewer';
     twig state Done;            # ← hardcoded literal — replace with target_state
-    @{ task_id = $taskId; completed = $true } | ConvertTo-Json
+    @{ child_id = $taskId; completed = $true } | ConvertTo-Json
 ```
 
 `scripts/task-router.ps1:106` — hardcoded `Doing` in a helper script:

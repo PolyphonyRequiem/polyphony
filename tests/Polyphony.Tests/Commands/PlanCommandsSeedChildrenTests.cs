@@ -88,7 +88,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var tasks = """[{"task_id":"task-1","title":"Do thing","type":"Task","description":"Body."}]""";
+        var tasks = """[{"child_id":"task-1","title":"Do thing","type":"Task","description":"Body."}]""";
         var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
@@ -100,20 +100,20 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         var createCall = runner.Invocations.First(i => i.Executable == "twig" && i.Arguments.Contains("new"));
         var descIdx = createCall.Arguments.ToList().IndexOf("--description");
         descIdx.ShouldBeGreaterThan(-1);
-        createCall.Arguments[descIdx + 1].ShouldContain("<!-- polyphony:plan-task-id=task-1 -->");
+        createCall.Arguments[descIdx + 1].ShouldContain("<!-- polyphony:plan-child-id=task-1 -->");
     }
 
     [Fact]
     public async Task SeedChildren_MarkerMatch_ReusesExistingChildNoCreate()
     {
         var (cmd, runner) = CreateCommand();
-        var children = """[{"id":222,"type":"Task","title":"Existing","fields":{"System.Description":"body\n\n<!-- polyphony:plan-task-id=task-1 -->"}}]""";
+        var children = """[{"id":222,"type":"Task","title":"Existing","fields":{"System.Description":"body\n\n<!-- polyphony:plan-child-id=task-1 -->"}}]""";
         StubShowTreeChildren(runner, 100, children);
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
         // No StubCreateChild — must NOT be called.
 
-        var tasks = """[{"task_id":"task-1","title":"Different Title","type":"Task","description":"Body."}]""";
+        var tasks = """[{"child_id":"task-1","title":"Different Title","type":"Task","description":"Body."}]""";
         var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
@@ -135,7 +135,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var tasks = """[{"task_id":"task-1","title":"Do thing","type":"Task","description":"Body."}]""";
+        var tasks = """[{"child_id":"task-1","title":"Do thing","type":"Task","description":"Body."}]""";
         var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
@@ -158,7 +158,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ErrorCount.ShouldBe(1);
-        result.Errors[0].Error.ShouldContain("task_id");
+        result.Errors[0].Error.ShouldContain("child_id");
         result.PlannedTagSet.ShouldBeFalse();
 
         var patchCalled = runner.Invocations.Any(i => i.Executable == "twig" && i.Arguments.Contains("patch"));
@@ -171,12 +171,12 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubShowTreeNoChildren(runner, 100);
 
-        var tasks = """[{"task_id":"task-1","description":"Body."}]""";
+        var tasks = """[{"child_id":"task-1","description":"Body."}]""";
         var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ErrorCount.ShouldBe(1);
-        result.Errors[0].TaskId.ShouldBe("task-1");
+        result.Errors[0].ChildId.ShouldBe("task-1");
         result.Errors[0].Error.ShouldContain("title or type");
     }
 
@@ -189,7 +189,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var tasks = """[{"task_id":"task-1","title":"X","type":"Task","description":"Body.","acceptance_criteria":["AC one","AC two"]}]""";
+        var tasks = """[{"child_id":"task-1","title":"X","type":"Task","description":"Body.","acceptance_criteria":["AC one","AC two"]}]""";
         var (exit, _) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
         exit.ShouldBe(ExitCodes.Success);
 
@@ -199,7 +199,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         desc.ShouldContain("## Acceptance Criteria");
         desc.ShouldContain("- AC one");
         desc.ShouldContain("- AC two");
-        desc.ShouldContain("<!-- polyphony:plan-task-id=task-1 -->");
+        desc.ShouldContain("<!-- polyphony:plan-child-id=task-1 -->");
     }
 
     [Fact]
@@ -226,7 +226,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var tasks = """[{"task_id":"task-1","title":"X","type":"Task","description":"Body."}]""";
+        var tasks = """[{"child_id":"task-1","title":"X","type":"Task","description":"Body."}]""";
         var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;

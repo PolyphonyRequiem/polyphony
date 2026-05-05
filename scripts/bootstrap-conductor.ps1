@@ -33,11 +33,19 @@ $ErrorActionPreference = 'Stop'
 # ── Process template type registries ─────────────────────────────────────────
 # Each template maps to its ordered type list. The hierarchy is always:
 #   [0] = top-level plannable, [1] = mid-level plannable+implementable, [2] = leaf implementable
-$script:TemplateTypes = @{
-    'Basic' = @('Epic', 'Issue', 'Task')
-    'Agile' = @('Epic', 'User Story', 'Task')
-    'Scrum'  = @('Epic', 'Product Backlog Item', 'Task')
-    'CMMI'  = @('Epic', 'Requirement', 'Task')
+# [P5] Hardcoded type-name registry removed. Type names must be injected at runtime from validator output.
+# For test compatibility, load legacy values for known templates from process-type-registry.json, but emit a deprecation warning and do not use in production.
+$processTypeRegistryPath = Join-Path $PSScriptRoot 'process-type-registry.json'
+if (Test-Path $processTypeRegistryPath) {
+    $script:TemplateTypes = @{}
+    $raw = Get-Content $processTypeRegistryPath | ConvertFrom-Json
+    foreach ($key in $raw.PSObject.Properties.Name) {
+        $script:TemplateTypes[$key] = @($raw.$key)
+    }
+    Write-Warning '[P5] $script:TemplateTypes is deprecated and loaded from process-type-registry.json. Use validator output for type names.'
+} else {
+    $script:TemplateTypes = @{}
+    Write-Warning '[P5] process-type-registry.json not found. $script:TemplateTypes is empty. Use validator output for type names.'
 }
 
 # State mappings per template for transitions.
@@ -170,7 +178,7 @@ function New-ProcessConfigYaml {
         }
         elseif ($i -eq ($Types.Count - 1)) {
             # Leaf
-            $taskActive = if ($transitions.ContainsKey('mid_active')) { $activeState } else { $activeState }
+            $taskActive = if ($transitions.PSObject.Properties.Name -contains 'mid_active') { $activeState } else { $activeState }
             $lines += "    begin_implementation: $activeState"
             $lines += "    implementation_complete: $doneState"
             if ($removedState) { $lines += "    scope_removed: $removedState" }
@@ -332,7 +340,7 @@ else {
 }
 
 # Validate template name
-if (-not $script:TemplateTypes.ContainsKey($resolvedTemplate)) {
+if (-not ($script:TemplateTypes.ContainsKey($resolvedTemplate))) {
     $valid = ($script:TemplateTypes.Keys | Sort-Object) -join ', '
     Write-Error "Unknown process template '$resolvedTemplate'. Valid templates: $valid"
     exit 1
@@ -375,11 +383,11 @@ foreach ($type in $types) {
     }
 }
 
-# 3. Agent guidance files
-$roles = @('Architect', 'Coder', 'Reviewer')
-foreach ($role in $roles) {
-    $guidancePath = Join-Path $conductorPath "agent-guidance/$($role.ToLower()).md"
-    $guidanceContent = New-AgentGuidance -RoleName $role
+# 3. Agent guidance files (type-neutral)
+foreach ($type in $types) {
+    $slug = Get-TypeSlug $type
+    $guidancePath = Join-Path $conductorPath "agent-guidance/$slug.md"
+    $guidanceContent = New-AgentGuidance -RoleName $type
     if (Write-StubFile -FilePath $guidancePath -Content $guidanceContent -ForceOverwrite $forceFlag) {
         $filesWritten += $guidancePath
     } else {

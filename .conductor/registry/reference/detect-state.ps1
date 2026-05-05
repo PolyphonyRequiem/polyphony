@@ -67,7 +67,7 @@ $seedStatus = if ($childCount -eq 0) { 'unseeded' }
 
 # Check if any non-terminal children are missing Tasks (grandchildren).
 # This detects the "Issues exist but no Tasks" state that causes infinite
-# routing loops in implementation (task_router finds nothing → all_tasks_done
+# routing loops in implementation (primary_router finds nothing → all_tasks_done
 # → pg_router loops back). Uses the --depth 2 tree data already loaded.
 $anyChildMissingTasks = $false
 if ($hasSeededChildren) {

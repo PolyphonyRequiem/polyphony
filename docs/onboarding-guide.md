@@ -34,6 +34,7 @@ Before starting, ensure the following are in place:
 - **Polyphony CLI installed** — The AOT-compiled `polyphony` binary is available on
   your PATH (typically at `~/.twig/bin/polyphony`). Build it with `publish-local.ps1`
   from the polyphony repo if not already installed.
+- **Type capabilities configured** — Every type in `.conductor/process-config.yaml` must declare a `capabilities` field with at least one of `plannable` or `implementable` (case-insensitive). Only these two values are valid.
 - **ADO workspace configured** — Your repo has a `.twig/config` file pointing to the
   correct ADO organization and project. If not, run `twig init`.
 - **Git repository** — Your repo uses git with a `main` branch as the default target.
@@ -144,7 +145,7 @@ against ADO's actual catalog. So `process_template: KyberAgile`, or
 concerned.
 
 What *does* matter is that the **state names** you use on the right-hand side
-of `transitions:` actually exist for each type in your process template.
+of `transitions:` actually exist for each type in your process template, and that every type has a valid `capabilities` field. The `capabilities` field is required for every type and must contain at least one of `plannable` or `implementable` (case-insensitive). Any other value will fail validation (see V-3, V-4).
 Polyphony will not catch a mismatch — `polyphony validate-config` does not
 cross-reference state names against the template's state set. The failure
 surfaces later, when twig tries to write the state and `StateResolver.ResolveByName`
@@ -205,9 +206,9 @@ the `.conductor/` directory reference):
 ├── process-config.yaml                 # Type capabilities, transitions, branch strategy
 ├── profile.yaml                        # Project metadata, tech stack, build commands
 ├── agent-guidance/
-│   ├── architect.md                    # Guidance for the architect agent
-│   ├── coder.md                        # Guidance for the coder agent
-│   └── reviewer.md                     # Guidance for the reviewer agent
+│   ├── epic.md                         # Guidance for Epic type
+│   ├── user-story.md                   # Guidance for User Story type
+│   ├── task.md                         # Guidance for Task type
 └── work-item-types/
     ├── epic.md                         # Epic type definition
     ├── user-story.md                   # Mid-level type definition (Agile stub)
@@ -222,7 +223,9 @@ For kyber you will rename `user-story.md` → `capability.md` and
 `user-story-template.md` → `capability-template.md` after bootstrap, then update
 `process-config.yaml` to reference the renamed type. The bootstrap can't infer
 custom type names; it always generates the standard mid-level type for the
-parent template.
+parent template. 
+
+> **Note:** Agent guidance files are now generated per type (e.g. `agent-guidance/capability.md`). V-11 warnings will reference the slug for each type. Ensure your agent-guidance directory matches your type names.
 
 ### Review and Customize
 
@@ -718,8 +721,8 @@ The full V-rule table is enforced in
 |---------|-------------|---------|-----|
 | V-1 | `ConfigValidator.cs:27` | Missing `process_template` | Add `process_template: <name>` to process-config.yaml |
 | V-2 | `ConfigValidator.cs:33` | No types defined | Add at least one entry under `types:` |
-| V-3 | `ConfigValidator.cs:56` | Type has no capabilities | Add `capabilities: [plannable]` or `[implementable]` (or both) |
-| V-4 | `ConfigValidator.cs:60-67` | Type has invalid capability value | **Use only `plannable` or `implementable`** — these are the only two values in the whitelist |
+| V-3 | `ConfigValidator.cs:56` | Type has no capabilities | Add `capabilities: [plannable]` or `[implementable]` (or both) — this field is required for every type. |
+| V-4 | `ConfigValidator.cs:60-67` | Type has invalid capability value | **Use only `plannable` or `implementable`** — these are the only two values in the whitelist. Any other value will fail validation. |
 | V-5 | `ConfigValidator.cs:71-74` | Type has no transitions | Add transition mappings under `transitions:` for the type |
 | V-6 | `ConfigValidator.cs:88-95` | Transition references undefined type | Ensure all keys in `transitions:` exist in `types:` |
 | V-7 | `ConfigValidator.cs:42-49` | Duplicate type name (case-insensitive) | Type names must be unique regardless of case |

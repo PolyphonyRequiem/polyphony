@@ -30,6 +30,7 @@ public sealed partial class StateCommands(
     IGitClient git,
     IGhClient gh,
     IProcessRunner runner,
+    GhTokenResolver ghTokenResolver,
     PhaseDetector phaseDetector,
     TransitionValidator transitionValidator,
     HierarchyWalker hierarchyWalker,

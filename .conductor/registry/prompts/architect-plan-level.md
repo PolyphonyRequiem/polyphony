@@ -146,10 +146,10 @@ Create a comprehensive implementation plan for the given work item, using
 type-specific definitions and decomposition guidance to produce a well-structured
 plan that can be reviewed and approved by humans and downstream agents.
 
-{% if guidance_loader.output.architect is defined and guidance_loader.output.architect %}
+{% if guidance_loader.output.epic is defined and guidance_loader.output.epic %}
 ## Repo-Specific Guidance
 
-{{ guidance_loader.output.architect }}
+{{ guidance_loader.output.epic }}
 {% endif %}
 
 ## Context
@@ -309,3 +309,6 @@ If there are no open questions, return an empty array: `"open_questions": []`
 - Keep the plan actionable — downstream agents will implement from it
 - If a user plan exists, preserve its design decisions unless they conflict
   with type constraints (raise as open questions in that case)
+- Use markdown link syntax for all file references in the plan (e.g.,
+  `[docs/projects/foo.plan.md](docs/projects/foo.plan.md)`) so they render
+  as clickable links in the approval gate UI

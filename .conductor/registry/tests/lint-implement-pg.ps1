@@ -6,8 +6,8 @@
     1. Workflow name is 'implement-pg' with correct entry point
     2. Required inputs: work_item_id, pg_number, work_item_ids, branch_name, feature_branch
     3. Required outputs: merged, pr_url
-    4. Task loop agents: task_router, coder (Opus 1M), task_reviewer, task_completer
-    5. Issue review agents: issue_reviewer (Opus 1M)
+    4. Primary loop agents: primary_router, coder (Opus 1M), primary_reviewer, primary_completer
+    5. Scope review agents: scope_reviewer (Opus 1M)
     6. PR creation: pr_submit, pr_platform_router, pr_lifecycle_github, pr_lifecycle_ado
     7. Dependency gate: dependency_check script + dependency_gate human_gate
     8. User acceptance human_gate
@@ -84,13 +84,13 @@ foreach ($output in $requiredOutputs) {
     }
 }
 
-# ── Check 5: Task loop agents ────────────────────────────────────────────
-$taskLoopAgents = @('task_router', 'coder', 'task_reviewer', 'task_completer')
-foreach ($agent in $taskLoopAgents) {
+# ── Check 5: Primary loop agents ────────────────────────────────────────────
+$primaryLoopAgents = @('primary_router', 'coder', 'primary_reviewer', 'primary_completer')
+foreach ($agent in $primaryLoopAgents) {
     if ($content -notmatch "name:\s*$agent") {
         $violations += [PSCustomObject]@{
-            Rule   = 'missing-task-loop-agent'
-            Detail = "Missing task loop agent: '$agent'"
+            Rule   = 'missing-primary-loop-agent'
+            Detail = "Missing primary loop agent: '$agent'"
         }
     }
 }
@@ -111,29 +111,29 @@ if ($coderBlock -and $coderBlock -notmatch 'claude-opus-4.7-1m-internal') {
     }
 }
 
-# ── Check 7: Issue review agents ─────────────────────────────────────────
-$issueAgents = @('issue_reviewer')
-foreach ($agent in $issueAgents) {
+# ── Check 7: Scope review agents ─────────────────────────────────────────
+$scopeAgents = @('scope_reviewer')
+foreach ($agent in $scopeAgents) {
     if ($content -notmatch "name:\s*$agent") {
         $violations += [PSCustomObject]@{
-            Rule   = 'missing-issue-review-agent'
-            Detail = "Missing issue review agent: '$agent'"
+            Rule   = 'missing-scope-review-agent'
+            Detail = "Missing scope review agent: '$agent'"
         }
     }
 }
 
-# ── Check 8: Issue reviewer uses Opus 1M ──────────────────────────────────
-$issueReviewerBlock = ''
-$inIssueReviewer = $false
+# ── Check 8: Scope reviewer uses Opus 1M ──────────────────────────────────
+$scopeReviewerBlock = ''
+$inScopeReviewer = $false
 foreach ($line in $lines) {
-    if ($line -match 'name:\s*issue_reviewer\s*$') { $inIssueReviewer = $true }
-    if ($inIssueReviewer) { $issueReviewerBlock += $line + "`n" }
-    if ($inIssueReviewer -and $issueReviewerBlock.Length -gt 50 -and $line -match '^\s*-\s*name:') { break }
+    if ($line -match 'name:\s*scope_reviewer\s*$') { $inScopeReviewer = $true }
+    if ($inScopeReviewer) { $scopeReviewerBlock += $line + "`n" }
+    if ($inScopeReviewer -and $scopeReviewerBlock.Length -gt 50 -and $line -match '^\s*-\s*name:') { break }
 }
-if ($issueReviewerBlock -and $issueReviewerBlock -notmatch 'claude-opus-4.7-1m-internal') {
+if ($scopeReviewerBlock -and $scopeReviewerBlock -notmatch 'claude-opus-4.7-1m-internal') {
     $violations += [PSCustomObject]@{
-        Rule   = 'wrong-issue-reviewer-model'
-        Detail = "Issue reviewer must use Opus 1M model (claude-opus-4.7-1m-internal) for cross-cutting review"
+        Rule   = 'wrong-scope-reviewer-model'
+        Detail = "Scope reviewer must use Opus 1M model (claude-opus-4.7-1m-internal) for cross-cutting review"
     }
 }
 
@@ -248,5 +248,5 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: implement-pg.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, $($taskLoopAgents.Count) task-loop agents, issue review, dependency gate, PR sub-workflows)" -ForegroundColor Green
+Write-Host "PASS: implement-pg.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, $($primaryLoopAgents.Count) primary-loop agents, scope review, dependency gate, PR sub-workflows)" -ForegroundColor Green
 exit 0
