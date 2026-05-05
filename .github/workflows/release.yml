@@ -1,0 +1,308 @@
+name: Release
+
+# Triggered on `vX.Y.Z` tag pushes. Builds self-contained single-file
+# binaries for win-x64 / linux-x64 / osx-arm64, computes SHA256 sums,
+# and creates a draft GitHub Release. The release is published manually
+# after a human eyeballs the artifacts — see WI-4 in
+# docs/decisions/versioning-strategy.md.
+#
+# Bundled-SemVer invariant: the preflight job runs lint-version-drift.ps1
+# with -RequiredVersion <bare-tag>, which asserts every workflow YAML's
+# workflow.version equals the bare tag. This converts the lint from
+# advisory-at-PR-time to gating-at-release-time. If a tag is pushed where
+# the YAMLs disagree, the release fails fast before any binaries are built.
+#
+# KNOWN LIMITATION — non-reproducible twig dep:
+# Polyphony.csproj has ProjectReferences to a sibling `twig2` repo, which
+# we check out from PolyphonyRequiem/twig's default branch with no pin.
+# This means a re-run of the same vX.Y.Z release tag could pick up a
+# different twig revision. Pre-existing problem inherited from CI; the
+# fix (submodule, recorded SHA, or twig NuGet package) is tracked as a
+# separate Epic. For v1, treat the *first* successful release of a tag
+# as the canonical build; do not re-run.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight (version + drift)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+    steps:
+      - name: Checkout polyphony
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: tree:0
+
+      - name: Compute bare version
+        id: compute
+        shell: bash
+        run: |
+          # Strip leading 'v' from the tag (vX.Y.Z → X.Y.Z). Refuse anything
+          # that isn't strict SemVer X.Y.Z (no prerelease in release tags).
+          ref="${GITHUB_REF_NAME}"
+          version="${ref#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$ref' is not a strict SemVer release tag (vX.Y.Z). Refusing."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: $version"
+
+      - name: Lint workflow versions (drift + tag-match gate)
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ steps.compute.outputs.version }}
+        # Single source of truth: lint-version-drift.ps1 with
+        # -RequiredVersion <bare-tag> enforces all 5 invariants AND that
+        # the YAMLs' shared version equals the tag.
+        run: pwsh -NoProfile -File tests/lint-version-drift.ps1 -RequiredVersion $env:EXPECTED_VERSION
+
+  build:
+    name: Build ${{ matrix.rid }}
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            runner: windows-latest
+            ext: .exe
+          - rid: linux-x64
+            runner: ubuntu-latest
+            ext: ''
+          - rid: osx-arm64
+            runner: macos-latest
+            ext: ''
+    runs-on: ${{ matrix.runner }}
+    steps:
+      # Mirror CI: twig2 sibling is required because Polyphony.csproj has
+      # ProjectReferences to ..\..\..\twig2\src\Twig.Domain etc. See KNOWN
+      # LIMITATION at top of file — twig is unpinned.
+      - name: Checkout twig (sibling dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: PolyphonyRequiem/twig
+          path: twig2
+          fetch-depth: 0
+          filter: tree:0
+
+      - name: Checkout polyphony
+        uses: actions/checkout@v4
+        with:
+          path: polyphony
+          fetch-depth: 0
+          filter: tree:0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: polyphony/global.json
+
+      - name: Restore
+        working-directory: polyphony
+        run: dotnet restore src/Polyphony
+
+      - name: Publish self-contained single-file
+        working-directory: polyphony
+        # AOT is intentionally disabled for v1 (see Polyphony.csproj).
+        # Self-contained single-file gives us a no-runtime-dependency
+        # binary that's ~76 MB per RID — acceptable for a CLI tool
+        # installed once per dev machine. AOT re-enablement is a
+        # separate Epic.
+        run: >
+          dotnet publish src/Polyphony
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=none
+          -p:DebugSymbols=false
+          -o out/${{ matrix.rid }}
+
+      - name: Rename binary
+        working-directory: polyphony
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          RID: ${{ matrix.rid }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          src="out/${RID}/polyphony${EXT}"
+          dst="out/${RID}/polyphony-${VERSION}-${RID}${EXT}"
+          mv "$src" "$dst"
+          ls -lh "out/${RID}/"
+
+      - name: Compute SHA256
+        working-directory: polyphony
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          RID: ${{ matrix.rid }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          cd "out/${RID}"
+          file="polyphony-${VERSION}-${RID}${EXT}"
+          # `shasum -a 256` is available on all three runners (Linux, macOS,
+          # and Git-Bash on Windows runners — Git-Bash ships Perl). Output
+          # line ends with the bare filename so consumers can
+          # `shasum -a 256 -c <file>.sha256`.
+          shasum -a 256 "$file" > "${file}.sha256"
+          cat "${file}.sha256"
+
+      - name: Smoke test (--version)
+        working-directory: polyphony
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          RID: ${{ matrix.rid }}
+          EXT: ${{ matrix.ext }}
+        # Currently every matrix RID has a same-arch host (win-x64 →
+        # windows-latest, linux-x64 → ubuntu-latest, osx-arm64 →
+        # macos-latest is arm64). If we ever cross-compile, gate this.
+        run: |
+          file="out/${RID}/polyphony-${VERSION}-${RID}${EXT}"
+          chmod +x "$file" || true
+          reported=$("$file" --version)
+          echo "Reported version: $reported"
+          # Reported version is MinVer-stamped (X.Y.Z+sha for tagged builds,
+          # X.Y.Z-alpha.N+sha otherwise). Strip build-metadata before
+          # comparing against the bare tag version. We deliberately do NOT
+          # strip the prerelease suffix — a tagged release MUST be exactly
+          # the tag, never a prerelease.
+          core="${reported%%+*}"
+          if [[ "$core" != "$VERSION" ]]; then
+            echo "::error::Binary reports '$reported' (core '$core') but tag is '$VERSION'"
+            exit 1
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: polyphony-${{ matrix.rid }}
+          path: |
+            polyphony/out/${{ matrix.rid }}/polyphony-${{ needs.preflight.outputs.version }}-${{ matrix.rid }}${{ matrix.ext }}
+            polyphony/out/${{ matrix.rid }}/polyphony-${{ needs.preflight.outputs.version }}-${{ matrix.rid }}${{ matrix.ext }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout polyphony (for release notes template)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Stage release files
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          mkdir -p release
+          # actions/download-artifact lays each artifact into its own
+          # subdirectory; flatten everything into release/.
+          find artifacts -type f \( -name 'polyphony-*' \) -exec cp -v {} release/ \;
+          ls -lh release/
+
+      - name: Generate release notes
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          cat > release-notes.md <<EOF
+          ## Polyphony v${VERSION}
+
+          Self-contained single-file binaries for win-x64, linux-x64, and osx-arm64.
+          Each binary bundles the .NET runtime — no separate \`dotnet\` install required.
+
+          The conductor workflow suite ships from the same tag and is registered
+          via \`conductor registry add\` (see install instructions below).
+
+          ### Install
+
+          **Linux / macOS (zsh, bash):**
+          \`\`\`bash
+          # Pick your RID: linux-x64 or osx-arm64
+          RID=linux-x64
+          curl -L -o polyphony "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/polyphony-${VERSION}-\${RID}"
+          curl -L -o polyphony.sha256 "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/polyphony-${VERSION}-\${RID}.sha256"
+          shasum -a 256 -c polyphony.sha256
+          chmod +x polyphony
+          mkdir -p ~/.twig/bin && mv polyphony ~/.twig/bin/
+          # Add ~/.twig/bin to PATH if it isn't already.
+          ~/.twig/bin/polyphony --version
+          \`\`\`
+
+          **Windows (PowerShell):**
+          \`\`\`powershell
+          \$ver = "${VERSION}"
+          Invoke-WebRequest -Uri "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$ver/polyphony-\$ver-win-x64.exe" -OutFile polyphony.exe
+          Invoke-WebRequest -Uri "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$ver/polyphony-\$ver-win-x64.exe.sha256" -OutFile polyphony.exe.sha256
+          # Verify (the .sha256 file is a one-line "hash  filename" record):
+          \$expected = (Get-Content polyphony.exe.sha256).Split(' ')[0]
+          \$actual = (Get-FileHash polyphony.exe -Algorithm SHA256).Hash.ToLower()
+          if (\$expected -ne \$actual) { throw "SHA256 mismatch" }
+          New-Item -ItemType Directory -Force -Path "\$env:USERPROFILE\.twig\bin" | Out-Null
+          Move-Item polyphony.exe "\$env:USERPROFILE\.twig\bin\" -Force
+          & "\$env:USERPROFILE\.twig\bin\polyphony.exe" --version
+          \`\`\`
+
+          ### Register the workflow suite with conductor
+          \`\`\`bash
+          conductor registry add polyphony PolyphonyRequiem/polyphony
+          conductor registry list polyphony
+          \`\`\`
+
+          See [docs/onboarding-guide.md](https://github.com/${GITHUB_REPOSITORY}/blob/v${VERSION}/docs/onboarding-guide.md) for the full bootstrap walkthrough.
+          EOF
+          echo '--- release-notes.md ---'
+          cat release-notes.md
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        # --draft so a human reviews the artifacts and notes before the
+        # release is published. Once we trust the pipeline, drop --draft.
+        #
+        # Re-run safety: if a draft for this tag already exists (e.g. the
+        # release job is being re-run after the publish step failed mid-way
+        # last time), delete it first and recreate. Published (non-draft)
+        # releases are NEVER touched — that would be a destructive surprise.
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          if existing=$(gh release view "$tag" --json isDraft,url -q '.isDraft' 2>/dev/null); then
+            if [[ "$existing" == "true" ]]; then
+              echo "Existing draft release found for $tag — deleting and recreating."
+              gh release delete "$tag" --yes
+            else
+              echo "::error::Release $tag already exists and is PUBLISHED. Refusing to overwrite."
+              echo "::error::Delete it manually from the Releases page if you really want to recreate it."
+              exit 1
+            fi
+          fi
+          gh release create "$tag" \
+            --draft \
+            --title "Polyphony $tag" \
+            --notes-file release-notes.md \
+            release/*
