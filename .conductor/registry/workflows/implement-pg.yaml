@@ -139,7 +139,7 @@ agents:
   #
   # Loads repo-specific agent guidance markdown from .conductor/agent-guidance/
   # via load-agent-guidance.ps1. Outputs a JSON role map (keyed by filename
-  # without extension, e.g. "coder", "reviewer"). The coder and task_reviewer
+  # without extension, e.g. "coder", "reviewer"). The coder and primary_reviewer
   # agents consume their respective role keys via Jinja2 conditionals so
   # prompts degrade gracefully when no guidance files exist.
   #
@@ -155,7 +155,7 @@ agents:
       - "plan"
       - "load-guidance"
     routes:
-      - to: task_router
+      - to: primary_router
 
   # ── Child work item router ── # type is runtime-injected; do not hardcode type names
   #
@@ -166,7 +166,7 @@ agents:
   # Invariants:
   #   Pre:  PG branch is checked out; work_item_ids are valid task IDs.
   #   Post: output.action is implement_item or all_items_done; output.child_id set if implementing.
-  - name: task_router
+  - name: primary_router
     type: script
     description: Route to next implementable task within this PG
     command: polyphony
@@ -179,9 +179,9 @@ agents:
       - "{{ workflow.input.pg_number }}"
     routes:
       - to: coder
-        when: "{{ task_router.output.action == 'implement_item' }}"
+        when: "{{ primary_router.output.action == 'implement_item' }}"
       - to: dependency_check
-        when: "{{ task_router.output.action == 'all_items_done' }}"
+        when: "{{ primary_router.output.action == 'all_items_done' }}"
       # Catch-all per M4: unknown action from task-router.ps1 should fail
       # safely to dependency_check (the natural "we're done with tasks"
       # path) rather than raise `No matching route found`.
@@ -194,7 +194,7 @@ agents:
   # then produces code changes committed to the PG branch.
   #
   # Invariants:
-  #   Pre:  task_router.output.action == 'implement_task'; child_id is valid.
+  #   Pre:  primary_router.output.action == 'implement_task'; child_id is valid.
   #   Post: Code changes are committed to the PG branch for the task.
   - name: coder
     type: agent
@@ -215,26 +215,26 @@ agents:
 
       ## Context
 
-      - **Work Item ID:** {{ task_router.output.primary_id }}
-      - **Work item title:** {{ task_router.output.primary_title }}
+      - **Work Item ID:** {{ primary_router.output.primary_id }}
+      - **Work item title:** {{ primary_router.output.primary_title }}
       - **PG branch:** {{ workflow.input.branch_name }}
       - **Parent work item:** {{ workflow.input.work_item_id }}
 
       ## Instructions
 
-      1. Read the full task description from ADO using `twig show {{ task_router.output.primary_id }}`
+      1. Read the full task description from ADO using `twig show {{ primary_router.output.primary_id }}`
       2. Understand the codebase context — read related files, understand patterns
       3. Implement the changes required by the task
       4. Write tests covering the new functionality
       5. Run the build and tests to verify correctness
-      6. Commit and push your changes with a descriptive message including `AB#{{ task_router.output.primary_id }}`
+      6. Commit and push your changes with a descriptive message including `AB#{{ primary_router.output.primary_id }}`
 
       ## Constraints
 
       - Follow existing code conventions and patterns
       - Do NOT modify files outside the scope of this task
       - Do NOT skip tests — every implementation must have test coverage
-      - Commit messages must reference the ADO work item: `AB#{{ task_router.output.primary_id }}`
+      - Commit messages must reference the ADO work item: `AB#{{ primary_router.output.primary_id }}`
       - Stage only the files you actually modified for this task. Use
         `git add <path1> <path2>` with explicit paths — never `git add -A`,
         `git add .`, or `git add --all`. The working tree may contain
@@ -242,10 +242,10 @@ agents:
         workflow iterations; sweeping them in pollutes the commit, breaks
         AB# traceability, and creates phantom changes in PR review.
 
-      {% if task_reviewer is defined and task_reviewer.output is defined and task_reviewer.output.verdict == 'changes_requested' and task_reviewer.output.feedback %}
+      {% if primary_reviewer is defined and primary_reviewer.output is defined and primary_reviewer.output.verdict == 'changes_requested' and primary_reviewer.output.feedback %}
       ## Previous Reviewer Feedback (this task)
 
-      Your previous attempt at this task was rejected by `task_reviewer`. Address the
+      Your previous attempt at this task was rejected by `primary_reviewer`. Address the
       feedback below specifically — the implementation already exists on the branch;
       do NOT re-research the problem from scratch and conclude "already implemented".
       Apply the changes the reviewer asked for, commit, and let the reviewer re-check.
@@ -254,10 +254,10 @@ agents:
       finding, fix the others and explain in your commit message and via
       `twig note --text "..."` why you did not apply that one.
 
-      {{ task_reviewer.output.feedback }}
+      {{ primary_reviewer.output.feedback }}
       {% endif %}
 
-      {% if issue_reviewer is defined and issue_reviewer.output is defined and issue_reviewer.output.verdict == 'changes_requested' and issue_reviewer.output.feedback %}
+      {% if scope_reviewer is defined and scope_reviewer.output is defined and scope_reviewer.output.verdict == 'changes_requested' and scope_reviewer.output.feedback %}
       ## Parent-level Reviewer Feedback (PG-wide)
 
       The parent-level reviewer flagged the following PG-wide concerns from the previous
@@ -265,7 +265,7 @@ agents:
       of them, address them here. Otherwise note that they will be picked up by the
       task that owns them.
 
-      {{ issue_reviewer.output.feedback }}
+      {{ scope_reviewer.output.feedback }}
       {% endif %}
 
       {% if guidance_loader.output.issue is defined and guidance_loader.output.issue %}
@@ -274,27 +274,27 @@ agents:
       {{ guidance_loader.output.issue }}
       {% endif %}
     routes:
-      - to: task_reviewer
+      - to: primary_reviewer
 
   # ── Child work item reviewer ── # type is runtime-injected; do not hardcode type names
   #
   # Reviews the coder's implementation for correctness, code quality, and
-  # alignment with the task requirements. Routes to task_completer if
+  # alignment with the task requirements. Routes to primary_completer if
   # approved, or back to coder if changes are requested.
   #
   # Invariants:
   #   Pre:  coder has committed changes to the PG branch for the task.
   #   Post: output.verdict is 'approved' or 'changes_requested'.
-  - name: task_reviewer
+  - name: primary_reviewer
     type: agent
     model: claude-sonnet-4.6
-    description: Review task implementation for correctness and quality
+    description: Review work item implementation for correctness and quality
     tools:
       - twig
       - filesystem
     output:
       # Schema mirrors this agent's JSON contract below. Required by M2:
-      # routes read task_reviewer.output.verdict.
+      # routes read primary_reviewer.output.verdict.
       verdict:
         type: string
         description: Review outcome — "approved" or "changes_requested"
@@ -307,22 +307,22 @@ agents:
         items:
           type: string
     prompt: |
-      You are the task reviewer for the twig SDLC workflow.
+      You are the primary reviewer for the twig SDLC workflow.
 
       ## Your Mission
 
-      Review the implementation of item {{ task_router.output.primary_id }} for
-      correctness, code quality, and alignment with the task requirements.
+      Review the implementation of item {{ primary_router.output.primary_id }} for
+      correctness, code quality, and alignment with the work item requirements.
 
       ## Context
 
-      - **Work Item ID:** {{ task_router.output.primary_id }}
-      - **Work item title:** {{ task_router.output.primary_title }}
+      - **Work Item ID:** {{ primary_router.output.primary_id }}
+      - **Work item title:** {{ primary_router.output.primary_title }}
       - **PG branch:** {{ workflow.input.branch_name }}
 
       ## Instructions
 
-      1. Read the item description from ADO: `twig show {{ task_router.output.primary_id }}`
+      1. Read the item description from ADO: `twig show {{ primary_router.output.primary_id }}`
       2. Inspect the latest commit on this PG branch — start with
          `git log --oneline -5` and `git diff HEAD~1` to see what the
          coder actually changed for this task.
@@ -357,10 +357,10 @@ agents:
       {{ guidance_loader.output.task }}
       {% endif %}
     routes:
-      - to: task_completer
-        when: "{{ task_reviewer.output.verdict == 'approved' }}"
+      - to: primary_completer
+        when: "{{ primary_reviewer.output.verdict == 'approved' }}"
       - to: coder
-        when: "{{ task_reviewer.output.verdict == 'changes_requested' }}"
+        when: "{{ primary_reviewer.output.verdict == 'changes_requested' }}"
       # Catch-all per M4: an unexpected verdict value (typo, schema drift)
       # routes back to coder for another iteration rather than raising
       # `No matching route found`.
@@ -369,42 +369,42 @@ agents:
   # ── Child work item completer ── # type is runtime-injected; do not hardcode type names
   #
   # Transitions the completed task to Done in ADO and adds a summary note.
-  # Then routes back to task_router to pick up the next task, or proceeds
+  # Then routes back to primary_router to pick up the next task, or proceeds
   # to dependency_check if no more tasks remain.
   #
   # Invariants:
-  #   Pre:  task_reviewer.output.verdict == 'approved'.
+  #   Pre:  primary_reviewer.output.verdict == 'approved'.
   #   Post: Child work item is transitioned to its template's done state in ADO; notes added. # type is runtime-injected; do not hardcode type names
-  - name: task_completer
+  - name: primary_completer
     type: script
-    description: Transition completed task to its template's done state and route to next task
+    description: Transition completed child to its template's done state and route to next
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - >-
-        $taskId = {{ task_router.output.primary_id }};
+        $taskId = {{ primary_router.output.primary_id }};
         twig set $taskId;
         twig note --text 'Child work item completed and approved by reviewer';
         $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
         if (-not $validate.is_valid) { throw "Cannot transition task $($taskId): $($validate.message)" };
         twig state $validate.target_state;
-        @{ task_id = $taskId; completed = $true; target_state = $validate.target_state } | ConvertTo-Json
+        @{ child_id = $taskId; completed = $true; target_state = $validate.target_state } | ConvertTo-Json
     routes:
-      - to: task_router
+      - to: primary_router
 
   # ── Dependency check ───────────────────────────────────────────────────
   #
   # Checks ADO predecessor links to determine if the PG is blocked by
   # unresolved dependencies. Runs dependency-check.ps1 which queries ADO
   # for predecessor work items and their states. Items with no predecessor
-  # links are routed directly to issue_reviewer (gate never fires).
+  # links are routed directly to scope_reviewer (gate never fires).
   #
   # On re-entry (P3), this node re-runs and auto-clears blocks whose
   # predecessors have since reached a terminal state.
   #
   # Invariants:
-  #   Pre:  All tasks in this PG are complete (task_router.output.action == 'all_tasks_done').
+  #   Pre:  All tasks in this PG are complete (primary_router.output.action == 'all_items_done').
   #   Post: output.status is 'blocked' or 'not_blocked'; blocking_items list populated if blocked.
   - name: dependency_check
     type: script
@@ -418,7 +418,7 @@ agents:
     routes:
       - to: dependency_gate
         when: "{{ dependency_check.output.status == 'blocked' }}"
-      - to: issue_reviewer
+      - to: scope_reviewer
         when: "{{ dependency_check.output.status == 'not_blocked' }}"
       # Catch-all per M4: defensive fallback — if dependency-check.ps1
       # ever emits a status other than blocked/not_blocked, treat it as
@@ -481,7 +481,7 @@ agents:
         route: dependency_check
       - label: "⏩ Override"
         value: override
-        route: issue_reviewer
+        route: scope_reviewer
       - label: "🔀 Reassign"
         value: reassign
         route: $end
@@ -495,7 +495,7 @@ agents:
   # Invariants:
   #   Pre:  All tasks complete; dependencies resolved (or overridden).
   #   Post: output.verdict is 'approved' or 'changes_requested'.
-  - name: issue_reviewer
+  - name: scope_reviewer
     type: agent
     model: gpt-4.1
     description: Review completed PG at the issue level for cohesion and completeness
@@ -504,7 +504,7 @@ agents:
       - filesystem
     output:
       # Schema mirrors this agent's JSON contract below. Required by M2:
-      # routes read issue_reviewer.output.verdict.
+      # routes read scope_reviewer.output.verdict.
       verdict:
         type: string
         description: Review outcome — "approved" or "changes_requested"
@@ -567,13 +567,13 @@ agents:
       ```
     routes:
       - to: user_acceptance
-        when: "{{ issue_reviewer.output.verdict == 'approved' }}"
-      - to: task_router
-        when: "{{ issue_reviewer.output.verdict == 'changes_requested' }}"
+        when: "{{ scope_reviewer.output.verdict == 'approved' }}"
+      - to: primary_router
+        when: "{{ scope_reviewer.output.verdict == 'changes_requested' }}"
       # Catch-all per M4: unknown verdict (typo, schema drift) routes
-      # back to task_router for another iteration rather than raising
+      # back to primary_router for another iteration rather than raising
       # `No matching route found`.
-      - to: task_router
+      - to: primary_router
 
   # ── User acceptance gate ───────────────────────────────────────────────
   #
@@ -582,7 +582,7 @@ agents:
   # accept, request changes, or abort (P6, P13).
   #
   # Invariants:
-  #   Pre:  issue_reviewer.output.verdict == 'approved'.
+  #   Pre:  scope_reviewer.output.verdict == 'approved'.
   #   Post: User has accepted (proceed to PR), requested changes (loop), or aborted.
   - name: user_acceptance
     type: human_gate
@@ -600,7 +600,7 @@ agents:
 
       ### Reviewer Summary
 
-      {{ issue_reviewer.output.feedback }}
+      {{ scope_reviewer.output.feedback }}
 
       ### Inspect the changes
 
@@ -622,7 +622,7 @@ agents:
         route: pr_submit
       - label: "🔄 Request Changes"
         value: changes
-        route: task_router
+        route: primary_router
       - label: "🛑 Abort"
         value: abort
         route: $end

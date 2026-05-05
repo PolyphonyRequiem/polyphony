@@ -44,16 +44,16 @@ agents:
     command: pwsh
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
-      - to: task_router
-  - name: task_router
+      - to: primary_router
+  - name: primary_router
     type: script
     command: pwsh
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
       - to: coder
-        when: "{{ task_router.output.action == 'implement_item' }}"
+        when: "{{ primary_router.output.action == 'implement_item' }}"
       - to: dependency_check
-        when: "{{ task_router.output.action == 'all_items_done' }}"
+        when: "{{ primary_router.output.action == 'all_items_done' }}"
   - name: coder
     type: agent
     model: claude-opus-4.7-1m-internal
@@ -61,23 +61,23 @@ agents:
     description: Implement a single task
     prompt: "Implement the task"
     routes:
-      - to: task_reviewer
-  - name: task_reviewer
+      - to: primary_reviewer
+  - name: primary_reviewer
     type: agent
     model: claude-sonnet-4.6
     description: Review task implementation
     prompt: "Review the implementation"
     routes:
-      - to: task_completer
-        when: "{{ task_reviewer.output.verdict == 'approved' }}"
+      - to: primary_completer
+        when: "{{ primary_reviewer.output.verdict == 'approved' }}"
       - to: coder
-        when: "{{ task_reviewer.output.verdict == 'changes_requested' }}"
-  - name: task_completer
+        when: "{{ primary_reviewer.output.verdict == 'changes_requested' }}"
+  - name: primary_completer
     type: script
     command: pwsh
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
-      - to: task_router
+      - to: primary_router
   - name: dependency_check
     type: script
     command: pwsh
@@ -85,7 +85,7 @@ agents:
     routes:
       - to: dependency_gate
         when: "{{ dependency_check.output.status == 'blocked' }}"
-      - to: issue_reviewer
+      - to: scope_reviewer
         when: "{{ dependency_check.output.status == 'not_blocked' }}"
   - name: dependency_gate
     type: human_gate
@@ -96,11 +96,11 @@ agents:
         route: dependency_check
       - label: "Override"
         value: override
-        route: issue_reviewer
+        route: scope_reviewer
       - label: "Reassign"
         value: reassign
         route: $end
-  - name: issue_reviewer
+  - name: scope_reviewer
     type: agent
     model: claude-opus-4.7-1m-internal
     context_window: 1000000
@@ -108,9 +108,9 @@ agents:
     prompt: "Review the PG"
     routes:
       - to: user_acceptance
-        when: "{{ issue_reviewer.output.verdict == 'approved' }}"
-      - to: task_router
-        when: "{{ issue_reviewer.output.verdict == 'changes_requested' }}"
+        when: "{{ scope_reviewer.output.verdict == 'approved' }}"
+      - to: primary_router
+        when: "{{ scope_reviewer.output.verdict == 'changes_requested' }}"
   - name: user_acceptance
     type: human_gate
     prompt: "Accept PG?"
@@ -120,7 +120,7 @@ agents:
         route: pr_submit
       - label: "Changes"
         value: changes
-        route: task_router
+        route: primary_router
   - name: pr_submit
     type: agent
     model: claude-sonnet-4.6
@@ -196,12 +196,12 @@ agents:
             ($output | Out-String) | Should -Match 'missing-output'
         }
 
-        It 'Fails when task_router agent is missing' {
-            $yaml = ($script:ValidYaml) -replace 'name: task_router', 'name: task_dispatcher'
+        It 'Fails when primary_router agent is missing' {
+            $yaml = ($script:ValidYaml) -replace 'name: primary_router', 'name: task_dispatcher'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-pg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-pg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-task-loop-agent'
+            ($output | Out-String) | Should -Match 'missing-primary-loop-agent'
         }
 
         It 'Fails when coder agent is missing' {
@@ -209,7 +209,7 @@ agents:
             Set-Content (Join-Path $script:WorkflowsDir 'implement-pg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-pg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-task-loop-agent'
+            ($output | Out-String) | Should -Match 'missing-primary-loop-agent'
         }
 
         It 'Fails when coder uses wrong model' {
@@ -220,20 +220,20 @@ agents:
             ($output | Out-String) | Should -Match 'wrong-coder-model'
         }
 
-        It 'Fails when issue_reviewer agent is missing' {
-            $yaml = ($script:ValidYaml) -replace 'name: issue_reviewer', 'name: pg_reviewer'
+        It 'Fails when scope_reviewer agent is missing' {
+            $yaml = ($script:ValidYaml) -replace 'name: scope_reviewer', 'name: pg_reviewer'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-pg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-pg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-issue-review-agent'
+            ($output | Out-String) | Should -Match 'missing-scope-review-agent'
         }
 
-        It 'Fails when issue_reviewer uses wrong model' {
-            $yaml = ($script:ValidYaml) -replace '(name: issue_reviewer[\s\S]*?model: )claude-opus-4.7-1m-internal', '$1claude-sonnet-4.6'
+        It 'Fails when scope_reviewer uses wrong model' {
+            $yaml = ($script:ValidYaml) -replace '(name: scope_reviewer[\s\S]*?model: )claude-opus-4.7-1m-internal', '$1claude-sonnet-4.6'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-pg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-pg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'wrong-issue-reviewer-model'
+            ($output | Out-String) | Should -Match 'wrong-scope-reviewer-model'
         }
 
         It 'Fails when dependency_check is missing' {
@@ -285,7 +285,7 @@ agents:
         }
 
         It 'Fails when entry point is wrong' {
-            $yaml = ($script:ValidYaml) -replace 'entry_point: pg_router', 'entry_point: task_router'
+            $yaml = ($script:ValidYaml) -replace 'entry_point: pg_router', 'entry_point: primary_router'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-pg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-pg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1

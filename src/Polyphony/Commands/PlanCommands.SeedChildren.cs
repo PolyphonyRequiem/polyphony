@@ -29,7 +29,7 @@ namespace Polyphony.Commands;
 public sealed partial class PlanCommands
 {
     private static readonly Regex MarkerRegex =
-        new(@"<!--\s*polyphony:plan-task-id=(task-\d+)\s*-->", RegexOptions.Compiled);
+        new(@"<!--\s*polyphony:plan-child-id=(task-\d+)\s*-->", RegexOptions.Compiled);
 
     /// <summary>
     /// Idempotently seed the architect's task list as children of
@@ -37,7 +37,7 @@ public sealed partial class PlanCommands
     /// </summary>
     /// <param name="workItem">Parent work item ID.</param>
     /// <param name="tasksJson">JSON array of task objects from <c>architect.output.tasks</c>.
-    /// Each task requires <c>task_id</c>, <c>title</c>, <c>type</c>, <c>description</c>.</param>
+    /// Each task requires <c>child_id</c>, <c>title</c>, <c>type</c>, <c>description</c>.</param>
     /// <param name="plannedTag">Tag value to apply to the parent on success
     /// (defaults to <c>polyphony:planned</c>).</param>
     /// <param name="ct">Cancellation token.</param>
@@ -235,7 +235,7 @@ public sealed partial class PlanCommands
             if (sb.Length > 0 && sb[^1] == '\n') sb.Length--;
         }
 
-        sb.Append("\n\n<!-- polyphony:plan-task-id=").Append(taskId).Append(" -->");
+        sb.Append("\n\n<!-- polyphony:plan-child-id=").Append(taskId).Append(" -->");
         return sb.ToString();
     }
 
