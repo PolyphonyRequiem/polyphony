@@ -45,6 +45,7 @@ public sealed class PolicyCommands
             UsedDefaults = !File.Exists(path),
             Approvals = SnapshotDomain(config.Approvals!),
             Pr = SnapshotDomain(config.Pr!),
+            OpenQuestions = SnapshotDomain(config.OpenQuestions!),
             Concurrency = new PolicyConcurrencySnapshot
             {
                 MaxConcurrentChildren = config.Concurrency!.MaxConcurrentChildren!.Value,
@@ -122,9 +123,9 @@ public sealed class PolicyCommands
     [Command("resolve")]
     public int Resolve(string scope, string domain, string path = ".conductor/policy.yaml")
     {
-        if (!Enum.TryParse<PolicyDomain>(domain, ignoreCase: true, out var domainEnum))
+        if (!TryParseDomain(domain, out var domainEnum))
         {
-            Console.WriteLine($$"""{"error":"Unknown domain '{{domain}}'. Expected 'approvals' or 'pr'."}""");
+            Console.WriteLine($$"""{"error":"Unknown domain '{{domain}}'. Expected 'approvals', 'pr', or 'open_questions'."}""");
             return ExitCodes.ConfigError;
         }
 
@@ -167,6 +168,8 @@ public sealed class PolicyCommands
             DefaultsMaxRevisionCycles = defaults.MaxRevisionCycles,
             DefaultsMaxFixLoops = defaults.MaxFixLoops,
             DefaultsMaxRemediationCycles = defaults.MaxRemediationCycles,
+            DefaultsMinSeverity = defaults.MinSeverity?.ToString().ToLowerInvariant(),
+            DefaultsMaxQuestionLoops = defaults.MaxQuestionLoops,
             DefaultsQualityAvgScoreAtLeast = defaults.QualityThreshold?.AvgScoreAtLeast,
             DefaultsQualityBlockingCountAtMost = defaults.QualityThreshold?.BlockingCountAtMost,
             RootMode = domain.Root?.Mode?.ToString().ToLowerInvariant(),
@@ -196,6 +199,7 @@ public sealed class PolicyCommands
         WarnIfNonPositive(config.Approvals?.Defaults?.MaxRevisionCycles, "approvals.defaults.max_revision_cycles", errors);
         WarnIfNonPositive(config.Pr?.Defaults?.MaxFixLoops, "pr.defaults.max_fix_loops", errors);
         WarnIfNonPositive(config.Pr?.Defaults?.MaxRemediationCycles, "pr.defaults.max_remediation_cycles", errors);
+        WarnIfNonPositive(config.OpenQuestions?.Defaults?.MaxQuestionLoops, "open_questions.defaults.max_question_loops", errors);
         WarnIfNonPositive(config.Concurrency?.MaxConcurrentChildren, "concurrency.max_concurrent_children", errors);
         WarnIfNonPositive(config.Concurrency?.MaxConcurrentPgs, "concurrency.max_concurrent_pgs", errors);
 
@@ -217,4 +221,16 @@ public sealed class PolicyCommands
 
     private static string EscapeJsonString(string value) =>
         value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+
+    private static bool TryParseDomain(string value, out PolicyDomain result)
+    {
+        // Handle underscore-separated form (open_questions) used in CLI and YAML.
+        if (string.Equals(value, "open_questions", StringComparison.OrdinalIgnoreCase))
+        {
+            result = PolicyDomain.OpenQuestions;
+            return true;
+        }
+
+        return Enum.TryParse(value, ignoreCase: true, out result);
+    }
 }

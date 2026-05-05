@@ -384,6 +384,209 @@ public sealed class PolicyCommandsTests : CommandTestBase
         output.ShouldContain("\"quality_avg_score_at_least\"");
         output.ShouldNotContain("\"MaxRevisionCycles\"");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // open_questions domain
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Load_NoFile_AppliesOpenQuestionsDefaults()
+    {
+        using var fx = new PolicyFileFixture();
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.OpenQuestions.DefaultsMode.ShouldBe("warning");
+        result.OpenQuestions.DefaultsMinSeverity.ShouldBe("moderate");
+        result.OpenQuestions.DefaultsMaxQuestionLoops.ShouldBe(3);
+    }
+
+    [Fact]
+    public void Load_FileWithOpenQuestions_MergesOverrides()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            open_questions:
+              defaults:
+                mode: auto
+                min_severity: critical
+                max_question_loops: 5
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.OpenQuestions.DefaultsMode.ShouldBe("auto");
+        result.OpenQuestions.DefaultsMinSeverity.ShouldBe("critical");
+        result.OpenQuestions.DefaultsMaxQuestionLoops.ShouldBe(5);
+    }
+
+    [Fact]
+    public void Resolve_OpenQuestions_DefaultScope_ReturnsDefaults()
+    {
+        using var fx = new PolicyFileFixture();
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Resolve("default", "open_questions", fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResolvedRule);
+        result.ShouldNotBeNull();
+        result.Domain.ShouldBe("open_questions");
+        result.Scope.ShouldBe("default");
+        result.Mode.ShouldBe("warning");
+        result.MinSeverity.ShouldBe("moderate");
+        result.MaxQuestionLoops.ShouldBe(3);
+    }
+
+    [Fact]
+    public void Resolve_OpenQuestions_RootScope_OverridesDefaults()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            open_questions:
+              defaults: { mode: warning, min_severity: moderate, max_question_loops: 3 }
+              root: { mode: manual, min_severity: critical }
+            """);
+
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Resolve("root", "open_questions", fx.PolicyPath));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResolvedRule);
+        result.ShouldNotBeNull();
+        result.Mode.ShouldBe("manual");
+        result.MinSeverity.ShouldBe("critical");
+        // Inherits from defaults
+        result.MaxQuestionLoops.ShouldBe(3);
+    }
+
+    [Fact]
+    public void Resolve_OpenQuestions_ByTypeScope_OverridesDefaults()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            open_questions:
+              defaults: { mode: warning, min_severity: moderate, max_question_loops: 3 }
+              by_type:
+                Issue: { mode: auto, max_question_loops: 5 }
+            """);
+
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Resolve("type:Issue", "open_questions", fx.PolicyPath));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResolvedRule);
+        result.ShouldNotBeNull();
+        result.Mode.ShouldBe("auto");
+        result.MaxQuestionLoops.ShouldBe(5);
+        // Inherits min_severity from defaults
+        result.MinSeverity.ShouldBe("moderate");
+    }
+
+    [Fact]
+    public void Resolve_OpenQuestions_ByTypeScope_FallsBackWhenTypeMissing()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            open_questions:
+              defaults: { mode: warning, min_severity: low, max_question_loops: 2 }
+              by_type:
+                Task: { mode: auto }
+            """);
+
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Resolve("type:Issue", "open_questions", fx.PolicyPath));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResolvedRule);
+        result.ShouldNotBeNull();
+        result.Mode.ShouldBe("warning");
+        result.MinSeverity.ShouldBe("low");
+        result.MaxQuestionLoops.ShouldBe(2);
+    }
+
+    [Fact]
+    public void Validate_NegativeMaxQuestionLoops_ReturnsError()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            open_questions:
+              defaults: { mode: warning, max_question_loops: -1 }
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeFalse();
+        result.Errors.ShouldContain(e => e.Contains("max_question_loops"));
+    }
+
+    [Fact]
+    public void Validate_InvalidMinSeverity_ReturnsParseError()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            open_questions:
+              defaults: { mode: warning, min_severity: bogus }
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeFalse();
+        result.Errors.Length.ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public void Resolve_ApprovalsShape_UnchangedByOpenQuestionsAddition()
+    {
+        // Regression: approvals/pr JSON shape must not include open_questions fields when null.
+        using var fx = new PolicyFileFixture();
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Resolve("default", "approvals", fx.PolicyPath));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResolvedRule);
+        result.ShouldNotBeNull();
+        result.Domain.ShouldBe("approvals");
+        result.MinSeverity.ShouldBeNull();
+        result.MaxQuestionLoops.ShouldBeNull();
+
+        // Raw JSON should not contain these fields (null fields are omitted).
+        output.ShouldNotContain("\"min_severity\"");
+        output.ShouldNotContain("\"max_question_loops\"");
+    }
+
+    [Fact]
+    public void Resolve_PrShape_UnchangedByOpenQuestionsAddition()
+    {
+        using var fx = new PolicyFileFixture();
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Resolve("default", "pr", fx.PolicyPath));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResolvedRule);
+        result.ShouldNotBeNull();
+        result.Domain.ShouldBe("pr");
+        result.MinSeverity.ShouldBeNull();
+        result.MaxQuestionLoops.ShouldBeNull();
+
+        output.ShouldNotContain("\"min_severity\"");
+        output.ShouldNotContain("\"max_question_loops\"");
+    }
 }
 
 /// <summary>

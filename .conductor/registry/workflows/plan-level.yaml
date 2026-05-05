@@ -289,7 +289,7 @@ agents:
                 type: string
       open_questions:
         type: array
-        description: Questions requiring user input before plan can finalize (empty array if none). Only severity >= moderate items should be emitted; the open_questions_gate route filters on severity.
+        description: Questions requiring user input before plan can finalize (empty array if none). Emit severity >= low; policy-driven route filters determine which questions gate.
         items:
           type: object
           properties:
@@ -301,19 +301,78 @@ agents:
               description: Full description of the question and why it matters
             severity:
               type: string
-              description: One of critical, major, moderate, low. Items with severity = low should be documented inline in the plan and NOT emitted here.
+              description: One of critical, major, moderate, low. Policy route filters determine which severities gate — the architect should emit all relevant questions.
       summary:
         type: string
         description: Brief one-paragraph summary of the plan
     routes:
-      # Severity-gated: only stop on the gate when at least one question is
-      # moderate or higher. Low-severity items in the array (if the architect
-      # emits any despite instructions) are filtered out and we proceed
-      # straight to review.
-      - to: open_questions_gate
-        when: "{{ architect.output.open_questions | selectattr('severity', 'in', ['moderate', 'major', 'critical']) | list | length > 0 }}"
+      - to: open_questions_policy
+
+  # ── Open questions policy resolver ─────────────────────────────────────
+  #
+  # Resolves the open_questions policy domain for the current work item
+  # type. Outputs mode, min_severity, and max_question_loops which drive
+  # the routing decision below.
+  #
+  # Invariants:
+  #   Pre:  architect has completed; type_loader.output.type_name is available.
+  #   Post: output contains { mode, min_severity, max_question_loops }.
+  - name: open_questions_policy
+    type: script
+    description: Resolve open_questions policy for routing decisions
+    command: polyphony
+    args:
+      - "policy"
+      - "resolve"
+      - "--domain"
+      - "open_questions"
+      - "--scope"
+      - "type:{{ type_loader.output.type_name }}"
+    routes:
+      - to: open_questions_counter
+
+  # ── Open questions loop counter ────────────────────────────────────────
+  #
+  # Tracks the number of answer loops taken. Increments on each pass
+  # through the counter (i.e., each time the architect → gate → answer
+  # cycle completes). Mirrors the review_counter pattern in github-pr.yaml.
+  #
+  # Invariants:
+  #   Pre:  open_questions_policy has resolved.
+  #   Post: output.iteration is the current count (0-based on first pass);
+  #         output.cap_reached indicates whether max_question_loops is hit.
+  - name: open_questions_counter
+    type: script
+    description: Track open questions answer loop iteration count
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-oq-loops-{{ workflow.input.work_item_id }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw)
+        } else {
+            $count = 0
+        }
+        $maxLoops = {{ open_questions_policy.output.max_question_loops }}
+        $capReached = $count -ge $maxLoops
+        @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
+    routes:
+      # Policy mode=auto: skip gate entirely regardless of questions.
       - to: review_group
-        when: "{{ architect.output.open_questions | selectattr('severity', 'in', ['moderate', 'major', 'critical']) | list | length == 0 }}"
+        when: "{{ open_questions_policy.output.mode == 'auto' }}"
+      # Cap reached: auto-proceed to review (fail honestly, don't loop forever).
+      - to: review_group
+        when: "{{ open_questions_counter.output.cap_reached == true }}"
+      # Mode=manual: gate on ANY question present.
+      - to: open_questions_gate
+        when: "{{ open_questions_policy.output.mode == 'manual' and architect.output.open_questions | length > 0 }}"
+      # Mode=warning: gate only when questions at or above min_severity exist.
+      - to: open_questions_gate
+        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
+      # Else: no gating questions — proceed to review.
+      - to: review_group
 
   # ── Open questions gate ──────────────────────────────────────────────────
   #
@@ -322,19 +381,23 @@ agents:
   # to review without answering (P6).
   #
   # Invariants:
-  #   Pre:  architect.output.open_questions is a non-empty array.
+  #   Pre:  architect.output.open_questions is a non-empty array; policy mode != auto.
   #   Post: User has answered questions or chosen to proceed.
   - name: open_questions_gate
     type: human_gate
     prompt: |
       ## 🤔 Open Questions — Work Item {{ workflow.input.work_item_id }}
 
-      The architect has identified questions that need your input before
-      finalizing the plan. Only **moderate-or-higher severity** questions are
-      shown here; lower-severity items are documented inline in the plan as
-      Assumptions or Risks instead of stopping for input.
+      **Policy mode:** `{{ open_questions_policy.output.mode }}` · **Loop:** {{ open_questions_counter.output.iteration }} of {{ open_questions_counter.output.max_loops }}
 
-      {% set blocking = architect.output.open_questions | selectattr('severity', 'in', ['moderate', 'major', 'critical']) | list %}
+      The architect has identified questions that need your input before
+      finalizing the plan.
+
+      {% if open_questions_policy.output.mode == 'warning' %}
+      {% set blocking = architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list %}
+      {% else %}
+      {% set blocking = architect.output.open_questions %}
+      {% endif %}
       {% for question in blocking %}
       ### {{ loop.index }}. [{{ question.severity | upper }}] {{ question.topic }}
 
@@ -350,11 +413,38 @@ agents:
     options:
       - label: "💬 Answer"
         value: answer
-        route: architect
+        route: open_questions_answer_counter
         prompt_for: answers
       - label: "⏩ Proceed to Review"
         value: proceed
         route: review_group
+
+  # ── Open questions answer counter increment ────────────────────────────
+  #
+  # Increments the loop counter when the user chooses "answer" so that
+  # the cap is enforced on the next pass through routing.
+  #
+  # Invariants:
+  #   Pre:  User selected "answer" at the open_questions_gate.
+  #   Post: Counter file incremented; routes back to architect.
+  - name: open_questions_answer_counter
+    type: script
+    description: Increment open questions loop counter on answer route
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-oq-loops-{{ workflow.input.work_item_id }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        @{ iteration = $count } | ConvertTo-Json
+    routes:
+      - to: architect
 
   # ── Review group (parallel) ──────────────────────────────────────────────
   #

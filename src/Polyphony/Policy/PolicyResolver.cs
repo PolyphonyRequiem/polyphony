@@ -25,6 +25,7 @@ public static class PolicyResolver
         {
             PolicyDomain.Approvals => config.Approvals,
             PolicyDomain.Pr => config.Pr,
+            PolicyDomain.OpenQuestions => config.OpenQuestions,
             _ => throw new ArgumentOutOfRangeException(nameof(domain)),
         };
 
@@ -60,12 +61,14 @@ public static class PolicyResolver
 
         return new ResolvedRule
         {
-            Domain = domain.ToString().ToLowerInvariant(),
+            Domain = DomainToString(domain),
             Scope = resolvedScope,
             Mode = (specific?.Mode ?? defaults.Mode ?? PolicyMode.Warning).ToString().ToLowerInvariant(),
             MaxRevisionCycles = specific?.MaxRevisionCycles ?? defaults.MaxRevisionCycles,
             MaxFixLoops = specific?.MaxFixLoops ?? defaults.MaxFixLoops,
             MaxRemediationCycles = specific?.MaxRemediationCycles ?? defaults.MaxRemediationCycles,
+            MinSeverity = (specific?.MinSeverity ?? defaults.MinSeverity)?.ToString().ToLowerInvariant(),
+            MaxQuestionLoops = specific?.MaxQuestionLoops ?? defaults.MaxQuestionLoops,
             QualityAvgScoreAtLeast = quality?.AvgScoreAtLeast,
             QualityBlockingCountAtMost = quality?.BlockingCountAtMost,
         };
@@ -81,6 +84,12 @@ public static class PolicyResolver
             BlockingCountAtMost = specific.BlockingCountAtMost ?? defaults.BlockingCountAtMost,
         };
     }
+
+    private static string DomainToString(PolicyDomain domain) => domain switch
+    {
+        PolicyDomain.OpenQuestions => "open_questions",
+        _ => domain.ToString().ToLowerInvariant(),
+    };
 }
 
 /// <summary>
@@ -95,6 +104,8 @@ public sealed record ResolvedRule
     public int? MaxRevisionCycles { get; init; }
     public int? MaxFixLoops { get; init; }
     public int? MaxRemediationCycles { get; init; }
+    public string? MinSeverity { get; init; }
+    public int? MaxQuestionLoops { get; init; }
     public int? QualityAvgScoreAtLeast { get; init; }
     public int? QualityBlockingCountAtMost { get; init; }
 }

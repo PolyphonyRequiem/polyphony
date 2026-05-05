@@ -144,7 +144,10 @@ and seeds children. Self-recurses for nested plannable levels via `for_each`.
 | `type_loader_error_gate` | human_gate | Handle type loading failures |
 | `route_check` | script | Validate Polyphony route for this work item |
 | `architect` | agent (Opus 1M) | Design implementation plan with PR groupings |
+| `open_questions_policy` | script | Resolve open_questions policy domain for routing |
+| `open_questions_counter` | script | Track answer loop iteration count |
 | `open_questions_gate` | human_gate | Surface blocking open questions to user |
+| `open_questions_answer_counter` | script | Increment loop counter on answer route |
 | `review_group` | parallel | Runs `technical_reviewer` and `readability_reviewer` concurrently |
 | `technical_reviewer` | agent (Opus 1M) | Technical accuracy review (must score ≥ 90) |
 | `readability_reviewer` | agent (Sonnet) | Clarity and structure review (must score ≥ 90) |
@@ -401,3 +404,38 @@ conductor run polyphony-full@polyphony `
 
 > **Always launch detached** — wrap with `Start-Process -WindowStyle Hidden` so
 > conductor survives if the parent session drops. Always use `--web` (not `--web-bg`).
+
+## Policy Configuration
+
+Policy is defined in `.conductor/policy.yaml` and resolved at runtime via
+`polyphony policy resolve --domain <domain> --scope <scope>`. Resolution uses
+most-specific-wins scoping: `root` → `type:<Name>` → `defaults`.
+
+### Policy Domains
+
+| Domain | Consumed By | Keys | Description |
+|--------|-------------|------|-------------|
+| `approvals` | `plan-level.yaml` (review_router / plan_approval) | `mode`, `max_revision_cycles`, `quality_threshold` | Controls whether the plan approval gate fires and under what conditions |
+| `pr` | `github-pr.yaml` / `ado-pr.yaml` | `mode`, `max_fix_loops`, `max_remediation_cycles` | Controls PR merge gating and fix loop caps |
+| `concurrency` | `polyphony-implement.yaml` / `polyphony-planning.yaml` | `max_concurrent_children`, `max_concurrent_pgs` | Limits parallel workflow and PG execution |
+| `open_questions` | `plan-level.yaml` (open_questions_policy → routing) | `mode`, `min_severity`, `max_question_loops` | Controls whether architect open questions gate for user input |
+
+### `open_questions` Domain
+
+Resolved after the architect agent completes. Drives routing between the
+architect and the `open_questions_gate` human gate.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mode` | `auto` \| `warning` \| `manual` | `warning` | `auto` = never gate; `warning` = gate on severity ≥ min_severity; `manual` = gate on any question |
+| `min_severity` | `critical` \| `major` \| `moderate` \| `low` | `moderate` | Minimum severity that triggers the gate (only applies in `warning` mode) |
+| `max_question_loops` | number | `3` | Maximum answer → revision cycles before auto-proceeding to review |
+
+**Gate modes explained:**
+
+- **`auto`** — Questions are emitted for plan documentation but never stop the
+  workflow. Useful for routine task types where the architect's defaults suffice.
+- **`warning`** — Gates only when questions at or above `min_severity` exist.
+  The default mode; balances user involvement with workflow throughput.
+- **`manual`** — Any question (even `low` severity) stops for user input.
+  Use for apex items or high-stakes planning where every ambiguity matters.
