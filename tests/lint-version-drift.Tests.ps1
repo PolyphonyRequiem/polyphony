@@ -2,14 +2,28 @@ BeforeAll {
     $script:LintScript = Join-Path $PSScriptRoot 'lint-version-drift.ps1'
 
     function Set-WorkflowFile {
-        param([string]$Dir, [string]$Name, [string]$Version)
-        $content = @"
-workflow:
-  name: $Name
-  version: "$Version"
-  description: test
-"@
-        Set-Content (Join-Path $Dir "$Name.yaml") $content
+        param(
+            [string]$Dir,
+            [string]$Name,
+            [string]$Version,
+            # Defaults to $Version (the bundled = self-required invariant).
+            # Pass $null to omit the metadata block entirely; pass a
+            # different SemVer to simulate metadata drift.
+            [object]$MinPolyphonyVersion = '__default__'
+        )
+        if ($MinPolyphonyVersion -eq '__default__') {
+            $MinPolyphonyVersion = $Version
+        }
+        $sb = [System.Text.StringBuilder]::new()
+        [void]$sb.AppendLine('workflow:')
+        [void]$sb.AppendLine("  name: $Name")
+        [void]$sb.AppendLine("  version: `"$Version`"")
+        [void]$sb.AppendLine('  description: test')
+        if ($null -ne $MinPolyphonyVersion) {
+            [void]$sb.AppendLine('  metadata:')
+            [void]$sb.AppendLine("    min_polyphony_version: `"$MinPolyphonyVersion`"")
+        }
+        Set-Content (Join-Path $Dir "$Name.yaml") $sb.ToString()
     }
 
     function Set-IndexFile {
@@ -124,6 +138,33 @@ workflow:
             $r = Invoke-Lint -RegistryRoot $script:RegistryRoot
             $r.ExitCode | Should -Be 1
             $r.Output | Should -Match "index\.yaml entry 'orphan-index' has no YAML on disk"
+        }
+    }
+
+    Context 'min_polyphony_version invariant' {
+
+        It 'Fails when YAML omits workflow.metadata.min_polyphony_version' {
+            Set-WorkflowFile -Dir $script:WorkflowsDir -Name 'one' -Version '1.0.0' -MinPolyphonyVersion $null
+            Set-IndexFile -Dir $script:RegistryRoot -Entries @{ one = @{ Versions = @('1.0.0') } }
+            $r = Invoke-Lint -RegistryRoot $script:RegistryRoot
+            $r.ExitCode | Should -Be 1
+            $r.Output | Should -Match 'no workflow\.metadata\.min_polyphony_version declared'
+        }
+
+        It 'Fails when min_polyphony_version disagrees with workflow.version (bundled = self-required)' {
+            Set-WorkflowFile -Dir $script:WorkflowsDir -Name 'one' -Version '1.2.0' -MinPolyphonyVersion '1.1.0'
+            Set-IndexFile -Dir $script:RegistryRoot -Entries @{ one = @{ Versions = @('1.2.0') } }
+            $r = Invoke-Lint -RegistryRoot $script:RegistryRoot
+            $r.ExitCode | Should -Be 1
+            $r.Output | Should -Match "metadata\.min_polyphony_version '1\.1\.0' != workflow\.version '1\.2\.0'"
+        }
+
+        It 'Passes when min_polyphony_version matches workflow.version' {
+            Set-WorkflowFile -Dir $script:WorkflowsDir -Name 'one' -Version '1.2.3' -MinPolyphonyVersion '1.2.3'
+            Set-IndexFile -Dir $script:RegistryRoot -Entries @{ one = @{ Versions = @('1.2.3') } }
+            $r = Invoke-Lint -RegistryRoot $script:RegistryRoot
+            $r.ExitCode | Should -Be 0
+            $r.Output | Should -Match 'min_polyphony_version aligned'
         }
     }
 

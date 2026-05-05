@@ -25,6 +25,8 @@ workflow:
     via feature_pr_updater. Escalates to human gate after cap is exceeded.
   version: "1.0.0"
   entry_point: feature_pr_creator
+  metadata:
+    min_polyphony_version: "1.0.0"
 
   limits:
     max_iterations: 200

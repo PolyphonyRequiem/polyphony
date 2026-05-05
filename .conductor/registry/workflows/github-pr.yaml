@@ -22,6 +22,8 @@ workflow:
     Sonnet in a loop (max 10 iterations), and merges when approved.
   version: "1.0.0"
   entry_point: pr_reviewer
+  metadata:
+    min_polyphony_version: "1.0.0"
 
   limits:
     max_iterations: 50

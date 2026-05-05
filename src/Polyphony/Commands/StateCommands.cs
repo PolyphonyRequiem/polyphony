@@ -1,9 +1,9 @@
-using System.Reflection;
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
+using Polyphony.Versioning;
 using Twig.Domain.Interfaces;
 
 namespace Polyphony.Commands;
@@ -44,9 +44,23 @@ public sealed partial class StateCommands(
     /// Validates git repo, twig CLI availability, and polyphony CLI
     /// availability (the latter is implicitly true since we ARE polyphony).
     /// </summary>
+    /// <param name="workflowYaml">
+    /// Optional absolute path to the workflow YAML being run (passed by
+    /// conductor as <c>{{ workflow.file }}</c>). When supplied, the verb
+    /// reads <c>workflow.metadata.min_polyphony_version</c> and adds a
+    /// <c>polyphony_version</c> check. See WI-3 in
+    /// <c>docs/decisions/versioning-strategy.md</c>.
+    /// </param>
+    /// <param name="requiredVersion">
+    /// Optional explicit minimum polyphony version (testing seam). When
+    /// both are supplied, this wins over the YAML metadata.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("preflight-lite")]
-    public async Task<int> PreflightLite(CancellationToken ct = default)
+    public async Task<int> PreflightLite(
+        string? workflowYaml = null,
+        string? requiredVersion = null,
+        CancellationToken ct = default)
     {
         StatePreflightLiteResult result;
         try
@@ -57,6 +71,12 @@ public sealed partial class StateCommands(
                 await CheckTwigCliAsync(ct).ConfigureAwait(false),
                 CheckPolyphonyCli(),
             };
+
+            var versionCheck = TryCheckPolyphonyVersion(workflowYaml, requiredVersion);
+            if (versionCheck is not null)
+            {
+                checks.Add(versionCheck);
+            }
 
             var failed = checks.Count(c => !c.Passed);
             var ready = failed == 0;
@@ -95,9 +115,24 @@ public sealed partial class StateCommands(
     /// and surfaces advisory warnings (gh auth, polyphony CLI, dotnet SDK).
     /// </summary>
     /// <param name="workItem">ADO work item ID — must be accessible via twig.</param>
+    /// <param name="workflowYaml">
+    /// Optional absolute path to the workflow YAML being run (passed by
+    /// conductor as <c>{{ workflow.file }}</c>). When supplied, the verb
+    /// reads <c>workflow.metadata.min_polyphony_version</c> and adds a
+    /// <c>polyphony_version</c> required check. See WI-3 in
+    /// <c>docs/decisions/versioning-strategy.md</c>.
+    /// </param>
+    /// <param name="requiredVersion">
+    /// Optional explicit minimum polyphony version (testing seam). When
+    /// both are supplied, this wins over the YAML metadata.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("preflight")]
-    public async Task<int> Preflight(int workItem, CancellationToken ct = default)
+    public async Task<int> Preflight(
+        int workItem,
+        string? workflowYaml = null,
+        string? requiredVersion = null,
+        CancellationToken ct = default)
     {
         StatePreflightResult result;
         try
@@ -111,6 +146,12 @@ public sealed partial class StateCommands(
             var (configCheck, adoOrg, adoProject) = await CheckTwigConfigAsync(ct).ConfigureAwait(false);
             required.Add(configCheck);
             required.Add(await CheckAdoAccessAsync(workItem, ct).ConfigureAwait(false));
+
+            var versionCheck = TryCheckPolyphonyVersion(workflowYaml, requiredVersion);
+            if (versionCheck is not null)
+            {
+                required.Add(versionCheck);
+            }
 
             var advisory = new List<PreflightCheck>
             {
@@ -301,15 +342,72 @@ public sealed partial class StateCommands(
     {
         // We ARE polyphony — the binary is by definition available.
         // Read assembly version to preserve the version-detail contract.
-        var version = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
-            ?? "unknown";
+        var version = PolyphonyVersion.GetCurrent();
         return new PreflightCheck
         {
             Name = "polyphony_cli",
             Passed = true,
             Detail = $"Polyphony CLI available: {version}",
+        };
+    }
+
+    /// <summary>
+    /// Resolve the required minimum polyphony version from
+    /// <paramref name="explicitRequired"/> (testing seam, wins) or from
+    /// <paramref name="workflowYaml"/>'s
+    /// <c>workflow.metadata.min_polyphony_version</c> field. Returns
+    /// <c>null</c> when neither source supplies a requirement (the check
+    /// is opt-in — workflows without metadata don't get the check).
+    /// </summary>
+    /// <remarks>
+    /// Failures that suggest configuration errors (e.g. unreadable YAML,
+    /// unparsable required version) emit a failing
+    /// <c>polyphony_version</c> check rather than throwing. That keeps
+    /// the JSON-on-stdout contract intact and gives the gate a clear
+    /// remediation surface.
+    /// </remarks>
+    private static PreflightCheck? TryCheckPolyphonyVersion(
+        string? workflowYaml, string? explicitRequired)
+    {
+        string? required = explicitRequired;
+        if (string.IsNullOrWhiteSpace(required) && !string.IsNullOrWhiteSpace(workflowYaml))
+        {
+            try
+            {
+                required = PolyphonyVersion.ReadMinVersionFromWorkflow(workflowYaml);
+            }
+            catch (Exception ex)
+            {
+                return new PreflightCheck
+                {
+                    Name = "polyphony_version",
+                    Passed = false,
+                    Detail = $"Cannot parse workflow YAML '{workflowYaml}': {ex.Message}",
+                    Remediation = "Verify the workflow YAML at the supplied --workflow-yaml path is valid.",
+                };
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(required))
+        {
+            // No requirement declared — opt-in semantics. Workflows on
+            // older registry versions without metadata.min_polyphony_version
+            // simply skip this check rather than failing.
+            return null;
+        }
+
+        var current = PolyphonyVersion.GetCurrent();
+        var ok = PolyphonyVersion.Satisfies(current, required, out var reason);
+        return new PreflightCheck
+        {
+            Name = "polyphony_version",
+            Passed = ok,
+            Detail = ok
+                ? $"polyphony {current} satisfies workflow requirement >= {required}"
+                : reason ?? "Polyphony version does not satisfy workflow requirement.",
+            Remediation = ok ? null
+                : "Update polyphony CLI: see docs/decisions/versioning-strategy.md " +
+                  "for the install path. Mid-run upgrades are not supported in v1.",
         };
     }
 

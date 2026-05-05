@@ -22,6 +22,8 @@ workflow:
     PR management or abort.
   version: "1.0.0"
   entry_point: ado_pr_error
+  metadata:
+    min_polyphony_version: "1.0.0"
 
   limits:
     max_iterations: 50

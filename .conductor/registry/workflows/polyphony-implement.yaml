@@ -17,6 +17,8 @@ workflow:
     completion status, then dispatches pending PGs in parallel via for_each.
   version: "1.0.0"
   entry_point: preflight_lite
+  metadata:
+    min_polyphony_version: "1.0.0"
 
   limits:
     # Implementation workflow runs a parallel for_each (max_concurrent: 3)
@@ -78,6 +80,8 @@ agents:
     args:
       - "state"
       - "preflight-lite"
+      - "--workflow-yaml"
+      - "{{ workflow.file }}"
     routes:
       - to: load_work_tree
         when: "{{ preflight_lite.output.ready == true }}"

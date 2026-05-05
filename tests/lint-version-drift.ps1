@@ -15,6 +15,9 @@
          (bundled-SemVer invariant — one tag drives all artifacts).
       4. Every workflow YAML referenced in index.yaml exists on disk, and
          every YAML on disk has an index.yaml entry.
+      5. Every workflow YAML declares `workflow.metadata.min_polyphony_version`
+         AND that value equals the YAML's own `workflow.version` (bundled =
+         self-required: a v1.2.3 workflow requires polyphony v1.2.3+).
 
     Skips gracefully if .conductor/registry/ is not laid out (e.g. on a
     branch that pre-dates the registry move).
@@ -57,6 +60,37 @@ function Get-WorkflowVersion {
             return $null
         }
         if ($inWorkflowBlock -and $line -match '^\s\s+version:\s*[''"]?([^''"\s]+)[''"]?\s*$') {
+            return $matches[1]
+        }
+    }
+    return $null
+}
+
+# Parse workflow.metadata.min_polyphony_version from a YAML file.
+# The metadata block is a 2-space-indented child of `workflow:`; the
+# field is at 4-space indent under `metadata:`. Returns $null if absent.
+function Get-WorkflowMinVersion {
+    param([string]$Path)
+    $lines = Get-Content $Path
+    $inWorkflowBlock = $false
+    $inMetadataBlock = $false
+    foreach ($line in $lines) {
+        if ($line -match '^workflow:\s*$') {
+            $inWorkflowBlock = $true
+            continue
+        }
+        if ($inWorkflowBlock -and $line -match '^[A-Za-z_]') {
+            return $null
+        }
+        if ($inWorkflowBlock -and $line -match '^\s\s+metadata:\s*$') {
+            $inMetadataBlock = $true
+            continue
+        }
+        # Any other 2-space-indented field after metadata: closes the block.
+        if ($inMetadataBlock -and $line -match '^\s\s[A-Za-z_]') {
+            $inMetadataBlock = $false
+        }
+        if ($inMetadataBlock -and $line -match '^\s\s\s\s+min_polyphony_version:\s*[''"]?([^''"\s]+)[''"]?\s*$') {
             return $matches[1]
         }
     }
@@ -132,7 +166,19 @@ foreach ($yaml in $yamlFiles) {
         continue
     }
 
-    Write-Host "PASS: $($yaml.Name) — version $yamlVersion (matches index)" -ForegroundColor Green
+    $minVersion = Get-WorkflowMinVersion -Path $yaml.FullName
+    if (-not $minVersion) {
+        Write-Host "FAIL: $($yaml.Name) — no workflow.metadata.min_polyphony_version declared" -ForegroundColor Red
+        $failed += $yaml.Name
+        continue
+    }
+    if ($minVersion -ne $yamlVersion) {
+        Write-Host "FAIL: $($yaml.Name) — metadata.min_polyphony_version '$minVersion' != workflow.version '$yamlVersion' (bundled = self-required)" -ForegroundColor Red
+        $failed += $yaml.Name
+        continue
+    }
+
+    Write-Host "PASS: $($yaml.Name) — version $yamlVersion (matches index, min_polyphony_version aligned)" -ForegroundColor Green
     $declaredVersions[$name] = $yamlVersion
 }
 

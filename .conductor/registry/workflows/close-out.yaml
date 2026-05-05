@@ -18,6 +18,8 @@ workflow:
     completed work item hierarchy and returns them as workflow output.
   version: "1.0.0"
   entry_point: close_out
+  metadata:
+    min_polyphony_version: "1.0.0"
 
   limits:
     max_iterations: 50

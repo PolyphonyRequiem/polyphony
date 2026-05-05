@@ -15,6 +15,8 @@ workflow:
     phase, and routes to planning, implementation, close-out, or end.
   version: "1.0.0"
   entry_point: policy_loader
+  metadata:
+    min_polyphony_version: "1.0.0"
 
   limits:
     # Apex workflow that orchestrates planning/implementation/close-out
@@ -90,6 +92,8 @@ agents:
       - "preflight"
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
+      - "--workflow-yaml"
+      - "{{ workflow.file }}"
     routes:
       - to: state_detector
         when: "{{ preflight_check.output.ready == true }}"

@@ -19,6 +19,8 @@ workflow:
     and triggers platform-specific PR creation and merge.
   version: "1.0.0"
   entry_point: pg_router
+  metadata:
+    min_polyphony_version: "1.0.0"
 
   limits:
     # Implement-pg runs a task loop (router -> coder -> reviewer ->
