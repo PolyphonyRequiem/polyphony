@@ -21,7 +21,7 @@ This repo is **two artifacts in one tree**:
 
 ### 1. The polyphony CLI binary (`src/Polyphony/`)
 
-A .NET 10 AOT-compiled CLI exposing ~24 verbs across 9 command groups. It does
+A .NET 11 CLI exposing ~24 verbs across 9 command groups. It does
 deterministic things — phase detection, transition validation, branch-name
 resolution, hierarchy walking, policy resolution — and emits structured JSON.
 **It writes nothing to ADO**; writes are always delegated to the
@@ -85,7 +85,7 @@ For the deeper "why split it this way?" — see
 
 You will need:
 
-- **.NET 10 SDK** — to build the CLI.
+- **.NET 11 SDK** — to build the CLI.
 - **PowerShell 7+** — workflow scripts are PowerShell.
 - **`twig` CLI** — Polyphony's write-side companion. Install from
   [`PolyphonyRequiem/twig`](https://github.com/PolyphonyRequiem/twig) and put
@@ -102,7 +102,7 @@ You will need:
 git clone https://github.com/PolyphonyRequiem/polyphony.git
 cd polyphony
 dotnet restore
-./publish-local.ps1     # AOT-publishes to ~/.twig/bin/polyphony(.exe)
+./publish-local.ps1     # publishes to ~/.twig/bin/polyphony(.exe)
 polyphony --version
 polyphony health        # Validates env + config; should show all green
 ```
@@ -356,11 +356,13 @@ Agent skills (loaded by Copilot CLI and Claude Code when in this repo):
 dotnet restore
 dotnet build
 dotnet test
-./publish-local.ps1     # AOT publish to ~/.twig/bin/
+./publish-local.ps1     # publish to ~/.twig/bin/
 ```
 
 `publish-local.ps1 -Configuration Debug` builds the debug variant for faster
-iteration; the AOT publish is intentionally Release-only by default.
+iteration; the publish is intentionally Release-only by default. AOT publish
+is currently disabled (see `src/Polyphony/Polyphony.csproj` for the rationale)
+but the codebase remains AOT-friendly so re-enabling is a csproj-level change.
 
 Workflow scripts under `.conductor/registry/scripts/` are tested with Pester:
 
