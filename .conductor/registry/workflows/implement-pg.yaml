@@ -165,7 +165,7 @@ agents:
   #
   # Invariants:
   #   Pre:  PG branch is checked out; work_item_ids are valid task IDs.
-  #   Post: output.action is implement_task or all_tasks_done; output.task_id set if implementing.
+  #   Post: output.action is implement_item or all_items_done; output.task_id set if implementing.
   - name: task_router
     type: script
     description: Route to next implementable task within this PG
@@ -215,8 +215,8 @@ agents:
 
       ## Context
 
-      - **Task ID:** {{ task_router.output.primary_id }}
-      - **Task title:** {{ task_router.output.primary_title }}
+      - **Work Item ID:** {{ task_router.output.primary_id }}
+      - **Work item title:** {{ task_router.output.primary_title }}
       - **PG branch:** {{ workflow.input.branch_name }}
       - **Parent work item:** {{ workflow.input.work_item_id }}
 
@@ -258,7 +258,7 @@ agents:
       {% endif %}
 
       {% if issue_reviewer is defined and issue_reviewer.output is defined and issue_reviewer.output.verdict == 'changes_requested' and issue_reviewer.output.feedback %}
-      ## Issue-level Reviewer Feedback (PG-wide)
+      ## Parent-level Reviewer Feedback (PG-wide)
 
       The parent-level reviewer flagged the following PG-wide concerns from the previous
       end-of-PG review. These may span multiple tasks — if the current task touches any
@@ -316,8 +316,8 @@ agents:
 
       ## Context
 
-      - **Task ID:** {{ task_router.output.primary_id }}
-      - **Task title:** {{ task_router.output.primary_title }}
+      - **Work Item ID:** {{ task_router.output.primary_id }}
+      - **Work item title:** {{ task_router.output.primary_title }}
       - **PG branch:** {{ workflow.input.branch_name }}
 
       ## Instructions
@@ -385,7 +385,7 @@ agents:
       - >-
         $taskId = {{ task_router.output.primary_id }};
         twig set $taskId;
-        twig note --text 'Child work item completed and approved by reviewer'; # type is runtime-injected; do not hardcode type names
+        twig note --text 'Child work item completed and approved by reviewer';
         $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
         if (-not $validate.is_valid) { throw "Cannot transition task $($taskId): $($validate.message)" };
         twig state $validate.target_state;
