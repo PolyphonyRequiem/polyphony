@@ -326,6 +326,7 @@ For agent rosters, recursion budgets, and the platform-abstraction model
 
 | Doc                                                                                       | Topic                                                                  |
 |-------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
+| [`docs/glossary.md`](docs/glossary.md)                                                    | Ubiquitous-language reference. Start here when in doubt about a term.  |
 | [`docs/polyphony-cli-reference.md`](docs/polyphony-cli-reference.md)                      | Per-verb deep-dive, conceptual primers, and value assessment.          |
 | [`docs/polyphony-architecture.md`](docs/polyphony-architecture.md)                        | Layering diagram, three-vocabularies rule, Polyphony-vs-twig boundary. |
 | [`docs/polyphony-process-config-schema.md`](docs/polyphony-process-config-schema.md)      | Full schema for `process-config.yaml`.                                 |
