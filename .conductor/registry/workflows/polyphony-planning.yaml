@@ -15,10 +15,10 @@ workflow:
     Planning orchestration entry point. Validates prerequisites with a
     lightweight preflight, invokes plan-level.yaml for recursive planning,
     re-checks state, and seeds the work tree if needed.
-  version: "1.0.0"
+  version: "1.0.1"
   entry_point: preflight_lite
   metadata:
-    min_polyphony_version: "1.0.0"
+    min_polyphony_version: "1.0.1"
 
   limits:
     # Planning workflow invokes plan-level.yaml which performs recursive

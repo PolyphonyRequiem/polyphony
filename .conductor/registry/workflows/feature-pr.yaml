@@ -23,10 +23,10 @@ workflow:
     review/fix/merge, and runs remediation cycles (capped at 3) when the
     sub-workflow fails to merge. After each remediation, re-requests review
     via feature_pr_updater. Escalates to human gate after cap is exceeded.
-  version: "1.0.0"
+  version: "1.0.1"
   entry_point: feature_pr_creator
   metadata:
-    min_polyphony_version: "1.0.0"
+    min_polyphony_version: "1.0.1"
 
   limits:
     max_iterations: 200
