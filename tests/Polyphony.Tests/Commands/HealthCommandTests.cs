@@ -76,6 +76,40 @@ public sealed class HealthCommandTests
     }
 
     [Fact]
+    public void HealthCommand_PolyphonyVersion_IsAtLeastMinimumMajorMinor()
+    {
+        // Regression for the MinVer-cache-collision bug: when a referenced
+        // project from a different git repo (e.g. ../twig2) shares the same
+        // `--tag-prefix` input, MinVer 7.0.0's per-process cache returns the
+        // sibling repo's height-incremented version (e.g. "0.74.0") for
+        // polyphony's stamp instead of computing fresh against polyphony's
+        // own tags. Directory.Build.props sets `MinVerMinimumMajorMinor=1.0`
+        // BOTH as a semantic floor (we shipped v1.0.0; nothing should ever
+        // stamp `0.x` again) AND to differentiate the cache key. Asserting
+        // the major version is >= 1 catches both regressions.
+        var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-health-floor-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var configPath = Path.Combine(tempDir, "process-config.yaml");
+        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
+        var cmd = new HealthCommand(tool => new HealthCheckResult { Name = tool, Success = true, Message = "mocked" });
+
+        var (_, output) = CaptureConsole(() => cmd.Health(configPath));
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.HealthResult);
+
+        result.ShouldNotBeNull();
+        result.PolyphonyVersion.ShouldNotBeNullOrEmpty();
+        // Strip SemVer build-metadata (`+sha`) and pre-release suffix
+        // (`-alpha.0.N`) before parsing the major.minor.patch core.
+        var coreVersion = result.PolyphonyVersion!.Split('+', 2)[0].Split('-', 2)[0];
+        var parts = coreVersion.Split('.');
+        parts.Length.ShouldBeGreaterThanOrEqualTo(2,
+            $"Expected SemVer core 'major.minor[.patch]', got: {result.PolyphonyVersion}");
+        var major = int.Parse(parts[0]);
+        major.ShouldBeGreaterThanOrEqualTo(1,
+            $"Expected major version >= 1 (MinVerMinimumMajorMinor floor), got: {result.PolyphonyVersion}");
+    }
+
+    [Fact]
     public void HealthCommand_Fails_WhenConfigMissing()
     {
         var cmd = new HealthCommand();
