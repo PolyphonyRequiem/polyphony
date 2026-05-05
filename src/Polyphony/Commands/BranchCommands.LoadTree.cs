@@ -58,9 +58,9 @@ public sealed partial class BranchCommands
                 .Select(p => new PgReconciliation
                 {
                     Name = p.Name,
-                    NonDoneTaskIds = p.NonDoneTaskIds,
-                    StaleDoingTaskIds = p.StaleDoingTaskIds,
-                    NonDoneIssueIds = p.NonDoneIssueIds,
+                    NonDoneChildIds = p.NonDoneChildIds,
+                    StaleDoingChildIds = p.StaleDoingChildIds,
+                    NonDoneWorkItemIds = p.NonDoneWorkItemIds,
                 })
                 .ToList();
 
@@ -124,7 +124,7 @@ public sealed partial class BranchCommands
                 Type = child.Type,
                 Tags = child.Tags ?? "",
                 TaskCount = tasks.Count,
-                Tasks = tasks,
+                Children = tasks,
             });
         }
 
@@ -133,7 +133,7 @@ public sealed partial class BranchCommands
             EpicId = root.WorkItemId,
             EpicTitle = root.Title,
             EpicType = root.Type,
-            Issues = issues,
+            WorkItems = issues,
         };
     }
 
@@ -219,17 +219,17 @@ public sealed partial class BranchCommands
         // semantic where ungrouped scopes need both signals to close.
         var completed = isFallback ? mergedPr > 0 && allDone : mergedPr > 0;
 
-        IReadOnlyList<int> nonDoneTasks = [];
-        IReadOnlyList<int> staleDoingTasks = [];
+        IReadOnlyList<int> nonDoneChildren = [];
+        IReadOnlyList<int> staleDoingChildren = [];
         IReadOnlyList<int> nonDoneIssues = [];
         if (completed)
         {
             var taskSet = taskIds.ToHashSet();
             var issueSet = issueIds.ToHashSet();
-            nonDoneTasks = allItems
+            nonDoneChildren = allItems
                 .Where(i => taskSet.Contains(i.WorkItemId) && !IsTerminalCategory(i.State))
                 .Select(i => i.WorkItemId).ToList();
-            staleDoingTasks = allItems
+            staleDoingChildren = allItems
                 .Where(i => taskSet.Contains(i.WorkItemId)
                     && string.Equals(i.State, "Doing", StringComparison.Ordinal))
                 .Select(i => i.WorkItemId).ToList();
@@ -241,15 +241,15 @@ public sealed partial class BranchCommands
         return new PullRequestGroup
         {
             Name = name,
-            TaskIds = taskIds,
-            IssueIds = issueIds,
+            ChildIds = taskIds,
+            WorkItemIds = issueIds,
             BranchNameSuggestion = branchName,
             MergedPr = mergedPr,
             Completed = completed,
-            NonDoneTaskIds = nonDoneTasks,
-            StaleDoingTaskIds = staleDoingTasks,
-            NonDoneIssueIds = nonDoneIssues,
-            NeedsReconciliation = staleDoingTasks.Count > 0 || nonDoneIssues.Count > 0,
+            NonDoneChildIds = nonDoneChildren,
+            StaleDoingChildIds = staleDoingChildren,
+            NonDoneWorkItemIds = nonDoneIssues,
+            NeedsReconciliation = staleDoingChildren.Count > 0 || nonDoneIssues.Count > 0,
         };
     }
 
@@ -308,7 +308,7 @@ public sealed partial class BranchCommands
 
     private static BranchLoadTreeResult EmptyLoadTreeResult(int workItem, string error, string adoWorkspace) => new()
     {
-        WorkTree = new WorkTree { EpicId = workItem, EpicTitle = "", EpicType = "", Issues = [] },
+        WorkTree = new WorkTree { EpicId = workItem, EpicTitle = "", EpicType = "", WorkItems = [] },
         PrGroups = [],
         CompletedPgs = [],
         PendingPgs = [],

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Polyphony;
 
 /// <summary>A single task underneath a work-tree issue.</summary>
@@ -18,7 +20,8 @@ public sealed record WorkTreeIssue
     public required string Type { get; init; }
     public required string Tags { get; init; }
     public required int TaskCount { get; init; }
-    public required IReadOnlyList<WorkTreeTask> Tasks { get; init; }
+    [JsonPropertyName("tasks")]
+    public required IReadOnlyList<WorkTreeTask> Children { get; init; }
 }
 
 /// <summary>The work-tree shape (epic + its issues + their tasks).</summary>
@@ -27,31 +30,41 @@ public sealed record WorkTree
     public required int EpicId { get; init; }
     public required string EpicTitle { get; init; }
     public required string EpicType { get; init; }
-    public required IReadOnlyList<WorkTreeIssue> Issues { get; init; }
+    [JsonPropertyName("issues")]
+    public required IReadOnlyList<WorkTreeIssue> WorkItems { get; init; }
 }
 
 /// <summary>A discovered PR group with completion + reconciliation metadata.</summary>
 public sealed record PullRequestGroup
 {
+    [JsonPropertyName("task_ids")]
+    public required IReadOnlyList<int> ChildIds { get; init; }
+    [JsonPropertyName("issue_ids")]
+    public required IReadOnlyList<int> WorkItemIds { get; init; }
+    [JsonPropertyName("non_done_task_ids")]
+    public required IReadOnlyList<int> NonDoneChildIds { get; init; }
+    [JsonPropertyName("stale_doing_task_ids")]
+    public required IReadOnlyList<int> StaleDoingChildIds { get; init; }
+    [JsonPropertyName("non_done_issue_ids")]
+    public required IReadOnlyList<int> NonDoneWorkItemIds { get; init; }
     public required string Name { get; init; }
-    public required IReadOnlyList<int> TaskIds { get; init; }
-    public required IReadOnlyList<int> IssueIds { get; init; }
     public required string BranchNameSuggestion { get; init; }
     public required int MergedPr { get; init; }
     public required bool Completed { get; init; }
-    public required IReadOnlyList<int> NonDoneTaskIds { get; init; }
-    public required IReadOnlyList<int> StaleDoingTaskIds { get; init; }
-    public required IReadOnlyList<int> NonDoneIssueIds { get; init; }
     public required bool NeedsReconciliation { get; init; }
 }
 
 /// <summary>Reconciliation summary for a PG that has a merged PR but stale items.</summary>
 public sealed record PgReconciliation
 {
+    [JsonPropertyName("non_done_task_ids")]
+    public required IReadOnlyList<int> NonDoneChildIds { get; init; }
+    [JsonPropertyName("stale_doing_task_ids")]
+    public required IReadOnlyList<int> StaleDoingChildIds { get; init; }
+    [JsonPropertyName("non_done_issue_ids")]
+    public required IReadOnlyList<int> NonDoneWorkItemIds { get; init; }
     public required string Name { get; init; }
-    public required IReadOnlyList<int> NonDoneTaskIds { get; init; }
-    public required IReadOnlyList<int> StaleDoingTaskIds { get; init; }
-    public required IReadOnlyList<int> NonDoneIssueIds { get; init; }
+
 }
 
 /// <summary>

@@ -88,7 +88,7 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
 
         result.Action.ShouldBe("create_branch", $"Output was: {output}");
         result.CurrentPg.ShouldBe("PG-1");
-        result.TaskIds.ShouldContain(200);
+        result.ChildIds.ShouldContain(200);
         result.TotalPgs.ShouldBe(1);
     }
 
@@ -191,7 +191,7 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         var result = Deserialize(output);
 
         result.CurrentPg.ShouldBe("PG-2", $"Output was: {output}");
-        result.TaskIds.ShouldContain(201);
+        result.ChildIds.ShouldContain(201);
         result.TotalPgs.ShouldBe(2);
     }
 

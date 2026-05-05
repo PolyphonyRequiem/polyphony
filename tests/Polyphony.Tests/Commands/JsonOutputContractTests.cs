@@ -475,7 +475,93 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
-    // Cross-command error format consistency
+    // Schema renames — JSON contract
+    // =========================================================================
+
+    [Fact]
+    public void SchemaRenames_JsonContract_FieldsPresent()
+    {
+        // Arrange: create dummy objects for serialization
+        var prGroup = new Polyphony.PullRequestGroup
+        {
+            ChildIds = new[] { 1, 2 },
+            WorkItemIds = new[] { 10, 20 },
+            NonDoneChildIds = new[] { 3 },
+            StaleDoingChildIds = new[] { 4 },
+            NonDoneWorkItemIds = new[] { 30 },
+            Name = "PG-1",
+            BranchNameSuggestion = "feature/pg-1",
+            MergedPr = 123,
+            Completed = true,
+            NeedsReconciliation = false
+        };
+        var pgRecon = new Polyphony.PgReconciliation
+        {
+            NonDoneChildIds = new[] { 5 },
+            StaleDoingChildIds = new[] { 6 },
+            NonDoneWorkItemIds = new[] { 40 },
+            Name = "PG-1"
+        };
+        var seedRecon = new Polyphony.SeedReconciliation
+        {
+            ChildId = "c1",
+            WorkItemId = 100,
+            MatchedBy = "marker"
+        };
+        var seedError = new Polyphony.SeedError
+        {
+            ChildId = "c2",
+            Title = "err",
+            Error = "fail"
+        };
+        var routeResult = new Polyphony.BranchRouteResult
+        {
+            Action = "create_branch",
+            CurrentPg = "PG-1",
+            BranchName = "feature/pg-1",
+            WorkItemIds = new[] { 10, 20 },
+            ChildIds = new[] { 1, 2 },
+            PrNumber = 1,
+            PrUrl = "url",
+            CompletedPgs = new[] { "PG-1" },
+            RemainingPgs = new[] { "PG-2" },
+            TotalPgs = 2,
+            AdoWorkspace = "org/proj",
+            Error = null
+        };
+
+        // Act
+        var prGroupJson = JsonSerializer.Serialize(prGroup, PolyphonyJsonContext.Default.PullRequestGroup);
+        var pgReconJson = JsonSerializer.Serialize(pgRecon, PolyphonyJsonContext.Default.PgReconciliation);
+        var seedReconJson = JsonSerializer.Serialize(seedRecon, PolyphonyJsonContext.Default.SeedReconciliation);
+        var seedErrorJson = JsonSerializer.Serialize(seedError, PolyphonyJsonContext.Default.SeedError);
+        var routeResultJson = JsonSerializer.Serialize(routeResult, PolyphonyJsonContext.Default.BranchRouteResult);
+
+        // Assert: JSON field names are stable and correct
+        prGroupJson.ShouldContain("\"task_ids\"");
+        prGroupJson.ShouldContain("\"issue_ids\"");
+        prGroupJson.ShouldContain("\"non_done_task_ids\"");
+        prGroupJson.ShouldContain("\"stale_doing_task_ids\"");
+        prGroupJson.ShouldContain("\"non_done_issue_ids\"");
+        pgReconJson.ShouldContain("\"non_done_task_ids\"");
+        pgReconJson.ShouldContain("\"stale_doing_task_ids\"");
+        pgReconJson.ShouldContain("\"non_done_issue_ids\"");
+        seedReconJson.ShouldContain("\"task_id\"");
+        seedErrorJson.ShouldContain("\"task_id\"");
+        routeResultJson.ShouldContain("\"issue_ids\"");
+        routeResultJson.ShouldContain("\"task_ids\"");
+        // Assert: C# property names are not leaked
+        prGroupJson.ShouldNotContain("NonDoneTaskIds");
+        prGroupJson.ShouldNotContain("NonDoneIssueIds");
+        prGroupJson.ShouldNotContain("StaleDoingTaskIds");
+        prGroupJson.ShouldNotContain("ChildIds");
+        prGroupJson.ShouldNotContain("WorkItemIds");
+        routeResultJson.ShouldNotContain("IssueIds");
+        routeResultJson.ShouldNotContain("TaskIds");
+        routeResultJson.ShouldNotContain("ChildIds");
+        routeResultJson.ShouldNotContain("WorkItemIds");
+    }
+
     // =========================================================================
 
     [Fact]

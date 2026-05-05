@@ -100,7 +100,7 @@ public sealed partial class PlanCommands
             }
             if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(type))
             {
-                errors.Add(new SeedError { TaskId = taskId, Title = title, Error = "task missing required title or type" });
+                errors.Add(new SeedError { ChildId = taskId, Title = title, Error = "task missing required title or type" });
                 continue;
             }
 
@@ -108,7 +108,7 @@ public sealed partial class PlanCommands
             {
                 if (markerIndex.TryGetValue(taskId, out var hit))
                 {
-                    reused.Add(new SeedReconciliation { TaskId = taskId, WorkItemId = hit.Id, MatchedBy = "marker" });
+                    reused.Add(new SeedReconciliation { ChildId = taskId, WorkItemId = hit.Id, MatchedBy = "marker" });
                     continue;
                 }
 
@@ -116,7 +116,7 @@ public sealed partial class PlanCommands
                 if (titleTypeIndex.TryGetValue(key, out var fallbackHit))
                 {
                     warnings.Add($"task {taskId} matched #{fallbackHit.Id} by title fallback (marker damaged or missing)");
-                    reused.Add(new SeedReconciliation { TaskId = taskId, WorkItemId = fallbackHit.Id, MatchedBy = "title" });
+                    reused.Add(new SeedReconciliation { ChildId = taskId, WorkItemId = fallbackHit.Id, MatchedBy = "title" });
                     continue;
                 }
 
@@ -125,15 +125,15 @@ public sealed partial class PlanCommands
                 var newId = created["id"]?.GetValue<int>() ?? 0;
                 if (newId == 0)
                 {
-                    errors.Add(new SeedError { TaskId = taskId, Title = title, Error = "twig new returned no id" });
+                    errors.Add(new SeedError { ChildId = taskId, Title = title, Error = "twig new returned no id" });
                     continue;
                 }
-                seeded.Add(new SeedReconciliation { TaskId = taskId, WorkItemId = newId, MatchedBy = "created" });
+                seeded.Add(new SeedReconciliation { ChildId = taskId, WorkItemId = newId, MatchedBy = "created" });
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                errors.Add(new SeedError { TaskId = taskId, Title = title, Error = ex.Message });
+                errors.Add(new SeedError { ChildId = taskId, Title = title, Error = ex.Message });
             }
         }
 

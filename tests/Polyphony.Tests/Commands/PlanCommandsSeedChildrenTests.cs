@@ -176,7 +176,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ErrorCount.ShouldBe(1);
-        result.Errors[0].TaskId.ShouldBe("task-1");
+        result.Errors[0].ChildId.ShouldBe("task-1");
         result.Errors[0].Error.ShouldContain("title or type");
     }
 

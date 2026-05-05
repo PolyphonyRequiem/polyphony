@@ -1,5 +1,7 @@
 namespace Polyphony;
 
+using System.Text.Json.Serialization;
+
 /// <summary>
 /// Output of <c>polyphony branch route</c>: the next PR-group action
 /// the workflow should take. Mirrors the JSON contract emitted by
@@ -25,10 +27,12 @@ public sealed record BranchRouteResult
     public required string BranchName { get; init; }
 
     /// <summary>Container item IDs (issues, etc.) belonging to the PG.</summary>
-    public required IReadOnlyList<int> IssueIds { get; init; }
+    [JsonPropertyName("issue_ids")]
+    public required IReadOnlyList<int> WorkItemIds { get; init; }
 
     /// <summary>Implementable item IDs (tasks) belonging to the PG.</summary>
-    public required IReadOnlyList<int> TaskIds { get; init; }
+    [JsonPropertyName("task_ids")]
+    public required IReadOnlyList<int> ChildIds { get; init; }
 
     /// <summary>Existing PR number associated with the PG branch (0 when none).</summary>
     public required int PrNumber { get; init; }

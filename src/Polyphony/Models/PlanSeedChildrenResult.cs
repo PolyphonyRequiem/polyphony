@@ -1,5 +1,7 @@
 namespace Polyphony;
 
+using System.Text.Json.Serialization;
+
 /// <summary>
 /// Output of <c>polyphony plan seed-children</c>: idempotent reconciliation
 /// of architect-emitted tasks against existing work-item children. Mirrors
@@ -24,7 +26,8 @@ public sealed record PlanSeedChildrenResult
 
 public sealed record SeedReconciliation
 {
-    public required string TaskId { get; init; }
+    [JsonPropertyName("task_id")]
+    public required string ChildId { get; init; }
     public required int WorkItemId { get; init; }
 
     /// <summary>One of <c>marker</c>, <c>title</c>, <c>created</c>.</summary>
@@ -33,7 +36,9 @@ public sealed record SeedReconciliation
 
 public sealed record SeedError
 {
-    public string? TaskId { get; init; }
+    [JsonPropertyName("task_id")]
+    public string? ChildId { get; init; }
     public string? Title { get; init; }
     public required string Error { get; init; }
 }
+
