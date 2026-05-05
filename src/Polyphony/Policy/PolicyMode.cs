@@ -22,10 +22,23 @@ public enum PolicyMode
 
 /// <summary>
 /// Domains addressable by <c>polyphony policy resolve</c>. Approvals govern the plan-approval gate
-/// and downstream review-routing; PR governs the github-pr / feature-pr merge gates.
+/// and downstream review-routing; PR governs the github-pr / feature-pr merge gates;
+/// OpenQuestions governs open-question loops in implementation workflows.
 /// </summary>
 public enum PolicyDomain
 {
     Approvals,
     Pr,
+    OpenQuestions,
+}
+
+/// <summary>
+/// Severity threshold for open-question filtering. Parsed case-insensitively from YAML.
+/// </summary>
+public enum Severity
+{
+    Low,
+    Moderate,
+    Major,
+    Critical,
 }

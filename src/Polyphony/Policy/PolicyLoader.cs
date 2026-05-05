@@ -16,6 +16,9 @@ namespace Polyphony.Policy;
 ///   <item><description>pr.defaults.mode = warning</description></item>
 ///   <item><description>pr.defaults.max_fix_loops = 10</description></item>
 ///   <item><description>pr.defaults.max_remediation_cycles = 3</description></item>
+///   <item><description>open_questions.defaults.mode = warning</description></item>
+///   <item><description>open_questions.defaults.min_severity = moderate</description></item>
+///   <item><description>open_questions.defaults.max_question_loops = 3</description></item>
 ///   <item><description>concurrency.max_concurrent_children = 3</description></item>
 ///   <item><description>concurrency.max_concurrent_pgs = 3</description></item>
 /// </list>
@@ -85,6 +88,12 @@ public static class PolicyLoader
         config.Pr.Defaults.Mode ??= PolicyMode.Warning;
         config.Pr.Defaults.MaxFixLoops ??= 10;
         config.Pr.Defaults.MaxRemediationCycles ??= 3;
+
+        config.OpenQuestions ??= new DomainPolicy();
+        config.OpenQuestions.Defaults ??= new ScopeRule();
+        config.OpenQuestions.Defaults.Mode ??= PolicyMode.Warning;
+        config.OpenQuestions.Defaults.MinSeverity ??= Severity.Moderate;
+        config.OpenQuestions.Defaults.MaxQuestionLoops ??= 3;
 
         config.Concurrency ??= new ConcurrencyPolicy();
         config.Concurrency.MaxConcurrentChildren ??= 3;
