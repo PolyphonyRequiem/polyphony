@@ -286,7 +286,13 @@ agents:
     workflow: ./feature-pr.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
-      feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default(ensure_feature_branch.output.branch | default('')) }}"
+      feature_branch: >-
+        {%- if state_detector.output.workspace_hint is defined and state_detector.output.workspace_hint.feature_branch is defined and state_detector.output.workspace_hint.feature_branch -%}
+        {{ state_detector.output.workspace_hint.feature_branch }}
+        {%- elif ensure_feature_branch is defined -%}
+        {{ ensure_feature_branch.output.branch | default('') }}
+        {%- else -%}
+        {%- endif %}
       target_branch: "main"
       platform: "github"
     routes:
