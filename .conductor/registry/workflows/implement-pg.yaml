@@ -307,7 +307,7 @@ agents:
         items:
           type: string
     prompt: |
-      You are the primary reviewer for the twig SDLC workflow.
+      You are the primary reviewer for the polyphony SDLC workflow.
 
       ## Your Mission
 
@@ -319,6 +319,27 @@ agents:
       - **Work Item ID:** {{ primary_router.output.primary_id }}
       - **Work item title:** {{ primary_router.output.primary_title }}
       - **PG branch:** {{ workflow.input.branch_name }}
+
+      {% if primary_reviewer is defined and primary_reviewer.output is defined and primary_reviewer.output.verdict == 'changes_requested' %}
+      ## ⚠️ This is a RE-REVIEW
+
+      You previously reviewed this item and requested changes. Your prior feedback:
+
+      {{ primary_reviewer.output.feedback }}
+
+      {% if primary_reviewer.output.issues is defined and primary_reviewer.output.issues | length > 0 %}
+      ### Prior issues flagged:
+      {% for issue in primary_reviewer.output.issues %}
+      {{ loop.index }}. {{ issue }}
+      {% endfor %}
+      {% endif %}
+
+      **Focus your review on whether the coder addressed the issues above.**
+      - Check each prior issue specifically — was it fixed, partially fixed, or ignored?
+      - Only flag NEW issues if they are substantive (bugs, missing tests, regressions)
+      - Do NOT re-flag issues that were adequately addressed
+      - If all prior issues are resolved and no new substantive issues exist, approve
+      {% endif %}
 
       ## Instructions
 
@@ -351,10 +372,10 @@ agents:
       - **Request changes** only for substantive issues (bugs, missing requirements, no tests)
       - Do NOT request changes for style preferences or minor nits
 
-      {% if guidance_loader.output.task is defined and guidance_loader.output.task %}
+      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
       ## Repo-Specific Guidance
 
-      {{ guidance_loader.output.task }}
+      {{ guidance_loader.output.reviewer }}
       {% endif %}
     routes:
       - to: primary_completer

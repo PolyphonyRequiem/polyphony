@@ -184,12 +184,12 @@ a PG-level PR, and closes completed work items in ADO after merge.
 | `branch_manager` | script | Create/checkout PG branch |
 | `primary_router` | script | Route to next implementable child via `polyphony branch next-task` |
 | `coder` | agent (Opus 1M) | Implement a single task with incremental commits |
-| `reducer_code` | agent (Sonnet) | Per-task code simplification |
+| `primary_reviewer` | agent (Opus) | Per-task quality gate with re-review awareness |
 | `primary_reviewer` | agent (Sonnet) | Per-child quality gate |
 | `primary_completer` | script | Mark child as done, loop to `primary_router` |
 | `dependency_check` | script | Check ADO predecessor links via `dependency-check.ps1` |
 | `dependency_gate` | human_gate | Surface blocked dependencies to user |
-| `reducer_issue` | agent (Sonnet) | Post-issue cross-task code sweep |
+| `scope_reviewer` | agent (Opus) | Per-issue acceptance criteria and integration check |
 | `scope_reviewer` | agent (Opus 1M) | Per-scope acceptance criteria and integration check |
 | `user_acceptance` | human_gate | Conditional per-issue user acceptance |
 | `pr_submit` | agent (Sonnet) | Validate build + tests, create PR via `gh pr create` |
@@ -286,7 +286,7 @@ PGs are the unit of parallel work in the implementation phase. Each PG:
    targeting the feature branch
 2. **Task loop** — `primary_router` discovers the next implementable child; `coder` implements
    it; `primary_reviewer` gates quality; loop until all children in the PG are complete
-3. **Issue review** — `reducer_issue` sweeps cross-task concerns; `scope_reviewer` checks
+3. **Issue review** — `scope_reviewer` checks
    acceptance criteria
 4. **PR creation** — `pr_submit` validates build/tests and creates a PR
 5. **PR lifecycle** — routed to `github-pr.yaml` or `ado-pr.yaml` for review/fix/merge
