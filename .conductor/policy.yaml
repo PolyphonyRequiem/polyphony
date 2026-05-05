@@ -77,3 +77,32 @@ concurrency:
   #   (balances throughput against resource utilization and feedback loops)
   max_concurrent_children: 3
   max_concurrent_pgs: 3
+
+open_questions:
+  # ACTIVE DEFAULTS: Warning mode for open questions gate.
+  # — Gates only when questions at or above min_severity exist
+  # — Auto-proceeds after max_question_loops answer cycles (prevents infinite loops)
+  # — Low-severity questions pass through without gating unless mode=manual
+  #
+  # Gate modes:
+  #   auto     — never gate on open questions; questions still appear in the plan
+  #              for documentation but do not stop the workflow.
+  #   warning  — gates only when at least one question meets min_severity threshold.
+  #   manual   — always gates if any question exists, regardless of severity.
+  #
+  # Severity levels (ordered): critical > major > moderate > low
+  # severities_at_or_above(min_severity) returns all severities >= the threshold.
+  # Example: min_severity=major → gates on critical and major only.
+  defaults:
+    mode: warning
+    min_severity: moderate
+    max_question_loops: 3
+
+  # Per-scope overrides:
+  # root:
+  #   mode: manual       # Apex items always gate on open questions
+  # by_type:
+  #   Task:
+  #     mode: auto       # Tasks skip question gate entirely
+  #   Epic:
+  #     mode: manual     # Epics always gate regardless of severity

@@ -152,6 +152,31 @@ plan that can be reviewed and approved by humans and downstream agents.
 {{ guidance_loader.output.epic }}
 {% endif %}
 
+{% if open_questions_policy is defined and open_questions_policy.output is defined %}
+## Open Questions Policy
+
+The resolved policy for this work item type:
+
+- **Mode:** `{{ open_questions_policy.output.mode }}`
+- **Min severity:** `{{ open_questions_policy.output.min_severity }}`
+- **Max loops:** `{{ open_questions_policy.output.max_question_loops }}`
+
+{% if open_questions_policy.output.mode == 'auto' %}
+> ℹ️ **Auto mode** — open questions will NOT gate the workflow. You may still
+> emit questions for plan documentation purposes (they will appear in the plan
+> but the workflow proceeds directly to review without stopping). Emit freely
+> at any severity for documentation value.
+{% elif open_questions_policy.output.mode == 'manual' %}
+> ℹ️ **Manual mode** — ANY open question (regardless of severity) will gate
+> the workflow for user input. Feel free to surface even low-severity items
+> that would benefit from user clarification.
+{% else %}
+> ℹ️ **Warning mode** — only questions at severity ≥ `{{ open_questions_policy.output.min_severity }}`
+> will gate the workflow. Questions below this threshold still appear in the
+> plan for documentation but do not stop for user input.
+{% endif %}
+{% endif %}
+
 ## Context
 
 - **Work item:** {{ workflow.input.work_item_id }}
@@ -213,28 +238,23 @@ Read the user plan from the filesystem and use it as your starting point.
    - Group children into PR Groups (PGs) for implementation ordering
 
 4. **Identify open questions** — If you encounter ambiguity, classify it
-   by severity and emit it as an open question only when severity is
-   **moderate or higher**. Lower-severity items should be documented inline
-   in the plan (e.g., as Risks / Assumptions / Alternatives) rather than
-   raised to the user.
+   by severity and emit it as an open question. The route filters (driven
+   by the open_questions policy) determine which questions actually gate —
+   emit all questions that have documentation or decision value.
 
    | Severity | Meaning | Action |
    |---|---|---|
    | `critical` | Plan cannot proceed without an answer (would invalidate the design) | Emit as open question |
    | `major`    | Answer would substantially change the chosen approach | Emit as open question |
    | `moderate` | Answer would meaningfully refine scope, decomposition, or acceptance criteria | Emit as open question |
-   | `low`      | A reasonable default exists; the answer is a refinement, not a blocker | Document inline as an Assumption / Risk; do NOT emit |
+   | `low`      | A reasonable default exists; the answer is a refinement, not a blocker | Emit as open question (for documentation; policy filters decide gating) |
 
-   Examples of items that should be emitted (severity ≥ moderate):
-   - Ambiguous requirements that change scope
-   - Conflicts between user plan and type constraints
-   - Multiple plausible decomposition strategies with materially different cost
-   - External dependencies that block the work item
-
-   Examples that should NOT be emitted (severity = low):
-   - "Should we use spaces or tabs?" — pick one, document the choice
-   - "Should error messages be capitalized?" — pick one, document the choice
-   - "What's the exact wording of the help text?" — draft it, mark refinable
+   Examples of items that should be emitted (all severities):
+   - Ambiguous requirements that change scope (critical/major)
+   - Conflicts between user plan and type constraints (major)
+   - Multiple plausible decomposition strategies with materially different cost (moderate)
+   - External dependencies that block the work item (critical)
+   - Refinement choices where a default exists but user input would improve quality (low)
 
 ## Output
 
@@ -291,10 +311,9 @@ contract.
 
 ### `open_questions` field
 
-`severity` must be one of: `critical`, `major`, `moderate`, `low`. Per the
-severity table above, only emit questions with severity ≥ `moderate`. The
-workflow filters on this — `low`-severity items will not stop on the gate
-even if you emit them.
+`severity` must be one of: `critical`, `major`, `moderate`, `low`. Emit
+questions at any severity level — the workflow's policy-driven route filters
+determine which questions actually gate for user input.
 
 If there are no open questions, return an empty array: `"open_questions": []`
 
