@@ -260,7 +260,7 @@ The tables below are the quick-reference index.
 |-----------------------------------|------------------------------------------------------------------|
 | `polyphony state preflight`       | Verify config, tools, and work item readiness before a run.      |
 | `polyphony state preflight-lite`  | Lightweight subset for nested workflow entry points.             |
-| `polyphony state detect`          | Apex-workflow phase detection (`state_detector` JSON shape).     |
+| `polyphony state detect`          | Root-workflow phase detection (`state_detector` JSON shape).     |
 
 ### `polyphony plan <verb>`
 
@@ -306,7 +306,7 @@ The nine YAMLs in `.conductor/registry/workflows/`:
 
 | File                       | Role                                                                |
 |----------------------------|---------------------------------------------------------------------|
-| `polyphony-full.yaml`      | Apex entry. Preflight + phase detection + dispatch.                 |
+| `polyphony-full.yaml`      | Root entry. Preflight + phase detection + dispatch.                 |
 | `polyphony-planning.yaml`  | Planning entry. Lite preflight + recursive plan + work-tree seed.   |
 | `plan-level.yaml`          | Recursive planning core. Self-recurses for nested plannable levels. |
 | `polyphony-implement.yaml` | Implementation entry. Loads work tree, dispatches PGs in parallel.  |
@@ -391,3 +391,4 @@ architect, coder, reviewer roles); polyphony is the calm rules engine
 underneath that gives those agents a stable contract surface to route on.
 
 For more, see [`docs/polyphony-architecture.md`](docs/polyphony-architecture.md).
+

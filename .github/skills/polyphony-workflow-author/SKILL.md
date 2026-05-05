@@ -133,7 +133,7 @@ for its idiom; copy from it rather than re-inventing.
 |-----------------------------------|--------------------------------------------------------------------------------------|
 | `scripts/scope-closer.ps1`        | Validate-then-transition: `polyphony validate` → `twig state $target_state`. The reference for state-name handling. |
 | `scripts/task-router.ps1`         | Within-PG task selection via capability filtering and `polyphony hierarchy`. Note: contains a remaining `twig state Doing` literal at line 106 to be replaced. |
-| `scripts/detect-state.ps1`        | Top-level phase detection: combines `polyphony route` + `polyphony validate` + `twig tree` into the apex `state_detector` JSON shape consumed by `twig-sdlc-v2-full.yaml`. |
+| `scripts/detect-state.ps1`        | Top-level phase detection: combines `polyphony route` + `polyphony validate` + `twig tree` into the root `state_detector` JSON shape consumed by `twig-sdlc-v2-full.yaml`. |
 | `scripts/pg-router.ps1`           | PR group lifecycle: groups items by PG tag, checks remote branches and gh PR state, returns the next PG action. |
 | `scripts/child-router.ps1`        | Plannable-child discovery for recursive planning (`plan-level.yaml`). The reference for capability-based filtering ("`_.capabilities -contains 'plannable'`"). |
 | `scripts/feature-pr-creator.ps1`  | gh-PR creation against `workspace_hint.feature_branch`. The reference for using `polyphony route` only for branch-name validation. |
@@ -246,7 +246,7 @@ not at release time.
 
 The check is enforced at runtime by `polyphony state preflight` /
 `polyphony state preflight-lite` via the `--workflow-yaml "{{ workflow.file }}"`
-flag (already wired in the apex preflight agent and both planning /
+flag (already wired in the root preflight agent and both planning /
 implement preflight-lite agents). On mismatch, preflight returns a failed
 check, the gate routes to retry/abort, and there is no Proceed Anyway —
 silent misroutes are exactly what this guard exists to prevent.
@@ -261,3 +261,4 @@ silent misroutes are exactly what this guard exists to prevent.
 See [`docs/decisions/versioning-strategy.md`](../../../docs/decisions/versioning-strategy.md)
 for the full rationale, the bundled-SemVer model, and the three-layer
 truth (git tag · YAML self-description · `index.yaml` versions list).
+

@@ -48,7 +48,7 @@ Two outcomes, delivered together:
 
 - **B) Per-consumer policy.** A consumer repo's `.conductor/policy.yaml`
   controls plan-approval behavior, PR review/merge behavior, and concurrency —
-  scoped by `root` (the apex work item) / `by_type` / `defaults`, with three
+  scoped by `root` (the root work item) / `by_type` / `defaults`, with three
   semantically clear modes (`auto` / `manual` / `warning`).
 
 After this work: polyphony stops being self-hosted-only, and the human-in-loop
@@ -79,7 +79,7 @@ Phase 0 (see Open Questions).
 
 | Scope | Applies when |
 |---|---|
-| `root` | This is the apex work item (passed via `--input work_item_id`). Recursive sub-trees do NOT re-scope as root. |
+| `root` | This is the root work item (passed via `--input work_item_id`). Recursive sub-trees do NOT re-scope as root. |
 | `by_type.<Type>` | This work item's type matches a per-type override |
 | `defaults` | Fallback for everything else |
 
@@ -283,7 +283,7 @@ before.
 - A `policy.yaml` with `pr.by_type.Task: { mode: auto }` causes a
   Task-scoped PG-PR to merge without a human gate when reviewer approves
   cleanly.
-- `approvals.root.mode: manual` keeps the apex `plan_approval` gate firing
+- `approvals.root.mode: manual` keeps the root `plan_approval` gate firing
   even when reviewers all hit ≥90.
 - `approvals.defaults.mode: warning` + a clean Issue plan skips the human
   gate.
@@ -396,3 +396,4 @@ These belong to follow-on Epics. The v1 design must not preclude them.
 - Phases 2–5 are parallelizable after Phase 1 lands; the architect should
   surface that opportunity in PG layout (one PG per phase, with Phase 1
   blocking the parallel band, and Phase 6 blocking on all of them).
+

@@ -610,7 +610,7 @@ All 9 workflow YAMLs pass `conductor validate`:
 
 | Workflow YAML | Status | Description |
 |---------------|:---:|-------------|
-| `twig-sdlc-v2-full.yaml` | ✅ Pass | Apex workflow: preflight → state detection → phase routing |
+| `twig-sdlc-v2-full.yaml` | ✅ Pass | Root workflow: preflight → state detection → phase routing |
 | `twig-sdlc-v2-planning.yaml` | ✅ Pass | Planning orchestration: preflight-lite → plan-level → seed check |
 | `twig-sdlc-v2-implement.yaml` | ✅ Pass | Implementation orchestration: load work tree → parallel PG dispatch |
 | `plan-level.yaml` | ✅ Pass | Recursive planning core for any plannable hierarchy level |
@@ -641,7 +641,7 @@ The twig repo's `.conductor/process-config.yaml` defines:
 | `branch_strategy.feature_branch` | `feature/{root_id}-{slug}` | ✅ |
 | `branch_strategy.pg_branch` | `pg-{n}/{root_id}-{slug}` | ✅ |
 
-#### Phase Transition Routing — Apex Workflow
+#### Phase Transition Routing — Root Workflow
 
 Routing from `twig-sdlc-v2-full.yaml` for each detected lifecycle phase:
 
@@ -655,7 +655,7 @@ Routing from `twig-sdlc-v2-full.yaml` for each detected lifecycle phase:
 | `done` | `detect-state.ps1` | `$end` | ✅ Correct |
 | `removed` | `detect-state.ps1` | `$end` | ✅ Correct |
 
-All 7 phase values produced by `detect-state.ps1` are handled by the apex workflow's route table. No unhandled phase values exist.
+All 7 phase values produced by `detect-state.ps1` are handled by the root workflow's route table. No unhandled phase values exist.
 
 #### Planning Sub-Workflow Routing
 
@@ -731,7 +731,7 @@ Key scripts produce JSON output consumed by workflow route conditions:
 |--------|-------------------|----------|:--------:|
 | `preflight-check.ps1` | `ready`, `summary`, `required_checks[]`, `failed_count` | `twig-sdlc-v2-full.yaml` routes on `ready` | ✅ |
 | `preflight-lite.ps1` | `ready`, `summary`, `checks[]` | Planning/implement preflight gates | ✅ |
-| `detect-state.ps1` | `phase`, `work_item_id`, `work_item_type`, `work_item_state`, `intent` | Apex workflow phase routing | ✅ |
+| `detect-state.ps1` | `phase`, `work_item_id`, `work_item_type`, `work_item_state`, `intent` | Root workflow phase routing | ✅ |
 | `pg-router.ps1` | `action`, `pr_groups[]`, `feature_branch` | `implement-pg.yaml` routes on `action` | ✅ |
 | `task-router.ps1` | `action`, `task_id`, `task_title`, `branch_name` | `implement-pg.yaml` routes on `action` | ✅ |
 | `load-work-tree.ps1` | `pr_groups[]`, `completed_pgs`, `pending_pgs` | `twig-sdlc-v2-implement.yaml` routes on `pending_pgs` length | ✅ |
@@ -815,7 +815,7 @@ The following gaps were identified during Phase 4 validation. These should be fi
 #### Gap 5: Script Output Contract Verification Incomplete *(Partially Resolved)*
 
 **Severity:** ~~Low~~ → **Informational**
-**Description:** Task 4.3.3 planned to verify script output contracts (JSON schema, required fields) against workflow expectations across the PowerShell script suite. The existing Pester lint tests (lint-type-agnostic, lint-apex-routing, etc.) validate script behavior but do not systematically verify output contract alignment with conductor workflow input schemas. The Basic template end-to-end trace (AB#2780) manually verified all 8 script output field names align with their consumer Jinja2 template references — no mismatches found.
+**Description:** Task 4.3.3 planned to verify script output contracts (JSON schema, required fields) against workflow expectations across the PowerShell script suite. The existing Pester lint tests (lint-type-agnostic, lint-root-routing, etc.) validate script behavior but do not systematically verify output contract alignment with conductor workflow input schemas. The Basic template end-to-end trace (AB#2780) manually verified all 8 script output field names align with their consumer Jinja2 template references — no mismatches found.
 **Impact:** Informational — manual verification complete for the Basic template. Automated contract assertions would guard against future drift.
 **Recommendation:** Consider adding output contract assertions to existing Pester lint suites in a future maintenance pass.
 
@@ -835,3 +835,4 @@ The following gaps were identified during Phase 4 validation. These should be fi
 - [Phase 3 Plan: Workflow YAML Refactoring](workflow-yaml-refactoring.plan.md)
 - [Azure DevOps Process Templates](https://learn.microsoft.com/en-us/azure/devops/boards/work-items/guidance/choose-process)
 - [Conductor Workflow Validation](https://github.com/github/conductor)
+

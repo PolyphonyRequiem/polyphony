@@ -74,8 +74,8 @@ stderr in AB#2923).
 - ❌ Use `when: "true"` as a sentinel catch-all *unless* it's the last
   route — earlier-evaluated `true` routes match first and short-circuit
   the rest.
-- ❌ Leave one apex workflow unprotected just because a sub-workflow has
-  a catch-all — the apex does its own routing on the sub-workflow's
+- ❌ Leave one root workflow unprotected just because a sub-workflow has
+  a catch-all — the root does its own routing on the sub-workflow's
   `output:` map.
 - ❌ Add a `routes:` table to a `human_gate` agent — silently ignored
   (gates route via `options[i].route`).
@@ -88,14 +88,15 @@ stderr in AB#2923).
 
 - ✅ Always provide a final unconditional route or an explicit error
   branch covering the script/agent's full output domain.
-- ✅ Pester-lint your apex routing tables to detect missing catch-alls
-  programmatically (see e.g. `tests/lint-apex-routing.Tests.ps1` in
+- ✅ Pester-lint your root routing tables to detect missing catch-alls
+  programmatically (see e.g. `tests/lint-root-routing.Tests.ps1` in
   `polyphony-conductor-workflows`).
 - ✅ When in doubt, route to a `human_gate` with the raw output — the
   human can then triage and decide.
 
 ## Discovery
-Polyphony AB#2922. The `polyphony-full.yaml` apex routed three known
+Polyphony AB#2922. The `polyphony-full.yaml` root routed three known
 phases from `state_detector` but nothing handled `phase=error`, so a
 real failure surfaced as `ValueError: No matching route found.`
 instead of an actionable error.
+

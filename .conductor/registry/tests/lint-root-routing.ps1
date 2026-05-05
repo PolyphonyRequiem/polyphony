@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    CI lint — validates phase-based routing in the apex workflow YAML.
+    CI lint — validates phase-based routing in the root workflow YAML.
 .DESCRIPTION
     Parses polyphony-full.yaml and verifies:
     1. All expected Polyphony phase values have corresponding routes
@@ -14,15 +14,15 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Join-Path $PSScriptRoot '..'
-$apexPath = Join-Path $repoRoot 'workflows' 'polyphony-full.yaml'
+$rootPath = Join-Path $repoRoot 'workflows' 'polyphony-full.yaml'
 
-if (-not (Test-Path $apexPath)) {
-    Write-Host "SKIP: $apexPath not found" -ForegroundColor Yellow
+if (-not (Test-Path $rootPath)) {
+    Write-Host "SKIP: $rootPath not found" -ForegroundColor Yellow
     exit 0
 }
 
-$content = Get-Content $apexPath -Raw
-$lines = @(Get-Content $apexPath)
+$content = Get-Content $rootPath -Raw
+$lines = @(Get-Content $rootPath)
 
 $violations = @()
 
@@ -88,7 +88,7 @@ foreach ($name in $subWorkflowNames) {
 
 # ── Report ────────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
-    Write-Host "FAIL: $($violations.Count) apex routing violation(s)" -ForegroundColor Red
+    Write-Host "FAIL: $($violations.Count) root routing violation(s)" -ForegroundColor Red
     Write-Host ''
     foreach ($v in $violations) {
         Write-Host "  [$($v.Rule)]: $($v.Detail)" -ForegroundColor Yellow
@@ -96,5 +96,7 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: Apex workflow routing validated ($($expectedPhases.Count) phases, $($subWorkflowNames.Count) sub-workflows)" -ForegroundColor Green
+Write-Host "PASS: Root workflow routing validated ($($expectedPhases.Count) phases, $($subWorkflowNames.Count) sub-workflows)" -ForegroundColor Green
 exit 0
+
+

@@ -1,14 +1,14 @@
 BeforeAll {
-    $script:LintScript = Join-Path $PSScriptRoot 'lint-apex-routing.ps1'
-    $script:ApexYaml = Join-Path $PSScriptRoot '..' 'workflows' 'polyphony-full.yaml'
+    $script:LintScript = Join-Path $PSScriptRoot 'lint-root-routing.ps1'
+    $script:RootYaml = Join-Path $PSScriptRoot '..' 'workflows' 'polyphony-full.yaml'
 }
 
-Describe 'lint-apex-routing.ps1' {
+Describe 'lint-root-routing.ps1' {
 
-    Context 'Production apex YAML validation' {
+    Context 'Production root YAML validation' {
 
         It 'Passes on the real polyphony-full.yaml' {
-            $script:ApexYaml | Should -Exist
+            $script:RootYaml | Should -Exist
             $output = pwsh -NoProfile -File $script:LintScript 2>&1
             $LASTEXITCODE | Should -Be 0
         }
@@ -17,12 +17,12 @@ Describe 'lint-apex-routing.ps1' {
     Context 'Phase coverage' {
 
         BeforeEach {
-            $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-apex-test-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+            $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-root-test-$([guid]::NewGuid().ToString('N').Substring(0,8))"
             $script:WorkflowsDir = Join-Path $script:TempRoot 'workflows'
             $script:TestsDir = Join-Path $script:TempRoot 'tests'
             New-Item $script:WorkflowsDir -ItemType Directory -Force | Out-Null
             New-Item $script:TestsDir -ItemType Directory -Force | Out-Null
-            Copy-Item $script:LintScript (Join-Path $script:TestsDir 'lint-apex-routing.ps1')
+            Copy-Item $script:LintScript (Join-Path $script:TestsDir 'lint-root-routing.ps1')
         }
 
         AfterEach {
@@ -59,7 +59,7 @@ agents:
     workflow: ./close-out.yaml
 '@
             Set-Content (Join-Path $script:WorkflowsDir 'polyphony-full.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-apex-routing.ps1') 2>&1
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-root-routing.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'removed'
         }
@@ -97,7 +97,7 @@ agents:
     workflow: ./close-out.yaml
 '@
             Set-Content (Join-Path $script:WorkflowsDir 'polyphony-full.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-apex-routing.ps1') 2>&1
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-root-routing.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'type-literal-in-route'
         }
@@ -133,7 +133,7 @@ agents:
     workflow: ./close-out.yaml
 '@
             Set-Content (Join-Path $script:WorkflowsDir 'polyphony-full.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-apex-routing.ps1') 2>&1
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-root-routing.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-workflow-type'
         }
@@ -169,8 +169,10 @@ agents:
     workflow: ./close-out.yaml
 '@
             Set-Content (Join-Path $script:WorkflowsDir 'polyphony-full.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-apex-routing.ps1') 2>&1
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-root-routing.ps1') 2>&1
             $LASTEXITCODE | Should -Be 0
         }
     }
 }
+
+

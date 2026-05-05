@@ -32,7 +32,7 @@ The current `twig-sdlc-full` workflow has this structure:
 
 | YAML File | Purpose | Type Coupling |
 |-----------|---------|---------------|
-| `twig-sdlc-full.yaml` | Apex entry, preflight → intake → planning → implementation → close-out | Routes by work item type |
+| `twig-sdlc-full.yaml` | Root entry, preflight → intake → planning → implementation → close-out | Routes by work item type |
 | `twig-sdlc-planning.yaml` | Planning orchestration (architect → review → approve) | Epic/Issue-specific branches |
 | `twig-sdlc-implement.yaml` | Implementation orchestration (PG manager → task manager) | Issue/Task-specific paths |
 | `plan-design.yaml` | Architect agent for Epic-level plans | Epic-only |
@@ -45,7 +45,7 @@ The current `twig-sdlc-full` workflow has this structure:
 
 | Script | Purpose | Polyphony Integration |
 |--------|---------|----------------------|
-| `detect-state.ps1` | Apex state detection: phase, plan, seeds, intent | `polyphony route` + `polyphony validate` |
+| `detect-state.ps1` | Root state detection: phase, plan, seeds, intent | `polyphony route` + `polyphony validate` |
 | `pg-router.ps1` | Route to next PG action | `polyphony hierarchy` + `Group-ByPG` |
 | `task-router.ps1` | Route to next implementable task within a PG | `polyphony hierarchy` + capability filter |
 | `scope-closer.ps1` | Close items in a PG after PR merge | `polyphony validate` per item |
@@ -70,7 +70,7 @@ Conductor workflow YAMLs support the following agent types and constructs releva
 ### Recursion Depth Budget (C3)
 
 ```
-Depth 0: twig-sdlc-v2-full.yaml (apex)
+Depth 0: twig-sdlc-v2-full.yaml (root)
 Depth 1: plan-level.yaml OR implement-pg.yaml (sub-workflow)
 Depth 2: plan-level.yaml recursion (child planning)
 Depth 3-7: plan-level.yaml recursion (up to 6 nested plannable levels)
@@ -137,8 +137,8 @@ The existing `twig-sdlc-full` workflow hardcodes Epic → Issue → Task hierarc
 
 | ID | Requirement | Source |
 |----|-------------|--------|
-| FR1 | Apex workflow accepts `work_item_id`, `intent`, and `user_plan_path` inputs | §3.1 |
-| FR2 | Apex workflow routes to planning or implementation based on `polyphony route` phase detection | §3.1 |
+| FR1 | Root workflow accepts `work_item_id`, `intent`, and `user_plan_path` inputs | §3.1 |
+| FR2 | Root workflow routes to planning or implementation based on `polyphony route` phase detection | §3.1 |
 | FR3 | Planning sub-workflow handles any plannable level via a single `plan-level.yaml` | §3.2 |
 | FR4 | Planning sub-workflow recursively invokes itself for nested plannable children | §3.2 |
 | FR5 | Planning recursion is capped at 6 levels (C3 depth budget) | §3.2 |
@@ -167,7 +167,7 @@ The existing `twig-sdlc-full` workflow hardcodes Epic → Issue → Task hierarc
 The v2 workflow is a tree of YAML files, each representing a bounded orchestration concern:
 
 ```
-twig-sdlc-v2-full.yaml                    (apex: preflight → detect → route)
+twig-sdlc-v2-full.yaml                    (root: preflight → detect → route)
   ├── twig-sdlc-v2-planning.yaml           (planning orchestration)
   │     └── plan-level.yaml                (recursive: plan any plannable level)
   │           └── plan-level.yaml          (self-recursion for child levels)
@@ -183,7 +183,7 @@ twig-sdlc-v2-full.yaml                    (apex: preflight → detect → route)
 
 ### Key Components
 
-#### 1. `twig-sdlc-v2-full.yaml` — Apex Workflow
+#### 1. `twig-sdlc-v2-full.yaml` — Root Workflow
 
 **Responsibility:** Top-level entry point. Accepts any work item type, detects phase, routes to planning or implementation.
 
@@ -219,7 +219,7 @@ state_detector (script: detect-state.ps1)
   → phase=removed → $end
 ```
 
-**Key difference from v1:** No type-specific routing. The `detect-state.ps1` script calls `polyphony route` which returns capability-based phase decisions. The apex workflow routes purely on phase, not type.
+**Key difference from v1:** No type-specific routing. The `detect-state.ps1` script calls `polyphony route` which returns capability-based phase decisions. The root workflow routes purely on phase, not type.
 
 #### 2. `twig-sdlc-v2-planning.yaml` — Planning Orchestration
 
@@ -515,7 +515,7 @@ detect-state.ps1 ──→ polyphony route ──→ { phase, action, workspace_
 
 ### Sequencing Constraints
 
-1. Issue 3.1 (apex workflow) must be created first — it defines the entry point and input contract.
+1. Issue 3.1 (root workflow) must be created first — it defines the entry point and input contract.
 2. Issues 3.2 (planning) and 3.3 (implementation) can proceed in parallel after 3.1.
 3. Issue 3.4 (feature PR + remediation) depends on both 3.3 (implementation) and 3.2 (planning, for remediation planning).
 4. The polyphony-sdlc SKILL.md update depends on all YAMLs being complete.
@@ -548,7 +548,7 @@ detect-state.ps1 ──→ polyphony route ──→ { phase, action, workspace_
 
 | File Path | Purpose |
 |-----------|---------|
-| `workflows/twig-sdlc-v2-full.yaml` | Apex workflow: preflight → detect → route to planning/implementation/close-out |
+| `workflows/twig-sdlc-v2-full.yaml` | Root workflow: preflight → detect → route to planning/implementation/close-out |
 | `workflows/twig-sdlc-v2-planning.yaml` | Planning orchestration: preflight → plan-level → seed check |
 | `workflows/plan-level.yaml` | Recursive planning: architect → review → approve → seed → recurse for children |
 | `workflows/twig-sdlc-v2-implement.yaml` | Implementation orchestration: load work tree → parallel PG dispatch |
@@ -573,9 +573,9 @@ detect-state.ps1 ──→ polyphony route ──→ { phase, action, workspace_
 
 This Epic (#2583) is decomposed into 4 Issues, each with concrete Tasks.
 
-### Issue 3.1: Apex Workflow (`twig-sdlc-v2-full.yaml`)
+### Issue 3.1: Root Workflow (`twig-sdlc-v2-full.yaml`)
 
-**Goal:** Create the v2 apex workflow that accepts any work item type and routes based on Polyphony phase detection, with `user_plan_path` as a first-class input.
+**Goal:** Create the v2 root workflow that accepts any work item type and routes based on Polyphony phase detection, with `user_plan_path` as a first-class input.
 
 **Prerequisites:** None (first Issue to implement).
 
@@ -584,10 +584,10 @@ This Epic (#2583) is decomposed into 4 Issues, each with concrete Tasks.
 | Task ID | Description | Files | Effort |
 |---------|-------------|-------|--------|
 | 3.1.1 | Create `twig-sdlc-v2-full.yaml` with inputs (work_item_id, intent, user_plan_path), preflight_check script node, and state_detector script node | `workflows/twig-sdlc-v2-full.yaml` | 3h |
-| 3.1.2 | Implement phase-based routing in apex YAML: route to planning, implementation, close-out, or end based on detect-state.ps1 output | `workflows/twig-sdlc-v2-full.yaml` | 2h |
+| 3.1.2 | Implement phase-based routing in root YAML: route to planning, implementation, close-out, or end based on detect-state.ps1 output | `workflows/twig-sdlc-v2-full.yaml` | 2h |
 | 3.1.3 | Add preflight_gate human gate with retry/proceed/abort options using Jinja2 template | `workflows/twig-sdlc-v2-full.yaml` | 1h |
 | 3.1.4 | Create `close-out.yaml` sub-workflow with close_out agent and closeout_filer agent | `workflows/close-out.yaml` | 2h |
-| 3.1.5 | Validate apex and close-out YAMLs via `conductor validate` | N/A (validation) | 1h |
+| 3.1.5 | Validate root and close-out YAMLs via `conductor validate` | N/A (validation) | 1h |
 
 **Acceptance Criteria:**
 - [ ] `twig-sdlc-v2-full.yaml` accepts `work_item_id`, `intent`, and `user_plan_path` inputs
@@ -599,7 +599,7 @@ This Epic (#2583) is decomposed into 4 Issues, each with concrete Tasks.
 
 **Goal:** Create the recursive planning system that handles any plannable level with a single `plan-level.yaml`, replacing 4 type-specific planning workflows.
 
-**Prerequisites:** Issue 3.1 (apex workflow defines entry point).
+**Prerequisites:** Issue 3.1 (root workflow defines entry point).
 
 **Tasks:**
 
@@ -624,7 +624,7 @@ This Epic (#2583) is decomposed into 4 Issues, each with concrete Tasks.
 
 **Goal:** Create the implementation orchestration with full parallel PG support and platform-specific PR sub-workflows.
 
-**Prerequisites:** Issue 3.1 (apex workflow defines entry point).
+**Prerequisites:** Issue 3.1 (root workflow defines entry point).
 
 **Tasks:**
 
@@ -674,7 +674,7 @@ This Epic (#2583) is decomposed into 4 Issues, each with concrete Tasks.
 
 PR groups cluster Tasks for reviewable PRs. Sized for ≤2000 LoC and ≤50 files each.
 
-### PG-1: Apex & Close-Out Workflows
+### PG-1: Root & Close-Out Workflows
 **Type:** Deep (few files, complex routing logic)
 **Tasks:** 3.1.1, 3.1.2, 3.1.3, 3.1.4, 3.1.5
 **Estimated LoC:** ~600 (2 YAML files with routing, gate templates, agent prompts)
@@ -706,14 +706,14 @@ PR groups cluster Tasks for reviewable PRs. Sized for ≤2000 LoC and ≤50 file
 
 | Group | Name | Issues/Tasks | Dependencies | Type |
 |-------|------|--------------|--------------|------|
-| PG-1 | apex-and-closeout | Issue 3.1 / Tasks 3.1.1–3.1.5 | None | Deep |
+| PG-1 | root-and-closeout | Issue 3.1 / Tasks 3.1.1–3.1.5 | None | Deep |
 | PG-2 | recursive-planning | Issue 3.2 / Tasks 3.2.1–3.2.6 | PG-1 | Deep |
 | PG-3 | implementation-and-pr | Issue 3.3 / Tasks 3.3.1–3.3.6 | PG-1 | Deep |
 | PG-4 | feature-pr-remediation-docs | Issue 3.4 / Tasks 3.4.1–3.4.6 | PG-2, PG-3 | Deep |
 
 ### Execution Order
 
-**Phase 1 — PG-1 (serial prerequisite):** Implement `twig-sdlc-v2-full.yaml` and `close-out.yaml`. This establishes the apex entry point, input contract (`work_item_id`, `intent`, `user_plan_path`), preflight gate, phase-based routing stubs, and the close-out sub-workflow. `conductor validate` is scoped to these two files. All downstream PGs depend on the apex being merged first.
+**Phase 1 — PG-1 (serial prerequisite):** Implement `twig-sdlc-v2-full.yaml` and `close-out.yaml`. This establishes the root entry point, input contract (`work_item_id`, `intent`, `user_plan_path`), preflight gate, phase-based routing stubs, and the close-out sub-workflow. `conductor validate` is scoped to these two files. All downstream PGs depend on the root being merged first.
 
 **Phase 2 — PG-2 and PG-3 (parallel):** Once PG-1 is merged, PG-2 and PG-3 can proceed concurrently on separate branches. PG-2 delivers the recursive planning suite (`twig-sdlc-v2-planning.yaml`, `plan-level.yaml`, `load-type-context.ps1`, `depth-guard.ps1`). PG-3 delivers the implementation orchestration (`twig-sdlc-v2-implement.yaml`, `implement-pg.yaml`, `github-pr.yaml`, `ado-pr.yaml`, `dependency-check.ps1`). Each set is self-contained within its branch and does not modify files owned by the other.
 
@@ -722,7 +722,7 @@ PR groups cluster Tasks for reviewable PRs. Sized for ≤2000 LoC and ≤50 file
 ### Dependency Topology
 
 ```
-PG-1 (apex + close-out)
+PG-1 (root + close-out)
   ├─► PG-2 (recursive planning)   ─┐
   └─► PG-3 (implementation + PR)  ─┴─► PG-4 (feature PR + remediation + docs)
 ```
@@ -748,3 +748,4 @@ All four PR groups are self-contained. The work is purely additive (no existing 
 - [Process Config](../../.conductor/process-config.yaml) — Type capabilities, transitions, review policies, branch strategy
 - [Work Item Type Definitions](../../.conductor/work-item-types/) — Epic, Issue, Task semantic definitions
 - [twig-conductor-workflows repo](https://github.com/PolyphonyRequiem/twig-conductor-workflows) — Target repo for v2 YAML files
+

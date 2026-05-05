@@ -7,7 +7,7 @@ public sealed partial class BranchCommands
 {
     /// <summary>
     /// Idempotently ensure a feature branch exists locally and on the remote.
-    /// Creates from <paramref name="baseBranch"/> if absent. The apex workflow
+    /// Creates from <paramref name="baseBranch"/> if absent. The root workflow
     /// calls this once after state detection; sub-workflows receive the branch
     /// name as an input and trust it.
     /// </summary>
@@ -92,3 +92,4 @@ public sealed partial class BranchCommands
         }
     }
 }
+

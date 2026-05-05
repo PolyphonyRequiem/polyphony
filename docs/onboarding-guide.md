@@ -765,7 +765,7 @@ Once validation passes, you're ready to run the v2 SDLC workflow.
 
 ### Invoking the Workflow
 
-The workflow is invoked through `conductor run` with a work item ID. The apex
+The workflow is invoked through `conductor run` with a work item ID. The root
 workflow takes three named inputs (`work_item_id`, `intent`, optional
 `user_plan_path`) — see `.github/skills/polyphony-sdlc/SKILL.md:330-355` for
 the full input contract:
@@ -1073,3 +1073,4 @@ Use this checklist when onboarding a new repo:
 - [ ] Fix any errors, review warnings
 - [ ] Run `conductor run twig-sdlc-v2-full@twig --input work_item_id=<id> --web` on a test work item
 - [ ] Verify routing, agent behavior, and PR lifecycle work correctly
+

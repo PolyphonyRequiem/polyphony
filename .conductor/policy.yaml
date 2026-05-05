@@ -3,11 +3,11 @@ schema_version: 1
 # .conductor/policy.yaml — polyphony's own SDLC policy.
 #
 # Loaded by `polyphony policy load` at the start of every workflow run
-# (apex `polyphony-full.yaml`). Consumed at decision points via
+# (root `polyphony-full.yaml`). Consumed at decision points via
 # `polyphony policy resolve --scope <root|type:Name|default> --domain <approvals|pr>`.
 #
 # CURRENT CONFIGURATION:
-# • Apex work items (Epic-level): manual approval gate — always requires sign-off
+# • Root work items (Epic-level): manual approval gate — always requires sign-off
 # • All other items: warning mode — gates only when quality bar is missed or fix loop cap hit
 # • PR merge: warning mode — auto-merges unless major issues remain at fix-loop cap
 # • Planning parallelism: up to 3 concurrent child workflows per recursion frame
@@ -15,7 +15,7 @@ schema_version: 1
 #
 # HOW IT WORKS:
 # Policy resolution uses three scopes (most-specific-wins):
-#   root          — the apex work item passed via -i work_item_id=<N>
+#   root          — the root work item passed via -i work_item_id=<N>
 #   type:<Name>   — any item of that type (e.g. type:Issue, type:Task)
 #   defaults      — fallback for everything else
 #
@@ -37,7 +37,7 @@ approvals:
       avg_score_at_least: 85
       blocking_count_at_most: 0
 
-  # ACTIVE: Apex work item overrides to manual.
+  # ACTIVE: Root work item overrides to manual.
   # — Ensures Epic-level items always require explicit human sign-off
   # — Prevents automatic approval regardless of score
   root:
@@ -62,7 +62,7 @@ pr:
     max_remediation_cycles: 3
 
   # Per-scope overrides (commented out — use to apply different gates to specific items).
-  # Example: uncomment root to require manual merge approval for apex PRs.
+  # Example: uncomment root to require manual merge approval for root PRs.
   root:
     mode: manual
   # by_type:
@@ -100,9 +100,10 @@ open_questions:
 
   # Per-scope overrides:
   # root:
-  #   mode: manual       # Apex items always gate on open questions
+  #   mode: manual       # Root items always gate on open questions
   # by_type:
   #   Task:
   #     mode: auto       # Tasks skip question gate entirely
   #   Epic:
   #     mode: manual     # Epics always gate regardless of severity
+

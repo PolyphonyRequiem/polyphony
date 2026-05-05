@@ -1,6 +1,6 @@
 # polyphony-planning — Planning orchestration sub-workflow.
 #
-# Invoked by the apex workflow (polyphony-full.yaml) when
+# Invoked by the root workflow (polyphony-full.yaml) when
 # phase=needs_planning or phase=needs_seeding. Runs a lightweight
 # preflight, delegates to plan-level.yaml for recursive planning, then
 # re-checks state to determine whether seeding is needed.
@@ -162,3 +162,4 @@ agents:
       # loop will re-detect and re-route on the next iteration if state
       # is still unresolved. See conductor-mechanics M4.
       - to: $end
+

@@ -1,4 +1,4 @@
-# polyphony-full — Type-agnostic apex workflow for the polyphony SDLC pipeline.
+# polyphony-full — Type-agnostic root workflow for the polyphony SDLC pipeline.
 #
 # Entry point for any work item type at any hierarchy level. Runs preflight
 # validation, detects lifecycle phase via Polyphony, and routes to the
@@ -11,7 +11,7 @@
 workflow:
   name: polyphony-full
   description: >-
-    Type-agnostic SDLC apex workflow. Validates prerequisites, detects lifecycle
+    Type-agnostic SDLC root workflow. Validates prerequisites, detects lifecycle
     phase, and routes to planning, implementation, close-out, or end.
   version: "1.0.1"
   entry_point: policy_loader
@@ -19,7 +19,7 @@ workflow:
     min_polyphony_version: "1.0.1"
 
   limits:
-    # Apex workflow that orchestrates planning/implementation/close-out
+    # Root workflow that orchestrates planning/implementation/close-out
     # sub-workflows; default 10 is far too low.
     max_iterations: 200
 
@@ -45,7 +45,7 @@ workflow:
       description: Path to .conductor/policy.yaml (override via -i policy=<path>)
 
 agents:
-  # ── Policy load (apex resolution) ──────────────────────────────────────
+  # ── Policy load (root resolution) ──────────────────────────────────────
   #
   # Loads .conductor/policy.yaml (or the override supplied via
   # -i policy=<path>) at start-of-run. Surfaces the fully-resolved snapshot
@@ -54,7 +54,7 @@ agents:
   # defaults-only snapshot with used_defaults=true.
   #
   # Sub-workflows that need scope-aware mode/cap resolution call
-  # `polyphony policy resolve` themselves rather than threading the apex
+  # `polyphony policy resolve` themselves rather than threading the root
   # snapshot through every input_mapping (see Phase 7 follow-up notes in
   # docs/decisions/polyphony-verb-migration.md).
   #
@@ -201,7 +201,7 @@ agents:
 
   # ── Feature branch management ──────────────────────────────────────────
   #
-  # The apex owns the feature branch lifecycle. This step idempotently
+  # The root owns the feature branch lifecycle. This step idempotently
   # ensures the feature branch exists locally and on the remote before
   # routing to planning or implementation. Sub-workflows receive the
   # branch name as an input and trust it exists.
@@ -278,7 +278,7 @@ agents:
   #
   # Invoked when state_detector.output.phase is ready_for_completion.
   # Creates a feature PR (feature branch → main), reviews it, runs
-  # remediation cycles if needed, and merges. The apex owns the feature
+  # remediation cycles if needed, and merges. The root owns the feature
   # branch lifecycle — this step consumes it.
   #
   # Invariants:
@@ -389,3 +389,4 @@ agents:
         }
     routes:
       - to: $end
+

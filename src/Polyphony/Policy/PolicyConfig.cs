@@ -34,7 +34,7 @@ public sealed class DomainPolicy
     /// <summary>Fallback rule for everything that doesn't hit a more specific scope.</summary>
     public ScopeRule? Defaults { get; set; }
 
-    /// <summary>Rule applied when the work item is the apex of the workflow run
+    /// <summary>Rule applied when the work item is the root of the workflow run
     /// (the one passed via <c>--input work_item_id</c>).</summary>
     public ScopeRule? Root { get; set; }
 
@@ -88,3 +88,4 @@ public sealed class ConcurrencyPolicy
     /// <summary>Implementation for_each cap (max parallel PG implementation sub-workflows).</summary>
     public int? MaxConcurrentPgs { get; set; }
 }
+

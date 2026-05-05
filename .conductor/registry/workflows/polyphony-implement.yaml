@@ -1,6 +1,6 @@
 # polyphony-implement — Implementation orchestration sub-workflow.
 #
-# Invoked by the apex workflow (polyphony-full.yaml) when
+# Invoked by the root workflow (polyphony-full.yaml) when
 # phase=ready_for_implementation or phase=in_progress. Runs a lightweight
 # preflight, loads the work tree for PG structure, and dispatches each
 # pending PG in parallel via for_each to implement-pg.yaml.
@@ -67,7 +67,7 @@ agents:
   # ── Lightweight preflight ──────────────────────────────────────────────
   #
   # Quick 3-check validation (twig CLI, polyphony CLI, git repo) before
-  # implementation begins. Cheaper than full preflight since the apex
+  # implementation begins. Cheaper than full preflight since the root
   # workflow already ran the comprehensive preflight-check.ps1.
   #
   # Invariants:

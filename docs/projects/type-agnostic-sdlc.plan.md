@@ -483,7 +483,7 @@ attempting transitions. Missing mappings are hard errors, not silent fallbacks.
 ### C3: Recursion Depth Budget
 Conductor max depth is 10. Budget allocation:
 ```
-Depth 0: twig-sdlc-full (apex)
+Depth 0: twig-sdlc-full (root)
 Depth 1: planning OR implementation (sub-workflow)
 Depth 2: plan-level (recursive planning per level)
 Depth 3–7: plan-level recursion (up to 6 nested plannable levels)
@@ -591,7 +591,7 @@ These are promoted into Polyphony in later phases once routing is proven.
 
 ### Phase 3: Workflow YAML Refactoring
 
-#### 3.1 — Apex workflow (twig-sdlc-full.yaml)
+#### 3.1 — Root workflow (twig-sdlc-full.yaml)
 - Generic entry point accepting any type at any level
 - Routes based on Polyphony's phase detection
 - Remove type-specific routing branches
@@ -731,3 +731,4 @@ All previously open questions have been resolved:
 - Git (branch operations)
 - gh CLI (PR operations — GitHub primary)
 - az repos (PR operations — ADO stub, deferred implementation)
+

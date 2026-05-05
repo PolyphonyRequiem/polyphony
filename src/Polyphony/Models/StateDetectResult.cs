@@ -1,7 +1,7 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output of <c>polyphony state detect</c>: the apex SDLC's authoritative
+/// Output of <c>polyphony state detect</c>: the root SDLC's authoritative
 /// view of the work item's lifecycle position. Mirrors the JSON contract
 /// of <c>scripts/detect-state.ps1</c> (line 250-273).
 /// </summary>
@@ -58,3 +58,4 @@ public sealed record StateDetectResult
 /// <summary>Children state count summary; serialised as the
 /// <c>children_summary</c> JSON string field of <see cref="StateDetectResult"/>.</summary>
 public sealed record ChildrenStateCounts(int Total, int Done, int Doing, int Todo);
+

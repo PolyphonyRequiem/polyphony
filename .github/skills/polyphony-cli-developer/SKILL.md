@@ -377,7 +377,8 @@ retry/abort. **There is no Proceed Anyway.**
 This deliberately lives in `state preflight*` rather than `health`
 because `preflight_gate` already understands the preflight JSON shape,
 and because sub-workflows that invoke `preflight-lite` standalone get
-coverage too (no apex-only hole).
+coverage too (no root-only hole).
 
 See [`docs/decisions/versioning-strategy.md`](../../../docs/decisions/versioning-strategy.md)
 for the full rationale.
+

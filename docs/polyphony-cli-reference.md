@@ -44,7 +44,7 @@ Polyphony exists in two layers that share a name:
 | Layer | What it is | Where it lives | Who consumes it |
 |---|---|---|---|
 | **Polyphony CLI** | C# binary; ~24 verbs returning JSON. Pure decisions over twig cache + config. | `src/Polyphony/`, ships as `polyphony.exe` | Workflow YAMLs (via `pwsh -Command "polyphony …"`); humans at the terminal |
-| **Polyphony workflow suite** | 9 conductor YAML files (apex + planning + implementation + close-out + 2 PR sub-workflows). Multi-agent orchestration. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run polyphony-full@polyphony …`); humans at human-gates |
+| **Polyphony workflow suite** | 9 conductor YAML files (root + planning + implementation + close-out + 2 PR sub-workflows). Multi-agent orchestration. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run polyphony-full@polyphony …`); humans at human-gates |
 
 They ship from the same repo since the in-repo workflow co-location migration,
 but they are independent artifacts:
@@ -62,7 +62,7 @@ but they are independent artifacts:
    ┌──────────────────────────┐              ┌──────────────────────────────────┐
    │  Polyphony WORKFLOW       │              │  LLM agents (Opus, Sonnet)       │
    │  suite (9 YAMLs)          │  dispatches  │  for judgment work               │
-   │  apex + planning +        │ ───────────► │  (architect, reviewer, coder,    │
+   │  root + planning +        │ ───────────► │  (architect, reviewer, coder,    │
    │  implementation +         │              │   fixer, merger, scope_reviewer) │
    │  close-out + PR lifecycles│              └──────────────────────────────────┘
    └─────────────┬────────────┘
@@ -113,7 +113,7 @@ CLI.
 | top-level | `health` | Diagnostic checks (SQLite, dotnet, twig on PATH, etc.) | environment | — |
 | `state` | `preflight` | Full SDLC entry gate: 4 required + 3 advisory checks | git, twig, gh, ado | — |
 | `state` | `preflight-lite` | Quick 3-check entry gate for the planning sub-workflow | git, twig | — |
-| `state` | `detect` | Apex routing payload: phase + plan artifacts + git/PR state | twig cache, fs, git, gh | — |
+| `state` | `detect` | Root routing payload: phase + plan artifacts + git/PR state | twig cache, fs, git, gh | — |
 | `plan` | `depth-guard` | Validate recursion depth against a configured maximum | (args only) | — |
 | `plan` | `next-child` | List immediate plannable children of a work item | twig cache | — |
 | `plan` | `load-type` | Load type-definition + template + decomposition guidance | config files | — |
@@ -187,7 +187,7 @@ take** for a given work item. There are two levels of this decision:
 - **SDLC phase routing** (`polyphony route`, `polyphony state detect`):
   Given a work item ID, what *lifecycle phase* is it in? Does it need
   planning, seeding, implementation, close-out, or is it done? This is the
-  decision the apex workflow (`polyphony-full.yaml`) makes once at the top.
+  decision the root workflow (`polyphony-full.yaml`) makes once at the top.
 
 - **PR-group routing** (`polyphony branch route`): Given a hierarchy of work
   items already partitioned into PR groups (PGs) via `PG-N` tags, which PG
@@ -259,7 +259,7 @@ JSON shape (`src/Polyphony/Models/RouteResult.cs`):
 unsubstituted — caller fills in the PG number.
 
 **Use when:** A workflow needs to decide which sub-workflow to dispatch to
-next. The apex routing decision in `polyphony-full.yaml` is driven entirely
+next. The root routing decision in `polyphony-full.yaml` is driven entirely
 by this verb (via `state detect`, which wraps it).
 
 **Don't use when:** You need to *change* a state — `route` is read-only.
@@ -271,7 +271,7 @@ Use `validate` to learn the target state, then `twig state <name>` to apply it.
 polyphony state detect --work-item <id> [--intent new|redo|resume] [--plan-path <path>] [--plan-root <dir>]
 ```
 
-The apex workflow's single biggest decision verb. Wraps `polyphony route`
+The root workflow's single biggest decision verb. Wraps `polyphony route`
 with three additional inputs:
 
 1. **User intent** (`--intent new|redo|resume`) — distinguishes a fresh
@@ -283,11 +283,11 @@ with three additional inputs:
 3. **Git/PR state** — checks the local repo for the feature branch and the
    remote for any matching PR.
 
-The output is the *canonical apex routing payload* — a flat record with
-everything the apex YAML needs to route between planning, implementation,
+The output is the *canonical root routing payload* — a flat record with
+everything the root YAML needs to route between planning, implementation,
 and close-out without making additional CLI calls.
 
-**Use when:** You're authoring the apex node of a new SDLC workflow.
+**Use when:** You're authoring the root node of a new SDLC workflow.
 
 **Don't use when:** You only need the SDLC phase and don't care about plan
 artifacts or git state — `polyphony route` is the lighter call.
@@ -409,7 +409,7 @@ polyphony validate-config [--config <dir>] [--output json|human]
 
 Returns `0` on valid (warnings allowed) or `2` on any error.
 
-**Use when:** CI / preflight, before any workflow runs. The apex
+**Use when:** CI / preflight, before any workflow runs. The root
 `state preflight` does *not* call `validate-config` directly — that's a
 separate concern that runs earlier in CI or as a one-shot before pushing
 config changes.
@@ -513,14 +513,14 @@ on `has_plannable_children`.
 The `state` group covers two related concerns:
 
 1. **Preflight** — *before we start, is everything wired up?* Two flavors:
-   `state preflight` (full, used by the apex workflow), and `state preflight-lite`
+   `state preflight` (full, used by the root workflow), and `state preflight-lite`
    (3 checks, used by sub-workflows that re-enter mid-run).
 2. **Detect** — *what's our current position in the lifecycle?* See § 3
    above for the full description of `state detect`.
 
 Both follow the **routing-style exit convention**: always exit 0; route on the
 JSON payload's `ready` (preflight) or `phase` (detect) field. Errors are
-reported via the payload, not via process exit code, so the apex workflow can
+reported via the payload, not via process exit code, so the root workflow can
 route to a human gate even on environment failures.
 
 ### `polyphony state preflight`
@@ -555,7 +555,7 @@ polyphony state preflight-lite
 
 Three checks only: `git_repo`, `twig_cli`, `polyphony_cli`. No work item
 needed. Used by re-entering sub-workflows that already passed full preflight
-on the apex run.
+on the root run.
 
 ---
 
@@ -589,7 +589,7 @@ polyphony policy load [--path <file>]
 Loads `policy.yaml` (or `--path`) and returns a snapshot of the resolved
 configuration with built-in defaults applied. When the file doesn't exist,
 returns a defaults-only snapshot with `used_defaults: true`. This is the
-verb the apex workflow calls once at the top to bake the policy into the run.
+verb the root workflow calls once at the top to bake the policy into the run.
 
 ### `polyphony policy validate`
 
@@ -726,7 +726,7 @@ Match precedence per task:
 On zero errors, merges the planned tag (default `polyphony:planned`) into
 the parent's `System.Tags`. `PhaseDetector` reads this tag to recognize the
 "already planned" state without consulting `process-config.yaml`
-(`PhaseDetector.cs:60-67`) — this is what stops the apex workflow from
+(`PhaseDetector.cs:60-67`) — this is what stops the root workflow from
 re-routing into planning forever after it succeeds.
 
 ---
@@ -779,7 +779,7 @@ Idempotent: if the branch exists locally, checks it out; if it exists on
 remote but not locally, fetches and checks out; if it exists nowhere, creates
 from `--base-branch` (default `main`) and pushes. Default remote is `origin`.
 
-The apex workflow calls this once after state detection. Sub-workflows trust
+The root workflow calls this once after state detection. Sub-workflows trust
 the branch name as an input rather than re-running the check.
 
 ### `polyphony branch next-task`
@@ -1004,3 +1004,4 @@ home. Otherwise, the script registry is where it belongs.
   call when, with worked examples).
 - **CLI authoring conventions:** `.github/skills/polyphony-cli-developer/SKILL.md`
   (when adding a new verb).
+

@@ -103,7 +103,7 @@ preflight-lite` — **not** raw `polyphony health`. Two reasons:
    parse a second JSON shape.
 2. Sub-workflows that invoke `preflight-lite` standalone (e.g. for testing
    or for partial re-entry) get the same enforcement automatically — no
-   apex-only hole.
+   root-only hole.
 
 The verb gains two flags:
 
@@ -196,3 +196,4 @@ compare per SemVer rules, with `1.1.0-alpha.5` < `1.1.0`.)
 - Conductor invocation grammar: `<workflow>@<registry>@<version>` (the
   version segment looks up the YAML registered under that version in
   `index.yaml`).
+
