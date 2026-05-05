@@ -220,3 +220,44 @@ These fields are covered by `tests/Polyphony.Tests/Commands/JsonOutputContractTe
 so they will not change shape silently. If you find yourself reaching for a field that
 isn't in the model, add it to the model + test (see polyphony-cli-developer skill),
 don't paper over it in PowerShell.
+
+---
+
+## The min-polyphony-version rule
+
+**Every workflow YAML MUST declare** the minimum polyphony CLI version
+it requires:
+
+```yaml
+workflow:
+  name: polyphony-full
+  version: "1.0.0"
+  metadata:
+    min_polyphony_version: "1.0.0"   # required, enforced by Pester lint
+```
+
+When you change a workflow to call a verb / flag / JSON field that didn't
+exist in an earlier polyphony release, **bump
+`min_polyphony_version` to the lowest CLI release that has the new
+surface**. The bundled-SemVer model means this almost always equals the
+YAML's own `workflow.version` after a release cut — but you bump
+`min_polyphony_version` *with the change* (in the contract-bumping PR),
+not at release time.
+
+The check is enforced at runtime by `polyphony state preflight` /
+`polyphony state preflight-lite` via the `--workflow-yaml "{{ workflow.file }}"`
+flag (already wired in the apex preflight agent and both planning /
+implement preflight-lite agents). On mismatch, preflight returns a failed
+check, the gate routes to retry/abort, and there is no Proceed Anyway —
+silent misroutes are exactly what this guard exists to prevent.
+
+> **Why a flag, not a `{{ workflow.metadata.min_polyphony_version }}`
+> template?** Conductor only exposes `workflow.input`, `workflow.dir`,
+> `workflow.file`, `workflow.name` in template context. **`workflow.metadata`
+> is NOT templatable.** The verb reads the YAML itself and parses the
+> metadata. If you're tempted to interpolate metadata into a script's
+> `args:`, re-read `m07-output-map-vs-schema.md`.
+
+See [`docs/decisions/versioning-strategy.md`](../../../docs/decisions/versioning-strategy.md)
+for the full rationale, the bundled-SemVer model, and the three-layer
+truth (git tag · YAML self-description · `index.yaml` versions list).

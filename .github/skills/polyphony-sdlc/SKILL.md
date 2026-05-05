@@ -344,6 +344,48 @@ The `platform` input (default: `github`) on `implement-pg.yaml` and `feature-pr.
 controls which sub-workflow is selected. Platform selection is driven by
 `process-config.yaml` — not hardcoded in workflow routing.
 
+## Versioning
+
+The polyphony CLI binary and the workflow registry **ship bundled** —
+one git tag (`v1.2.3`) drives both:
+
+- CLI binary version `1.2.3` (MinVer reads the tag).
+- Every workflow YAML's `workflow.version: "1.2.3"`.
+- Each `index.yaml` workflow entry's `versions: [...]` list ends with
+  `"1.2.3"` (the list is append-only across releases).
+
+Each workflow YAML also declares a **min CLI version** it requires:
+
+```yaml
+workflow:
+  name: polyphony-full
+  version: "1.0.0"
+  metadata:
+    min_polyphony_version: "1.0.0"
+```
+
+On every run, `polyphony state preflight` (apex) and `polyphony state
+preflight-lite` (planning + implement sub-workflows) check the running
+CLI's `AssemblyInformationalVersion` against
+`metadata.min_polyphony_version` and **fail preflight on mismatch**.
+The existing `preflight_gate` routes a failed preflight to retry/abort
+— there is no "Proceed Anyway" option for version mismatches.
+
+Comparison ignores `+build-metadata` (per SemVer); pre-release identifiers
+(`-alpha.5`) are NOT stripped and compare per SemVer rules.
+
+> **Do not upgrade polyphony mid-run.** v1 has no resume-time re-check;
+> if you upgrade between conductor sessions, restart the workflow rather
+> than `--resume`.
+
+> **Pinning.** `conductor registry add` does NOT accept `--ref` / `--tag`
+> for github sources, so you can't pin the registry version via
+> conductor. The min-version preflight check is the runtime guarantee
+> instead.
+
+For full rationale and the three-layer truth model see
+[`docs/decisions/versioning-strategy.md`](../../../docs/decisions/versioning-strategy.md).
+
 ## How to Invoke
 
 ### Prerequisites
@@ -351,10 +393,19 @@ controls which sub-workflow is selected. Platform selection is driven by
 1. Install the conductor CLI
 2. Register the polyphony workflow registry:
    ```
-   conductor registry add polyphony --source github://PolyphonyRequiem/polyphony-conductor-workflows
+   conductor registry add polyphony PolyphonyRequiem/polyphony
    ```
-3. Ensure `twig`, `gh`, `polyphony`, and `dotnet` are in PATH
-4. The target repo has `.conductor/process-config.yaml` with type definitions, templates, and `polyphony validate-config` passes
+   (Note: positional `NAME SOURCE`; conductor does **not** accept
+   `--ref` / `--tag` for github sources. The registry resolves to HEAD
+   of the default branch. Per-workflow version pinning is enforced at
+   runtime by the min-version preflight check, not by the registry
+   mechanism.)
+3. Ensure `twig`, `gh`, `polyphony`, and `dotnet` are in PATH.
+   `polyphony --version` reports the real MinVer SemVer (e.g. `1.0.0`
+   on a tagged commit, or `1.0.1-alpha.5+<sha>` on an untagged commit
+   downstream of a tag).
+4. The target repo has `.conductor/process-config.yaml` with type
+   definitions, templates, and `polyphony validate-config` passes.
 
 ### New Epic with a User Plan
 
