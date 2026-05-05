@@ -34,14 +34,15 @@ $ErrorActionPreference = 'Stop'
 # Each template maps to its ordered type list. The hierarchy is always:
 #   [0] = top-level plannable, [1] = mid-level plannable+implementable, [2] = leaf implementable
 # [P5] Hardcoded type-name registry removed. Type names must be injected at runtime from validator output.
-# For test compatibility, retain legacy values for known templates, but emit a deprecation warning and do not use in production.
-$script:TemplateTypes = @{
-    'Basic' = @('Epic', 'Issue', 'Task')
-    'Agile' = @('Epic', 'User Story', 'Task')
-    'Scrum'  = @('Epic', 'Product Backlog Item', 'Task')
-    'CMMI'  = @('Epic', 'Requirement', 'Task')
+# For test compatibility, load legacy values for known templates from process-type-registry.json, but emit a deprecation warning and do not use in production.
+$processTypeRegistryPath = Join-Path $PSScriptRoot 'process-type-registry.json'
+if (Test-Path $processTypeRegistryPath) {
+    $script:TemplateTypes = Get-Content $processTypeRegistryPath | ConvertFrom-Json
+    Write-Warning '[P5] $script:TemplateTypes is deprecated and loaded from process-type-registry.json. Use validator output for type names.'
+} else {
+    $script:TemplateTypes = @{}
+    Write-Warning '[P5] process-type-registry.json not found. $script:TemplateTypes is empty. Use validator output for type names.'
 }
-Write-Warning '[P5] $script:TemplateTypes is deprecated and will be removed. Use validator output for type names.'
 
 # State mappings per template for transitions.
 # 'removed' is omitted for Basic, which has no Removed state (state set: To Do, Doing, Done).
@@ -123,7 +124,7 @@ function New-ProcessConfigYaml {
     $transitions = $script:TemplateTransitions[$Template]
     $activeState  = $transitions.active
     $doneState    = $transitions.done
-    $removedState = if ($transitions.ContainsKey('removed')) { $transitions.removed } else { $null }
+    $removedState = if ($transitions.PSObject.Properties.Name -contains 'removed') { $transitions.removed } else { $null }
 
     $lines = @()
     $lines += "process_template: $Template"
@@ -173,14 +174,14 @@ function New-ProcessConfigYaml {
         }
         elseif ($i -eq ($Types.Count - 1)) {
             # Leaf
-            $taskActive = if ($transitions.ContainsKey('mid_active')) { $activeState } else { $activeState }
+            $taskActive = if ($transitions.PSObject.Properties.Name -contains 'mid_active') { $activeState } else { $activeState }
             $lines += "    begin_implementation: $activeState"
             $lines += "    implementation_complete: $doneState"
             if ($removedState) { $lines += "    scope_removed: $removedState" }
         }
         else {
             # Mid-level
-            $midActive = if ($transitions.ContainsKey('mid_active')) { $transitions.mid_active } else { $activeState }
+            $midActive = if ($transitions.PSObject.Properties.Name -contains 'mid_active') { $transitions.mid_active } else { $activeState }
             $lines += "    begin_planning: $midActive"
             $lines += "    begin_implementation: $midActive"
             $lines += "    implementation_complete: $doneState"
@@ -335,7 +336,7 @@ else {
 }
 
 # Validate template name
-if (-not $script:TemplateTypes.ContainsKey($resolvedTemplate)) {
+if (-not ($script:TemplateTypes.PSObject.Properties.Name -contains $resolvedTemplate)) {
     $valid = ($script:TemplateTypes.Keys | Sort-Object) -join ', '
     Write-Error "Unknown process template '$resolvedTemplate'. Valid templates: $valid"
     exit 1

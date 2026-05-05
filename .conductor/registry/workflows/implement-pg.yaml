@@ -258,7 +258,7 @@ agents:
       {% endif %}
 
       {% if issue_reviewer is defined and issue_reviewer.output is defined and issue_reviewer.output.verdict == 'changes_requested' and issue_reviewer.output.feedback %}
-      ## Parent-level Reviewer Feedback (PG-wide)
+      ## Issue-level Reviewer Feedback (PG-wide)
 
       The parent-level reviewer flagged the following PG-wide concerns from the previous
       end-of-PG review. These may span multiple tasks — if the current task touches any
