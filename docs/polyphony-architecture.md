@@ -26,15 +26,25 @@ From orchestration down to backing store:
                                      ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ polyphony CLI verbs       (decisions + queries)                           │
-│   route · validate · validate-config · hierarchy                          │
+│   route · validate · validate-config · hierarchy · health                 │
+│   state {detect, preflight, preflight-lite}                               │
+│   plan {depth-guard, next-child, load-type, load-guidance,                │
+│          review, seed-children}                                           │
+│   policy {load, validate, resolve}                                        │
+│   branch {route, load-tree, ensure-feature, next-task,                    │
+│           check-deps, close-scope}                                        │
+│   pr {create-feature-pr}                                                  │
 │   src/Polyphony/Commands/*.cs                                             │
+│   ↳ For per-verb depth, see docs/polyphony-cli-reference.md               │
 └──────────────────────────────────────────────────────────────────────────┘
                                      │
                                      ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Polyphony engine          (pure logic over WorkItem + ProcessConfig)      │
 │   PhaseDetector · TransitionValidator · HierarchyWalker · ConfigValidator │
+│   BranchNameResolver · PolicyResolver                                     │
 │   src/Polyphony/Routing/*.cs · src/Polyphony/Configuration/*.cs           │
+│   src/Polyphony/Policy/*.cs                                               │
 └──────────────────────────────────────────────────────────────────────────┘
                                      │
                                      ▼
