@@ -59,8 +59,19 @@ tools:
   - filesystem
 
 output:
-  merged: "{{ pr_lifecycle_github.output.merged | default(pr_lifecycle_ado.output.merged) | default(remediation_abort.output.merged) | default(false) }}"
-  pr_url: "{{ feature_pr_creator.output.pr_url | default('') }}"
+  # Per M3, under StrictUndefined we must guard `is defined` because only
+  # ONE of pr_lifecycle_github / pr_lifecycle_ado / remediation_abort actually
+  # runs in any given execution — the others remain undefined and the
+  # `default` filter does NOT lazy-evaluate its argument when the variable
+  # itself is undefined (only when the looked-up attribute is undefined).
+  # Per M7, pipe booleans through `| string | lower` so the parent receives
+  # a real bool rather than capital "True"/"False".
+  merged: >-
+    {% if pr_lifecycle_github is defined %}{{ (pr_lifecycle_github.output.merged | default(false)) | string | lower }}
+    {%- elif pr_lifecycle_ado is defined %}{{ (pr_lifecycle_ado.output.merged | default(false)) | string | lower }}
+    {%- elif remediation_abort is defined %}{{ (remediation_abort.output.merged | default(false)) | string | lower }}
+    {%- else %}false{% endif %}
+  pr_url: "{% if feature_pr_creator is defined %}{{ feature_pr_creator.output.pr_url | default('') }}{% else %}{% endif %}"
 
 agents:
   # ── Feature PR creator ──────────────────────────────────────────────────
