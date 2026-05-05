@@ -42,8 +42,15 @@ BeforeAll {
     }
 
     function Invoke-Lint {
-        param([string]$RegistryRoot)
-        $output = pwsh -NoProfile -File $script:LintScript -RegistryRoot $RegistryRoot 2>&1
+        param(
+            [string]$RegistryRoot,
+            [string]$RequiredVersion
+        )
+        $cmdArgs = @('-NoProfile', '-File', $script:LintScript, '-RegistryRoot', $RegistryRoot)
+        if ($RequiredVersion) {
+            $cmdArgs += @('-RequiredVersion', $RequiredVersion)
+        }
+        $output = pwsh @cmdArgs 2>&1
         return @{ ExitCode = $LASTEXITCODE; Output = ($output | Out-String) }
     }
 }
@@ -182,6 +189,58 @@ workflow:
             $r = Invoke-Lint -RegistryRoot $script:RegistryRoot
             $r.ExitCode | Should -Be 0
             $r.Output | Should -Match 'SKIP'
+        }
+    }
+
+    Context '-RequiredVersion (release-time gate)' {
+
+        It 'Passes when shared workflow.version equals -RequiredVersion' {
+            Set-WorkflowFile -Dir $script:WorkflowsDir -Name 'one' -Version '1.0.1'
+            Set-WorkflowFile -Dir $script:WorkflowsDir -Name 'two' -Version '1.0.1'
+            Set-IndexFile -Dir $script:RegistryRoot -Entries @{
+                one = @{ Versions = @('1.0.0', '1.0.1') }
+                two = @{ Versions = @('1.0.0', '1.0.1') }
+            }
+            $r = Invoke-Lint -RegistryRoot $script:RegistryRoot -RequiredVersion '1.0.1'
+            $r.ExitCode | Should -Be 0
+            $r.Output | Should -Match 'matches required 1\.0\.1'
+        }
+
+        It 'Fails when shared workflow.version does not equal -RequiredVersion' {
+            Set-WorkflowFile -Dir $script:WorkflowsDir -Name 'one' -Version '1.0.0'
+            Set-IndexFile -Dir $script:RegistryRoot -Entries @{
+                one = @{ Versions = @('1.0.0') }
+            }
+            $r = Invoke-Lint -RegistryRoot $script:RegistryRoot -RequiredVersion '9.9.9'
+            $r.ExitCode | Should -Be 1
+            $r.Output | Should -Match "does not match required version '9\.9\.9'"
+        }
+
+        It 'Without -RequiredVersion still emits the original PASS line' {
+            Set-WorkflowFile -Dir $script:WorkflowsDir -Name 'one' -Version '1.0.0'
+            Set-IndexFile -Dir $script:RegistryRoot -Entries @{
+                one = @{ Versions = @('1.0.0') }
+            }
+            $r = Invoke-Lint -RegistryRoot $script:RegistryRoot
+            $r.ExitCode | Should -Be 0
+            $r.Output | Should -Match 'aligned at version 1\.0\.0'
+            $r.Output | Should -Not -Match 'required'
+        }
+
+        It 'Stops at internal-drift failures before checking -RequiredVersion' {
+            # If internal invariants 1-5 fail, the script must exit before
+            # the -RequiredVersion check — otherwise we could see a
+            # confusing "matches required" line on top of a real failure.
+            Set-WorkflowFile -Dir $script:WorkflowsDir -Name 'one' -Version '1.0.0'
+            Set-WorkflowFile -Dir $script:WorkflowsDir -Name 'two' -Version '1.1.0'
+            Set-IndexFile -Dir $script:RegistryRoot -Entries @{
+                one = @{ Versions = @('1.0.0') }
+                two = @{ Versions = @('1.1.0') }
+            }
+            $r = Invoke-Lint -RegistryRoot $script:RegistryRoot -RequiredVersion '1.0.0'
+            $r.ExitCode | Should -Be 1
+            $r.Output | Should -Match 'bundled-SemVer invariant broken'
+            $r.Output | Should -Not -Match 'matches required'
         }
     }
 }

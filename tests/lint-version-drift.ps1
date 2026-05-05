@@ -19,15 +19,26 @@
          AND that value equals the YAML's own `workflow.version` (bundled =
          self-required: a v1.2.3 workflow requires polyphony v1.2.3+).
 
+      6. (Optional, gated by -RequiredVersion) The shared workflow.version
+         equals the supplied required version. Used by .github/workflows/
+         release.yml to assert that a `vX.Y.Z` tag matches the YAMLs it
+         is about to release. Without this flag the lint is advisory at
+         PR time; with it, gating at release time.
+
     Skips gracefully if .conductor/registry/ is not laid out (e.g. on a
     branch that pre-dates the registry move).
+.PARAMETER RequiredVersion
+    When supplied (e.g. "1.0.1"), asserts that the unique workflow.version
+    shared by all YAMLs equals this value. Mismatch → exit 1. When omitted,
+    invariants 1-5 are checked but no external version is enforced.
 .OUTPUTS
     Per-YAML PASS / FAIL lines on stdout. Exit 0 if all invariants hold,
     1 otherwise.
 #>
 [CmdletBinding()]
 param(
-    [string]$RegistryRoot = (Join-Path $PSScriptRoot '..' '.conductor' 'registry')
+    [string]$RegistryRoot = (Join-Path $PSScriptRoot '..' '.conductor' 'registry'),
+    [string]$RequiredVersion
 )
 $ErrorActionPreference = 'Stop'
 
@@ -208,6 +219,21 @@ Write-Host ''
 if ($failed.Count -gt 0) {
     Write-Host "FAIL: $($failed.Count) version-drift violation(s) detected" -ForegroundColor Red
     exit 1
+}
+
+# Optional release-gate check: assert the shared version equals the
+# supplied required version. We only reach here when invariants 1-5
+# passed, so $uniqueVersions[0] is the single agreed version.
+if ($RequiredVersion) {
+    $shared = $uniqueVersions[0]
+    if ($shared -ne $RequiredVersion) {
+        Write-Host ''
+        Write-Host "FAIL: workflow.version '$shared' does not match required version '$RequiredVersion'" -ForegroundColor Red
+        Write-Host "      (release tag and bundled-SemVer YAMLs must agree)" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "PASS: all $($yamlFiles.Count) workflow YAMLs aligned at version $shared (matches required $RequiredVersion)" -ForegroundColor Green
+    exit 0
 }
 
 Write-Host "PASS: all $($yamlFiles.Count) workflow YAMLs aligned at version $($uniqueVersions[0])" -ForegroundColor Green
