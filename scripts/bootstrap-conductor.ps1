@@ -37,7 +37,11 @@ $ErrorActionPreference = 'Stop'
 # For test compatibility, load legacy values for known templates from process-type-registry.json, but emit a deprecation warning and do not use in production.
 $processTypeRegistryPath = Join-Path $PSScriptRoot 'process-type-registry.json'
 if (Test-Path $processTypeRegistryPath) {
-    $script:TemplateTypes = Get-Content $processTypeRegistryPath | ConvertFrom-Json
+    $script:TemplateTypes = @{}
+    $raw = Get-Content $processTypeRegistryPath | ConvertFrom-Json
+    foreach ($key in $raw.PSObject.Properties.Name) {
+        $script:TemplateTypes[$key] = @($raw.$key)
+    }
     Write-Warning '[P5] $script:TemplateTypes is deprecated and loaded from process-type-registry.json. Use validator output for type names.'
 } else {
     $script:TemplateTypes = @{}
@@ -124,7 +128,7 @@ function New-ProcessConfigYaml {
     $transitions = $script:TemplateTransitions[$Template]
     $activeState  = $transitions.active
     $doneState    = $transitions.done
-    $removedState = if ($transitions.PSObject.Properties.Name -contains 'removed') { $transitions.removed } else { $null }
+    $removedState = if ($transitions.ContainsKey('removed')) { $transitions.removed } else { $null }
 
     $lines = @()
     $lines += "process_template: $Template"
@@ -181,7 +185,7 @@ function New-ProcessConfigYaml {
         }
         else {
             # Mid-level
-            $midActive = if ($transitions.PSObject.Properties.Name -contains 'mid_active') { $transitions.mid_active } else { $activeState }
+            $midActive = if ($transitions.ContainsKey('mid_active')) { $transitions.mid_active } else { $activeState }
             $lines += "    begin_planning: $midActive"
             $lines += "    begin_implementation: $midActive"
             $lines += "    implementation_complete: $doneState"
@@ -336,7 +340,7 @@ else {
 }
 
 # Validate template name
-if (-not ($script:TemplateTypes.PSObject.Properties.Name -contains $resolvedTemplate)) {
+if (-not ($script:TemplateTypes.ContainsKey($resolvedTemplate))) {
     $valid = ($script:TemplateTypes.PSObject.Properties.Name | Sort-Object) -join ', '
     Write-Error "Unknown process template '$resolvedTemplate'. Valid templates: $valid"
     exit 1
