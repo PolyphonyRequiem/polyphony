@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Configuration;
@@ -142,11 +143,23 @@ public sealed class HealthCommand
             Os = Environment.OSVersion.ToString(),
             Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
             DotnetVersion = dotnetVersion.ToString(),
-            PolyphonyVersion = typeof(HealthCommand).Assembly.GetName().Version?.ToString() ?? "",
+            PolyphonyVersion = ResolvePolyphonyVersion(),
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.HealthResult));
         return result.AllCriticalPassed ? ExitCodes.Success : ExitCodes.HealthCheckFailed;
+    }
+
+    // Read AssemblyInformationalVersion (where MinVer writes the real SemVer,
+    // including pre-release/build-metadata). Falls back to the numeric
+    // AssemblyVersion only as a last resort — that field is set to a stable
+    // 1.0.0.0 by MinVer and would mask the real version on every release.
+    private static string ResolvePolyphonyVersion()
+    {
+        var asm = typeof(HealthCommand).Assembly;
+        return asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? asm.GetName().Version?.ToString()
+            ?? "unknown";
     }
 
     private static HealthCheckResult DefaultCheckTool(string tool)
