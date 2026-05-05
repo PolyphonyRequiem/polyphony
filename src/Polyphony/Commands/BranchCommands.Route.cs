@@ -142,8 +142,8 @@ public sealed partial class BranchCommands
                 pgMap[tag] = bucket;
             }
 
-            var isImplementable = item.Capabilities.Contains("implementable");
-            var isPlannable = item.Capabilities.Contains("plannable");
+            var isImplementable = item.Facets.Contains("implementable");
+            var isPlannable = item.Facets.Contains("plannable");
             var hasChildren = item.Children is { Length: > 0 };
             // Issue-as-task: plannable+implementable with no children → implementable.
             if (isImplementable && (!isPlannable || !hasChildren))
@@ -163,8 +163,8 @@ public sealed partial class BranchCommands
             var taskIds = allItems
                 .Where(i =>
                 {
-                    var imp = i.Capabilities.Contains("implementable");
-                    var pln = i.Capabilities.Contains("plannable");
+                    var imp = i.Facets.Contains("implementable");
+                    var pln = i.Facets.Contains("plannable");
                     var hc = i.Children is { Length: > 0 };
                     return imp && (!pln || !hc);
                 })
@@ -172,8 +172,8 @@ public sealed partial class BranchCommands
             var issueIds = allItems
                 .Where(i =>
                 {
-                    var pln = i.Capabilities.Contains("plannable");
-                    var imp = i.Capabilities.Contains("implementable");
+                    var pln = i.Facets.Contains("plannable");
+                    var imp = i.Facets.Contains("implementable");
                     var hc = i.Children is { Length: > 0 };
                     return pln && (!imp || hc);
                 })
@@ -368,3 +368,4 @@ public sealed partial class BranchCommands
         int PrNumber,
         string PrUrl);
 }
+

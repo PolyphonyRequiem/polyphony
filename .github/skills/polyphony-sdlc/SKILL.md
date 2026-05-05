@@ -22,7 +22,7 @@ multi-agent orchestration with no hardcoded type names.
 
 ## Workflow Inputs
 
-The apex workflow (`polyphony-full.yaml`, registered as `polyphony-full@polyphony`)
+The root workflow (`polyphony-full.yaml`, registered as `polyphony-full@polyphony`)
 accepts three inputs:
 
 | Input | Type | Required | Default | Description |
@@ -58,7 +58,7 @@ URL conventions to use.
 
 ## Phase Detection and Routing
 
-The apex workflow uses `polyphony route` (via `detect-state.ps1`) for type-agnostic
+The root workflow uses `polyphony route` (via `detect-state.ps1`) for type-agnostic
 phase detection. No work item type names appear in any YAML routing condition.
 
 ```
@@ -81,7 +81,7 @@ The conductor engine enforces a maximum depth of 10. The polyphony workflow budg
 levels, leaving 1 level of headroom:
 
 ```
-Depth 0: polyphony-full.yaml                  (apex: preflight → detect → route)
+Depth 0: polyphony-full.yaml                  (root: preflight → detect → route)
 Depth 1: polyphony-planning.yaml              (planning orchestration)
          OR polyphony-implement.yaml          (implementation orchestration)
 Depth 2: plan-level.yaml                      (recursive planning core)
@@ -97,7 +97,7 @@ user can approve going deeper or abort.
 
 ## The 9 YAML Workflow Files
 
-### 1. `polyphony-full.yaml` — Apex Workflow
+### 1. `polyphony-full.yaml` — Root Workflow
 
 **Registry name:** `polyphony-full@polyphony`
 **Responsibility:** Top-level entry point. Accepts any work item type at any hierarchy
@@ -364,7 +364,7 @@ workflow:
     min_polyphony_version: "1.0.0"
 ```
 
-On every run, `polyphony state preflight` (apex) and `polyphony state
+On every run, `polyphony state preflight` (root) and `polyphony state
 preflight-lite` (planning + implement sub-workflows) check the running
 CLI's `AssemblyInformationalVersion` against
 `metadata.min_polyphony_version` and **fail preflight on mismatch**.
@@ -499,4 +499,4 @@ architect and the `open_questions_gate` human gate.
 - **`warning`** — Gates only when questions at or above `min_severity` exist.
   The default mode; balances user involvement with workflow throughput.
 - **`manual`** — Any question (even `low` severity) stops for user input.
-  Use for apex items or high-stakes planning where every ambiguity matters.
+  Use for root items or high-stakes planning where every ambiguity matters.

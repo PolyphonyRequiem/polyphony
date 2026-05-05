@@ -12,7 +12,7 @@ namespace Polyphony.Tests.Commands;
 
 /// <summary>
 /// End-to-end tests for the <c>polyphony plan</c> verb group. Verifies output shape,
-/// routing-script exit-code convention (always 0), capability filtering for
+/// routing-script exit-code convention (always 0), facet filtering for
 /// <c>plan depth-guard</c> and <c>plan next-child</c>, and the file-IO loaders
 /// <c>plan load-type</c> and <c>plan load-guidance</c>.
 /// </summary>
@@ -102,7 +102,7 @@ public sealed class PlanCommandsTests : CommandTestBase
     // ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task NextChild_FiltersToPlannableCapability()
+    public async Task NextChild_FiltersToPlannableFacet()
     {
         // Default config: Epic and Issue are plannable; Task is not.
         var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Root").WithState("New").Build();
@@ -632,3 +632,5 @@ internal sealed class ConductorDirFixture : IDisposable
         }
     }
 }
+
+

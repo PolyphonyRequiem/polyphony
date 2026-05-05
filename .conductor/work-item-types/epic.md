@@ -77,3 +77,4 @@ See: `templates/epic-template.md`
 Epics generally do NOT have conductor plan documents. They are strategic containers. The planning lifecycle starts at the Issue level — each child Issue gets its own plan document in `docs/projects/`.
 
 Epics may reference project-level documentation (PRDs, architecture docs, specs) as external references, not conductor plan artifacts.
+

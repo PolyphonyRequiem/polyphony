@@ -12,7 +12,7 @@ namespace Polyphony.Tests.Routing;
 /// <summary>
 /// Tests for HierarchyWalker across 2-tier (Issue→Task), 3-tier (Epic→Middle→Task),
 /// and 4-tier (Epic→Feature→Issue→Task) hierarchies.
-/// Verifies that capability annotations are correct at every level for each process template.
+/// Verifies that facet annotations are correct at every level for each process template.
 /// </summary>
 public sealed class HierarchyTierTests
 {
@@ -26,11 +26,11 @@ public sealed class HierarchyTierTests
     private sealed record TemplateDefinition(
         string Name,
         string TopType,
-        string[] TopCapabilities,
+        string[] TopFacets,
         string MiddleType,
-        string[] MiddleCapabilities,
+        string[] MiddleFacets,
         string LeafType,
-        string[] LeafCapabilities);
+        string[] LeafFacets);
 
     private static readonly TemplateDefinition[] Templates =
     [
@@ -49,9 +49,9 @@ public sealed class HierarchyTierTests
     private static ProcessConfig BuildConfig(TemplateDefinition template) =>
         new ProcessConfigBuilder()
             .WithProcessTemplate(template.Name)
-            .WithType(template.TopType, template.TopCapabilities)
-            .WithType(template.MiddleType, template.MiddleCapabilities)
-            .WithType(template.LeafType, template.LeafCapabilities)
+            .WithType(template.TopType, template.TopFacets)
+            .WithType(template.MiddleType, template.MiddleFacets)
+            .WithType(template.LeafType, template.LeafFacets)
             .Build();
 
     private HierarchyWalker CreateWalker(ProcessConfig config) => new(config, _repository);
@@ -93,7 +93,7 @@ public sealed class HierarchyTierTests
     }
 
     [Fact]
-    public async Task TwoTier_IssueToTask_AnnotatesCapabilitiesCorrectly()
+    public async Task TwoTier_IssueToTask_AnnotatesFacetsCorrectly()
     {
         var issue = new WorkItemBuilder()
             .WithId(1).WithType("Issue").WithTitle("Parent Issue").WithState("Doing").Build();
@@ -110,9 +110,9 @@ public sealed class HierarchyTierTests
         var result = await walker.WalkAsync(1, maxDepth: 2, CancellationToken.None);
 
         result.ShouldNotBeNull();
-        result.Capabilities.ShouldBe(["plannable", "implementable"]);
+        result.Facets.ShouldBe(["plannable", "implementable"]);
         result.Children.ShouldNotBeNull();
-        result.Children[0].Capabilities.ShouldBe(["implementable"]);
+        result.Children[0].Facets.ShouldBe(["implementable"]);
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public sealed class HierarchyTierTests
 
         foreach (var child in result.Children)
         {
-            child.Capabilities.ShouldBe(["implementable"]);
+            child.Facets.ShouldBe(["implementable"]);
         }
     }
 
@@ -218,7 +218,7 @@ public sealed class HierarchyTierTests
 
     [Theory]
     [MemberData(nameof(AllTemplateNames))]
-    public async Task ThreeTier_AnnotatesCapabilitiesAtEveryLevel(string templateName)
+    public async Task ThreeTier_AnnotatesFacetsAtEveryLevel(string templateName)
     {
         var t = GetTemplate(templateName);
         var config = BuildConfig(t);
@@ -242,13 +242,13 @@ public sealed class HierarchyTierTests
         var result = await walker.WalkAsync(1, maxDepth: 3, CancellationToken.None);
 
         result.ShouldNotBeNull();
-        result.Capabilities.ShouldBe(t.TopCapabilities);
+        result.Facets.ShouldBe(t.TopFacets);
 
         result.Children.ShouldNotBeNull();
-        result.Children[0].Capabilities.ShouldBe(t.MiddleCapabilities);
+        result.Children[0].Facets.ShouldBe(t.MiddleFacets);
 
         result.Children[0].Children.ShouldNotBeNull();
-        result.Children[0].Children![0].Capabilities.ShouldBe(t.LeafCapabilities);
+        result.Children[0].Children![0].Facets.ShouldBe(t.LeafFacets);
     }
 
     [Theory]
@@ -300,7 +300,7 @@ public sealed class HierarchyTierTests
         var result = await walker.WalkAsync(1, maxDepth: 3, CancellationToken.None);
 
         result.ShouldNotBeNull();
-        result.Capabilities.ShouldContain("plannable");
+        result.Facets.ShouldContain("plannable");
     }
 
     [Theory]
@@ -330,8 +330,8 @@ public sealed class HierarchyTierTests
 
         result.ShouldNotBeNull();
         var leaf = result.Children![0].Children![0];
-        leaf.Capabilities.ShouldContain("implementable");
-        leaf.Capabilities.ShouldNotContain("plannable");
+        leaf.Facets.ShouldContain("implementable");
+        leaf.Facets.ShouldNotContain("plannable");
     }
 
     // ===================================================================
@@ -395,7 +395,7 @@ public sealed class HierarchyTierTests
     }
 
     [Fact]
-    public async Task FourTier_AnnotatesCapabilitiesAtEveryLevel()
+    public async Task FourTier_AnnotatesFacetsAtEveryLevel()
     {
         var epic = new WorkItemBuilder()
             .WithId(1).WithType("Epic").WithTitle("Epic").WithState("Doing").Build();
@@ -420,16 +420,16 @@ public sealed class HierarchyTierTests
         var result = await walker.WalkAsync(1, maxDepth: 4, CancellationToken.None);
 
         result.ShouldNotBeNull();
-        result.Capabilities.ShouldBe(["plannable"]);
+        result.Facets.ShouldBe(["plannable"]);
 
         var featureNode = result.Children![0];
-        featureNode.Capabilities.ShouldBe(["plannable"]);
+        featureNode.Facets.ShouldBe(["plannable"]);
 
         var issueNode = featureNode.Children![0];
-        issueNode.Capabilities.ShouldBe(["plannable", "implementable"]);
+        issueNode.Facets.ShouldBe(["plannable", "implementable"]);
 
         var taskNode = issueNode.Children![0];
-        taskNode.Capabilities.ShouldBe(["implementable"]);
+        taskNode.Facets.ShouldBe(["implementable"]);
     }
 
     [Fact]
@@ -490,23 +490,23 @@ public sealed class HierarchyTierTests
         result.ShouldNotBeNull();
 
         // Epic is plannable-only
-        result.Capabilities.ShouldContain("plannable");
-        result.Capabilities.ShouldNotContain("implementable");
+        result.Facets.ShouldContain("plannable");
+        result.Facets.ShouldNotContain("implementable");
 
         // Feature is plannable-only
         var featureNode = result.Children![0];
-        featureNode.Capabilities.ShouldContain("plannable");
-        featureNode.Capabilities.ShouldNotContain("implementable");
+        featureNode.Facets.ShouldContain("plannable");
+        featureNode.Facets.ShouldNotContain("implementable");
 
         // Issue is plannable AND implementable
         var issueNode = featureNode.Children![0];
-        issueNode.Capabilities.ShouldContain("plannable");
-        issueNode.Capabilities.ShouldContain("implementable");
+        issueNode.Facets.ShouldContain("plannable");
+        issueNode.Facets.ShouldContain("implementable");
 
         // Task is implementable-only
         var taskNode = issueNode.Children![0];
-        taskNode.Capabilities.ShouldContain("implementable");
-        taskNode.Capabilities.ShouldNotContain("plannable");
+        taskNode.Facets.ShouldContain("implementable");
+        taskNode.Facets.ShouldNotContain("plannable");
     }
 
     [Fact]
@@ -554,18 +554,20 @@ public sealed class HierarchyTierTests
 
         foreach (var featureNode in result.Children)
         {
-            featureNode.Capabilities.ShouldBe(["plannable"]);
+            featureNode.Facets.ShouldBe(["plannable"]);
             featureNode.Children.ShouldNotBeNull();
             featureNode.Children!.Length.ShouldBe(1);
 
             var issueNode = featureNode.Children[0];
-            issueNode.Capabilities.ShouldBe(["plannable", "implementable"]);
+            issueNode.Facets.ShouldBe(["plannable", "implementable"]);
             issueNode.Children.ShouldNotBeNull();
             issueNode.Children!.Length.ShouldBe(1);
 
             var taskNode = issueNode.Children[0];
-            taskNode.Capabilities.ShouldBe(["implementable"]);
+            taskNode.Facets.ShouldBe(["implementable"]);
             taskNode.Children.ShouldBeNull();
         }
     }
 }
+
+

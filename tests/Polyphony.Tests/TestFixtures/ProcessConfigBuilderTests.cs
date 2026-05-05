@@ -32,7 +32,7 @@ public sealed class ProcessConfigBuilderTests
             .Build();
 
         config.Types.ShouldContainKey("Issue");
-        config.Types["Issue"].Capabilities.ShouldBe(new[] { "plannable", "implementable" });
+        config.Types["Issue"].Facets.ShouldBe(new[] { "plannable", "implementable" });
         config.Transitions.ShouldContainKey("Issue");
         config.Transitions["Issue"]["begin_planning"].ShouldBe("Doing");
         config.Transitions["Issue"]["complete"].ShouldBe("Done");
@@ -46,7 +46,7 @@ public sealed class ProcessConfigBuilderTests
             .Build();
 
         config.Types.ShouldContainKey("Task");
-        config.Types["Task"].Capabilities.ShouldBe(new[] { "implementable" });
+        config.Types["Task"].Facets.ShouldBe(new[] { "implementable" });
         config.Transitions.ShouldNotContainKey("Task");
     }
 
@@ -112,3 +112,4 @@ public sealed class ProcessConfigBuilderTests
         config.Platform.ShouldBe("azure-devops");
     }
 }
+

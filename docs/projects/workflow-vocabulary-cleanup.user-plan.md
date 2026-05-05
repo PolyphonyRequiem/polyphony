@@ -16,7 +16,7 @@ intended_consumer: polyphony-conductor-workflows architect agent (plan-level.yam
 ## Problem
 
 The Polyphony engine (`src/Polyphony/`) is type-agnostic — `PhaseDetector.cs`
-routes by capability lookup, with zero hardcoded type strings. The planning
+routes by facet lookup, with zero hardcoded type strings. The planning
 workflow (`plan-level.yaml` + `load-type-context.ps1`) honors this pattern by
 loading the user's actual work-item-type definition from
 `.conductor/work-item-types/{slug}.md` at runtime and injecting it into the
@@ -72,8 +72,8 @@ the implementation and PR layers:
 5. Update tests and lint contracts to match the new field names.
 
 **Forward compatibility constraint:** the loader must **return** the
-resolved capabilities for an item, not assume them from type alone. v1
-populates capabilities by today's type-only lookup; v2 (out of scope here,
+resolved facets for an item, not assume them from type alone. v1
+populates facets by today's type-only lookup; v2 (out of scope here,
 see Future Work) replaces the lookup with conditional rules. By making the
 loader the resolution point, v2 only changes the loader — consumers don't
 notice.
@@ -90,7 +90,7 @@ The architect should refine into ordered Tasks/PGs. This is the v1 scope:
      "type": "Task",
      "title": "...",
      "definition": "...",
-     "capabilities": ["implementable"],
+     "facets": ["implementable"],
      "parent": {
        "id": 2930,
        "type": "Issue",
@@ -99,7 +99,7 @@ The architect should refine into ordered Tasks/PGs. This is the v1 scope:
      }
    }
    ```
-   The `capabilities` field is the v2 extension point.
+   The `facets` field is the v2 extension point.
 
 2. **Agent renames** in `implement-pg.yaml`:
    - `task_router` → `next_implementable_router`
@@ -167,22 +167,22 @@ architect to decide rather than rubber-stamp:
 
 These belong to a follow-on Epic. The v1 design must not preclude them:
 
-- **Conditional capability resolution rules**
-  (`capabilities: { rules: [...] }` schema). v1 loader returns the
-  `capabilities` array so the rules engine can be slotted in behind it
+- **Conditional facet resolution rules**
+  (`facets: { rules: [...] }` schema). v1 loader returns the
+  `facets` array so the rules engine can be slotted in behind it
   without changing consumers.
 
   Sketch of the future shape (Shape A with generalized `rules:` key):
   ```yaml
   Task:
-    capabilities:
+    facets:
       rules:
         - when: parent_type == TaskGroup
           values: [actionable, implementable]   # architect picks per task
         - default: [implementable]
   ```
 
-- **`actionable` capability** + the no-PR / act-and-confirm execution mode.
+- **`actionable` facet** + the no-PR / act-and-confirm execution mode.
   `actionable` means "work that a human or bot performs and confirms, but
   produces no code artifact" — cloudvault TaskGroup → child Task is the
   canonical example. This will require a third execution branch in
@@ -210,7 +210,7 @@ These belong to a follow-on Epic. The v1 design must not preclude them:
   `issue_reviewer`, `task_router`, `task_reviewer`, `task_completer`
   remains in `implement-pg.yaml` or the platform PR workflows
   (verified by grep + lint test).
-- The loader returns a `capabilities` field, populated from current
+- The loader returns a `facets` field, populated from current
   type-only lookup, with a comment marking the v2 rules-extension point.
 - `polyphony-conductor-workflows` test suite is green.
 - `polyphony` test suite is green (`scripts/*.Tests.ps1`).
@@ -227,3 +227,4 @@ These belong to a follow-on Epic. The v1 design must not preclude them:
 - Most code changes land in the
   [polyphony-conductor-workflows](https://github.com/PolyphonyRequiem/polyphony-conductor-workflows)
   repo, not polyphony itself. Expect the SDLC to operate cross-repo.
+

@@ -25,7 +25,7 @@ intended_consumer: polyphony-conductor-workflows architect agent (plan-level.yam
 - There is no cap on `architect → gate → architect` answer-loop roundtrips,
   so a misbehaving architect that re-raises questions on every revision can
   loop the workflow indefinitely.
-- There is no per-scope tuning. An apex Epic should probably always gate;
+- There is no per-scope tuning. An root Epic should probably always gate;
   a leaf Task probably never should — but today they get the same treatment.
 
 Meanwhile `.conductor/policy.yaml` already has the right machinery for this
@@ -54,7 +54,7 @@ open_questions:
     min_severity: moderate
     max_question_loops: 3
   root:
-    mode: manual           # apex Epic always gets the gate
+    mode: manual           # root Epic always gets the gate
   by_type:
     Task:
       mode: auto           # leaf tasks never stop on questions
@@ -186,7 +186,7 @@ architect to decide rather than rubber-stamp:
    workflow knows the work item's type via `type_loader.output.type_name`.
    Should the resolve call use `--scope type:{{ type }}` (so `by_type`
    overrides apply) or `--scope root` (since open_questions only fires on
-   the apex of the run, not on children)? User lean: `--scope type:{{ type }}`
+   the root of the run, not on children)? User lean: `--scope type:{{ type }}`
    — same as approvals/pr resolve calls elsewhere, and lets a repo say "auto
    for Issue, manual for Epic" sensibly.
 
@@ -257,10 +257,11 @@ architect to decide rather than rubber-stamp:
 
 ### Process notes
 
-- This Epic dogfoods the new apex flow shipped earlier
+- This Epic dogfoods the new root flow shipped earlier
   (`state_detector → feature_pr → close_out → epic_closer`), which has
   not been exercised end-to-end on a real Epic since it landed. Two birds.
 - Scope is small enough to land in 2 PGs (one .NET, one YAML+docs); the
   architect may collapse to 1 if preferred.
 - File any workflow-engine bugs surfaced during the run as siblings under
   Epic 2919 (workflow-bugs-found-via-dogfood).
+

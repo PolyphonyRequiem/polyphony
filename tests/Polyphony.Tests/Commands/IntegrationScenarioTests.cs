@@ -232,7 +232,7 @@ public sealed class IntegrationScenarioTests : CommandTestBase
         result.WorkItemId.ShouldBe(400);
         result.Type.ShouldBe(EpicType);
         result.State.ShouldBe(InProgressState);
-        result.Capabilities.ShouldContain("plannable");
+        result.Facets.ShouldContain("plannable");
 
         // 2 children (User Stories)
         result.Children.ShouldNotBeNull();
@@ -241,15 +241,15 @@ public sealed class IntegrationScenarioTests : CommandTestBase
         var storyX = result.Children.First(c => c.WorkItemId == 410);
         storyX.Type.ShouldBe(UserStoryType);
         storyX.State.ShouldBe(ProposedState);
-        storyX.Capabilities.ShouldContain("plannable");
-        storyX.Capabilities.ShouldContain("implementable");
+        storyX.Facets.ShouldContain("plannable");
+        storyX.Facets.ShouldContain("implementable");
 
         // Story X has 1 Task child
         storyX.Children.ShouldNotBeNull();
         storyX.Children!.Length.ShouldBe(1);
         storyX.Children[0].WorkItemId.ShouldBe(411);
         storyX.Children[0].Type.ShouldBe(TaskType);
-        storyX.Children[0].Capabilities.ShouldContain("implementable");
+        storyX.Children[0].Facets.ShouldContain("implementable");
     }
 
     [Fact]
@@ -338,7 +338,7 @@ public sealed class IntegrationScenarioTests : CommandTestBase
         // snake_case property names
         output.ShouldContain("\"work_item_id\"");
         output.ShouldContain("\"children\"");
-        output.ShouldContain("\"capabilities\"");
+        output.ShouldContain("\"facets\"");
 
         // null tags should be omitted (WhenWritingNull)
         output.ShouldNotContain("\"tags\"");
@@ -536,3 +536,4 @@ public sealed class IntegrationScenarioTests : CommandTestBase
         result.Message.ShouldNotBeNullOrEmpty();
     }
 }
+

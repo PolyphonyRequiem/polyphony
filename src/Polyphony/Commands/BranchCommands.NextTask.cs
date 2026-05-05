@@ -56,7 +56,7 @@ public sealed partial class BranchCommands
             // _parent property attached to each node; we model it as a
             // (node, parent) tuple instead.
             var nodes = FlattenWithParents(hierarchy).ToList();
-            var implementable = nodes.Where(n => n.Node.Capabilities.Contains("implementable")).ToList();
+            var implementable = nodes.Where(n => n.Node.Facets.Contains("implementable")).ToList();
 
             // Same fallback ladder as task-router.ps1:
             //   1. items directly tagged with the PG
@@ -70,7 +70,7 @@ public sealed partial class BranchCommands
             if (candidates.Count == 0)
             {
                 var pgContainerIds = nodes
-                    .Where(n => n.Node.Capabilities.Contains("plannable")
+                    .Where(n => n.Node.Facets.Contains("plannable")
                         && string.Equals(ExtractPgTag(n.Node.Tags), resolvedPg, StringComparison.Ordinal))
                     .Select(n => n.Node.WorkItemId)
                     .ToHashSet();
@@ -83,8 +83,8 @@ public sealed partial class BranchCommands
             {
                 candidates = nodes
                     .Where(n =>
-                        n.Node.Capabilities.Contains("plannable")
-                        && n.Node.Capabilities.Contains("implementable")
+                        n.Node.Facets.Contains("plannable")
+                        && n.Node.Facets.Contains("implementable")
                         && string.Equals(ExtractPgTag(n.Node.Tags), resolvedPg, StringComparison.Ordinal)
                         && (n.Node.Children is null || n.Node.Children.Length == 0))
                     .ToList();
@@ -222,7 +222,7 @@ public sealed partial class BranchCommands
         var current = start.Parent;
         while (current is not null)
         {
-            if (current.Node.Capabilities.Contains("plannable"))
+            if (current.Node.Facets.Contains("plannable"))
             {
                 return (current.Node.WorkItemId, current.Node.Title, current.Node.Type);
             }
@@ -268,3 +268,4 @@ public sealed partial class BranchCommands
             result,
             PolyphonyJsonContext.Default.BranchNextTaskResult));
 }
+

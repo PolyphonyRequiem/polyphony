@@ -14,7 +14,7 @@ public sealed class HealthCommandTests
         var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-health-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
         var configPath = Path.Combine(tempDir, "process-config.yaml");
-        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
+        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { facets: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
         // Inject a tool checker that reports both `twig` and `git` healthy so
         // the test does not depend on the CI runner having those binaries.
         var cmd = new HealthCommand(tool => new HealthCheckResult
@@ -57,7 +57,7 @@ public sealed class HealthCommandTests
         var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-health-version-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
         var configPath = Path.Combine(tempDir, "process-config.yaml");
-        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
+        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { facets: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
         var cmd = new HealthCommand(tool => new HealthCheckResult { Name = tool, Success = true, Message = "mocked" });
 
         var (_, output) = CaptureConsole(() => cmd.Health(configPath));
@@ -90,7 +90,7 @@ public sealed class HealthCommandTests
         var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-health-floor-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
         var configPath = Path.Combine(tempDir, "process-config.yaml");
-        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
+        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { facets: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
         var cmd = new HealthCommand(tool => new HealthCheckResult { Name = tool, Success = true, Message = "mocked" });
 
         var (_, output) = CaptureConsole(() => cmd.Health(configPath));
@@ -154,7 +154,7 @@ public sealed class HealthCommandTests
             var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-health-twig-missing-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
             var configPath = Path.Combine(tempDir, "process-config.yaml");
-            File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
+            File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { facets: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
             var (exitCode, output) = CaptureConsole(() => cmd.Health(configPath));
             exitCode.ShouldBe(ExitCodes.HealthCheckFailed);
             var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.HealthResult);
@@ -180,7 +180,7 @@ public sealed class HealthCommandTests
             var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-health-git-missing-{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempDir);
             var configPath = Path.Combine(tempDir, "process-config.yaml");
-            File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
+            File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { facets: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
             var (exitCode, output) = CaptureConsole(() => cmd.Health(configPath));
             exitCode.ShouldBe(ExitCodes.HealthCheckFailed);
             var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.HealthResult);
@@ -243,3 +243,4 @@ public sealed class HealthCommandTests
         }
     }
 }
+

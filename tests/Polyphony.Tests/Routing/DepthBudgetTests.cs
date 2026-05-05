@@ -17,7 +17,7 @@ namespace Polyphony.Tests.Routing;
 /// <c>scripts/depth-guard.ps1</c> (a deterministic conductor agent), which receives
 /// the current recursion depth and emits <c>allowed=false</c> when the limit is
 /// exceeded. The .NET layer's responsibility is to <em>accurately represent</em> the
-/// hierarchy with capability annotations — it does not reject deep trees itself.
+/// hierarchy with facet annotations — it does not reject deep trees itself.
 /// Pester tests in <c>scripts/depth-guard.Tests.ps1</c> cover the enforcement logic.
 /// These xUnit tests verify the .NET side of the contract.
 /// </summary>
@@ -44,14 +44,14 @@ public sealed class DepthBudgetTests
     /// <summary>
     /// Recursively counts the maximum number of nested plannable levels
     /// in a <see cref="HierarchyResult"/> tree. Only nodes whose
-    /// <see cref="HierarchyResult.Capabilities"/> contain "plannable" are counted.
+    /// <see cref="HierarchyResult.Facets"/> contain "plannable" are counted.
     /// </summary>
     private static int CountMaxPlannableDepth(HierarchyResult? node)
     {
         if (node is null)
             return 0;
 
-        var isPlannable = node.Capabilities.Contains("plannable");
+        var isPlannable = node.Facets.Contains("plannable");
         var childMax = 0;
 
         if (node.Children is { Length: > 0 })
@@ -234,8 +234,8 @@ public sealed class DepthBudgetTests
 
         result.ShouldNotBeNull();
         result.Children.ShouldNotBeNull();
-        result.Capabilities.ShouldContain("plannable");
-        result.Children[0].Capabilities.ShouldNotContain("plannable");
+        result.Facets.ShouldContain("plannable");
+        result.Children[0].Facets.ShouldNotContain("plannable");
         CountMaxPlannableDepth(result).ShouldBe(1);
     }
 
@@ -334,14 +334,14 @@ public sealed class DepthBudgetTests
     }
 
     // ──────────────────────────────────────────────
-    //  Capabilities are faithfully annotated for budget decisions
+    //  Facets are faithfully annotated for budget decisions
     // ──────────────────────────────────────────────
 
     [Fact]
-    public async Task DeepHierarchy_AllNodesHaveCorrectCapabilities()
+    public async Task DeepHierarchy_AllNodesHaveCorrectFacets()
     {
         // Verify that each level in a deep plannable tree has the correct
-        // capabilities annotated so the depth guard can make accurate decisions.
+        // facets annotated so the depth guard can make accurate decisions.
         var portfolio = new WorkItemBuilder()
             .WithId(1).WithType("Portfolio").WithTitle("Portfolio").WithState("Doing").Build();
         var initiative = new WorkItemBuilder()
@@ -370,23 +370,23 @@ public sealed class DepthBudgetTests
         result.ShouldNotBeNull();
 
         // Level 0: Portfolio — plannable only
-        result.Capabilities.ShouldBe(["plannable"]);
+        result.Facets.ShouldBe(["plannable"]);
 
         // Level 1: Initiative — plannable only
         var level1 = result.Children![0];
-        level1.Capabilities.ShouldBe(["plannable"]);
+        level1.Facets.ShouldBe(["plannable"]);
 
         // Level 2: Epic — plannable only
         var level2 = level1.Children![0];
-        level2.Capabilities.ShouldBe(["plannable"]);
+        level2.Facets.ShouldBe(["plannable"]);
 
         // Level 3: Story — plannable + implementable
         var level3 = level2.Children![0];
-        level3.Capabilities.ShouldBe(["plannable", "implementable"]);
+        level3.Facets.ShouldBe(["plannable", "implementable"]);
 
         // Level 4: Task — implementable only (not plannable, stops the plannable chain)
         var level4 = level3.Children![0];
-        level4.Capabilities.ShouldBe(["implementable"]);
+        level4.Facets.ShouldBe(["implementable"]);
 
         // Total plannable depth = 4 (Portfolio, Initiative, Epic, Story)
         CountMaxPlannableDepth(result).ShouldBe(4);
@@ -395,7 +395,7 @@ public sealed class DepthBudgetTests
     [Fact]
     public async Task UnknownTypeInHierarchy_HasZeroPlannableContribution()
     {
-        // Epic (plannable) → Bug (unknown type, no capabilities) → Feature (plannable)
+        // Epic (plannable) → Bug (unknown type, no facets) → Feature (plannable)
         // Plannable depth = 2 (Epic and Feature counted; Bug is not plannable but
         // its subtree still contributes if it contains plannable children)
         var epic = new WorkItemBuilder()
@@ -416,11 +416,13 @@ public sealed class DepthBudgetTests
         var result = await CreateWalker().WalkAsync(1, maxDepth: 4, CancellationToken.None);
 
         result.ShouldNotBeNull();
-        // Bug has empty capabilities — not plannable
-        result.Children![0].Capabilities.ShouldBeEmpty();
+        // Bug has empty facets — not plannable
+        result.Children![0].Facets.ShouldBeEmpty();
         // Feature beneath Bug is still plannable
-        result.Children[0].Children![0].Capabilities.ShouldContain("plannable");
+        result.Children[0].Children![0].Facets.ShouldContain("plannable");
         // Total plannable depth = 2 (Epic + Feature; Bug doesn't count)
         CountMaxPlannableDepth(result).ShouldBe(2);
     }
 }
+
+

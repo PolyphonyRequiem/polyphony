@@ -141,7 +141,7 @@ function New-ProcessConfigYaml {
 
         if ($i -eq 0) {
             # Top-level: plannable only
-            $lines += '    capabilities: [plannable]'
+            $lines += '    facets: [plannable]'
             $lines += '    filing_eligible: false'
             $lines += '    max_nesting_depth: 1'
             $lines += '    decomposition_guidance: |'
@@ -149,12 +149,12 @@ function New-ProcessConfigYaml {
         }
         elseif ($i -eq ($Types.Count - 1)) {
             # Leaf: implementable only
-            $lines += '    capabilities: [implementable]'
+            $lines += '    facets: [implementable]'
             $lines += '    filing_eligible: true'
         }
         else {
             # Mid-level: plannable + implementable
-            $lines += '    capabilities: [plannable, implementable]'
+            $lines += '    facets: [plannable, implementable]'
             $lines += '    filing_eligible: true'
             $lines += '    max_nesting_depth: 1'
             $lines += '    decomposition_guidance: |'
@@ -413,3 +413,4 @@ $summary = [ordered]@{
 }
 
 $summary | ConvertTo-Json -Depth 3
+

@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-This plan establishes the quality gate for the type-agnostic Polyphony system before cross-repo adoption. It delivers comprehensive xUnit tests for the Polyphony .NET engine (state machine transitions, hierarchy discovery, transition validation, multi-capability routing), integration tests against pre-seeded SQLite databases, workflow YAML validation via `conductor validate`, and cross-process-template verification for Agile (Epic/User Story/Task), Scrum (Epic/PBI/Task), and CMMI (Scenario/Deliverable/Task) configurations. All tests run deterministically with `dotnet test` and Pester — no live ADO calls. Success means every process template routes correctly through the same codebase without code changes, proving the system is ready for production use across repositories.
+This plan establishes the quality gate for the type-agnostic Polyphony system before cross-repo adoption. It delivers comprehensive xUnit tests for the Polyphony .NET engine (state machine transitions, hierarchy discovery, transition validation, multi-facet routing), integration tests against pre-seeded SQLite databases, workflow YAML validation via `conductor validate`, and cross-process-template verification for Agile (Epic/User Story/Task), Scrum (Epic/PBI/Task), and CMMI (Scenario/Deliverable/Task) configurations. All tests run deterministically with `dotnet test` and Pester — no live ADO calls. Success means every process template routes correctly through the same codebase without code changes, proving the system is ready for production use across repositories.
 
 ## Background
 
@@ -72,7 +72,7 @@ The existing tests cover the **Basic** process template (Epic/Issue/Task) thorou
 
 The Polyphony type-agnostic routing engine has been built and integrated into conductor workflows, but it has only been validated against one process template (Basic). Before the system can be adopted by other repositories that may use Agile, Scrum, or CMMI processes, we must prove:
 
-1. **State machine correctness** — Transitions work for every supported process template's state names and capabilities.
+1. **State machine correctness** — Transitions work for every supported process template's state names and facets.
 2. **Hierarchy flexibility** — 2-tier, 3-tier, and 4-tier hierarchies are discovered and routed correctly.
 3. **Configuration-driven behavior** — Changing the process config YAML is sufficient to support a new template; no code changes needed.
 4. **Workflow integrity** — All refactored conductor YAMLs pass validation and produce correct exit codes.
@@ -107,7 +107,7 @@ Without this validation phase, adopting the system in non-Basic repos risks sile
 |----|-------------|
 | FR-1 | State machine tests cover all 8 phases × 4 process templates (Basic, Agile, Scrum, CMMI) |
 | FR-2 | Transition validation tests cover all event types × 4 templates with legal/illegal permutations |
-| FR-3 | Hierarchy tests cover 2-tier, 3-tier, and 4-tier trees with capability annotation |
+| FR-3 | Hierarchy tests cover 2-tier, 3-tier, and 4-tier trees with facet annotation |
 | FR-4 | Integration tests use pre-seeded SQLite databases (not in-memory) |
 | FR-5 | Cross-process config fixtures exist as YAML files loadable by `ProcessConfigLoader` |
 | FR-6 | Depth budget tests verify >4 plannable levels produce an error |
@@ -144,13 +144,13 @@ The testing strategy is layered to match the system architecture:
 │  Layer 2: Cross-Process Unit Tests (PhaseDetector + Validator)   │
 │  - Process config fixtures: Agile, Scrum, CMMI                   │
 │  - State machine transitions per template                        │
-│  - Capability-based routing per template                         │
+│  - Facet-based routing per template                         │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 1: Extended Unit Tests (edge cases + depth budget)         │
 │  - 2-tier, 3-tier, 4-tier hierarchy tests                        │
 │  - Depth budget enforcement (>4 plannable levels)                │
 │  - Missing mapping = hard error                                  │
-│  - Multi-capability routing (plannable+implementable)            │
+│  - Multi-facet routing (plannable+implementable)            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -167,7 +167,7 @@ New YAML fixture files, one per process template, stored in `tests/Polyphony.Tes
 | `scrum.yaml` | Scrum | Epic→Product Backlog Item→Task | 3-tier |
 | `cmmi.yaml` | CMMI | Epic→Requirement→Task | 3-tier |
 
-Each config defines: `types` with capabilities, `transitions` with state names matching the ADO process template's actual states, and `branch_strategy`.
+Each config defines: `types` with facets, `transitions` with state names matching the ADO process template's actual states, and `branch_strategy`.
 
 **State→Category mapping is configurable and semantically mapped.** `StateCategoryResolver.Resolve()` uses a two-tier strategy:
 1. **Primary:** Authoritative `StateEntry` data from `ProcessTypeRecord.States` (sourced from ADO via twig's process type store)
@@ -204,7 +204,7 @@ public static class ProcessConfigFixture
 }
 ```
 
-**Note:** For unit tests, `StateCategoryResolver` uses its hardcoded fallback (entries=null) which already covers all four templates' state names. For integration tests that exercise the full command pipeline, `ProcessTypeRecord` entries with `StateEntry` data should be seeded into the SQLite database so the authoritative resolution path is validated. The YAML fixtures define process config (types, capabilities, transitions); state→category mapping comes from `StateCategoryResolver` automatically.
+**Note:** For unit tests, `StateCategoryResolver` uses its hardcoded fallback (entries=null) which already covers all four templates' state names. For integration tests that exercise the full command pipeline, `ProcessTypeRecord` entries with `StateEntry` data should be seeded into the SQLite database so the authoritative resolution path is validated. The YAML fixtures define process config (types, facets, transitions); state→category mapping comes from `StateCategoryResolver` automatically.
 
 #### 3. Cross-Process PhaseDetector Tests
 
@@ -228,7 +228,7 @@ Extended `HierarchyWalkerTests` covering:
 - **2-tier**: Issue→Task (no grandparent)
 - **3-tier**: Epic→Issue→Task (standard)
 - **4-tier**: Epic→Feature→Issue→Task (deep hierarchy)
-- Capability annotation correct at each level
+- Facet annotation correct at each level
 - Depth budget: >4 plannable levels returns error
 
 #### 6. Integration Test Infrastructure
@@ -369,7 +369,7 @@ Test Work Items ──→ WorkItemBuilder ──→ SQLite/Mock ──→│
 | 4.1.2 | Create `ProcessConfigFixture` helper class to load YAML fixtures | `tests/Polyphony.Tests/TestFixtures/ProcessConfigFixture.cs`, `.csproj` | S |
 | 4.1.3 | Create cross-process `PhaseDetectorTests` with `[Theory]` parameterization across 4 templates | `tests/Polyphony.Tests/Routing/CrossProcessPhaseDetectorTests.cs` | M |
 | 4.1.4 | Create cross-process `TransitionValidatorTests` covering legal/illegal/missing transitions per template | `tests/Polyphony.Tests/Routing/CrossProcessTransitionValidatorTests.cs` | M |
-| 4.1.5 | Create `HierarchyTierTests` for 2-tier, 3-tier, 4-tier hierarchies with capability annotation | `tests/Polyphony.Tests/Routing/HierarchyTierTests.cs` | M |
+| 4.1.5 | Create `HierarchyTierTests` for 2-tier, 3-tier, 4-tier hierarchies with facet annotation | `tests/Polyphony.Tests/Routing/HierarchyTierTests.cs` | M |
 | 4.1.6 | Create `DepthBudgetTests` verifying >4 plannable levels produce error behavior | `tests/Polyphony.Tests/Routing/DepthBudgetTests.cs` | S |
 
 **Acceptance Criteria:**
@@ -596,7 +596,7 @@ All four ADO process templates were validated across unit tests, integration tes
 |-----------|------:|-------|
 | CrossProcessPhaseDetectorTests | 34 | 8 phases × 4 templates, composite hierarchies, unregistered types |
 | CrossProcessTransitionValidatorTests | 29 | Legal/illegal transitions × 4 templates, Scrum InProgress variants, CMMI resolve event |
-| HierarchyTierTests | 14 | 2-tier, 3-tier (all templates), 4-tier, capability annotation, branching hierarchies |
+| HierarchyTierTests | 14 | 2-tier, 3-tier (all templates), 4-tier, facet annotation, branching hierarchies |
 | DepthBudgetTests | 12 | Plannable depth counting, deep chains (5 levels), implementable caps, unregistered types |
 | CrossProcessRouteCommandTests | 15 | E2E route per template (×4 = 60 executions), JSON contracts, exit codes |
 | CrossProcessValidateCommandTests | 8 | E2E validate per template (×4 = 32 executions), legal/illegal/unknown events |
@@ -610,7 +610,7 @@ All 9 workflow YAMLs pass `conductor validate`:
 
 | Workflow YAML | Status | Description |
 |---------------|:---:|-------------|
-| `twig-sdlc-v2-full.yaml` | ✅ Pass | Apex workflow: preflight → state detection → phase routing |
+| `twig-sdlc-v2-full.yaml` | ✅ Pass | Root workflow: preflight → state detection → phase routing |
 | `twig-sdlc-v2-planning.yaml` | ✅ Pass | Planning orchestration: preflight-lite → plan-level → seed check |
 | `twig-sdlc-v2-implement.yaml` | ✅ Pass | Implementation orchestration: load work tree → parallel PG dispatch |
 | `plan-level.yaml` | ✅ Pass | Recursive planning core for any plannable hierarchy level |
@@ -634,14 +634,14 @@ The twig repo's `.conductor/process-config.yaml` defines:
 |-------|-------|:---------:|
 | `process_template` | Basic | ✅ |
 | `platform` | github | ✅ Routes to `github-pr.yaml` (not `ado-pr.yaml`) |
-| Epic capabilities | `[plannable]` | ✅ Plannable-only; decomposed into Issues |
-| Issue capabilities | `[plannable, implementable]` | ✅ Dual-capability; can be planned or implemented directly |
-| Task capabilities | `[implementable]` | ✅ Leaf implementable items |
+| Epic facets | `[plannable]` | ✅ Plannable-only; decomposed into Issues |
+| Issue facets | `[plannable, implementable]` | ✅ Dual-facet; can be planned or implemented directly |
+| Task facets | `[implementable]` | ✅ Leaf implementable items |
 | `branch_strategy.target` | main | ✅ |
 | `branch_strategy.feature_branch` | `feature/{root_id}-{slug}` | ✅ |
 | `branch_strategy.pg_branch` | `pg-{n}/{root_id}-{slug}` | ✅ |
 
-#### Phase Transition Routing — Apex Workflow
+#### Phase Transition Routing — Root Workflow
 
 Routing from `twig-sdlc-v2-full.yaml` for each detected lifecycle phase:
 
@@ -655,7 +655,7 @@ Routing from `twig-sdlc-v2-full.yaml` for each detected lifecycle phase:
 | `done` | `detect-state.ps1` | `$end` | ✅ Correct |
 | `removed` | `detect-state.ps1` | `$end` | ✅ Correct |
 
-All 7 phase values produced by `detect-state.ps1` are handled by the apex workflow's route table. No unhandled phase values exist.
+All 7 phase values produced by `detect-state.ps1` are handled by the root workflow's route table. No unhandled phase values exist.
 
 #### Planning Sub-Workflow Routing
 
@@ -691,7 +691,7 @@ pg_execution_group (max_concurrent=3, failure_mode=fail_fast)
   └─ failed_count > 0 → pg_summary_gate (human: retry/abort)
 ```
 
-**Basic template behavior:** `load-work-tree.ps1` uses `polyphony hierarchy` to discover the work tree. `pg-router.ps1` groups items by PG tag using `Group-ByPG` from `lib/pg-helpers.ps1` — capability-based, not type-name-based.
+**Basic template behavior:** `load-work-tree.ps1` uses `polyphony hierarchy` to discover the work tree. `pg-router.ps1` groups items by PG tag using `Group-ByPG` from `lib/pg-helpers.ps1` — facet-based, not type-name-based.
 
 #### PG Implementation Routing (implement-pg.yaml)
 
@@ -721,7 +721,7 @@ pr_submit → pr_platform_router
 
 **PR platform routing for twig repo:** `process-config.yaml` specifies `platform: github`. The `pr_platform_router` in `implement-pg.yaml` routes to `github-pr.yaml` (lines 672–675). Confirmed: `ado-pr.yaml` is never selected for this repo.
 
-**Task routing:** `task-router.ps1` filters by `implementable` capability and PG tag, with 4 fallback levels: direct tag match → children of tagged containers → issue-as-task (plannable+implementable) → all implementable items. This is type-agnostic — no hardcoded type names.
+**Task routing:** `task-router.ps1` filters by `implementable` facet and PG tag, with 4 fallback levels: direct tag match → children of tagged containers → issue-as-task (plannable+implementable) → all implementable items. This is type-agnostic — no hardcoded type names.
 
 #### Script Output Contract Verification
 
@@ -731,7 +731,7 @@ Key scripts produce JSON output consumed by workflow route conditions:
 |--------|-------------------|----------|:--------:|
 | `preflight-check.ps1` | `ready`, `summary`, `required_checks[]`, `failed_count` | `twig-sdlc-v2-full.yaml` routes on `ready` | ✅ |
 | `preflight-lite.ps1` | `ready`, `summary`, `checks[]` | Planning/implement preflight gates | ✅ |
-| `detect-state.ps1` | `phase`, `work_item_id`, `work_item_type`, `work_item_state`, `intent` | Apex workflow phase routing | ✅ |
+| `detect-state.ps1` | `phase`, `work_item_id`, `work_item_type`, `work_item_state`, `intent` | Root workflow phase routing | ✅ |
 | `pg-router.ps1` | `action`, `pr_groups[]`, `feature_branch` | `implement-pg.yaml` routes on `action` | ✅ |
 | `task-router.ps1` | `action`, `task_id`, `task_title`, `branch_name` | `implement-pg.yaml` routes on `action` | ✅ |
 | `load-work-tree.ps1` | `pr_groups[]`, `completed_pgs`, `pending_pgs` | `twig-sdlc-v2-implement.yaml` routes on `pending_pgs` length | ✅ |
@@ -815,7 +815,7 @@ The following gaps were identified during Phase 4 validation. These should be fi
 #### Gap 5: Script Output Contract Verification Incomplete *(Partially Resolved)*
 
 **Severity:** ~~Low~~ → **Informational**
-**Description:** Task 4.3.3 planned to verify script output contracts (JSON schema, required fields) against workflow expectations across the PowerShell script suite. The existing Pester lint tests (lint-type-agnostic, lint-apex-routing, etc.) validate script behavior but do not systematically verify output contract alignment with conductor workflow input schemas. The Basic template end-to-end trace (AB#2780) manually verified all 8 script output field names align with their consumer Jinja2 template references — no mismatches found.
+**Description:** Task 4.3.3 planned to verify script output contracts (JSON schema, required fields) against workflow expectations across the PowerShell script suite. The existing Pester lint tests (lint-type-agnostic, lint-root-routing, etc.) validate script behavior but do not systematically verify output contract alignment with conductor workflow input schemas. The Basic template end-to-end trace (AB#2780) manually verified all 8 script output field names align with their consumer Jinja2 template references — no mismatches found.
 **Impact:** Informational — manual verification complete for the Basic template. Automated contract assertions would guard against future drift.
 **Recommendation:** Consider adding output contract assertions to existing Pester lint suites in a future maintenance pass.
 
@@ -835,3 +835,5 @@ The following gaps were identified during Phase 4 validation. These should be fi
 - [Phase 3 Plan: Workflow YAML Refactoring](workflow-yaml-refactoring.plan.md)
 - [Azure DevOps Process Templates](https://learn.microsoft.com/en-us/azure/devops/boards/work-items/guidance/choose-process)
 - [Conductor Workflow Validation](https://github.com/github/conductor)
+
+

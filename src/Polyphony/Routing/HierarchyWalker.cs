@@ -5,13 +5,13 @@ namespace Polyphony.Routing;
 
 /// <summary>
 /// Recursively traverses the work item tree to a specified depth,
-/// annotating each node with capabilities from the process config.
+/// annotating each node with facets from the process config.
 /// </summary>
 public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemRepository repository)
 {
     /// <summary>
     /// Walks the hierarchy starting from <paramref name="rootId"/> down to <paramref name="maxDepth"/> levels.
-    /// Each node is annotated with capabilities from <see cref="ProcessConfig.Types"/>.
+    /// Each node is annotated with facets from <see cref="ProcessConfig.Types"/>.
     /// </summary>
     /// <param name="rootId">The work item ID to start from.</param>
     /// <param name="maxDepth">Maximum depth to traverse. 0 returns only the root node.</param>
@@ -33,7 +33,7 @@ public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemReposi
         CancellationToken ct)
     {
         var typeName = item.Type.Value;
-        var capabilities = LookupCapabilities(typeName);
+        var facets = LookupFacets(typeName);
         item.Fields.TryGetValue("System.Tags", out var tags);
 
         HierarchyResult[]? children = null;
@@ -59,18 +59,20 @@ public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemReposi
             WorkItemId = item.Id,
             Title = item.Title,
             Type = typeName,
-            Capabilities = capabilities,
+            Facets = facets,
             State = item.State,
             Tags = tags,
             Children = children,
         };
     }
 
-    private string[] LookupCapabilities(string typeName)
+    private string[] LookupFacets(string typeName)
     {
         if (processConfig.Types.TryGetValue(typeName, out var typeConfig))
-            return typeConfig.Capabilities;
+            return typeConfig.Facets;
 
         return [];
     }
 }
+
+

@@ -116,7 +116,7 @@ three):
 
 ### Anti-patterns
 
-- State names, transitions, capabilities all live in `process-config.yaml`.
+- State names, transitions, facets all live in `process-config.yaml`.
   The `.md` files describe *intent and shape*, not *lifecycle*.
 - Concrete work-item IDs belong in plan documents under `docs/projects/`,
   not here.
@@ -396,3 +396,4 @@ correctly. Unit tests calling `ConfigValidator.Validate(config)` with no
 
 Bootstrap order — which file to write first, second, third — see
 **`polyphony-bootstrap.skill.md`** § 7b.
+

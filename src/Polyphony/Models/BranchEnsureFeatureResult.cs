@@ -3,7 +3,7 @@ namespace Polyphony;
 /// <summary>
 /// Output of <c>polyphony branch ensure-feature</c>: confirms the feature
 /// branch exists locally and on the remote, creating it idempotently if
-/// necessary. The apex workflow calls this once; sub-workflows receive the
+/// necessary. The root workflow calls this once; sub-workflows receive the
 /// branch name as an input and trust it.
 /// </summary>
 public sealed record BranchEnsureFeatureResult
@@ -26,3 +26,4 @@ public sealed record BranchEnsureFeatureResult
     /// <summary>Non-empty when the operation partially or fully failed.</summary>
     public string? Error { get; init; }
 }
+

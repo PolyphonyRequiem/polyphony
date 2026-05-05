@@ -19,6 +19,19 @@ public static class ProcessConfigLoader
         var config = deserializer.Deserialize<ProcessConfig>(yaml)
             ?? throw new InvalidOperationException("Failed to parse process config");
 
+        // Back-compat: copy the legacy `capabilities:` YAML key onto `Facets`
+        // when the new `facets:` key is absent. The capability→facet rename
+        // ships in Phase 1 of the PR-lifecycle overhaul; existing process
+        // configs continue to work during the migration window.
+        // See docs/glossary.md.
+        foreach (var typeConfig in config.Types.Values)
+        {
+            if (typeConfig.Facets.Length == 0 && typeConfig.CapabilitiesLegacy is { Length: > 0 } legacy)
+            {
+                typeConfig.Facets = legacy;
+            }
+        }
+
         if (config.SchemaVersion > 1)
             throw new InvalidOperationException(
                 $"Unsupported process config schema version {config.SchemaVersion}. " +
@@ -39,3 +52,4 @@ public static class ProcessConfigLoader
         return typeConfig.Parent;
     }
 }
+

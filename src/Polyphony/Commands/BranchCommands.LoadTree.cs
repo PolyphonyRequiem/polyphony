@@ -66,8 +66,8 @@ public sealed partial class BranchCommands
 
             var taggedCount = allItems.Count(i => ExtractPgTag(i.Tags) is not null);
             var totalTasks = allItems.Count(i =>
-                i.Capabilities.Contains("implementable") && !i.Capabilities.Contains("plannable"));
-            var totalIssues = allItems.Count(i => i.Capabilities.Contains("plannable"));
+                i.Facets.Contains("implementable") && !i.Facets.Contains("plannable"));
+            var totalIssues = allItems.Count(i => i.Facets.Contains("plannable"));
 
             var org = await twig.GetConfigValueAsync("organization", ct).ConfigureAwait(false) ?? "";
             var proj = await twig.GetConfigValueAsync("project", ct).ConfigureAwait(false) ?? "";
@@ -156,8 +156,8 @@ public sealed partial class BranchCommands
                 pgMap[tag] = bucket;
             }
 
-            var isImplementable = item.Capabilities.Contains("implementable");
-            var isContainer = item.Capabilities.Contains("plannable");
+            var isImplementable = item.Facets.Contains("implementable");
+            var isContainer = item.Facets.Contains("plannable");
             var hasChildren = item.Children is { Length: > 0 };
             // Issue-as-task: plannable+implementable with no children → implementable.
             if (isImplementable && (!isContainer || !hasChildren))
@@ -176,10 +176,10 @@ public sealed partial class BranchCommands
             // Fallback: no PG tags found → synthesize a single PG-1.
             var slug = Slugify(root.Title);
             var taskIds = allItems
-                .Where(i => i.Capabilities.Contains("implementable") && !i.Capabilities.Contains("plannable"))
+                .Where(i => i.Facets.Contains("implementable") && !i.Facets.Contains("plannable"))
                 .Select(i => i.WorkItemId).ToList();
             var issueIds = allItems
-                .Where(i => i.Capabilities.Contains("plannable"))
+                .Where(i => i.Facets.Contains("plannable"))
                 .Select(i => i.WorkItemId).ToList();
             groups.Add(BuildOnePg("PG-1", taskIds, issueIds, NewBranchName($"pg-1-{slug}"),
                 allItems, mergedPrs, isFallback: true));
@@ -329,3 +329,4 @@ public sealed partial class BranchCommands
             result,
             PolyphonyJsonContext.Default.BranchLoadTreeResult));
 }
+

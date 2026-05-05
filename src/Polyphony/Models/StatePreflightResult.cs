@@ -52,7 +52,7 @@ public sealed record PreflightDetails
 }
 
 /// <summary>
-/// Output of <c>polyphony state preflight</c>: the apex-workflow gate
+/// Output of <c>polyphony state preflight</c>: the root-workflow gate
 /// payload. Splits checks into required (gating) and advisory (warning).
 /// </summary>
 public sealed record StatePreflightResult
@@ -78,3 +78,4 @@ public sealed record StatePreflightResult
     /// <summary>Diagnostic metadata (work item ID, ADO org/project).</summary>
     public required PreflightDetails Details { get; init; }
 }
+

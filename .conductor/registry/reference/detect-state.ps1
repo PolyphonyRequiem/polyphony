@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Deterministic state detector for the twig SDLC apex workflow.
+    Deterministic state detector for the twig SDLC root workflow.
     Inspects ADO work item state, plan artifacts, and git state to determine
     the current lifecycle phase and validate user intent.
 

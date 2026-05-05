@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This plan implements the Polyphony deterministic routing engine — the core state machine that powers conductor SDLC workflows. Given a work item ID and a process configuration, Polyphony inspects the work item's type, state, capabilities, and child hierarchy (all read from the twig SQLite cache) to produce a structured JSON routing decision: which SDLC phase the item is in and what action to take next. Phase 1 delivers working implementations of all three CLI commands (`route`, `validate`, `hierarchy`), backed by a shared routing engine with proper DI, cache access, phase detection, transition validation, and branch-name resolution. The result is a fully deterministic, AOT-compiled binary that conductor workflows can invoke for routing decisions without hardcoding type assumptions.
+This plan implements the Polyphony deterministic routing engine — the core state machine that powers conductor SDLC workflows. Given a work item ID and a process configuration, Polyphony inspects the work item's type, state, facets, and child hierarchy (all read from the twig SQLite cache) to produce a structured JSON routing decision: which SDLC phase the item is in and what action to take next. Phase 1 delivers working implementations of all three CLI commands (`route`, `validate`, `hierarchy`), backed by a shared routing engine with proper DI, cache access, phase detection, transition validation, and branch-name resolution. The result is a fully deterministic, AOT-compiled binary that conductor workflows can invoke for routing decisions without hardcoding type assumptions.
 
 ## Background
 
@@ -71,7 +71,7 @@ Polyphony serves as the routing oracle for conductor SDLC workflows (defined in 
 
 The `.conductor/process-config.yaml` defines the type system:
 
-- **Capabilities**: `plannable` (can have a plan document), `implementable` (can have code changes)
+- **Facets**: `plannable` (can have a plan document), `implementable` (can have code changes)
 - **Transitions**: Event → target state mappings per type (e.g., `begin_planning` → `Doing`)
 - **Branch strategy**: Templates for feature, planning, and PG branches
 - **Review policies**: Agent/human review requirements per PR category
@@ -92,7 +92,7 @@ Conductor SDLC workflows currently cannot invoke Polyphony for routing decisions
 
 2. **No transition validation** — There's no way to programmatically verify that a lifecycle event (e.g., `begin_planning`, `implementation_complete`) is legal for a given work item's current state. Agents must guess or hardcode.
 
-3. **No hierarchy introspection** — Conductor cannot query the work item tree with capability annotations (plannable/implementable), making it impossible to determine which children need work.
+3. **No hierarchy introspection** — Conductor cannot query the work item tree with facet annotations (plannable/implementable), making it impossible to determine which children need work.
 
 4. **No DI or cache access** — The commands don't connect to the twig SQLite cache at all, so they have no access to work item state, hierarchy, or process metadata.
 
@@ -104,7 +104,7 @@ Conductor SDLC workflows currently cannot invoke Polyphony for routing decisions
 
 2. **Implement the `validate` command** — Given a work item ID and a lifecycle event name, determine whether the transition is legal based on the process config and current state, returning the target state if valid.
 
-3. **Implement the `hierarchy` command** — Given a work item ID and depth, walk the hierarchy and return each node annotated with capabilities from the process config.
+3. **Implement the `hierarchy` command** — Given a work item ID and depth, walk the hierarchy and return each node annotated with facets from the process config.
 
 4. **Establish DI and cache access** — Wire up Twig.Infrastructure services so commands can read from the twig SQLite cache. Commands receive services via constructor injection.
 
@@ -131,7 +131,7 @@ Conductor SDLC workflows currently cannot invoke Polyphony for routing decisions
 | FR-2 | `route` command resolves workspace hints (feature branch, PG branch) from process config branch strategy |
 | FR-3 | `validate` command checks lifecycle event against process config transitions and current work item state |
 | FR-4 | `validate` command evaluates preconditions (e.g., `all_children_complete` requires all children in Completed category) |
-| FR-5 | `hierarchy` command walks the work item tree to specified depth, annotating each node with capabilities |
+| FR-5 | `hierarchy` command walks the work item tree to specified depth, annotating each node with facets |
 | FR-6 | All commands load process config from `--config` path (default `.conductor/process-config.yaml`) |
 | FR-7 | All commands accept `--twig-dir` to locate the twig cache directory (default `.twig`) |
 | FR-8 | Exit codes follow a defined scheme: 0 (success), 1 (routing/validation failure), 2 (config error), 3 (cache error) |
@@ -213,7 +213,7 @@ public static class SdlcAction
 
 #### 2. PhaseDetector (`Routing/PhaseDetector.cs`)
 
-The core state machine. Determines the SDLC phase for a work item based on its type, capabilities, state, and children:
+The core state machine. Determines the SDLC phase for a work item based on its type, facets, state, and children:
 
 ```csharp
 public sealed class PhaseDetector(ProcessConfig processConfig)
@@ -231,7 +231,7 @@ public sealed record RoutingDecision
 
 **Phase Detection Rules:**
 
-| Type Capabilities | State Category | Children | Phase | Action |
+| Type Facets | State Category | Children | Phase | Action |
 |-------------------|---------------|----------|-------|--------|
 | plannable | Proposed | none | `needs_planning` | `plan` |
 | plannable | Proposed | has children | `needs_planning` | `plan` |
@@ -244,12 +244,12 @@ public sealed record RoutingDecision
 | any | Completed | — | `done` | `none` |
 | any | Removed | — | `removed` | `none` |
 
-For items with both `plannable` and `implementable` capabilities (like Issue in Basic process):
+For items with both `plannable` and `implementable` facets (like Issue in Basic process):
 - **Proposed + no children** → `needs_planning` (plan first, then decide on decomposition)
 - **InProgress + no children** → `ready_for_implementation` (direct implementation, no decomposition needed)
 - **InProgress + children** → follows the children-based logic above
 
-**Design Decision:** Phase detection operates on the Polyphony-level `ProcessConfig` (from YAML), not the Twig.Domain `ProcessConfiguration` (from ADO API cache). This is intentional — Polyphony's routing rules are defined in the repo-local process config, while Twig.Domain's `ProcessConfiguration` represents the ADO process template's raw state machine. The two may diverge (e.g., Polyphony adds `plannable`/`implementable` capabilities that ADO doesn't know about).
+**Design Decision:** Phase detection operates on the Polyphony-level `ProcessConfig` (from YAML), not the Twig.Domain `ProcessConfiguration` (from ADO API cache). This is intentional — Polyphony's routing rules are defined in the repo-local process config, while Twig.Domain's `ProcessConfiguration` represents the ADO process template's raw state machine. The two may diverge (e.g., Polyphony adds `plannable`/`implementable` facets that ADO doesn't know about).
 
 However, **state category resolution** uses `StateCategoryResolver` from Twig.Domain, which maps state names (like "To Do", "Doing", "Done") to `StateCategory` values. This is the bridge between ADO state names and Polyphony's phase logic.
 
@@ -286,7 +286,7 @@ public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemReposi
 }
 ```
 
-Recursively loads children via `IWorkItemRepository.GetChildrenAsync()` up to `maxDepth`, annotating each node with `Capabilities` from `ProcessConfig.Types[type].Capabilities`.
+Recursively loads children via `IWorkItemRepository.GetChildrenAsync()` up to `maxDepth`, annotating each node with `Facets` from `ProcessConfig.Types[type].Facets`.
 
 #### 5. BranchNameResolver (`Routing/BranchNameResolver.cs`)
 
@@ -381,7 +381,7 @@ Registers:
 1. CLI receives: --work-item 1234 --depth 3 --config ...
 2. DI resolves: ProcessConfig, HierarchyWalker
 3. Walk: HierarchyWalker.WalkAsync(1234, 3)
-   → Recursively loads children, annotates with capabilities
+   → Recursively loads children, annotates with facets
 4. Build HierarchyResult tree and serialize
 5. Write JSON to stdout, return exit code 0
 ```
@@ -391,7 +391,7 @@ Registers:
 | Decision | Rationale |
 |----------|-----------|
 | String constants for phases/actions (not enums) | Avoids reflection-based enum serialization; forward-compatible; conductor scripts match on strings |
-| Read Polyphony ProcessConfig from YAML, not Twig.Domain ProcessConfiguration | Polyphony's routing concepts (plannable/implementable capabilities) are repo-specific, not ADO-native |
+| Read Polyphony ProcessConfig from YAML, not Twig.Domain ProcessConfiguration | Polyphony's routing concepts (plannable/implementable facets) are repo-specific, not ADO-native |
 | Use Twig.Domain's `StateCategoryResolver` for state → category | Reuses battle-tested state name mapping; avoids duplicating fallback heuristics |
 | Read-only cache access | Polyphony is an observer, not a mutator; state changes go through twig CLI |
 | Per-command service resolution (not global static) | Testable, injectable, AOT-safe |
@@ -450,7 +450,7 @@ Registers:
 | `src/Polyphony/Routing/RoutingDecision.cs` | Phase + action result record |
 | `src/Polyphony/Routing/PhaseDetector.cs` | Core state machine — determines phase from work item state and children |
 | `src/Polyphony/Routing/TransitionValidator.cs` | Lifecycle event validation against process config and preconditions |
-| `src/Polyphony/Routing/HierarchyWalker.cs` | Recursive hierarchy traversal with capability annotations |
+| `src/Polyphony/Routing/HierarchyWalker.cs` | Recursive hierarchy traversal with facet annotations |
 | `src/Polyphony/Routing/BranchNameResolver.cs` | Branch name template resolution from process config |
 | `src/Polyphony/Infrastructure/TwigCacheLocator.cs` | Locates `.twig/cache.db` from working directory or `--twig-dir` |
 | `src/Polyphony/Infrastructure/PolyphonyServiceRegistration.cs` | DI registration for all Polyphony + Twig services |
@@ -472,7 +472,7 @@ Registers:
 | `src/Polyphony/Commands/ValidateCommand.cs` | Replace stub with full implementation using injected `TransitionValidator` |
 | `src/Polyphony/Commands/HierarchyCommand.cs` | Replace stub with full implementation using injected `HierarchyWalker` |
 | `src/Polyphony/PolyphonyJsonContext.cs` | Add `RoutingDecision` and any new serialized types |
-| `src/Polyphony/Models/RouteResult.cs` | Potentially add fields (e.g., `Capabilities`, `ChildSummary`) |
+| `src/Polyphony/Models/RouteResult.cs` | Potentially add fields (e.g., `Facets`, `ChildSummary`) |
 | `tests/Polyphony.Tests/Polyphony.Tests.csproj` | Add project reference to Twig.Domain (for test builders) |
 
 ---
@@ -546,7 +546,7 @@ Registers:
 **Acceptance Criteria:**
 - [ ] `polyphony route --work-item 1234` outputs valid JSON with phase, action, and workspace_hint
 - [ ] `polyphony validate --work-item 1234 --event begin_planning` outputs valid JSON with is_valid and target_state
-- [ ] `polyphony hierarchy --work-item 1234 --depth 3` outputs valid JSON tree with capabilities per node
+- [ ] `polyphony hierarchy --work-item 1234 --depth 3` outputs valid JSON tree with facets per node
 - [ ] All commands return appropriate exit codes (0 on success, 1-3 on errors)
 - [ ] Missing work item returns exit code 3 with error JSON
 - [ ] Invalid config path returns exit code 2 with error JSON
@@ -660,5 +660,6 @@ Registers:
 
 - [Conductor Design Principles](../../.github/skills/conductor-design/SKILL.md) — Especially P5 (type-agnostic), P8 (scripts over agents)
 - [Twig SDLC Workflow](../../.github/skills/twig-sdlc/SKILL.md) — Full workflow definition
-- [Process Config](../../.conductor/process-config.yaml) — Type capabilities, transitions, branch strategy
+- [Process Config](../../.conductor/process-config.yaml) — Type facets, transitions, branch strategy
 - [Work Item Type Definitions](../../.conductor/work-item-types/) — Epic, Issue, Task definitions
+

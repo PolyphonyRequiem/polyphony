@@ -5,20 +5,20 @@ process_template: Agile
 
 types:
   Epic:
-    capabilities: [plannable]
+    facets: [plannable]
     filing_eligible: false
     max_nesting_depth: 1
     decomposition_guidance: |
       Always decompose into User Stories. Epics are never implemented directly.
   User Story:
-    capabilities: [plannable, implementable]
+    facets: [plannable, implementable]
     filing_eligible: true
     max_nesting_depth: 1
     decomposition_guidance: |
       Decompose into Tasks when scope exceeds a single PG.
       Implement directly when the change is focused and fits one PG.
   Task:
-    capabilities: [implementable]
+    facets: [implementable]
     filing_eligible: true
 
 transitions:
@@ -43,3 +43,4 @@ branch_strategy:
   target: main
 
 platform: github
+

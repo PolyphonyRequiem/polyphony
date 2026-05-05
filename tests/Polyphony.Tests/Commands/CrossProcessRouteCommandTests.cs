@@ -21,7 +21,7 @@ public sealed class CrossProcessRouteCommandTests : CommandTestBase
         string Name,
         string TopType,
         string MiddleType,
-        string[] MiddleCapabilities,
+        string[] MiddleFacets,
         string LeafType,
         string ProposedState,
         string InProgressState,
@@ -46,7 +46,7 @@ public sealed class CrossProcessRouteCommandTests : CommandTestBase
         var config = new ProcessConfigBuilder()
             .WithProcessTemplate(template.Name)
             .WithType(template.TopType, ["plannable"])
-            .WithType(template.MiddleType, template.MiddleCapabilities)
+            .WithType(template.MiddleType, template.MiddleFacets)
             .WithType(template.LeafType, ["implementable"])
             .WithBranchStrategy()
             .Build();
@@ -449,3 +449,4 @@ public sealed class CrossProcessRouteCommandTests : CommandTestBase
         result.Action.ShouldBe(SdlcAction.Implement);
     }
 }
+

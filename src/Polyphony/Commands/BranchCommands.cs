@@ -364,7 +364,7 @@ public sealed partial class BranchCommands(
     /// <summary>
     /// Group-by-PG logic from <c>scripts/lib/pg-helpers.ps1</c>:
     ///   - Parse the work item's tags for the first <c>PG-N</c> entry.
-    ///   - Classify by capability: implementable items go to implementables,
+    ///   - Classify by facet: implementable items go to implementables,
     ///     plannable-with-children items go to containers.
     /// "Issue-as-task" (plannable+implementable with no children) is treated
     /// as implementable.
@@ -434,3 +434,4 @@ public sealed partial class BranchCommands(
             result,
             PolyphonyJsonContext.Default.BranchCloseScopeResult));
 }
+

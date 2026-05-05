@@ -18,18 +18,18 @@ public sealed class ProcessConfigBuilder
     public ProcessConfigBuilder WithPlatform(string platform) { _platform = platform; return this; }
 
     /// <summary>
-    /// Adds a work item type with its capabilities and per-event transitions.
+    /// Adds a work item type with its facets and per-event transitions.
     /// </summary>
     public ProcessConfigBuilder WithType(
         string name,
-        string[] capabilities,
+        string[] facets,
         Dictionary<string, string>? transitions = null,
         bool selfReferential = false,
         string[]? allowedChildTypes = null,
         string? parent = null)
     {
         _types[name] = new TypeConfig {
-            Capabilities = capabilities,
+            Facets = facets,
             SelfReferential = selfReferential,
             AllowedChildTypes = allowedChildTypes ?? System.Array.Empty<string>(),
             Parent = parent
@@ -46,14 +46,14 @@ public sealed class ProcessConfigBuilder
     /// </summary>
     public ProcessConfigBuilder WithTypeWithParent(
         string name,
-        string[] capabilities,
+        string[] facets,
         string parent,
         Dictionary<string, string>? transitions = null,
         bool selfReferential = false,
         string[]? allowedChildTypes = null)
     {
         _types[name] = new TypeConfig {
-            Capabilities = capabilities,
+            Facets = facets,
             Parent = parent,
             SelfReferential = selfReferential,
             AllowedChildTypes = allowedChildTypes ?? System.Array.Empty<string>()
@@ -94,3 +94,4 @@ public sealed class ProcessConfigBuilder
         };
     }
 }
+

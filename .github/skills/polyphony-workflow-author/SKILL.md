@@ -51,7 +51,7 @@ A canonical, correct example: `scripts/scope-closer.ps1:53-72`.
 | What phase is this work item in? What action should we take?     | `polyphony route --work-item N`                   | `Commands/RouteCommand.cs`      |
 | What state name should I pass to `twig state` for event X?       | `polyphony validate --work-item N --event X`      | `Commands/ValidateCommand.cs`   |
 | Is this transition even legal right now?                         | `polyphony validate --work-item N --event X`      | `Commands/ValidateCommand.cs`   |
-| Walk children: capabilities, states, tags                        | `polyphony hierarchy --work-item N --depth 3`     | `Commands/HierarchyCommand.cs`  |
+| Walk children: facets, states, tags                        | `polyphony hierarchy --work-item N --depth 3`     | `Commands/HierarchyCommand.cs`  |
 | Get suggested branch names for this work item                    | `polyphony route` → `output.workspace_hint`       | `Routing/BranchNameResolver.cs` |
 | Validate `.conductor/process-config.yaml` itself                 | `polyphony validate-config --config .conductor`   | `Commands/ValidateConfigCommand.cs` |
 | Set the active work item context                                 | `twig set <id> --output json`                     | twig CLI                        |
@@ -132,10 +132,10 @@ for its idiom; copy from it rather than re-inventing.
 | Script                            | What it is the canonical reference for                                              |
 |-----------------------------------|--------------------------------------------------------------------------------------|
 | `scripts/scope-closer.ps1`        | Validate-then-transition: `polyphony validate` → `twig state $target_state`. The reference for state-name handling. |
-| `scripts/task-router.ps1`         | Within-PG task selection via capability filtering and `polyphony hierarchy`. Note: contains a remaining `twig state Doing` literal at line 106 to be replaced. |
-| `scripts/detect-state.ps1`        | Top-level phase detection: combines `polyphony route` + `polyphony validate` + `twig tree` into the apex `state_detector` JSON shape consumed by `twig-sdlc-v2-full.yaml`. |
+| `scripts/task-router.ps1`         | Within-PG task selection via facet filtering and `polyphony hierarchy`. Note: contains a remaining `twig state Doing` literal at line 106 to be replaced. |
+| `scripts/detect-state.ps1`        | Top-level phase detection: combines `polyphony route` + `polyphony validate` + `twig tree` into the root `state_detector` JSON shape consumed by `twig-sdlc-v2-full.yaml`. |
 | `scripts/pg-router.ps1`           | PR group lifecycle: groups items by PG tag, checks remote branches and gh PR state, returns the next PG action. |
-| `scripts/child-router.ps1`        | Plannable-child discovery for recursive planning (`plan-level.yaml`). The reference for capability-based filtering ("`_.capabilities -contains 'plannable'`"). |
+| `scripts/child-router.ps1`        | Plannable-child discovery for recursive planning (`plan-level.yaml`). The reference for facet-based filtering ("`_.facets -contains 'plannable'`"). |
 | `scripts/feature-pr-creator.ps1`  | gh-PR creation against `workspace_hint.feature_branch`. The reference for using `polyphony route` only for branch-name validation. |
 | `scripts/load-work-tree.ps1`      | Hierarchy → PG-grouped tree with completion status. The reference for `Group-ByPG` and PG enumeration. |
 
@@ -213,7 +213,7 @@ See `scripts/child-router.ps1:13` for the explicit doc-comment of this conventio
   `workspace_hint.pg_branch` (`Models/RouteResult.cs`).
 - `polyphony validate` → `is_valid`, `target_state`, `event`, `message`
   (`Models/ValidateResult.cs`).
-- `polyphony hierarchy` → `work_item_id`, `title`, `type`, `state`, `capabilities`,
+- `polyphony hierarchy` → `work_item_id`, `title`, `type`, `state`, `facets`,
   `tags`, `children` (recursive; `Models/HierarchyResult.cs`).
 
 These fields are covered by `tests/Polyphony.Tests/Commands/JsonOutputContractTests.cs`,
@@ -246,7 +246,7 @@ not at release time.
 
 The check is enforced at runtime by `polyphony state preflight` /
 `polyphony state preflight-lite` via the `--workflow-yaml "{{ workflow.file }}"`
-flag (already wired in the apex preflight agent and both planning /
+flag (already wired in the root preflight agent and both planning /
 implement preflight-lite agents). On mismatch, preflight returns a failed
 check, the gate routes to retry/abort, and there is no Proceed Anyway —
 silent misroutes are exactly what this guard exists to prevent.
@@ -261,3 +261,5 @@ silent misroutes are exactly what this guard exists to prevent.
 See [`docs/decisions/versioning-strategy.md`](../../../docs/decisions/versioning-strategy.md)
 for the full rationale, the bundled-SemVer model, and the three-layer
 truth (git tag · YAML self-description · `index.yaml` versions list).
+
+

@@ -17,10 +17,10 @@ public sealed class ProcessConfigFixtureTests
         config.Types.ShouldContainKey("Epic");
         config.Types.ShouldContainKey("Issue");
         config.Types.ShouldContainKey("Task");
-        config.Types["Epic"].Capabilities.ShouldContain("plannable");
-        config.Types["Issue"].Capabilities.ShouldContain("plannable");
-        config.Types["Issue"].Capabilities.ShouldContain("implementable");
-        config.Types["Task"].Capabilities.ShouldContain("implementable");
+        config.Types["Epic"].Facets.ShouldContain("plannable");
+        config.Types["Issue"].Facets.ShouldContain("plannable");
+        config.Types["Issue"].Facets.ShouldContain("implementable");
+        config.Types["Task"].Facets.ShouldContain("implementable");
         config.Transitions.ShouldNotBeEmpty();
     }
 
@@ -34,8 +34,8 @@ public sealed class ProcessConfigFixtureTests
         config.Types.ShouldContainKey("Epic");
         config.Types.ShouldContainKey("User Story");
         config.Types.ShouldContainKey("Task");
-        config.Types["User Story"].Capabilities.ShouldContain("plannable");
-        config.Types["User Story"].Capabilities.ShouldContain("implementable");
+        config.Types["User Story"].Facets.ShouldContain("plannable");
+        config.Types["User Story"].Facets.ShouldContain("implementable");
         config.Transitions.ShouldNotBeEmpty();
     }
 
@@ -49,8 +49,8 @@ public sealed class ProcessConfigFixtureTests
         config.Types.ShouldContainKey("Epic");
         config.Types.ShouldContainKey("Product Backlog Item");
         config.Types.ShouldContainKey("Task");
-        config.Types["Product Backlog Item"].Capabilities.ShouldContain("plannable");
-        config.Types["Product Backlog Item"].Capabilities.ShouldContain("implementable");
+        config.Types["Product Backlog Item"].Facets.ShouldContain("plannable");
+        config.Types["Product Backlog Item"].Facets.ShouldContain("implementable");
         config.Transitions.ShouldNotBeEmpty();
     }
 
@@ -64,8 +64,8 @@ public sealed class ProcessConfigFixtureTests
         config.Types.ShouldContainKey("Epic");
         config.Types.ShouldContainKey("Requirement");
         config.Types.ShouldContainKey("Task");
-        config.Types["Requirement"].Capabilities.ShouldContain("plannable");
-        config.Types["Requirement"].Capabilities.ShouldContain("implementable");
+        config.Types["Requirement"].Facets.ShouldContain("plannable");
+        config.Types["Requirement"].Facets.ShouldContain("implementable");
         config.Transitions.ShouldNotBeEmpty();
     }
 
@@ -94,8 +94,8 @@ public sealed class ProcessConfigFixtureTests
         var config = LoadByTemplate(template);
 
         config.Types.ShouldContainKey("Epic");
-        config.Types["Epic"].Capabilities.ShouldContain("plannable");
-        config.Types["Epic"].Capabilities.ShouldNotContain("implementable");
+        config.Types["Epic"].Facets.ShouldContain("plannable");
+        config.Types["Epic"].Facets.ShouldNotContain("implementable");
     }
 
     [Theory]
@@ -108,8 +108,8 @@ public sealed class ProcessConfigFixtureTests
         var config = LoadByTemplate(template);
 
         config.Types.ShouldContainKey("Task");
-        config.Types["Task"].Capabilities.ShouldContain("implementable");
-        config.Types["Task"].Capabilities.ShouldNotContain("plannable");
+        config.Types["Task"].Facets.ShouldContain("implementable");
+        config.Types["Task"].Facets.ShouldNotContain("plannable");
     }
 
     [Theory]
@@ -133,3 +133,4 @@ public sealed class ProcessConfigFixtureTests
         _ => throw new ArgumentException($"Unknown template: {template}"),
     };
 }
+

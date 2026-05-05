@@ -184,7 +184,7 @@ The resolved policy for this work item type:
 
 ## Type Definition
 
-The following defines the semantic meaning, capabilities, and constraints of this
+The following defines the semantic meaning, facets, and constraints of this
 work item type. Use this to understand what kind of planning is appropriate:
 
 {{ type_loader.output.definition }}
@@ -331,3 +331,4 @@ If there are no open questions, return an empty array: `"open_questions": []`
 - Use markdown link syntax for all file references in the plan (e.g.,
   `[docs/projects/foo.plan.md](docs/projects/foo.plan.md)`) so they render
   as clickable links in the approval gate UI
+

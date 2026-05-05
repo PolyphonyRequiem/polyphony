@@ -154,13 +154,13 @@ public sealed class CrossProcessTransitionValidatorTests
 
         foreach (var (typeName, transitions) in template.Transitions)
         {
-            string[] capabilities = typeName == template.TopType
+            string[] facets = typeName == template.TopType
                 ? ["plannable"]
                 : typeName == template.LeafType
                     ? ["implementable"]
                     : ["plannable", "implementable"];
 
-            builder.WithType(typeName, capabilities, transitions);
+            builder.WithType(typeName, facets, transitions);
         }
 
         return new TransitionValidator(builder.Build());
@@ -646,3 +646,4 @@ public sealed class CrossProcessTransitionValidatorTests
     private static InvalidTransition AssertInvalid(TransitionOutcome outcome) =>
         ((IUnion)outcome).Value.ShouldBeOfType<InvalidTransition>();
 }
+

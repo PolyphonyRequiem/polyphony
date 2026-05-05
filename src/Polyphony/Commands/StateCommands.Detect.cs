@@ -9,9 +9,9 @@ using Twig.Domain.Interfaces;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// Apex-workflow state detector. Replaces <c>scripts/detect-state.ps1</c>.
+/// Root-workflow state detector. Replaces <c>scripts/detect-state.ps1</c>.
 /// Inspects ADO state, plan artifacts on disk, and git state to produce
-/// the canonical lifecycle snapshot the apex YAML routes on.
+/// the canonical lifecycle snapshot the root YAML routes on.
 /// </summary>
 public sealed partial class StateCommands
 {
@@ -31,7 +31,7 @@ public sealed partial class StateCommands
 
     /// <summary>
     /// Inspect work item lifecycle state, plan artifacts, and git/PR state
-    /// to produce the canonical apex-workflow routing payload.
+    /// to produce the canonical root-workflow routing payload.
     /// </summary>
     /// <param name="workItem">ADO work item ID to inspect.</param>
     /// <param name="intent">User intent: <c>new</c>, <c>redo</c>, or <c>resume</c>. Defaults to <c>resume</c>.</param>
@@ -352,3 +352,4 @@ public sealed partial class StateCommands
 
 /// <summary>Children state count summary; serialised as the
 /// <c>children_summary</c> JSON string field of <see cref="StateDetectResult"/>.</summary>
+

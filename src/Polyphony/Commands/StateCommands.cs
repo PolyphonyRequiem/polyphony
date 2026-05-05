@@ -10,7 +10,7 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// State-detection and preflight verbs (<c>polyphony state ...</c>).
-/// Replaces the deterministic PowerShell scripts invoked from the apex
+/// Replaces the deterministic PowerShell scripts invoked from the root
 /// SDLC workflow:
 /// <list type="bullet">
 ///   <item><c>scripts/preflight-lite.ps1</c> → <see cref="PreflightLite"/></item>
@@ -110,7 +110,7 @@ public sealed partial class StateCommands(
     }
 
     /// <summary>
-    /// Full preflight for the apex SDLC workflow. Validates required
+    /// Full preflight for the root SDLC workflow. Validates required
     /// gating prerequisites (git, twig, twig config, ADO connectivity)
     /// and surfaces advisory warnings (gh auth, polyphony CLI, dotnet SDK).
     /// </summary>
@@ -437,3 +437,4 @@ public sealed partial class StateCommands(
         };
     }
 }
+

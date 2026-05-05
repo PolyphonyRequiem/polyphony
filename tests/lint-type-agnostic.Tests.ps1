@@ -22,10 +22,10 @@ Describe 'lint-type-agnostic.ps1' {
 
     Context 'Clean scripts (exit 0)' {
 
-        It 'Passes when scripts use capabilities instead of type names' {
+        It 'Passes when scripts use facets instead of type names' {
             Set-Content (Join-Path $script:ScriptsDir 'clean.ps1') @'
-$isImplementable = $item.capabilities -contains 'implementable'
-$isContainer = $item.capabilities -contains 'plannable'
+$isImplementable = $item.facets -contains 'implementable'
+$isContainer = $item.facets -contains 'plannable'
 '@
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-type-agnostic.ps1') 2>&1
             $LASTEXITCODE | Should -Be 0
@@ -141,3 +141,4 @@ $json = '{"type":"Epic"}'
         }
     }
 }
+

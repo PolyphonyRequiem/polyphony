@@ -44,7 +44,7 @@ Polyphony exists in two layers that share a name:
 | Layer | What it is | Where it lives | Who consumes it |
 |---|---|---|---|
 | **Polyphony CLI** | C# binary; ~24 verbs returning JSON. Pure decisions over twig cache + config. | `src/Polyphony/`, ships as `polyphony.exe` | Workflow YAMLs (via `pwsh -Command "polyphony …"`); humans at the terminal |
-| **Polyphony workflow suite** | 9 conductor YAML files (apex + planning + implementation + close-out + 2 PR sub-workflows). Multi-agent orchestration. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run polyphony-full@polyphony …`); humans at human-gates |
+| **Polyphony workflow suite** | 9 conductor YAML files (root + planning + implementation + close-out + 2 PR sub-workflows). Multi-agent orchestration. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run polyphony-full@polyphony …`); humans at human-gates |
 
 They ship from the same repo since the in-repo workflow co-location migration,
 but they are independent artifacts:
@@ -62,7 +62,7 @@ but they are independent artifacts:
    ┌──────────────────────────┐              ┌──────────────────────────────────┐
    │  Polyphony WORKFLOW       │              │  LLM agents (Opus, Sonnet)       │
    │  suite (9 YAMLs)          │  dispatches  │  for judgment work               │
-   │  apex + planning +        │ ───────────► │  (architect, reviewer, coder,    │
+   │  root + planning +        │ ───────────► │  (architect, reviewer, coder,    │
    │  implementation +         │              │   fixer, merger, scope_reviewer) │
    │  close-out + PR lifecycles│              └──────────────────────────────────┘
    └─────────────┬────────────┘
@@ -109,11 +109,11 @@ CLI.
 | top-level | `route` | Detect SDLC phase + recommended action for a work item | twig cache | — |
 | top-level | `validate` | Check whether a lifecycle event is legal; return `target_state` | twig cache | — |
 | top-level | `validate-config` | Schema-validate `process-config.yaml` against rules V-1..V-14 | config file | — |
-| top-level | `hierarchy` | Walk the work-item tree; annotate each node with capabilities | twig cache | — |
+| top-level | `hierarchy` | Walk the work-item tree; annotate each node with facets | twig cache | — |
 | top-level | `health` | Diagnostic checks (SQLite, dotnet, twig on PATH, etc.) | environment | — |
 | `state` | `preflight` | Full SDLC entry gate: 4 required + 3 advisory checks | git, twig, gh, ado | — |
 | `state` | `preflight-lite` | Quick 3-check entry gate for the planning sub-workflow | git, twig | — |
-| `state` | `detect` | Apex routing payload: phase + plan artifacts + git/PR state | twig cache, fs, git, gh | — |
+| `state` | `detect` | Root routing payload: phase + plan artifacts + git/PR state | twig cache, fs, git, gh | — |
 | `plan` | `depth-guard` | Validate recursion depth against a configured maximum | (args only) | — |
 | `plan` | `next-child` | List immediate plannable children of a work item | twig cache | — |
 | `plan` | `load-type` | Load type-definition + template + decomposition guidance | config files | — |
@@ -187,7 +187,7 @@ take** for a given work item. There are two levels of this decision:
 - **SDLC phase routing** (`polyphony route`, `polyphony state detect`):
   Given a work item ID, what *lifecycle phase* is it in? Does it need
   planning, seeding, implementation, close-out, or is it done? This is the
-  decision the apex workflow (`polyphony-full.yaml`) makes once at the top.
+  decision the root workflow (`polyphony-full.yaml`) makes once at the top.
 
 - **PR-group routing** (`polyphony branch route`): Given a hierarchy of work
   items already partitioned into PR groups (PGs) via `PG-N` tags, which PG
@@ -196,8 +196,8 @@ take** for a given work item. There are two levels of this decision:
   (`implement-pg.yaml`) makes per PG.
 
 Both share a key design rule: **routing is computed from `StateCategory`
-plus `capabilities`, never from a hardcoded type name.** Polyphony does not
-have an `if (typeName == "Epic")` anywhere — it reads the type's capabilities
+plus `facets`, never from a hardcoded type name.** Polyphony does not
+have an `if (typeName == "Epic")` anywhere — it reads the type's facets
 from `process-config.yaml` and decides on those. This is what makes the system
 type-agnostic across Basic / Agile / Scrum / CMMI process templates and
 across whatever custom hierarchy a repo defines.
@@ -217,7 +217,7 @@ Returns the SDLC phase the item is in, plus a recommended `action`. The
 decision is made by `PhaseDetector.cs:20-43`, which reads:
 
 - The item's `StateCategory` (from `Twig.Domain.Services.Process.StateCategoryResolver`)
-- The item's type's `capabilities` from `process-config.yaml`
+- The item's type's `facets` from `process-config.yaml`
 - Any `polyphony:planned` tag on `System.Tags` (which short-circuits "needs
   planning" once children have been seeded — see
   `PhaseDetector.cs:60-67`)
@@ -233,7 +233,7 @@ Phase constants (`src/Polyphony/Routing/SdlcPhase.cs`):
 | `ready_for_completion` | All children complete; item itself not yet closed |
 | `done` | In a terminal state (Completed) |
 | `removed` | In Removed category |
-| `unknown` | Type has no capabilities, or work item not found |
+| `unknown` | Type has no facets, or work item not found |
 
 Action constants (`src/Polyphony/Routing/SdlcAction.cs`):
 `plan` · `seed` · `implement` · `monitor` · `close` · `none`.
@@ -259,7 +259,7 @@ JSON shape (`src/Polyphony/Models/RouteResult.cs`):
 unsubstituted — caller fills in the PG number.
 
 **Use when:** A workflow needs to decide which sub-workflow to dispatch to
-next. The apex routing decision in `polyphony-full.yaml` is driven entirely
+next. The root routing decision in `polyphony-full.yaml` is driven entirely
 by this verb (via `state detect`, which wraps it).
 
 **Don't use when:** You need to *change* a state — `route` is read-only.
@@ -271,7 +271,7 @@ Use `validate` to learn the target state, then `twig state <name>` to apply it.
 polyphony state detect --work-item <id> [--intent new|redo|resume] [--plan-path <path>] [--plan-root <dir>]
 ```
 
-The apex workflow's single biggest decision verb. Wraps `polyphony route`
+The root workflow's single biggest decision verb. Wraps `polyphony route`
 with three additional inputs:
 
 1. **User intent** (`--intent new|redo|resume`) — distinguishes a fresh
@@ -283,11 +283,11 @@ with three additional inputs:
 3. **Git/PR state** — checks the local repo for the feature branch and the
    remote for any matching PR.
 
-The output is the *canonical apex routing payload* — a flat record with
-everything the apex YAML needs to route between planning, implementation,
+The output is the *canonical root routing payload* — a flat record with
+everything the root YAML needs to route between planning, implementation,
 and close-out without making additional CLI calls.
 
-**Use when:** You're authoring the apex node of a new SDLC workflow.
+**Use when:** You're authoring the root node of a new SDLC workflow.
 
 **Don't use when:** You only need the SDLC phase and don't care about plan
 artifacts or git state — `polyphony route` is the lighter call.
@@ -404,12 +404,12 @@ polyphony validate-config [--config <dir>] [--output json|human]
 
 | Range | Severity | What it checks |
 |---|---|---|
-| V-1..V-8 | error | schema_version, type list, capabilities, transitions, branch_strategy syntax, etc. |
+| V-1..V-8 | error | schema_version, type list, facets, transitions, branch_strategy syntax, etc. |
 | V-9..V-14 | warning | companion files exist (`work-item-types/<slug>.md`, templates, `agent-guidance/*.md`, `profile.yaml`) |
 
 Returns `0` on valid (warnings allowed) or `2` on any error.
 
-**Use when:** CI / preflight, before any workflow runs. The apex
+**Use when:** CI / preflight, before any workflow runs. The root
 `state preflight` does *not* call `validate-config` directly — that's a
 separate concern that runs earlier in CI or as a one-shot before pushing
 config changes.
@@ -434,7 +434,7 @@ defaults will paper over. Returns `0` on valid, `2` on errors.
 Hierarchy is the *tree-walking* primitive. Multiple verbs lean on it:
 
 - `polyphony hierarchy` is the raw walker — give it a root, get a tree with
-  capabilities annotated on each node.
+  facets annotated on each node.
 - `polyphony plan next-child` filters the immediate children to the
   `plannable` ones.
 - `polyphony branch route` and `polyphony branch load-tree` walk the tree,
@@ -444,10 +444,10 @@ Hierarchy is the *tree-walking* primitive. Multiple verbs lean on it:
 
 The shared engine is `HierarchyWalker` (`src/Polyphony/Routing/HierarchyWalker.cs`).
 It reads from `IWorkItemRepository` (twig SQLite cache), and for each node it
-annotates `capabilities` from the type's entry in `process-config.yaml`.
-**Capabilities are the universal classifier** — every routing decision is
-written against `Capabilities.Contains("plannable")` /
-`Capabilities.Contains("implementable")`, never against a type name.
+annotates `facets` from the type's entry in `process-config.yaml`.
+**Facets are the universal classifier** — every routing decision is
+written against `Facets.Contains("plannable")` /
+`Facets.Contains("implementable")`, never against a type name.
 
 ### `polyphony hierarchy`
 
@@ -466,18 +466,18 @@ nulls):
   "work_item_id": 1234,
   "title":        "Some Epic",
   "type":         "Epic",
-  "capabilities": ["plannable"],
+  "facets": ["plannable"],
   "state":        "Doing",
   "tags":         "PG-1; release-blocker",
   "children": [
     { "work_item_id": 1235, "title": "…", "type": "Issue",
-      "capabilities": ["plannable","implementable"],
+      "facets": ["plannable","implementable"],
       "state": "To Do", "children": [] }
   ]
 }
 ```
 
-**Use when:** A script needs to flatten + filter by capability or tag without
+**Use when:** A script needs to flatten + filter by facet or tag without
 re-implementing the walker. Typical pattern:
 
 ```powershell
@@ -486,7 +486,7 @@ function Flatten($n) {
     @($n) + ($n.children | ForEach-Object { Flatten $_ })
 }
 $implementable = Flatten $tree |
-    Where-Object { $_.capabilities -contains 'implementable' }
+    Where-Object { $_.facets -contains 'implementable' }
 ```
 
 **Don't use when:** You need ADO field metadata beyond `state` and `tags`
@@ -513,14 +513,14 @@ on `has_plannable_children`.
 The `state` group covers two related concerns:
 
 1. **Preflight** — *before we start, is everything wired up?* Two flavors:
-   `state preflight` (full, used by the apex workflow), and `state preflight-lite`
+   `state preflight` (full, used by the root workflow), and `state preflight-lite`
    (3 checks, used by sub-workflows that re-enter mid-run).
 2. **Detect** — *what's our current position in the lifecycle?* See § 3
    above for the full description of `state detect`.
 
 Both follow the **routing-style exit convention**: always exit 0; route on the
 JSON payload's `ready` (preflight) or `phase` (detect) field. Errors are
-reported via the payload, not via process exit code, so the apex workflow can
+reported via the payload, not via process exit code, so the root workflow can
 route to a human gate even on environment failures.
 
 ### `polyphony state preflight`
@@ -555,7 +555,7 @@ polyphony state preflight-lite
 
 Three checks only: `git_repo`, `twig_cli`, `polyphony_cli`. No work item
 needed. Used by re-entering sub-workflows that already passed full preflight
-on the apex run.
+on the root run.
 
 ---
 
@@ -589,7 +589,7 @@ polyphony policy load [--path <file>]
 Loads `policy.yaml` (or `--path`) and returns a snapshot of the resolved
 configuration with built-in defaults applied. When the file doesn't exist,
 returns a defaults-only snapshot with `used_defaults: true`. This is the
-verb the apex workflow calls once at the top to bake the policy into the run.
+verb the root workflow calls once at the top to bake the policy into the run.
 
 ### `polyphony policy validate`
 
@@ -726,7 +726,7 @@ Match precedence per task:
 On zero errors, merges the planned tag (default `polyphony:planned`) into
 the parent's `System.Tags`. `PhaseDetector` reads this tag to recognize the
 "already planned" state without consulting `process-config.yaml`
-(`PhaseDetector.cs:60-67`) — this is what stops the apex workflow from
+(`PhaseDetector.cs:60-67`) — this is what stops the root workflow from
 re-routing into planning forever after it succeeds.
 
 ---
@@ -779,7 +779,7 @@ Idempotent: if the branch exists locally, checks it out; if it exists on
 remote but not locally, fetches and checks out; if it exists nowhere, creates
 from `--base-branch` (default `main`) and pushes. Default remote is `origin`.
 
-The apex workflow calls this once after state detection. Sub-workflows trust
+The root workflow calls this once after state detection. Sub-workflows trust
 the branch name as an input rather than re-running the check.
 
 ### `polyphony branch next-task`
@@ -914,7 +914,7 @@ else:
 
 | Verb | Why it justifies a typed binary |
 |---|---|
-| `route` / `state detect` | Type-agnostic phase detection over `StateCategory` × `capabilities`. Doing this correctly across Basic/Agile/Scrum/CMMI templates needs the `Twig.Domain` resolvers — and PowerShell calling into .NET assemblies is awkward enough that owning the call here pays for itself. |
+| `route` / `state detect` | Type-agnostic phase detection over `StateCategory` × `facets`. Doing this correctly across Basic/Agile/Scrum/CMMI templates needs the `Twig.Domain` resolvers — and PowerShell calling into .NET assemblies is awkward enough that owning the call here pays for itself. |
 | `validate` | Returns `target_state` so PowerShell never types `"Done"` literally. This single field is the seam that makes the SDLC process-template-agnostic. |
 | `validate-config` | 14 schema rules are far easier to author and test as C# than as a YAML linter. |
 | `branch route` | Stale-PR defense, parallel-PG dispatch via `--pg-number`, type-agnostic terminal-state checks via `StateCategoryResolver` — three subtle ratchets that previously bit us in the PowerShell version. |
@@ -1004,3 +1004,5 @@ home. Otherwise, the script registry is where it belongs.
   call when, with worked examples).
 - **CLI authoring conventions:** `.github/skills/polyphony-cli-developer/SKILL.md`
   (when adding a new verb).
+
+

@@ -220,7 +220,7 @@ inference that would otherwise fail opaquely in a downstream agent.
 
 | Script | Workflow | Purpose | Budget |
 |--------|----------|---------|--------|
-| `preflight-check.ps1` | `twig-sdlc-full.yaml` | Full validation (12 checks) for apex SDLC entry | ≤10 seconds |
+| `preflight-check.ps1` | `twig-sdlc-full.yaml` | Full validation (12 checks) for root SDLC entry | ≤10 seconds |
 | `preflight-lite.ps1` | `twig-sdlc-planning.yaml`, `twig-sdlc-implement.yaml` | Lightweight validation (3 checks) for sub-workflow re-entry | ≤5 seconds |
 
 **Full preflight** runs as the `preflight_check` script node in `twig-sdlc-full.yaml`.
@@ -507,3 +507,4 @@ frontmatter is the canonical mechanism and must be included in all new plans.
 ## When NOT to Use
 
 - **Quick fixes** — single-file changes don't need a 5-phase pipeline
+

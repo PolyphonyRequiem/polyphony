@@ -39,9 +39,10 @@ if ($violations.Count -gt 0) {
         Write-Host "  ${rel}:$($v.LineNumber): $($v.Line.Trim())" -ForegroundColor Yellow
     }
     Write-Host ''
-    Write-Host 'Fix: Replace type-name literals with polyphony capability/hierarchy queries.' -ForegroundColor Cyan
+    Write-Host 'Fix: Replace type-name literals with polyphony facet/hierarchy queries.' -ForegroundColor Cyan
     exit 1
 }
 
 Write-Host "PASS: No type-name literals found ($($files.Count) files scanned)" -ForegroundColor Green
 exit 0
+

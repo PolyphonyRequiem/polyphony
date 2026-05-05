@@ -70,7 +70,7 @@ You are not changing anything; you want the model.
   `C:\Users\dangreen\projects\twig2\`.
 - **The `conductor` workflow engine** — YAML schema, routing semantics,
   re-entry, human gates. Use the **conductor** skill.
-- **The v2 SDLC workflow suite** — apex `twig-sdlc-v2-full.yaml`, the
+- **The v2 SDLC workflow suite** — root `twig-sdlc-v2-full.yaml`, the
   9-workflow tree, recursion budget, parallel PG execution. Use the
   **polyphony-sdlc** skill (`.github/skills/polyphony-sdlc/SKILL.md`).
   The workflow YAMLs themselves live in
@@ -95,3 +95,4 @@ You are not changing anything; you want the model.
 Sizes rounded; see file system for canonical bytes. Files marked
 `.skill.md` carry frontmatter and are intended to be auto-loaded by an agent
 runtime; the others are reference Markdown.
+
