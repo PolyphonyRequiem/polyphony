@@ -4,14 +4,14 @@
 project:
   name: Polyphony
   description: >
-    AOT-compiled .NET 10 CLI that routes work items through SDLC phases
+    .NET 11 CLI that routes work items through SDLC phases
     based on per-repo process configuration. Reads .conductor/process-config.yaml
     to determine hierarchy roles, state transitions, and branch strategy.
   repository: PolyphonyRequiem/polyphony
 
 tech_stack:
-  language: C# 14
-  framework: .NET 10 (AOT, trimmed)
+  language: C# (preview LangVersion)
+  framework: .NET 11
   cli_framework: ConsoleAppFramework v5 (source-generated)
   serialization: System.Text.Json (source-generated context)
   config_parsing: YamlDotNet
@@ -27,7 +27,9 @@ conventions:
   - Sealed classes and sealed records by default
   - Primary constructors for DI
   - Source-generated JSON only (no reflection)
-  - AOT-safe code paths (no dynamic loading)
+  - AOT-friendly code paths (no dynamic loading) — AOT publish is currently
+    disabled while we work around YamlDotNet, but code stays AOT-safe so
+    re-enabling is a csproj-level change
   - All public APIs return structured result types
 
 estimation:

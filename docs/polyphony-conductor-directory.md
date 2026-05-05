@@ -293,7 +293,7 @@ project:
 
 tech_stack:
   language: <e.g. C# 14>
-  framework: <e.g. .NET 10 (AOT, trimmed)>
+  framework: <e.g. .NET 11>
   testing: <e.g. xUnit + Shouldly + NSubstitute>
   # …
 

@@ -1,6 +1,6 @@
 # Epic Guidance — polyphony
 
-You are planning work for **polyphony**: an AOT-compiled .NET 10 CLI (C# 14)
+You are planning work for **polyphony**: a .NET 11 CLI (preview LangVersion)
 that routes work items through SDLC phases for any per-repo process
 configuration. Polyphony reads `.conductor/process-config.yaml` to determine
 hierarchy roles, state transitions, and branch strategy. It does not hard-code

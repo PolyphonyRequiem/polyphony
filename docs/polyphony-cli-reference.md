@@ -1,6 +1,6 @@
 # Polyphony CLI Reference
 
-The Polyphony CLI is a single AOT-compiled .NET binary that exposes ~24 verbs
+The Polyphony CLI is a single .NET 11 binary that exposes ~24 verbs
 across 9 command groups. It is the **deterministic decision layer** of the
 polyphony SDLC system — every `polyphony <verb>` is a pure-ish function over
 twig's local SQLite cache and a small set of YAML config files, emitting JSON.
@@ -634,11 +634,12 @@ agent with deterministic helper verbs that:
   (`plan seed-children`)
 
 These verbs were originally PowerShell scripts. Migrating them to the CLI
-gave them unit tests, deterministic JSON contracts, and AOT speed — but the
-*logic* hasn't fundamentally changed. They are the most "thin shell" verbs
-in the CLI and the most defensible target for the question "could this just
-be a script?". The answer is *yes* — but having them in C# means one
-contract surface for the workflow YAML, which is what justifies the cost.
+gave them unit tests, deterministic JSON contracts, and a single typed
+contract surface for the workflow YAML — but the *logic* hasn't fundamentally
+changed. They are the most "thin shell" verbs in the CLI and the most
+defensible target for the question "could this just be a script?". The answer
+is *yes* — but having them in C# means one contract surface for the workflow
+YAML, which is what justifies the cost.
 
 ### `polyphony plan depth-guard`
 
@@ -938,10 +939,11 @@ container, adding a verb is much cheaper than maintaining a pwsh script with
 its own argument-parsing, JSON-emitting, and exit-code handling.
 
 The cost of these thin verbs is real: slow .NET cold-start (~150ms per
-invocation), AOT packaging complexity, a `JsonOutputContractTests` suite that
-has to enumerate every result type. The benefit is also real: when a verb's
-contract changes, exactly one place changes — and the workflow's call site
-is type-checked by the JSON contract test, not by hope.
+invocation), a `JsonOutputContractTests` suite that has to enumerate every
+result type, and the overhead of a typed contract for what could be a plain
+JSON-emitting script. The benefit is also real: when a verb's contract
+changes, exactly one place changes — and the workflow's call site is
+type-checked by the JSON contract test, not by hope.
 
 ### What the CLI *is not* adding
 

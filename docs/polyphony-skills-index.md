@@ -6,7 +6,7 @@ which document to read first based on what you are about to do.
 
 ## What polyphony is, in two sentences
 
-Polyphony is an AOT-compiled .NET CLI that decides *what should happen* to a
+Polyphony is a .NET 11 CLI that decides *what should happen* to a
 work item in an SDLC pipeline — phase, transition, branch hint — based on a
 per-repo `.conductor/process-config.yaml`. It pairs with `twig` (which
 *executes* the decisions against ADO) and with `conductor` (which orchestrates
