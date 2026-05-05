@@ -30,4 +30,6 @@ app.Add<PolicyCommands>("policy");
 app.Add<BranchCommands>("branch");
 app.Add<StateCommands>("state");
 app.Add<PrCommands>("pr");
+app.Add<ScopeCommands>("scope");
+app.Add<RootCommands>("root");
 app.Run(args);
