@@ -46,6 +46,36 @@ public sealed class HealthCommandTests
     }
 
     [Fact]
+    public void HealthCommand_PolyphonyVersion_IsInformationalVersion_NotAssemblyVersion()
+    {
+        // Regression for the AssemblyVersion-vs-InformationalVersion bug:
+        // MinVer pins AssemblyVersion to a stable "0.0.0.0" / "1.0.0.0" so
+        // that downstream binders don't break on every patch, and writes the
+        // real SemVer (including pre-release / build-metadata) into
+        // AssemblyInformationalVersion. HealthCommand must report the latter,
+        // otherwise `polyphony health` always returns the placeholder.
+        var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-health-version-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var configPath = Path.Combine(tempDir, "process-config.yaml");
+        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { capabilities: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
+        var cmd = new HealthCommand(tool => new HealthCheckResult { Name = tool, Success = true, Message = "mocked" });
+
+        var (_, output) = CaptureConsole(() => cmd.Health(configPath));
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.HealthResult);
+
+        result.ShouldNotBeNull();
+        result.PolyphonyVersion.ShouldNotBeNullOrEmpty();
+        // Numeric AssemblyVersion is always 4-part dotted ("X.Y.Z.W"); SemVer
+        // from InformationalVersion is 3-part ("X.Y.Z") with optional
+        // "-prerelease" / "+build" suffix. A 4-part dotted string with no
+        // pre-release / build metadata is the smoking gun for the regression.
+        var fourPartDotted = System.Text.RegularExpressions.Regex.IsMatch(
+            result.PolyphonyVersion!, @"^\d+\.\d+\.\d+\.\d+$");
+        fourPartDotted.ShouldBeFalse(
+            $"Expected SemVer from AssemblyInformationalVersion, got 4-part AssemblyVersion: {result.PolyphonyVersion}");
+    }
+
+    [Fact]
     public void HealthCommand_Fails_WhenConfigMissing()
     {
         var cmd = new HealthCommand();
