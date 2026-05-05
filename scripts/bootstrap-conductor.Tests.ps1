@@ -104,6 +104,7 @@ Describe 'bootstrap-conductor.ps1 — Agile template' {
     }
 
     It 'Generates correct types for Agile' {
+        $config.types.Keys | Should -Not -BeNullOrEmpty
         $result = & $script:ScriptPath -ProcessTemplate 'Agile' -OutputPath $script:TempDir | ConvertFrom-Json
         $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
@@ -131,7 +132,8 @@ Describe 'bootstrap-conductor.ps1 — Agile template' {
         $config = Get-Content (Join-Path $script:TempDir '.conductor' 'process-config.yaml') -Raw
         $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
         $yaml = Get-Content $configPath -Raw | ConvertFrom-Yaml
-        $topType = ($yaml.types.Keys)[0]
+        $topType = $yaml.types.Keys | Where-Object { -not $yaml.types[$_].ContainsKey('parent') } | Select-Object -First 1
+        $topType | Should -Not -BeNullOrEmpty
         $transitions = $yaml.transitions[$topType]
         # Defensive: check for double values
         $bp = $transitions.begin_planning
@@ -161,6 +163,7 @@ Describe 'bootstrap-conductor.ps1 — Scrum template' {
     }
 
     It 'Generates correct types for Scrum' {
+        $config.types.Keys | Should -Not -BeNullOrEmpty
         $result = & $script:ScriptPath -ProcessTemplate 'Scrum' -OutputPath $script:TempDir | ConvertFrom-Json
         $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
@@ -180,15 +183,16 @@ Describe 'bootstrap-conductor.ps1 — Scrum template' {
         $config = Get-Content (Join-Path $script:TempDir '.conductor' 'process-config.yaml') -Raw
         $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
         $yaml = Get-Content $configPath -Raw | ConvertFrom-Yaml
-        # Find a mid-level type (not Epic, not Task)
+        # Find a mid-level type structurally (plannable + implementable)
         $typeKeys = $yaml.types.Keys
-        $midType = $typeKeys | Where-Object { $_ -notmatch 'Epic|Task' } | Select-Object -First 1
-        if ($midType -eq $null) {
-            throw "No mid-level type found in types.Keys: $typeKeys"
-        }
+        $midType = $typeKeys | Where-Object {
+            $caps = $yaml.types[$_].capabilities
+            $caps -contains 'plannable' -and $caps -contains 'implementable'
+        } | Select-Object -First 1
+        $midType | Should -Not -BeNullOrEmpty
         $transitions = $yaml.transitions[$midType]
         $bp = $transitions.begin_planning
-        Write-Host "DEBUG: midType=$midType, begin_planning=$bp"
+        
         if ($bp -is [System.Collections.IEnumerable] -and -not ($bp -is [string])) {
             foreach ($item in $bp) {
                 $config | Should -Match ("begin_planning: $item")
@@ -210,6 +214,7 @@ Describe 'bootstrap-conductor.ps1 — CMMI template' {
     }
 
     It 'Generates correct types for CMMI' {
+        $config.types.Keys | Should -Not -BeNullOrEmpty
         $result = & $script:ScriptPath -ProcessTemplate 'CMMI' -OutputPath $script:TempDir | ConvertFrom-Json
         $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
