@@ -184,7 +184,7 @@ agents:
         when: "{{ state_detector.output.phase == 'ready_for_implementation' }}"
       - to: ensure_feature_branch
         when: "{{ state_detector.output.phase == 'in_progress' }}"
-      - to: close_out
+      - to: feature_pr
         when: "{{ state_detector.output.phase == 'ready_for_completion' }}"
       - to: $end
         when: "{{ state_detector.output.phase == 'done' }}"
@@ -268,25 +268,114 @@ agents:
     routes:
       - to: state_detector
         # Re-discover phase after implementation. State_detector will see all
-        # PGs done and route to close_out. P3: Re-Entry by State Discovery.
+        # PGs done and route to feature_pr. P3: Re-Entry by State Discovery.
+
+  # ── Feature PR sub-workflow ───────────────────────────────────────────
+  #
+  # Invoked when state_detector.output.phase is ready_for_completion.
+  # Creates a feature PR (feature branch → main), reviews it, runs
+  # remediation cycles if needed, and merges. The apex owns the feature
+  # branch lifecycle — this step consumes it.
+  #
+  # Invariants:
+  #   Pre:  All PGs are merged into the feature branch.
+  #   Post: Feature PR is merged (merged=true) or aborted.
+  - name: feature_pr
+    type: workflow
+    description: Feature PR creation, review, and merge
+    workflow: ./feature-pr.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default(ensure_feature_branch.output.branch | default('')) }}"
+      target_branch: "main"
+      platform: "github"
+    routes:
+      - to: close_out
+        when: "{{ feature_pr.output.merged == true }}"
+      - to: feature_pr_failed_gate
+        when: "{{ feature_pr.output.merged == false }}"
+      # Catch-all per M4: ambiguous merged state → surface to user.
+      - to: feature_pr_failed_gate
+
+  # ── Feature PR failure gate ─────────────────────────────────────────
+  #
+  # Fires when the feature PR sub-workflow returns merged=false (abort,
+  # remediation cap exceeded, or unresolvable conflicts).
+  #
+  # Invariants:
+  #   Pre:  feature_pr.output.merged == false.
+  #   Post: User has chosen to retry, skip, or abort.
+  - name: feature_pr_failed_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Feature PR Not Merged
+
+      The feature PR for work item **{{ workflow.input.work_item_id }}** was
+      not successfully merged.
+
+      {% if feature_pr.output.pr_url is defined and feature_pr.output.pr_url %}
+      **PR:** {{ feature_pr.output.pr_url }}
+      {% endif %}
+
+      Choose an action:
+      - **Retry** — re-attempt the feature PR lifecycle
+      - **Skip** — proceed to close-out without merging (manual merge required)
+      - **Abort** — end the workflow
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: feature_pr
+      - label: "⏭️ Skip"
+        value: skip
+        route: close_out
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
 
   # ── Close-out sub-workflow ────────────────────────────────────────────
   #
-  # Invoked when state_detector.output.phase is ready_for_completion.
-  # Performs post-mortem analysis and files observations as new work items
-  # using filing-eligible types from process-config.yaml.
+  # Performs post-mortem analysis after the feature PR is merged.
+  # Observations are returned as workflow output (not filed as children).
   #
   # Invariants:
-  #   Pre:  state_detector.output.phase == ready_for_completion.
-  #   Post: Observations filed; output.filed_count returned.
+  #   Pre:  Feature PR merged or user chose to skip.
+  #   Post: Observations recorded; routes to epic_closer.
   - name: close_out
     type: workflow
     description: Post-implementation close-out and observation filing
     workflow: ./close-out.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
-      feature_branch: "{{ ensure_feature_branch.output.branch | default('') }}"
+      feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default('') }}"
     routes:
-      - to: state_detector
-        # Re-discover phase after close-out. State_detector will see phase=done
-        # (or removed) and route to $end. P3: Re-Entry by State Discovery.
+      - to: epic_closer
+
+  # ── Epic closer ──────────────────────────────────────────────────────
+  #
+  # Transitions the root work item to Done via the all_children_complete
+  # event. Validates the precondition (all children in terminal state)
+  # before transitioning. Non-fatal on failure — if the transition is
+  # invalid, the item stays in its current state.
+  #
+  # Invariants:
+  #   Pre:  Close-out has completed; all child work items should be Done.
+  #   Post: Root work item transitioned to Done (or left as-is on failure).
+  - name: epic_closer
+    type: script
+    description: Transition root work item to Done via all_children_complete
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $id = {{ workflow.input.work_item_id }};
+        $validation = polyphony validate --work-item $id --event all_children_complete 2>&1 | ConvertFrom-Json;
+        if ($validation.is_valid) {
+          twig set $id 2>$null;
+          twig state $validation.target_state 2>$null;
+          @{ transitioned = $true; target_state = $validation.target_state; work_item_id = $id } | ConvertTo-Json
+        } else {
+          @{ transitioned = $false; reason = $validation.message; work_item_id = $id } | ConvertTo-Json
+        }
+    routes:
+      - to: $end
