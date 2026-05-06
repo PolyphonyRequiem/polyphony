@@ -10,7 +10,7 @@ workflows:
   polyphony-implement:
     description: "Implementation orchestration sub-workflow — preflight, work tree load, per-PG dispatch"
     path: workflows/polyphony-implement.yaml
-    versions: ["1.0.0", "1.0.1"]
+    versions: ["1.0.0", "1.0.1", "1.1.0", "1.2.0"]
   plan-level:
     description: "Recursive planning core — single hierarchy level (sub-workflow, called by polyphony-planning)"
     path: workflows/plan-level.yaml
@@ -19,6 +19,10 @@ workflows:
     description: "Implement a single PR group — coding, review, PR (sub-workflow, called by polyphony-implement)"
     path: workflows/implement-pg.yaml
     versions: ["1.0.0", "1.0.1"]
+  implement-mg:
+    description: "Implement a single merge group — coding, review, MG-PR open + merge (sub-workflow, called by polyphony-implement)"
+    path: workflows/implement-mg.yaml
+    versions: ["1.0.0", "1.1.0"]
   feature-pr:
     description: "Feature PR lifecycle — review, fix loop, merge (sub-workflow)"
     path: workflows/feature-pr.yaml

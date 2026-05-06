@@ -44,7 +44,7 @@ workflow:
     work tree to discover MG structure and completion status, then
     dispatches pending MGs sequentially via for_each to implement-mg.yaml.
     Releases the lock on every exit path.
-  version: "1.1.0"
+  version: "1.2.0"
   entry_point: preflight_lite
   metadata:
     min_polyphony_version: "1.0.1"
@@ -75,6 +75,27 @@ workflow:
       required: false
       default: github
       description: "PR platform: github | ado"
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO organization name (required when platform=ado; ignored otherwise).
+        Threaded down to implement-mg.yaml's ADO MG-PR leg.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO project name (required when platform=ado; ignored otherwise).
+        Threaded down to implement-mg.yaml's ADO MG-PR leg.
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO repository identifier — GUID or name (required when platform=ado;
+        ignored otherwise). Threaded down to implement-mg.yaml's ADO MG-PR leg.
 
 tools:
   - twig
@@ -517,6 +538,9 @@ for_each:
         work_item_ids: "{{ pg.work_item_ids }}"
         feature_branch: "{{ pg.feature_branch }}"
         platform: "{{ workflow.input.platform }}"
+        organization: "{{ workflow.input.organization }}"
+        project: "{{ workflow.input.project }}"
+        repository: "{{ workflow.input.repository }}"
     routes:
       # Group results expose `errors` / `outputs` / `count`. There is no
       # `failed_count` / `succeeded_count` aggregate — derive from

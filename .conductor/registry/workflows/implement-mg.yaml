@@ -76,7 +76,7 @@ workflow:
     MG branch, iterates tasks through coder → reviewer with per-task
     branches and PRs, runs scope-level review, and opens + merges the
     MG PR via the merge-commit-only path required by the ADR.
-  version: "1.0.0"
+  version: "1.1.0"
   entry_point: branch_ensure_mg
   metadata:
     min_polyphony_version: "1.0.1"
@@ -128,9 +128,35 @@ workflow:
       default: github
       description: >-
         PR platform — `github` (full lifecycle: open + merge MG PR via gh)
-        or `ado` (stub — opens a human gate so the operator manages the
-        MG PR manually in Azure DevOps). Mirrors the implement-pg.yaml
-        contract. Default github preserves pre-platform-router behavior.
+        or `ado` (full lifecycle via ADO REST when organization, project,
+        and repository are also supplied; falls back to a clear failure
+        gate when those connection inputs are blank). Mirrors the
+        implement-pg.yaml contract. Default github preserves
+        pre-platform-router behavior.
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO organization name (e.g. `contoso`). Required when
+        platform=ado; ignored when platform=github. When platform=ado
+        and this is blank, pr_platform_router routes to
+        mg_pr_inputs_missing_gate before invoking any ADO verb.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO project name. Required when platform=ado; ignored when
+        platform=github.
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO repository identifier — GUID or name; both accepted by
+        `pr open-mg-ado` / `pr merge-mg-ado`. Required when
+        platform=ado; ignored when platform=github.
 
 tools:
   - twig
@@ -145,8 +171,14 @@ output:
   # because several routes (dependency_gate reassign, user_acceptance
   # abort, error fall-throughs) reach $end without running scope_closer.
   merged: "{% if scope_closer is defined %}{{ (scope_closer.output.exit_code == 0) | string | lower }}{% else %}false{% endif %}"
-  pr_url: "{% if mg_pr_open is defined %}{{ mg_pr_open.output.pr_url | default('') }}{% else %}{% endif %}"
-  pr_number: "{% if mg_pr_open is defined %}{{ mg_pr_open.output.pr_number | default(0) }}{% else %}0{% endif %}"
+  pr_url: >-
+    {% if mg_pr_open_ado is defined %}{{ mg_pr_open_ado.output.pr_url | default('') }}
+    {%- elif mg_pr_open is defined %}{{ mg_pr_open.output.pr_url | default('') }}
+    {%- else %}{% endif %}
+  pr_number: >-
+    {% if mg_pr_open_ado is defined %}{{ mg_pr_open_ado.output.pr_number | default(0) }}
+    {%- elif mg_pr_open is defined %}{{ mg_pr_open.output.pr_number | default(0) }}
+    {%- else %}0{% endif %}
   mg_path: "{{ workflow.input.mg_path }}"
 
 agents:
@@ -776,30 +808,46 @@ agents:
   #
   # Routes to the platform-specific MG-PR lifecycle leg based on the
   # platform input (github | ado). Mirrors the pattern in
-  # implement-pg.yaml. ADO leg is a human-gate stub matching ado-pr.yaml
-  # — the ADO MG verbs (`pr open-mg-ado`, `pr merge-mg-ado`) exist (#106)
-  # but require organization/project/repository which the current
-  # implement-mg.yaml input contract does not yet thread through. A
-  # follow-up PR will plumb those inputs and replace the human gate with
-  # a real ADO leg using the verbs.
+  # implement-pg.yaml.
+  #
+  # The script ALSO computes `ado_inputs_ready` so the workflow can fail
+  # early and clearly when platform=ado but the connection inputs
+  # (organization, project, repository) were not threaded — without
+  # invoking an ADO verb that would just return `error_code:
+  # invalid_argument`. The router emits:
+  #   { platform: 'github'|'ado', ado_inputs_ready: bool, missing: '<csv>' }
+  # so route conditions can branch on the ready flag and the failure
+  # gate can reference the missing field list per M3.
   #
   # Invariants:
   #   Pre:  User accepted the MG; platform is 'github' or 'ado'.
-  #   Post: Routes to mg_pr_open (github) or mg_pr_human_gate_ado (ado).
+  #   Post: Routes to mg_pr_open (github), mg_pr_open_ado (ado +
+  #         inputs ready), or mg_pr_inputs_missing_gate (ado + missing).
   - name: pr_platform_router
     type: script
-    description: Route to platform-specific MG-PR lifecycle based on platform input
+    description: Route to platform-specific MG-PR lifecycle based on platform + ADO connection inputs
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - >-
-        @{ platform = '{{ workflow.input.platform }}' } | ConvertTo-Json
+        $platform = '{{ workflow.input.platform }}';
+        $org = '{{ workflow.input.organization }}';
+        $proj = '{{ workflow.input.project }}';
+        $repo = '{{ workflow.input.repository }}';
+        $missing = @();
+        if ([string]::IsNullOrWhiteSpace($org)) { $missing += 'organization' };
+        if ([string]::IsNullOrWhiteSpace($proj)) { $missing += 'project' };
+        if ([string]::IsNullOrWhiteSpace($repo)) { $missing += 'repository' };
+        $ready = ($missing.Count -eq 0);
+        @{ platform = $platform; ado_inputs_ready = $ready; missing = ($missing -join ',') } | ConvertTo-Json -Compress
     routes:
       - to: mg_pr_open
         when: "{{ pr_platform_router.output.platform == 'github' }}"
-      - to: mg_pr_human_gate_ado
-        when: "{{ pr_platform_router.output.platform == 'ado' }}"
+      - to: mg_pr_open_ado
+        when: "{{ pr_platform_router.output.platform == 'ado' and pr_platform_router.output.ado_inputs_ready == true }}"
+      - to: mg_pr_inputs_missing_gate
+        when: "{{ pr_platform_router.output.platform == 'ado' and pr_platform_router.output.ado_inputs_ready == false }}"
       # Catch-all per M4: unknown platform value fails safely to $end
       # rather than raising `No matching route found` mid-MG.
       - to: $end
@@ -854,44 +902,182 @@ agents:
     routes:
       - to: scope_closer
 
-  # ── ADO MG-PR human gate (stub) ───────────────────────────────────────
+  # ── ADO MG-PR open ────────────────────────────────────────────────────
   #
-  # ADO leg of the platform router. Stub — matches the pattern in
-  # ado-pr.yaml. The operator opens, reviews, and merges the MG PR
-  # manually in Azure DevOps, then accepts this gate to continue to
-  # scope_closer. Abort drops to $end without running scope_closer.
+  # ADO leg of the platform router. Opens (or reuses) the MG PR in
+  # Azure DevOps via `polyphony pr open-mg-ado`. Head is the MG branch;
+  # base is the parent (enclosing MG branch when nested, feature branch
+  # when top-level). Idempotent — reuses an existing OPEN PR for the
+  # same head/base pair.
   #
-  # A follow-up PR will replace this with real verbs once the ADO
-  # connection inputs (organization / project / repository) are threaded
-  # through the workflow stack. The verbs themselves exist (PR #106).
+  # Routing-style verb: always exits 0; success/failure determined by
+  # `output.error_code`. On any error_code, route to mg_pr_failed_gate_ado
+  # so the operator can inspect and retry (open is idempotent) or abort.
   #
   # Invariants:
-  #   Pre:  User accepted the MG; platform == 'ado'.
-  #   Post: Operator has manually opened + merged the MG PR in ADO, OR
-  #         aborted (which routes to $end without invoking scope_closer).
-  - name: mg_pr_human_gate_ado
+  #   Pre:  Platform == 'ado'; ado_inputs_ready == true; user accepted the MG.
+  #   Post: ADO MG PR exists; output.pr_number and output.pr_url set.
+  - name: mg_pr_open_ado
+    type: script
+    description: Open (or reuse) the ADO MG PR targeting the parent branch
+    command: polyphony
+    args:
+      - "pr"
+      - "open-mg-ado"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
+    routes:
+      - to: mg_pr_failed_gate_ado
+        when: "{{ mg_pr_open_ado.output.error_code is defined and mg_pr_open_ado.output.error_code != '' }}"
+      - to: mg_pr_merge_ado
+        when: "{{ mg_pr_open_ado.output.error_code is not defined or mg_pr_open_ado.output.error_code == '' }}"
+      # Catch-all per M4: missing/malformed error_code -> failed gate.
+      - to: mg_pr_failed_gate_ado
+
+  # ── ADO MG-PR merge ───────────────────────────────────────────────────
+  #
+  # Merges the ADO MG PR via merge-commit (hardcoded by the verb to
+  # `noFastForward` per ADR `docs/decisions/branch-model.md` — nested
+  # merge groups depend on git ancestry; squash and rebase would break
+  # the chain). The head branch is never deleted; sibling MGs may still
+  # be in flight (`completionOptions.deleteSourceBranch` is pinned to
+  # false in `AdoCompletionOptions`).
+  #
+  # Idempotent — recognises an already-merged PR via `already_merged`.
+  #
+  # Routing-style verb: always exits 0; success determined by
+  # `merged == true` (covers both fresh merges and already-merged
+  # idempotent re-runs). Any non-empty error_code routes to the failed
+  # gate.
+  #
+  # Invariants:
+  #   Pre:  ADO MG PR is open.
+  #   Post: ADO MG PR is merged into the parent branch.
+  - name: mg_pr_merge_ado
+    type: script
+    description: Merge the ADO MG PR via merge-commit (per the ADR)
+    command: polyphony
+    args:
+      - "pr"
+      - "merge-mg-ado"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
+    routes:
+      - to: mg_pr_failed_gate_ado
+        when: "{{ mg_pr_merge_ado.output.error_code is defined and mg_pr_merge_ado.output.error_code != '' }}"
+      - to: scope_closer
+        when: "{{ mg_pr_merge_ado.output.merged == true }}"
+      # Catch-all per M4: not merged + no error_code -> failed gate
+      # so the operator can decide rather than silently advancing.
+      - to: mg_pr_failed_gate_ado
+
+  # ── ADO connection-inputs missing gate ────────────────────────────────
+  #
+  # Fires when platform=ado but one or more of organization, project,
+  # repository was blank. Surfaces a clear remediation path (re-invoke
+  # the workflow with the missing inputs) without burning an ADO API
+  # call that would just return `invalid_argument`.
+  #
+  # Per M3, only this gate's prompt references
+  # `pr_platform_router.output.missing` — the router IS defined when we
+  # reach this gate (route precondition).
+  #
+  # Invariants:
+  #   Pre:  platform == 'ado' AND ado_inputs_ready == false.
+  #   Post: Operator has been informed; workflow exits without invoking
+  #         any ADO verb.
+  - name: mg_pr_inputs_missing_gate
     type: human_gate
-    description: ADO MG-PR is operator-managed — merge in ADO, then accept
+    description: ADO connection inputs are missing — workflow cannot proceed
     prompt: |
-      ## ADO MG-PR — operator action required
+      ## ADO connection inputs missing
 
-      The MG branch (`mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`)
-      is ready to promote into `{{ workflow.input.feature_branch }}`.
+      `platform=ado` was selected but the following required inputs are
+      blank: **{{ pr_platform_router.output.missing }}**
 
-      Open, review, and **complete (merge-commit)** the MG PR in Azure
-      DevOps. Do NOT use squash or rebase — nested merge groups depend
-      on git ancestry per
-      `docs/decisions/branch-model.md`.
+      `polyphony pr open-mg-ado` and `pr merge-mg-ado` require all three
+      of `--organization`, `--project`, and `--repository`. Re-invoke the
+      workflow chain with those inputs supplied (typically threaded from
+      `polyphony-implement.yaml`'s inputs).
 
-      Then choose:
-
-      - **Accept** — continue to scope_closer (transitions completed
-        items to Done in ADO).
-      - **Abort** — exit without running scope_closer.
+      MG branch:
+      `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
     options:
-      - label: "✅ Accept (MG PR merged in ADO)"
-        value: accepted
-        route: scope_closer
+      - label: "🛑 Abort (will re-invoke with inputs)"
+        value: abort
+        route: $end
+
+  # ── ADO MG-PR failure gate ────────────────────────────────────────────
+  #
+  # Fires when either `mg_pr_open_ado` or `mg_pr_merge_ado` returned a
+  # non-empty error_code (or the merge verb returned merged=false).
+  # Operator can:
+  #
+  # - **Retry** — route back to `mg_pr_open_ado`. Open is idempotent
+  #   (reuses existing OPEN PR); merge is idempotent (recognises
+  #   already-merged). Safe regardless of which verb failed.
+  # - **Abort** — exit without running scope_closer. Items remain in
+  #   their pre-merge states.
+  #
+  # Per M3 (StrictUndefined), every reference to a verb's output is
+  # guarded with `is defined` because at most one of the two verbs has
+  # actually run when this gate fires.
+  #
+  # Invariants:
+  #   Pre:  At least one of mg_pr_open_ado / mg_pr_merge_ado has been
+  #         invoked and returned an error or did not merge.
+  #   Post: Operator has retried (route to mg_pr_open_ado) or aborted ($end).
+  - name: mg_pr_failed_gate_ado
+    type: human_gate
+    description: ADO MG PR open/merge failed — operator decides retry or abort
+    prompt: |
+      ## ADO MG-PR lifecycle failed
+
+      MG: `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+
+      {% if mg_pr_merge_ado is defined and mg_pr_merge_ado.output.error_code is defined and mg_pr_merge_ado.output.error_code != '' -%}
+      **Stage:** merge
+      **Error code:** `{{ mg_pr_merge_ado.output.error_code }}`
+      **Detail:** {{ mg_pr_merge_ado.output.error | default('(no detail)') }}
+      {%- elif mg_pr_merge_ado is defined and mg_pr_merge_ado.output.merged == false -%}
+      **Stage:** merge
+      **Error code:** `merge_returned_false`
+      **Detail:** Merge verb returned merged=false with no error_code; PR may still be open or in an unexpected state.
+      {%- elif mg_pr_open_ado is defined and mg_pr_open_ado.output.error_code is defined and mg_pr_open_ado.output.error_code != '' -%}
+      **Stage:** open
+      **Error code:** `{{ mg_pr_open_ado.output.error_code }}`
+      **Detail:** {{ mg_pr_open_ado.output.error | default('(no detail)') }}
+      {%- else -%}
+      **Stage:** unknown
+      **Detail:** Routed to failure gate without an explicit error_code.
+      {%- endif %}
+
+      **Retry** is safe: `pr open-mg-ado` reuses an existing OPEN PR for
+      the same head/base, and `pr merge-mg-ado` recognises an
+      already-merged PR. The retry route re-enters at `mg_pr_open_ado`.
+
+      **Abort** exits without invoking `scope_closer` — items remain in
+      their pre-merge states.
+    options:
+      - label: "🔄 Retry (re-enter open → merge)"
+        value: retry
+        route: mg_pr_open_ado
       - label: "🛑 Abort"
         value: abort
         route: $end
