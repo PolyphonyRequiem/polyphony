@@ -143,4 +143,54 @@ public interface IGitClient
     /// so the command verb can route on git's exit code rather than throw.
     /// </summary>
     Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Detach onto <paramref name="head"/> and run
+    /// <c>git rebase --onto {newBase} {oldBase} HEAD</c>. The rebase is
+    /// expressed in explicit three-arg form (rather than
+    /// <c>git rebase {newBase}</c>) so we replay only the commits that
+    /// belong to the descendant — anything between <paramref name="oldBase"/>
+    /// and <paramref name="head"/> — without picking up commits
+    /// <paramref name="newBase"/> may have introduced beyond
+    /// <paramref name="oldBase"/>.
+    ///
+    /// <para><b>Caller contract:</b> the worktree MUST be clean before
+    /// invocation (no uncommitted changes, no in-progress rebase). The
+    /// caller is responsible for verifying that — this method does NOT
+    /// run <c>git status</c> defensively.</para>
+    ///
+    /// <para>Outcomes are returned as a <see cref="RebaseOutcome"/>
+    /// discriminated union. On <see cref="RebaseOutcome.Conflict"/> /
+    /// <see cref="RebaseOutcome.Failed"/> the implementation runs
+    /// <c>git rebase --abort</c> before returning, leaving the worktree in
+    /// detached-HEAD state at <paramref name="head"/>.</para>
+    /// </summary>
+    /// <param name="newBase">Target ref to rebase onto (e.g. <c>origin/plan/100</c>).</param>
+    /// <param name="oldBase">SHA of the commit the head was previously based on (typically <c>git merge-base HEAD origin/{old-parent}</c>).</param>
+    /// <param name="head">SHA of the head commit being rebased. Checked out detached before rebasing.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<RebaseOutcome> RebaseOntoAsync(
+        string newBase,
+        string oldBase,
+        string head,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git merge-base {a} {b}</c>. Returns the trimmed SHA of the best
+    /// common ancestor, or null when no merge base exists (disconnected
+    /// histories, exit code 1) or when the call fails for any other reason.
+    /// Used by the cascade remedy to compute the <c>oldBase</c> argument
+    /// for <see cref="RebaseOntoAsync"/>.
+    /// </summary>
+    Task<string?> MergeBaseAsync(string a, string b, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git merge-base --is-ancestor {maybeAncestor} {descendant}</c>.
+    /// Returns true when git exits 0 (is an ancestor), false on exit 1
+    /// (not an ancestor — the documented "boolean false" exit). Throws
+    /// <see cref="ExternalToolException"/> on any other exit code (bad ref,
+    /// repo error). Used by the three-fact freshness check to decide whether
+    /// the parent's tip is already an ancestor of the head we're considering.
+    /// </summary>
+    Task<bool> IsAncestorAsync(string maybeAncestor, string descendant, CancellationToken ct = default);
 }

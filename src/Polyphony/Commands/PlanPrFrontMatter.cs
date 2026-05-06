@@ -57,6 +57,19 @@ internal static class PlanPrFrontMatter
         @"\A---\s*\r?\n(?<yaml>.*?)\r?\n---\s*(\r?\n|$)",
         RegexOptions.Singleline | RegexOptions.Compiled);
 
+    // Tighter variant used only by ReplaceSnapshotPreservingTail. It
+    // captures the front-matter block up to and including the CLOSING
+    // <c>---</c> only — NOT the line ending that follows it. The original
+    // line ending after the closing fence (LF, CRLF, or end-of-string)
+    // is therefore part of the body tail, which lets the rewriter splice
+    // in a fresh front-matter block while the tail bytes (including their
+    // exact line endings) round-trip verbatim. The opening fence may have
+    // any leading whitespace on its own line; the closing fence may have
+    // trailing spaces/tabs but not a newline.
+    private static readonly Regex RewriteFenceRegex = new(
+        @"\A---[ \t]*\r?\n(?<yaml>.*?)\r?\n---[ \t]*",
+        RegexOptions.Singleline | RegexOptions.Compiled);
+
     public static PrPollMetadata Parse(string body)
     {
         var defaults = new PrPollMetadata
@@ -287,4 +300,148 @@ internal static class PlanPrFrontMatter
         }
         return dict;
     }
+
+    /// <summary>
+    /// Replace the <c>ancestor_plan_generations</c> snapshot inside an
+    /// existing plan-PR body, preserving the <c>requests_parent_change</c>
+    /// flag and the body tail (everything below the closing <c>---</c>
+    /// fence) byte-for-byte. Used by the P9 cascade remedy after a clean
+    /// auto-rebase to update the PR's snapshot to match the manifest's
+    /// current <c>plan_generations</c>.
+    ///
+    /// <para><b>Outcomes</b> (<see cref="FrontMatterReplacement"/>):</para>
+    /// <list type="bullet">
+    ///   <item><see cref="FrontMatterReplacement.Replaced"/> — front-matter
+    ///     was Present and well-formed; <c>NewBody</c> contains the rewritten
+    ///     body. <c>requests_parent_change</c> is carried over verbatim;
+    ///     <c>ancestor_plan_generations</c> is replaced wholesale by
+    ///     <paramref name="newAncestorPlanGenerations"/> serialised in
+    ///     deterministic key-sorted order.</item>
+    ///   <item><see cref="FrontMatterReplacement.Malformed"/> — front-matter
+    ///     was present but failed strict parsing. The cascade-remedy verb
+    ///     refuses to rewrite a malformed body and surfaces
+    ///     <c>malformed_front_matter</c> as its outcome.</item>
+    ///   <item><see cref="FrontMatterReplacement.Absent"/> — no fenced
+    ///     front-matter at the start of the body. The cascade-remedy verb
+    ///     also refuses (a plan-PR without front-matter is a hand-edited
+    ///     special case the workflow shouldn't silently overwrite).</item>
+    /// </list>
+    ///
+    /// <para><b>Tail preservation:</b> the regex used for detection is
+    /// non-greedy on the YAML block, so a body containing additional
+    /// <c>---</c>-only lines (markdown horizontal rules) below the closing
+    /// fence is safe — only the FIRST closing fence is treated as the
+    /// front-matter boundary. The serialised front-matter is emitted with
+    /// <c>\n</c> line endings; the tail is appended verbatim including
+    /// whatever line endings (CRLF/LF/mixed) it originally had, so a
+    /// CRLF-tailed body round-trips exactly in its tail bytes.</para>
+    ///
+    /// <para>The serialiser uses the canonical block-style YAML the rest
+    /// of the codebase emits and key-sorts the snapshot so two callers
+    /// passing the same dictionary produce byte-identical output.</para>
+    /// </summary>
+    /// <param name="body">Existing PR body to rewrite. May be empty.</param>
+    /// <param name="newAncestorPlanGenerations">Replacement snapshot. Keys are normalised plan-keys (<c>"root"</c> or numeric ids as strings); values are the manifest's current generations.</param>
+    public static FrontMatterReplacement ReplaceSnapshotPreservingTail(
+        string body,
+        IReadOnlyDictionary<string, int> newAncestorPlanGenerations)
+    {
+        ArgumentNullException.ThrowIfNull(newAncestorPlanGenerations);
+        body ??= string.Empty;
+
+        var strict = ParseStrict(body);
+        switch (strict.Status)
+        {
+            case FrontMatterStatus.Absent:
+                return new FrontMatterReplacement.Absent();
+            case FrontMatterStatus.Malformed:
+                return new FrontMatterReplacement.Malformed(strict.ErrorDetail ?? "Malformed front-matter.");
+        }
+
+        // Locate the front-matter span so we can splice in the rewritten
+        // block while preserving the tail bytes verbatim. ParseStrict
+        // already proved a fence exists. Use the rewrite-specific regex
+        // that does NOT consume the line ending after the closing ---,
+        // so the original tail (including its line endings) flows through
+        // unchanged.
+        var match = RewriteFenceRegex.Match(body);
+        if (!match.Success)
+        {
+            // Defensive: ParseStrict says Present but the regex disagrees.
+            // Treat as Absent so the caller can refuse rather than emit
+            // a body without a fence.
+            return new FrontMatterReplacement.Absent();
+        }
+
+        var tail = body[match.Length..];
+        var rewritten = SerialiseFrontMatter(strict.RequestsParentChange, newAncestorPlanGenerations) + tail;
+        return new FrontMatterReplacement.Replaced(rewritten);
+    }
+
+    /// <summary>
+    /// Emit the canonical front-matter block: opening fence, deterministic
+    /// key order (<c>requests_parent_change</c> first, then
+    /// <c>ancestor_plan_generations</c> with sorted keys), closing fence.
+    /// Output line endings are <c>\n</c>. The closing <c>---</c> is emitted
+    /// WITHOUT a trailing newline — the body tail (appended by the caller)
+    /// carries the line ending that originally followed the closing fence,
+    /// so a CRLF body's tail round-trips byte-exactly and a body whose tail
+    /// is empty (front-matter only, no body) ends with exactly one <c>\n</c>
+    /// after the closing fence.
+    /// </summary>
+    private static string SerialiseFrontMatter(
+        bool requestsParentChange,
+        IReadOnlyDictionary<string, int> generations)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("---\n");
+        sb.Append("requests_parent_change: ");
+        sb.Append(requestsParentChange ? "true" : "false");
+        sb.Append('\n');
+        sb.Append("ancestor_plan_generations:\n");
+        foreach (var kvp in generations.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            sb.Append("  ");
+            sb.Append(SerialiseYamlKey(kvp.Key));
+            sb.Append(": ");
+            sb.Append(kvp.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            sb.Append('\n');
+        }
+        sb.Append("---");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Quote a snapshot key only when it would otherwise parse as a
+    /// non-string YAML scalar (the all-digits case for numeric work-item
+    /// ids — left unquoted YAML 1.2 would still treat them as strings, but
+    /// the existing emitters in this codebase quote them, and we preserve
+    /// that convention so emitted bodies round-trip identically).
+    /// </summary>
+    private static string SerialiseYamlKey(string key)
+    {
+        if (key.Length > 0 && key.All(char.IsDigit))
+        {
+            return $"\"{key}\"";
+        }
+        return key;
+    }
+}
+
+/// <summary>
+/// Outcome of <see cref="PlanPrFrontMatter.ReplaceSnapshotPreservingTail"/>.
+/// Discriminated union so the cascade-remedy verb can route on the three
+/// terminal cases — replaced (write back to the PR), malformed (refuse),
+/// absent (refuse) — without nullable-string sniffing.
+/// </summary>
+public abstract record FrontMatterReplacement
+{
+    /// <summary>Front-matter was Present; <see cref="NewBody"/> is the rewritten body to write back.</summary>
+    public sealed record Replaced(string NewBody) : FrontMatterReplacement;
+
+    /// <summary>Front-matter parsed strictly as Malformed; the verb refuses to rewrite. <see cref="Reason"/> mirrors <see cref="PlanPrFrontMatterStrictResult.ErrorDetail"/>.</summary>
+    public sealed record Malformed(string Reason) : FrontMatterReplacement;
+
+    /// <summary>Body had no fenced front-matter at the start; the verb refuses to invent one (a hand-written plan PR is out of scope).</summary>
+    public sealed record Absent : FrontMatterReplacement;
 }

@@ -20,7 +20,8 @@ public sealed class ProcessRunner : IProcessRunner
         string executable,
         IReadOnlyList<string> arguments,
         CancellationToken ct = default,
-        string? workingDirectory = null)
+        string? workingDirectory = null,
+        string? stdin = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -29,7 +30,7 @@ public sealed class ProcessRunner : IProcessRunner
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = false,
+            RedirectStandardInput = stdin is not null,
         };
 
         if (workingDirectory is not null)
@@ -44,6 +45,22 @@ public sealed class ProcessRunner : IProcessRunner
 
         using var process = new Process { StartInfo = startInfo };
         process.Start();
+
+        // When stdin was requested, write the payload and close the stream so
+        // the child sees EOF. Done BEFORE we await pipe drains / WaitForExit
+        // so a child that wants the full input before producing output (e.g.
+        // `gh pr edit --body-file -`) doesn't deadlock waiting on our writer.
+        if (stdin is not null)
+        {
+            try
+            {
+                await process.StandardInput.WriteAsync(stdin.AsMemory(), ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                process.StandardInput.Close();
+            }
+        }
 
         // Begin draining BOTH pipes immediately. If we waited for exit first
         // and the child wrote enough to fill the OS pipe buffer (~64KB), the
