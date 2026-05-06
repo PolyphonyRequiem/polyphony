@@ -51,6 +51,10 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<IGhClient, GhClient>();
         services.AddSingleton<GhTokenResolver>();
 
+        // Run lock infrastructure (Phase 4b PR D1b).
+        services.AddSingleton<Polyphony.Locking.RunLockStore>();
+        services.AddSingleton<Polyphony.Locking.RunLockPathResolver>();
+
         return services;
     }
 }
