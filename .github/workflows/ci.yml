@@ -63,3 +63,10 @@ jobs:
         run: |
           $result = Invoke-Pester -Path tests/ -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
+
+      - name: Lint workflow YAMLs (StrictUndefined default-trap)
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path .conductor/registry/tests/lint-strict-undefined.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
