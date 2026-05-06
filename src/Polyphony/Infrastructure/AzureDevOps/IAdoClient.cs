@@ -200,4 +200,62 @@ public interface IAdoClient
         string reviewerId,
         int vote,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Complete (merge) an Azure DevOps pull request — the ADO equivalent of
+    /// <c>gh pr merge --merge --match-head-commit &lt;sha&gt;</c>.
+    /// Mirrors the GitHub-side merge step inside <c>polyphony pr merge-plan-pr</c>;
+    /// the new <c>polyphony pr merge-plan-ado</c> verb (Phase 5) consumes this
+    /// to perform the platform half of the compound transactional verb.
+    ///
+    /// <para>
+    /// Hits <c>PATCH /_apis/git/repositories/{repo}/pullRequests/{pr}?api-version=7.1</c>
+    /// with body
+    /// <c>{ status: "completed", lastMergeSourceCommit: { commitId: &lt;headSha&gt; },
+    /// completionOptions: { mergeStrategy: "noFastForward",
+    /// deleteSourceBranch: false, bypassPolicy: false } }</c>.
+    /// Per ADR Rev 4 the strategy is pinned to <c>noFastForward</c>
+    /// (preserves a real merge commit so sibling plan branches can be
+    /// reasoned about by SHA) and source-branch deletion is disabled (other
+    /// plan branches may still be in flight).
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Stale-head guard.</b> The supplied <paramref name="lastMergeSourceCommitSha"/>
+    /// is ADO's analogue of <c>gh pr merge --match-head-commit</c>. When the
+    /// PR's source branch has advanced past that SHA (someone pushed between
+    /// poll and merge), ADO refuses with HTTP 409. The verb returns
+    /// <see cref="AdoCompletePullRequestResult.Status"/> = <c>"stale_head"</c>
+    /// rather than throwing so the calling verb can route to a re-poll-and-retry.
+    /// </para>
+    ///
+    /// <para>
+    /// Failure shape, encoded into <see cref="AdoCompletePullRequestResult.Status"/>:
+    /// <list type="bullet">
+    ///   <item><c>"completed"</c> — HTTP 200; <c>MergeCommitSha</c> populated from the response's <c>lastMergeCommit.commitId</c>.</item>
+    ///   <item><c>"stale_head"</c> — HTTP 409 (source branch advanced past <paramref name="lastMergeSourceCommitSha"/>).</item>
+    ///   <item><c>"not_found"</c> — HTTP 404 (PR or repo missing).</item>
+    ///   <item><c>"not_mergeable"</c> — HTTP 400 (ADO refused for a non-stale reason — policy block, conflicts, …).</item>
+    ///   <item><c>"ado_error"</c> — any other non-success status that doesn't trigger the cases above.</item>
+    /// </list>
+    /// Throws on the same conditions as <see cref="ListPullRequestsAsync"/>:
+    /// <see cref="HttpRequestException"/> for 401/403/5xx (after retries
+    /// exhausted), <see cref="TimeoutException"/> when retries are
+    /// exhausted, and <see cref="InvalidOperationException"/> when no PAT
+    /// is configured.
+    /// </para>
+    /// </summary>
+    /// <param name="lastMergeSourceCommitSha">
+    /// Head SHA of the source branch as observed by the caller's pre-merge
+    /// poll. ADO compares this to its current source tip and refuses with
+    /// HTTP 409 (surfaced as <c>"stale_head"</c>) when they differ — the
+    /// stale-head guard.
+    /// </param>
+    Task<AdoCompletePullRequestResult> CompletePullRequestAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string lastMergeSourceCommitSha,
+        CancellationToken ct = default);
 }

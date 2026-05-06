@@ -492,6 +492,112 @@ public sealed class AdoClient : IAdoClient
         return true;
     }
 
+    /// <inheritdoc />
+    public async Task<AdoCompletePullRequestResult> CompletePullRequestAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string lastMergeSourceCommitSha,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(organization);
+        ArgumentException.ThrowIfNullOrEmpty(project);
+        ArgumentException.ThrowIfNullOrEmpty(repository);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
+        ArgumentException.ThrowIfNullOrEmpty(lastMergeSourceCommitSha);
+
+        var pat = ResolvePatOrThrow();
+        var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                  $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                  $"?api-version=7.1";
+
+        // Serialize the body once; HttpContent is single-use, so a fresh
+        // StringContent is built per attempt by the request factory below.
+        var body = new AdoCompletePullRequestRequest
+        {
+            Status = "completed",
+            LastMergeSourceCommit = new AdoCommitRef { CommitId = lastMergeSourceCommitSha },
+            CompletionOptions = new AdoCompletionOptions
+            {
+                MergeStrategy = "noFastForward",
+                DeleteSourceBranch = false,
+                BypassPolicy = false,
+            },
+        };
+        var bodyJson = JsonSerializer.Serialize(
+            body, PolyphonyJsonContext.Default.AdoCompletePullRequestRequest);
+
+        using var response = await SendWithRetryAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Patch, url)
+            {
+                Content = new StringContent(bodyJson, Encoding.UTF8, "application/json"),
+            };
+            AddAuthHeaders(req, pat);
+            return req;
+        }, ct).ConfigureAwait(false);
+
+        // Routable failure shapes are encoded into the result status —
+        // throw only for unrecoverable wire-level errors so the verb can
+        // route 404/409/400 distinctly without parsing exception messages.
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return new AdoCompletePullRequestResult(
+                Status: "not_found",
+                MergeCommitSha: null,
+                HttpStatus: (int)response.StatusCode,
+                ErrorBody: await ReadBodyTruncatedAsync(response, ct).ConfigureAwait(false));
+        }
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            // ADO returns 409 for stale-head (lastMergeSourceCommit.commitId
+            // doesn't match the current source tip) — the analogue of GitHub's
+            // --match-head-commit refusal. Surface as a structured signal.
+            return new AdoCompletePullRequestResult(
+                Status: "stale_head",
+                MergeCommitSha: null,
+                HttpStatus: (int)response.StatusCode,
+                ErrorBody: await ReadBodyTruncatedAsync(response, ct).ConfigureAwait(false));
+        }
+        if (response.StatusCode == HttpStatusCode.BadRequest)
+        {
+            // 400 covers policy refusal, active conflicts, missing reviewers,
+            // etc. — not retryable, but distinct from generic 5xx so the
+            // verb can emit a more specific error_code.
+            return new AdoCompletePullRequestResult(
+                Status: "not_mergeable",
+                MergeCommitSha: null,
+                HttpStatus: (int)response.StatusCode,
+                ErrorBody: await ReadBodyTruncatedAsync(response, ct).ConfigureAwait(false));
+        }
+        await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+
+        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        var detail = await JsonSerializer.DeserializeAsync(
+            stream, PolyphonyJsonContext.Default.AdoPullRequestDetailRaw, ct).ConfigureAwait(false);
+        var mergeCommit = detail?.LastMergeCommit?.CommitId;
+
+        return new AdoCompletePullRequestResult(
+            Status: "completed",
+            MergeCommitSha: mergeCommit,
+            HttpStatus: (int)response.StatusCode,
+            ErrorBody: null);
+    }
+
+    private static async Task<string?> ReadBodyTruncatedAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        try
+        {
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return string.IsNullOrEmpty(body) ? null : Truncate(body, 200);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// Map the wire-level PR detail + reviewer envelope into the
     /// platform-neutral <see cref="AdoPullRequestPollData"/> projection.
