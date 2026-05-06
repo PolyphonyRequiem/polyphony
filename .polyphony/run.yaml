@@ -8,7 +8,12 @@ plan_generations:
   root: 2
 topology_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 merge_groups: []
-rebases: []
+rebases:
+- branch: plan/99001-99002
+  onto: refs/heads/plan/99001
+  reason: child_plan_drift
+  commit: 02a0150062b975e543af59bce5194fc88d3f2b8e
+  recorded_at: 2026-05-06T23:02:08.9043947Z
 human_approvals: []
 retired_merge_group_ids: []
 merged_plan_prs:
