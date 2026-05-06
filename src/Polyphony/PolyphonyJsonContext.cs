@@ -108,6 +108,13 @@ namespace Polyphony;
 [JsonSerializable(typeof(AdoAuthStatus))]
 [JsonSerializable(typeof(AdoConnectionData))]
 [JsonSerializable(typeof(AdoConnectionDataUser))]
+[JsonSerializable(typeof(AdoCreatePullRequestRequest))]
+[JsonSerializable(typeof(AdoIdentityRef))]
+[JsonSerializable(typeof(AdoLink))]
+[JsonSerializable(typeof(AdoPullRequest))]
+[JsonSerializable(typeof(AdoPullRequestListResponse))]
+[JsonSerializable(typeof(AdoPullRequestRaw))]
+[JsonSerializable(typeof(AdoReferenceLinks))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
