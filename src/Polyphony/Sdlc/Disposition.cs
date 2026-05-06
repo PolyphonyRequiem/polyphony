@@ -25,4 +25,35 @@ public static class Disposition
     /// </summary>
     public static bool IsValid(string? value) =>
         value is Needed or Ready or Fulfilling or Satisfied;
+
+    /// <summary>
+    /// Strict ordinal rank for threshold comparisons:
+    /// <c>Needed=0 &lt; Ready=1 &lt; Fulfilling=2 &lt; Satisfied=3</c>.
+    /// </summary>
+    /// <remarks>
+    /// Used by <see cref="RequirementSetReducer"/> to evaluate whether a current
+    /// disposition meets a <see cref="RequirementEdge.RequiredDisposition"/>
+    /// threshold (current's order &gt;= threshold's order). Fails closed on
+    /// unknown input rather than returning a default; callers that accept
+    /// untrusted input must validate via <see cref="IsValid"/> first.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="disposition"/> is not one of the four canonical strings.
+    /// </exception>
+    public static int Order(string disposition) => disposition switch
+    {
+        Needed => 0,
+        Ready => 1,
+        Fulfilling => 2,
+        Satisfied => 3,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(disposition), disposition, "Unknown disposition."),
+    };
+
+    /// <summary>
+    /// Returns true when <paramref name="current"/> meets or exceeds the
+    /// <paramref name="threshold"/> in the disposition ordering.
+    /// </summary>
+    public static bool Meets(string current, string threshold) =>
+        Order(current) >= Order(threshold);
 }

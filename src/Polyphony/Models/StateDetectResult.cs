@@ -53,6 +53,29 @@ public sealed record StateDetectResult
     public required bool FeatureBranchExists { get; init; }
 
     public required string Error { get; init; }
+
+    /// <summary>
+    /// Phase 2b additive — the work item's requirement set with computed
+    /// dispositions, derived from <see cref="WorkItemType"/>'s facets and
+    /// reduced against observable plan/seed/implementation signals. Null when
+    /// derivation failed (see <see cref="RequirementsError"/>) or the type
+    /// is not in the process config.
+    /// </summary>
+    public IReadOnlyList<Polyphony.Sdlc.Requirement>? Requirements { get; init; }
+
+    /// <summary>Per-input provenance for the deriver inputs (decomposable,
+    /// facet_order, actionable_executor). Null when <see cref="Requirements"/>
+    /// is null.</summary>
+    public Polyphony.Sdlc.ResolvedRequirementInputs? ResolvedRequirementInputs { get; init; }
+
+    /// <summary>True when any deriver input was resolved by inference rather
+    /// than explicit configuration. Null when <see cref="Requirements"/> is
+    /// null.</summary>
+    public bool? RequirementsAnyInputInferred { get; init; }
+
+    /// <summary>Set when the requirement set could not be derived; null on
+    /// success or when the type is not in the process config (silent skip).</summary>
+    public string? RequirementsError { get; init; }
 }
 
 /// <summary>Children state count summary; serialised as the

@@ -1,0 +1,193 @@
+using Polyphony.Configuration;
+using Polyphony.Sdlc;
+using Shouldly;
+using Xunit;
+
+namespace Polyphony.Tests.Sdlc;
+
+/// <summary>
+/// Tests for <see cref="RequirementInputResolver.Resolve"/>. The resolver
+/// bridges <see cref="TypeConfig"/> + observable signals to the deriver inputs;
+/// the priority chain for <c>decomposable</c> inference is the highest-risk
+/// area and is covered exhaustively here.
+/// </summary>
+public sealed class RequirementInputResolverTests
+{
+    private static TypeConfig Type(
+        bool? decomposable = null,
+        string[]? facetOrder = null,
+        string? actionableExecutor = null,
+        string[]? allowedChildTypes = null,
+        string? decompositionGuidance = null,
+        string[]? facets = null) => new()
+    {
+        Decomposable = decomposable,
+        FacetOrder = facetOrder,
+        ActionableExecutor = actionableExecutor,
+        AllowedChildTypes = allowedChildTypes ?? [],
+        DecompositionGuidance = decompositionGuidance,
+        Facets = facets ?? [],
+    };
+
+    // ── decomposable: explicit wins ─────────────────────────────────────
+
+    [Fact]
+    public void Resolve_DecomposableExplicitTrue_ReturnsTrueWithExplicitProvenance()
+    {
+        var resolved = RequirementInputResolver.Resolve(Type(decomposable: true), childCount: 0);
+
+        resolved.Decomposable.ShouldBeTrue();
+        resolved.DecomposableProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    [Fact]
+    public void Resolve_DecomposableExplicitFalse_ReturnsFalseEvenWithChildren()
+    {
+        // Explicit always wins — even when observable signals would suggest otherwise.
+        var resolved = RequirementInputResolver.Resolve(
+            Type(decomposable: false, allowedChildTypes: ["Task"], decompositionGuidance: "split"),
+            childCount: 5);
+
+        resolved.Decomposable.ShouldBeFalse();
+        resolved.DecomposableProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    // ── decomposable: inference chain ───────────────────────────────────
+
+    [Fact]
+    public void Resolve_DecomposableUnset_ChildrenPresent_InfersTrue()
+    {
+        var resolved = RequirementInputResolver.Resolve(Type(), childCount: 1);
+
+        resolved.Decomposable.ShouldBeTrue();
+        resolved.DecomposableProvenance.ShouldBe(ResolutionProvenance.Inferred);
+    }
+
+    [Fact]
+    public void Resolve_DecomposableUnset_NoChildren_AllowedChildTypesNonEmpty_InfersTrue()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(allowedChildTypes: ["Task"]),
+            childCount: 0);
+
+        resolved.Decomposable.ShouldBeTrue();
+        resolved.DecomposableProvenance.ShouldBe(ResolutionProvenance.Inferred);
+    }
+
+    [Fact]
+    public void Resolve_DecomposableUnset_OnlyDecompositionGuidance_InfersTrue()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(decompositionGuidance: "split into smaller pieces"),
+            childCount: 0);
+
+        resolved.Decomposable.ShouldBeTrue();
+        resolved.DecomposableProvenance.ShouldBe(ResolutionProvenance.Inferred);
+    }
+
+    [Fact]
+    public void Resolve_DecomposableUnset_NoSignals_InfersFalse()
+    {
+        var resolved = RequirementInputResolver.Resolve(Type(), childCount: 0);
+
+        resolved.Decomposable.ShouldBeFalse();
+        resolved.DecomposableProvenance.ShouldBe(ResolutionProvenance.Inferred);
+    }
+
+    [Fact]
+    public void Resolve_DecomposableUnset_WhitespaceOnlyGuidance_DoesNotInferTrue()
+    {
+        // IsNullOrWhiteSpace check guards against inadvertent placeholder values.
+        var resolved = RequirementInputResolver.Resolve(
+            Type(decompositionGuidance: "   "),
+            childCount: 0);
+
+        resolved.Decomposable.ShouldBeFalse();
+    }
+
+    // ── facet_order ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Resolve_FacetOrderExplicit_ReturnsExplicitProvenance()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(facetOrder: ["actionable", "implementable"]),
+            childCount: 0);
+
+        resolved.FacetOrder.ShouldBe(["actionable", "implementable"]);
+        resolved.FacetOrderProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    [Fact]
+    public void Resolve_FacetOrderUnset_ReturnsNotApplicableProvenance()
+    {
+        var resolved = RequirementInputResolver.Resolve(Type(), childCount: 0);
+
+        resolved.FacetOrder.ShouldBeNull();
+        resolved.FacetOrderProvenance.ShouldBe(ResolutionProvenance.NotApplicable);
+    }
+
+    [Fact]
+    public void Resolve_FacetOrderEmpty_TreatedAsNotApplicable()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(facetOrder: []),
+            childCount: 0);
+
+        resolved.FacetOrderProvenance.ShouldBe(ResolutionProvenance.NotApplicable);
+    }
+
+    // ── actionable_executor ─────────────────────────────────────────────
+
+    [Fact]
+    public void Resolve_ActionableExecutorExplicit_ReturnsExplicitProvenance()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(actionableExecutor: "polyphony"),
+            childCount: 0);
+
+        resolved.ActionableExecutor.ShouldBe("polyphony");
+        resolved.ActionableExecutorProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    [Fact]
+    public void Resolve_ActionableExecutorUnset_ReturnsNotApplicableProvenance()
+    {
+        var resolved = RequirementInputResolver.Resolve(Type(), childCount: 0);
+
+        resolved.ActionableExecutor.ShouldBeNull();
+        resolved.ActionableExecutorProvenance.ShouldBe(ResolutionProvenance.NotApplicable);
+    }
+
+    // ── AnyInferred ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void AnyInferred_TrueWhenDecomposableInferred()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(allowedChildTypes: ["Task"]),
+            childCount: 0);
+
+        resolved.AnyInferred.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnyInferred_FalseWhenAllExplicitOrNotApplicable()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(decomposable: true),
+            childCount: 0);
+
+        // decomposable=Explicit; facet_order/executor=NotApplicable → not inferred.
+        resolved.AnyInferred.ShouldBeFalse();
+    }
+
+    // ── argument validation ─────────────────────────────────────────────
+
+    [Fact]
+    public void Resolve_NullType_Throws()
+    {
+        Should.Throw<ArgumentNullException>(() =>
+            RequirementInputResolver.Resolve(null!, childCount: 0));
+    }
+}

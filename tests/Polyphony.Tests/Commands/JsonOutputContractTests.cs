@@ -570,32 +570,35 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var validateCmd = CreateValidateCommand();
         var hierarchyCmd = CreateHierarchyCommand();
         var planCmd = CreatePlanCommands();
+        var nextReadyCmd = CreateStateCommands();
         using var fx = new ConductorDirFixture();
 
         var (routeExit, routeOutput) = await CaptureConsoleAsync(() => routeCmd.Route(missingId));
         var (validateExit, validateOutput) = await CaptureConsoleAsync(() => validateCmd.Validate(missingId, "begin_planning"));
         var (hierarchyExit, hierarchyOutput) = await CaptureConsoleAsync(() => hierarchyCmd.Hierarchy(missingId));
         var (loadTypeExit, loadTypeOutput) = await CaptureConsoleAsync(() => planCmd.LoadType(missingId, fx.ConfigDir));
+        var (nextReadyExit, nextReadyOutput) = await CaptureConsoleAsync(() => nextReadyCmd.NextReady(missingId));
 
-        // All four operator-facing commands should return CacheError (3) on missing work item.
+        // All five operator-facing commands should return CacheError (3) on missing work item.
         routeExit.ShouldBe(ExitCodes.CacheError);
         validateExit.ShouldBe(ExitCodes.CacheError);
         hierarchyExit.ShouldBe(ExitCodes.CacheError);
         loadTypeExit.ShouldBe(ExitCodes.CacheError);
+        nextReadyExit.ShouldBe(ExitCodes.CacheError);
 
-        // All four should produce valid JSON with an "error" field.
-        // Route/Validate/Hierarchy include "work_item_id"; LoadType emits its own shape
+        // All five should produce valid JSON with an "error" field.
+        // Route/Validate/Hierarchy/NextReady include "work_item_id"; LoadType emits its own shape
         // (PlanLoadTypeResult with empty type/definition + error), so we only assert the
         // common "error" string contract here.
-        foreach (var output in new[] { routeOutput, validateOutput, hierarchyOutput, loadTypeOutput })
+        foreach (var output in new[] { routeOutput, validateOutput, hierarchyOutput, loadTypeOutput, nextReadyOutput })
         {
             var doc = JsonDocument.Parse(output);
             doc.RootElement.TryGetProperty("error", out var errorProp).ShouldBeTrue();
             errorProp.GetString().ShouldNotBeNullOrEmpty();
         }
 
-        // Route/Validate/Hierarchy additionally guarantee the work_item_id field.
-        foreach (var output in new[] { routeOutput, validateOutput, hierarchyOutput })
+        // Route/Validate/Hierarchy/NextReady additionally guarantee the work_item_id field.
+        foreach (var output in new[] { routeOutput, validateOutput, hierarchyOutput, nextReadyOutput })
         {
             var doc = JsonDocument.Parse(output);
             doc.RootElement.TryGetProperty("work_item_id", out var idProp).ShouldBeTrue();
@@ -859,6 +862,109 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
+    // State next-ready — JSON contract
+    //
+    // Standard CacheError + canonical {"error":"...","work_item_id":N} on
+    // not-found; ConfigError when the type is unknown to the process config.
+    // Snake-case enforced; null Error omitted on success.
+    // =========================================================================
+
+    [Fact]
+    public async Task NextReady_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(11_001).WithType(EpicType).WithTitle("Snake Epic").WithState(InProgressState).Build());
+
+        var cmd = CreateStateCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.NextReady(11_001));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+
+        output.ShouldContain("\"work_item_id\"");
+        output.ShouldContain("\"work_item_type\"");
+        output.ShouldContain("\"status\"");
+        output.ShouldContain("\"requirements\"");
+        output.ShouldContain("\"next\"");
+        output.ShouldContain("\"fulfilling\"");
+        output.ShouldContain("\"satisfied\"");
+        output.ShouldContain("\"needed\"");
+        output.ShouldContain("\"resolved_inputs\"");
+        output.ShouldContain("\"any_input_inferred\"");
+
+        AssertNoPascalCase(output, "WorkItemId");
+        AssertNoPascalCase(output, "WorkItemType");
+        AssertNoPascalCase(output, "Status");
+        AssertNoPascalCase(output, "Requirements");
+        AssertNoPascalCase(output, "Next");
+        AssertNoPascalCase(output, "ResolvedInputs");
+        AssertNoPascalCase(output, "AnyInputInferred");
+    }
+
+    [Fact]
+    public async Task NextReady_NullFieldsOmitted_WhenWritingNull()
+    {
+        // Happy path → Error is null → the "error" key must be absent.
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(11_002).WithType(EpicType).WithTitle("Null fields").WithState(InProgressState).Build());
+
+        var cmd = CreateStateCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.NextReady(11_002));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        output.ShouldNotContain("\"error\"");
+    }
+
+    [Fact]
+    public async Task NextReady_DeserializationRoundTrip_FieldsMapped()
+    {
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(11_003).WithType(EpicType).WithTitle("Roundtrip").WithState(InProgressState).Build());
+
+        var cmd = CreateStateCommands();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.NextReady(11_003));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult);
+        result.ShouldNotBeNull();
+        result!.WorkItemId.ShouldBe(11_003);
+        result.WorkItemType.ShouldBe(EpicType);
+        result.Status.ShouldNotBeNullOrEmpty();
+        result.Requirements.ShouldNotBeNull();
+        result.ResolvedInputs.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task NextReady_NotFound_ReturnsErrorJson_WithCacheErrorExitCode()
+    {
+        var cmd = CreateStateCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.NextReady(99_996));
+
+        exitCode.ShouldBe(ExitCodes.CacheError);
+        exitCode.ShouldBe(3);
+
+        var doc = JsonDocument.Parse(output);
+        doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+        doc.RootElement.GetProperty("work_item_id").GetInt32().ShouldBe(99_996);
+    }
+
+    [Fact]
+    public async Task NextReady_TypeUnknown_ReturnsConfigError_WithErrorPayload()
+    {
+        // Bug is not in the test config (only Epic + Task) → ConfigError +
+        // populated NextReady payload with status="error".
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(11_004).WithType("Bug").WithTitle("Unknown type").WithState(ProposedState).Build());
+
+        var cmd = CreateStateCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.NextReady(11_004));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult);
+        result.ShouldNotBeNull();
+        result!.Status.ShouldBe("error");
+        result.Error.ShouldNotBeNullOrEmpty();
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 
@@ -885,6 +991,20 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         var config = CreateConfigBuilder().Build();
         return new HierarchyCommand(new HierarchyWalker(config, Repository));
+    }
+
+    private StateCommands CreateStateCommands()
+    {
+        var config = CreateConfigBuilder().Build();
+        var runner = new FakeProcessRunner();
+        var twig = new TwigClient(runner);
+        var git = new GitClient(runner);
+        var gh = new GhClient(runner);
+        var ghTokenResolver = new GhTokenResolver(NSubstitute.Substitute.For<IGitClient>());
+        var phaseDetector = new PhaseDetector(config);
+        var validator = new TransitionValidator(config);
+        var walker = new HierarchyWalker(config, Repository);
+        return new StateCommands(twig, git, gh, runner, ghTokenResolver, phaseDetector, validator, walker, Repository, config);
     }
 
     private static ProcessConfigBuilder CreateConfigBuilder()

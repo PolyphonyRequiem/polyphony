@@ -57,6 +57,8 @@ namespace Polyphony;
 [JsonSerializable(typeof(RequirementSet))]
 [JsonSerializable(typeof(RequirementsDeriveResult))]
 [JsonSerializable(typeof(RequirementsInputProvenance))]
+[JsonSerializable(typeof(StateNextReadyResult))]
+[JsonSerializable(typeof(ResolvedRequirementInputs))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
