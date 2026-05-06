@@ -152,4 +152,48 @@ public sealed class GitClientRebaseTests
 
         outcome.ShouldBeOfType<RebaseOutcome.Clean>().NewHeadSha.ShouldBe("newcommit");
     }
+
+    [Fact]
+    public async Task PushHeadWithLease_HappyPath_PassesFullRefAndLeaseSpec()
+    {
+        var fake = new FakeProcessRunner();
+        fake.WhenExact("git",
+            ["push", "origin", "HEAD:refs/heads/plan/100-200", "--force-with-lease=refs/heads/plan/100-200:abc123"],
+            new ProcessResult(0, "", ""));
+        var client = new GitClient(fake);
+
+        var result = await client.PushHeadWithLeaseAsync("origin", "plan/100-200", "abc123", default);
+
+        result.Succeeded.ShouldBeTrue();
+        result.ExitCode.ShouldBe(0);
+        // Single push invocation; no extra calls.
+        fake.Invocations.Count.ShouldBe(1);
+        fake.Invocations[0].Arguments.ShouldBe(
+            ["push", "origin", "HEAD:refs/heads/plan/100-200", "--force-with-lease=refs/heads/plan/100-200:abc123"]);
+    }
+
+    [Fact]
+    public async Task PushHeadWithLease_LeaseRejected_ReturnsRawProcessResultForCallerRouting()
+    {
+        var fake = new FakeProcessRunner();
+        fake.WhenExact("git",
+            ["push", "origin", "HEAD:refs/heads/plan/100-200", "--force-with-lease=refs/heads/plan/100-200:abc123"],
+            new ProcessResult(1, "", "error: stale info: remote ref has changed; refusing to update"));
+        var client = new GitClient(fake);
+
+        var result = await client.PushHeadWithLeaseAsync("origin", "plan/100-200", "abc123", default);
+
+        result.Succeeded.ShouldBeFalse();
+        result.ExitCode.ShouldBe(1);
+        result.Stderr.ShouldContain("stale info");
+    }
+
+    [Fact]
+    public async Task PushHeadWithLease_RejectsInvalidArgs()
+    {
+        var client = new GitClient(new FakeProcessRunner());
+        await Should.ThrowAsync<ArgumentException>(async () => await client.PushHeadWithLeaseAsync("", "b", "s"));
+        await Should.ThrowAsync<ArgumentException>(async () => await client.PushHeadWithLeaseAsync("origin", "", "s"));
+        await Should.ThrowAsync<ArgumentException>(async () => await client.PushHeadWithLeaseAsync("origin", "b", ""));
+    }
 }

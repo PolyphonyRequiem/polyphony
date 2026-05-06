@@ -267,6 +267,28 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
         };
     }
 
+    public Task<ProcessResult> PushHeadWithLeaseAsync(
+        string remote,
+        string branch,
+        string expectedRemoteSha,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(remote);
+        ArgumentException.ThrowIfNullOrEmpty(branch);
+        ArgumentException.ThrowIfNullOrEmpty(expectedRemoteSha);
+
+        // Full ref form (refs/heads/{branch}) on both sides of the lease so the
+        // server-side comparison is unambiguous — see `git push --help`,
+        // "force-with-lease=<refname>:<expect>" section.
+        string[] args =
+        [
+            "push", remote,
+            $"HEAD:refs/heads/{branch}",
+            $"--force-with-lease=refs/heads/{branch}:{expectedRemoteSha}",
+        ];
+        return runner.RunAsync(Exe, args, ct);
+    }
+
     private async Task TryRebaseAbortAsync(CancellationToken ct)
     {
         // Best-effort. If there's no rebase in progress git exits non-zero;

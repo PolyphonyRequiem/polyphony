@@ -193,4 +193,32 @@ public interface IGitClient
     /// the parent's tip is already an ancestor of the head we're considering.
     /// </summary>
     Task<bool> IsAncestorAsync(string maybeAncestor, string descendant, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git push {remote} HEAD:refs/heads/{branch} --force-with-lease=refs/heads/{branch}:{expectedRemoteSha}</c>.
+    /// Pushes the worktree's current HEAD (typically a detached-HEAD post-rebase
+    /// commit) to <paramref name="branch"/> on <paramref name="remote"/> with a
+    /// strict lease — git refuses the push if the remote no longer points at
+    /// <paramref name="expectedRemoteSha"/>, so a concurrent push by another
+    /// actor cannot be silently overwritten.
+    ///
+    /// <para><b>Returns the raw <see cref="ProcessResult"/></b> so the
+    /// cascade-remedy verb can route on git's exit code and stderr without
+    /// catching exceptions: a lease failure (stderr contains "stale info" or
+    /// "rejected") becomes <c>pr_head_changed</c> in the verb output, while
+    /// any other non-zero exit is surfaced as <c>git_failed</c> with the raw
+    /// stderr for diagnostics.</para>
+    ///
+    /// <para>Caller contract: HEAD must already be at the commit you want to
+    /// push. This method does not run any pre-push checks.</para>
+    /// </summary>
+    /// <param name="remote">Remote name, typically <c>origin</c>.</param>
+    /// <param name="branch">Target branch name on the remote (without <c>refs/heads/</c> prefix).</param>
+    /// <param name="expectedRemoteSha">SHA the remote ref is expected to point at. The push fails if the remote no longer matches.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<ProcessResult> PushHeadWithLeaseAsync(
+        string remote,
+        string branch,
+        string expectedRemoteSha,
+        CancellationToken ct = default);
 }

@@ -325,5 +325,7 @@ public sealed class LockCommandsTests : IDisposable
             => Task.FromResult<RebaseOutcome>(new RebaseOutcome.Failed("not implemented"));
         public Task<string?> MergeBaseAsync(string a, string b, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<bool> IsAncestorAsync(string maybeAncestor, string descendant, CancellationToken ct = default) => Task.FromResult(false);
+        public Task<ProcessResult> PushHeadWithLeaseAsync(string remote, string branch, string expectedRemoteSha, CancellationToken ct = default)
+            => Task.FromResult(new ProcessResult(0, string.Empty, string.Empty));
     }
 }
