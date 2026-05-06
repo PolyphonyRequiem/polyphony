@@ -94,7 +94,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         result.ContainerTitle.ShouldBe("Issue 1");
         result.ContainerType.ShouldBe("Issue");
         result.RemainingCount.ShouldBe(2);
-        result.CurrentPg.ShouldBe("PG-1");
+        result.CurrentMergeGroup.ShouldBe("PG-1");
         result.AdoWorkspace.ShouldBe("org/proj");
         result.BranchName.ShouldStartWith("feature/100-");
     }
@@ -143,7 +143,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
             () => cmd.NextTask(workItem: 100, pgNumber: 3));
         var result = Deserialize(output);
 
-        result.CurrentPg.ShouldBe("PG-3");
+        result.CurrentMergeGroup.ShouldBe("PG-3");
         result.PrimaryId.ShouldBe(300);
     }
 

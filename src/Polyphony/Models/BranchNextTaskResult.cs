@@ -1,8 +1,13 @@
+using System.Text.Json.Serialization;
+
 namespace Polyphony;
 
 /// <summary>
 /// Result of <c>polyphony branch next-task</c>. Mirrors the JSON shape of
-/// the legacy <c>scripts/task-router.ps1</c>.
+/// the legacy <c>scripts/task-router.ps1</c>. JSON wire key
+/// <c>current_pg</c> is preserved via
+/// <see cref="JsonPropertyNameAttribute"/> until the workflow rewire PR
+/// ships.
 /// </summary>
 public sealed record BranchNextTaskResult
 {
@@ -14,7 +19,10 @@ public sealed record BranchNextTaskResult
     public required string ContainerTitle { get; init; }
     public required string ContainerType { get; init; }
     public required int RemainingCount { get; init; }
-    public required string CurrentPg { get; init; }
+
+    [JsonPropertyName("current_pg")]
+    public required string CurrentMergeGroup { get; init; }
+
     public required string BranchName { get; init; }
     public required string AdoWorkspace { get; init; }
     public string? Error { get; init; }

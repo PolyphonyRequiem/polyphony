@@ -125,6 +125,9 @@ public sealed class JsonOutputContractTests : CommandTestBase
         AssertNoPascalCase(output, "Message");
         AssertNoPascalCase(output, "WorkspaceHint");
         AssertNoPascalCase(output, "FeatureBranch");
+        // The C# property is now named MergeGroupBranch but the JSON wire
+        // key is still "pg_branch" — assert the new C# name doesn't leak.
+        AssertNoPascalCase(output, "MergeGroupBranch");
         AssertNoPascalCase(output, "PgBranch");
     }
 
@@ -143,8 +146,9 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.RouteResult);
         result.ShouldNotBeNull();
 
-        // If pg_branch is null, it should be absent from the raw JSON
-        if (result.WorkspaceHint?.PgBranch is null)
+        // If MergeGroupBranch (legacy JSON key "pg_branch") is null, it
+        // should be absent from the raw JSON.
+        if (result.WorkspaceHint?.MergeGroupBranch is null)
         {
             output.ShouldNotContain("\"pg_branch\"");
         }
@@ -482,7 +486,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
     public void SchemaRenames_JsonContract_FieldsPresent()
     {
         // Arrange: create dummy objects for serialization
-        var prGroup = new Polyphony.PullRequestGroup
+        var mergeGroup = new Polyphony.MergeGroup
         {
             ChildIds = new[] { 1, 2 },
             WorkItemIds = new[] { 10, 20 },
@@ -495,7 +499,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
             Completed = true,
             NeedsReconciliation = false
         };
-        var pgRecon = new Polyphony.PgReconciliation
+        var mergeGroupRecon = new Polyphony.MergeGroupReconciliation
         {
             NonDoneChildIds = new[] { 5 },
             StaleDoingChildIds = new[] { 6 },
@@ -517,46 +521,57 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var routeResult = new Polyphony.BranchRouteResult
         {
             Action = "create_branch",
-            CurrentPg = "PG-1",
+            CurrentMergeGroup = "PG-1",
             BranchName = "feature/pg-1",
             WorkItemIds = new[] { 10, 20 },
             ChildIds = new[] { 1, 2 },
             PrNumber = 1,
             PrUrl = "url",
-            CompletedPgs = new[] { "PG-1" },
-            RemainingPgs = new[] { "PG-2" },
-            TotalPgs = 2,
+            CompletedMergeGroups = new[] { "PG-1" },
+            RemainingMergeGroups = new[] { "PG-2" },
+            TotalMergeGroups = 2,
             AdoWorkspace = "org/proj",
             Error = null
         };
 
         // Act
-        var prGroupJson = JsonSerializer.Serialize(prGroup, PolyphonyJsonContext.Default.PullRequestGroup);
-        var pgReconJson = JsonSerializer.Serialize(pgRecon, PolyphonyJsonContext.Default.PgReconciliation);
+        var mergeGroupJson = JsonSerializer.Serialize(mergeGroup, PolyphonyJsonContext.Default.MergeGroup);
+        var mergeGroupReconJson = JsonSerializer.Serialize(mergeGroupRecon, PolyphonyJsonContext.Default.MergeGroupReconciliation);
         var seedReconJson = JsonSerializer.Serialize(seedRecon, PolyphonyJsonContext.Default.SeedReconciliation);
         var seedErrorJson = JsonSerializer.Serialize(seedError, PolyphonyJsonContext.Default.SeedError);
         var routeResultJson = JsonSerializer.Serialize(routeResult, PolyphonyJsonContext.Default.BranchRouteResult);
 
-        // Assert: JSON field names are stable and correct
-        prGroupJson.ShouldContain("\"child_ids\"");
-        prGroupJson.ShouldContain("\"work_item_ids\"");
-        prGroupJson.ShouldContain("\"non_done_child_ids\"");
-        prGroupJson.ShouldContain("\"stale_doing_child_ids\"");
-        prGroupJson.ShouldContain("\"non_done_work_item_ids\"");
-        pgReconJson.ShouldContain("\"non_done_child_ids\"");
-        pgReconJson.ShouldContain("\"stale_doing_child_ids\"");
-        pgReconJson.ShouldContain("\"non_done_work_item_ids\"");
+        // Assert: JSON field names are stable and correct (legacy snake_case
+        // wire keys preserved via [JsonPropertyName] until the workflow
+        // rewire PR ships).
+        mergeGroupJson.ShouldContain("\"child_ids\"");
+        mergeGroupJson.ShouldContain("\"work_item_ids\"");
+        mergeGroupJson.ShouldContain("\"non_done_child_ids\"");
+        mergeGroupJson.ShouldContain("\"stale_doing_child_ids\"");
+        mergeGroupJson.ShouldContain("\"non_done_work_item_ids\"");
+        mergeGroupReconJson.ShouldContain("\"non_done_child_ids\"");
+        mergeGroupReconJson.ShouldContain("\"stale_doing_child_ids\"");
+        mergeGroupReconJson.ShouldContain("\"non_done_work_item_ids\"");
         seedReconJson.ShouldContain("\"child_id\"");
         seedErrorJson.ShouldContain("\"child_id\"");
         routeResultJson.ShouldContain("\"work_item_ids\"");
         routeResultJson.ShouldContain("\"child_ids\"");
+        // Bridge proof: the renamed C# properties still emit the legacy
+        // snake_case keys consumers expect.
+        routeResultJson.ShouldContain("\"current_pg\"");
+        routeResultJson.ShouldContain("\"completed_pgs\"");
+        routeResultJson.ShouldContain("\"remaining_pgs\"");
+        routeResultJson.ShouldContain("\"total_pgs\"");
         // Assert: C# property names are not leaked
-        prGroupJson.ShouldNotContain("NonDoneChildIds");
-        prGroupJson.ShouldNotContain("NonDoneWorkItemIds");
-        prGroupJson.ShouldNotContain("StaleDoingChildIds");
-        prGroupJson.ShouldNotContain("ChildIds");
+        mergeGroupJson.ShouldNotContain("NonDoneChildIds");
+        mergeGroupJson.ShouldNotContain("NonDoneWorkItemIds");
+        mergeGroupJson.ShouldNotContain("StaleDoingChildIds");
+        mergeGroupJson.ShouldNotContain("ChildIds");
         routeResultJson.ShouldNotContain("WorkItemIds");
         routeResultJson.ShouldNotContain("ChildIds");
+        routeResultJson.ShouldNotContain("CurrentMergeGroup");
+        routeResultJson.ShouldNotContain("CompletedMergeGroups");
+        routeResultJson.ShouldNotContain("RemainingMergeGroups");
     }
 
     // =========================================================================

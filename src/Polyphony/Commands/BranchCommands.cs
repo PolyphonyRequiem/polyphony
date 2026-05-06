@@ -228,13 +228,13 @@ public sealed partial class BranchCommands(
             PolyphonyJsonContext.Default.BranchCheckDepsResult));
 
     /// <summary>
-    /// Close all non-terminal items in a PG scope by validating each
-    /// transition against the process config and transitioning valid items
-    /// to their target state. Replaces <c>scripts/scope-closer.ps1</c>.
+    /// Close all non-terminal items in a merge-group scope by validating
+    /// each transition against the process config and transitioning valid
+    /// items to their target state. Replaces <c>scripts/scope-closer.ps1</c>.
     /// </summary>
     /// <param name="workItem">ADO work item ID — root of the hierarchy.</param>
-    /// <param name="pgName">PG name (e.g. "PG-1"). Either this or pg-number is required.</param>
-    /// <param name="pgNumber">PG number (e.g. 1). Convenience for callers that track PG as int.</param>
+    /// <param name="pgName">Merge-group name (e.g. "PG-1"). Either this or pg-number is required. Operator-facing flag name preserved as <c>--pg-name</c> until the workflow rewire PR ships.</param>
+    /// <param name="pgNumber">Merge-group number (e.g. 1). Convenience for callers that track merge groups as ints.</param>
     /// <param name="prNumber">PR number associated with this scope closure (echoed in output).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("close-scope")]
@@ -245,11 +245,11 @@ public sealed partial class BranchCommands(
         int prNumber = 0,
         CancellationToken ct = default)
     {
-        var resolvedPg = string.IsNullOrEmpty(pgName) && pgNumber > 0
+        var resolvedMergeGroup = string.IsNullOrEmpty(pgName) && pgNumber > 0
             ? $"PG-{pgNumber}"
             : pgName;
 
-        if (string.IsNullOrEmpty(resolvedPg))
+        if (string.IsNullOrEmpty(resolvedMergeGroup))
         {
             EmitClose(EmptyClose("", prNumber, "Either --pg-name or --pg-number must be provided.", ""));
             return ExitCodes.Success;
@@ -263,18 +263,18 @@ public sealed partial class BranchCommands(
             var hierarchy = await walker.WalkAsync(workItem, maxDepth: 3, ct).ConfigureAwait(false);
             if (hierarchy is null)
             {
-                EmitClose(EmptyClose(resolvedPg, prNumber,
+                EmitClose(EmptyClose(resolvedMergeGroup, prNumber,
                     $"Work item {workItem} not found", await ResolveAdoWorkspaceAsync(ct).ConfigureAwait(false)));
                 return ExitCodes.Success;
             }
 
             var allItems = Flatten(hierarchy).ToList();
-            var pgItemIds = ItemsForPg(allItems, resolvedPg);
-            var pgItems = allItems.Where(i => pgItemIds.Contains(i.WorkItemId)).ToList();
+            var mergeGroupItemIds = ItemsForMergeGroup(allItems, resolvedMergeGroup);
+            var mergeGroupItems = allItems.Where(i => mergeGroupItemIds.Contains(i.WorkItemId)).ToList();
 
             // P5-compliant terminal check via twig.Domain (replaces hardcoded
             // 'Done' string in scope-closer.ps1:63).
-            var nonTerminal = pgItems.Where(i => !IsTerminalCategory(i.State)).ToList();
+            var nonTerminal = mergeGroupItems.Where(i => !IsTerminalCategory(i.State)).ToList();
 
             var closed = new List<ClosedItem>();
             var failed = new List<FailedClosure>();
@@ -308,7 +308,7 @@ public sealed partial class BranchCommands(
 
             result = new BranchCloseScopeResult
             {
-                PgName = resolvedPg,
+                MergeGroupName = resolvedMergeGroup,
                 PrNumber = prNumber,
                 ClosedItems = closed,
                 FailedClosures = failed,
@@ -323,7 +323,7 @@ public sealed partial class BranchCommands(
         }
         catch (Exception ex)
         {
-            result = EmptyClose(resolvedPg, prNumber, $"Error closing scope: {ex.Message}",
+            result = EmptyClose(resolvedMergeGroup, prNumber, $"Error closing scope: {ex.Message}",
                 await TryResolveAdoWorkspaceAsync(ct).ConfigureAwait(false));
         }
 
@@ -362,26 +362,33 @@ public sealed partial class BranchCommands(
     }
 
     /// <summary>
-    /// Group-by-PG logic from <c>scripts/lib/pg-helpers.ps1</c>:
-    ///   - Parse the work item's tags for the first <c>PG-N</c> entry.
+    /// Group-by-merge-group logic from <c>scripts/lib/pg-helpers.ps1</c>:
+    ///   - Parse the work item's tags for the first <c>PG-N</c> entry
+    ///     (legacy tag format — see <see cref="ExtractLegacyPgTag"/>).
     ///   - Classify by facet: implementable items go to implementables,
     ///     plannable-with-children items go to containers.
     /// "Issue-as-task" (plannable+implementable with no children) is treated
     /// as implementable.
     /// </summary>
-    private static HashSet<int> ItemsForPg(IEnumerable<HierarchyResult> items, string pg)
+    private static HashSet<int> ItemsForMergeGroup(IEnumerable<HierarchyResult> items, string mergeGroup)
     {
         var ids = new HashSet<int>();
         foreach (var item in items)
         {
-            var tag = ExtractPgTag(item.Tags);
-            if (!string.Equals(tag, pg, StringComparison.Ordinal)) continue;
+            var tag = ExtractLegacyPgTag(item.Tags);
+            if (!string.Equals(tag, mergeGroup, StringComparison.Ordinal)) continue;
             ids.Add(item.WorkItemId);
         }
         return ids;
     }
 
-    private static string? ExtractPgTag(string? tags)
+    /// <summary>
+    /// Parses the legacy <c>PG-N</c> tag format from a work item's tag
+    /// string. Named "legacy" because the planner-emitted format is
+    /// scheduled to flip in the prompt-migration PR; until then this
+    /// reader only accepts <c>PG-N</c>.
+    /// </summary>
+    private static string? ExtractLegacyPgTag(string? tags)
     {
         if (string.IsNullOrEmpty(tags)) return null;
         foreach (var raw in tags.Split(';'))
@@ -417,9 +424,9 @@ public sealed partial class BranchCommands(
         return category == StateCategory.Completed || category == StateCategory.Removed;
     }
 
-    private static BranchCloseScopeResult EmptyClose(string pg, int pr, string error, string adoWorkspace) => new()
+    private static BranchCloseScopeResult EmptyClose(string mergeGroup, int pr, string error, string adoWorkspace) => new()
     {
-        PgName = pg,
+        MergeGroupName = mergeGroup,
         PrNumber = pr,
         ClosedItems = [],
         FailedClosures = [],

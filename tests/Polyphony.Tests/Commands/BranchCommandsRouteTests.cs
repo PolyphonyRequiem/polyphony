@@ -87,9 +87,9 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         var result = Deserialize(output);
 
         result.Action.ShouldBe("create_branch", $"Output was: {output}");
-        result.CurrentPg.ShouldBe("PG-1");
+        result.CurrentMergeGroup.ShouldBe("PG-1");
         result.ChildIds.ShouldContain(200);
-        result.TotalPgs.ShouldBe(1);
+        result.TotalMergeGroups.ShouldBe(1);
     }
 
     [Fact]
@@ -114,7 +114,7 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         result.Action.ShouldBe("submit_pr", $"Output was: {output}");
         result.PrNumber.ShouldBe(42);
         result.PrUrl.ShouldBe("https://example.com/pr/42");
-        result.CurrentPg.ShouldBe("PG-1");
+        result.CurrentMergeGroup.ShouldBe("PG-1");
     }
 
     [Fact]
@@ -139,8 +139,8 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         var result = Deserialize(output);
 
         result.Action.ShouldBe("all_complete", $"Output was: {output}");
-        result.CompletedPgs.ShouldContain("PG-1");
-        result.RemainingPgs.ShouldBeEmpty();
+        result.CompletedMergeGroups.ShouldContain("PG-1");
+        result.RemainingMergeGroups.ShouldBeEmpty();
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         var result = Deserialize(output);
 
         result.Action.ShouldBe("create_branch", $"Output was: {output}");
-        result.CurrentPg.ShouldBe("PG-1");
+        result.CurrentMergeGroup.ShouldBe("PG-1");
     }
 
     [Fact]
@@ -190,9 +190,9 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(() => cmd.Route(workItem: 100, pgNumber: 2));
         var result = Deserialize(output);
 
-        result.CurrentPg.ShouldBe("PG-2", $"Output was: {output}");
+        result.CurrentMergeGroup.ShouldBe("PG-2", $"Output was: {output}");
         result.ChildIds.ShouldContain(201);
-        result.TotalPgs.ShouldBe(2);
+        result.TotalMergeGroups.ShouldBe(2);
     }
 
     [Fact]
@@ -215,8 +215,8 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         var result = Deserialize(output);
 
         result.Action.ShouldBe("all_complete", $"Output was: {output}");
-        result.CurrentPg.ShouldBe("");
-        result.CompletedPgs.ShouldContain("PG-1");
+        result.CurrentMergeGroup.ShouldBe("");
+        result.CompletedMergeGroups.ShouldContain("PG-1");
     }
 
     [Fact]
