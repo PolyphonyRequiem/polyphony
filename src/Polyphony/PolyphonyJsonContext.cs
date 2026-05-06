@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Manifest;
 using Polyphony.Locking;
 using Polyphony.Models;
@@ -103,6 +104,9 @@ namespace Polyphony;
 [JsonSerializable(typeof(WorktreeRemoveResult))]
 [JsonSerializable(typeof(WorktreeListResult))]
 [JsonSerializable(typeof(WorktreeEntry))]
+[JsonSerializable(typeof(AdoAuthStatus))]
+[JsonSerializable(typeof(AdoConnectionData))]
+[JsonSerializable(typeof(AdoConnectionDataUser))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
