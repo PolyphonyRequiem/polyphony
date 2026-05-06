@@ -365,5 +365,11 @@ public sealed class PrCommandsVoteAdoTests : CommandTestBase
             if (ThrowOnSetVote is not null) throw ThrowOnSetVote;
             return Task.FromResult(SetVoteResult);
         }
+
+        public Task<AdoCompletePullRequestResult> CompletePullRequestAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string lastMergeSourceCommitSha,
+            CancellationToken ct = default)
+            => throw new NotImplementedException();
     }
 }

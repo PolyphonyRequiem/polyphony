@@ -155,6 +155,97 @@ public sealed class AdoSetReviewerVoteRequest
 }
 
 /// <summary>
+/// Wire-level body for the ADO "complete pull request" PATCH:
+/// <c>PATCH /_apis/git/repositories/{repo}/pullRequests/{pr}</c>
+/// with body
+/// <c>{ status: "completed", lastMergeSourceCommit: { commitId }, completionOptions: { ... } }</c>.
+/// AOT-safe: registered in <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+/// <remarks>
+/// Per ADR Rev 4 the merge strategy is pinned to <c>noFastForward</c> (a real
+/// merge commit, never a fast-forward), matching the GitHub-side
+/// <c>gh pr merge --merge</c>. <c>lastMergeSourceCommit.commitId</c> is the
+/// stale-head guard — when the source branch has advanced past the supplied
+/// SHA, ADO refuses with HTTP 409, which the verb routes as
+/// <c>stale_head</c>.
+/// </remarks>
+public sealed class AdoCompletePullRequestRequest
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "completed";
+
+    [JsonPropertyName("lastMergeSourceCommit")]
+    public AdoCommitRef? LastMergeSourceCommit { get; set; }
+
+    [JsonPropertyName("completionOptions")]
+    public AdoCompletionOptions? CompletionOptions { get; set; }
+}
+
+/// <summary>
+/// Nested <c>completionOptions</c> object inside
+/// <see cref="AdoCompletePullRequestRequest"/>. Only the three fields the
+/// merge-plan-ado verb cares about are surfaced — others (squashMerge,
+/// transitionWorkItems, …) inherit ADO's defaults.
+/// </summary>
+public sealed class AdoCompletionOptions
+{
+    /// <summary>
+    /// ADO merge strategy. Pinned to <c>noFastForward</c> for plan PRs
+    /// (preserves the merge commit so sibling plan branches can still be
+    /// reasoned about by SHA). Other accepted values per the ADO contract:
+    /// <c>squash</c>, <c>rebase</c>, <c>rebaseMerge</c>.
+    /// </summary>
+    [JsonPropertyName("mergeStrategy")]
+    public string MergeStrategy { get; set; } = "noFastForward";
+
+    /// <summary>
+    /// True ⇒ ADO deletes the source branch as part of the completion. Plan
+    /// PRs leave it false because sibling plan branches may still be in flight.
+    /// </summary>
+    [JsonPropertyName("deleteSourceBranch")]
+    public bool DeleteSourceBranch { get; set; }
+
+    /// <summary>
+    /// True ⇒ ADO bypasses branch-protection policies. Pinned to false in v1
+    /// — the task spec defers a CLI-exposed bypass flag.
+    /// </summary>
+    [JsonPropertyName("bypassPolicy")]
+    public bool BypassPolicy { get; set; }
+}
+
+/// <summary>
+/// Outcome of <see cref="IAdoClient.CompletePullRequestAsync"/>. The call
+/// has six observable shapes; rather than throw on the routable ones, the
+/// verb consumes a structured projection so error-code mapping stays in one
+/// place. AOT-safe: registered in <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+/// <param name="Status">
+/// Discriminator: <c>"completed"</c> (success), <c>"stale_head"</c>
+/// (HTTP 409 — source branch advanced past the supplied SHA),
+/// <c>"not_found"</c> (HTTP 404 — PR or repo missing),
+/// <c>"not_mergeable"</c> (HTTP 400/409 — ADO refused for a non-stale
+/// reason, e.g. policy block or active conflicts), or <c>"ado_error"</c>
+/// (any other non-success status).
+/// </param>
+/// <param name="MergeCommitSha">
+/// SHA of the merge commit ADO recorded. Populated only when
+/// <see cref="Status"/> is <c>"completed"</c>; null otherwise.
+/// </param>
+/// <param name="HttpStatus">
+/// Raw HTTP status returned by ADO. Populated for non-success outcomes so
+/// the verb can include it in the error envelope.
+/// </param>
+/// <param name="ErrorBody">
+/// Truncated response body for non-success outcomes (best-effort; may be
+/// null when the body could not be read).
+/// </param>
+public sealed record AdoCompletePullRequestResult(
+    string Status,
+    string? MergeCommitSha,
+    int? HttpStatus,
+    string? ErrorBody);
+
+/// <summary>
 /// Wire-level envelope for the ADO PR list response (<c>{ "value": [...] }</c>).
 /// </summary>
 public sealed class AdoPullRequestListResponse

@@ -410,5 +410,11 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
             int pullRequestId, string reviewerId, int vote,
             CancellationToken ct = default)
             => throw new NotImplementedException();
+
+        public Task<AdoCompletePullRequestResult> CompletePullRequestAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string lastMergeSourceCommitSha,
+            CancellationToken ct = default)
+            => throw new NotImplementedException();
     }
 }
