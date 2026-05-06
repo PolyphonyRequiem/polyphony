@@ -120,7 +120,31 @@ public interface IGhClient
     /// <see cref="ExternalToolTimeoutException"/> when every attempt timed
     /// out — callers that want to treat a hang as "unknown" must catch.
     /// </summary>
+    /// <summary>
+    /// <c>gh pr view {prNumber} --repo {repoSlug} --json number,state,reviewDecision,reviews,headRefOid,baseRefName,headRefName,mergeable,mergedAt,mergeCommit,body</c>.
+    /// Returns the rich snapshot consumed by <c>polyphony pr poll-status</c>:
+    /// PR state, review decision, individual reviews, mergeability, head/base
+    /// refs, and the body (so the caller can parse plan-PR front-matter).
+    /// Returns null when the PR cannot be found (non-zero exit). Throws
+    /// <see cref="ExternalToolTimeoutException"/> when every attempt timed
+    /// out — callers that want to treat a hang as "unknown" must catch.
+    /// </summary>
     Task<GhPullRequestPollData?> GetPullRequestPollDataAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>gh pr view {prNumber} --repo {repoSlug} --json files</c>.
+    /// Returns the list of files changed by the PR. Used by
+    /// <c>polyphony pr validate-plan-diff</c> and the merge-time guard in
+    /// <c>polyphony pr merge-plan-pr</c> to classify whether a child plan PR
+    /// touched parent / ancestor / polyphony-state files.
+    /// Returns null when the PR cannot be found (non-zero exit). Throws
+    /// <see cref="ExternalToolTimeoutException"/> when every attempt timed
+    /// out — same contract as <see cref="GetPullRequestPollDataAsync"/>.
+    /// </summary>
+    Task<IReadOnlyList<GhPullRequestChangedFile>?> GetPullRequestFilesAsync(
         string repoSlug,
         int prNumber,
         CancellationToken ct = default);
