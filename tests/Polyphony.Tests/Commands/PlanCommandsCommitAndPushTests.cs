@@ -16,7 +16,7 @@ public sealed class PlanCommandsCommitAndPushTests : CommandTestBase
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner)), runner);
+        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner)), runner);
     }
 
     private static PlanCommitAndPushResult Parse(string output) =>

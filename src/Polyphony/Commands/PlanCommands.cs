@@ -31,7 +31,8 @@ public sealed partial class PlanCommands(
     IWorkItemRepository repository,
     ProcessConfig processConfig,
     ITwigClient twig,
-    IGitClient git)
+    IGitClient git,
+    IGhClient gh)
 {
     /// <summary>
     /// Validates current recursion depth against a configured maximum. Always exits 0.

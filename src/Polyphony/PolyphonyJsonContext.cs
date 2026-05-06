@@ -22,6 +22,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(PlanLoadTypeResult))]
 [JsonSerializable(typeof(PlanReviewResult))]
 [JsonSerializable(typeof(PlanCommitAndPushResult))]
+[JsonSerializable(typeof(PlanDetectStateResult))]
 [JsonSerializable(typeof(PlanDeriveAncestorChainResult))]
 [JsonSerializable(typeof(PolicyLoadResult))]
 [JsonSerializable(typeof(PolicyValidateResult))]
