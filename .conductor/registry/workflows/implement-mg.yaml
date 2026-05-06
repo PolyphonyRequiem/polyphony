@@ -1,0 +1,842 @@
+# implement-mg — Single MG (merge-group) lifecycle on the Rev 4 branch model.
+#
+# Drives one merge group through: branch creation → per-task implementation
+# loop with per-task PRs → MG-level review and acceptance → MG PR creation
+# and merge → scope closure.
+#
+# Companion to implement-pg.yaml. While implement-pg commits straight to the
+# MG branch and opens a single PR, implement-mg adopts the new ADR
+# (docs/decisions/branch-model.md) shape:
+#
+#   - The merge group lives on `mg/{root}_{mg_path}` (per MergeGroupPath
+#     grammar). Created via `polyphony branch ensure-mg`.
+#
+#   - Each task in the MG is implemented on its own per-item branch
+#     `task/{root}-{item_id}` and promoted into the MG branch via a
+#     squash-merged task PR (`polyphony pr open-task-pr` +
+#     `polyphony pr merge-task-pr`).
+#
+#   - The MG itself is promoted into the feature branch (or its parent MG)
+#     via a merge-commit-only MG PR (`polyphony pr open-mg-pr` +
+#     `polyphony pr merge-mg-pr`). The merge method is hard-coded merge-commit
+#     per the ADR; nested merge groups depend on git ancestry and squash
+#     would break the chain.
+#
+# Invariants:
+#   Pre:  Items in this MG carry `PG-{pg_number}` legacy tags (transitional
+#         bridge — see "Transitional notes" below). Feature branch exists.
+#   Post: Each task PR merged into the MG branch; MG PR merged into the
+#         enclosing branch (parent MG when nested, feature when top-level);
+#         all items transitioned to Done in ADO.
+#
+# Transitional notes (TODO follow-up PRs):
+#   1. `polyphony branch next-task --pg-number N` and `branch route`
+#      currently match items by `PG-N` tag (ExtractLegacyPgTag in
+#      BranchCommands). Items in this MG MUST carry that legacy tag for
+#      this workflow to find them. A follow-up PR will introduce
+#      MG-path-aware item routing (`--mg-path PATH`) and drop the legacy
+#      tag dependency.
+#   2. The same is true for `polyphony branch close-scope --pg-number N`.
+#   3. The run lock and run manifest (`polyphony lock acquire`,
+#      `polyphony manifest init` + `record-approval`) are NOT acquired or
+#      written here. The apex workflow that wraps multiple MGs is
+#      responsible for lock acquisition, manifest init, and final
+#      approval recording. Adding those here would defeat parallel-MG
+#      execution under one root.
+#   4. The MG PR merges directly via `polyphony pr merge-mg-pr` without a
+#      review-fix sub-workflow. A follow-up PR will plug in a
+#      platform-router that supports both GitHub and ADO MG-PR review
+#      lifecycles.
+#
+# Re-entry behavior (P3):
+#   Every step in this workflow is idempotent — `branch ensure-mg`,
+#   `branch ensure-task`, `pr open-mg-pr`, `pr open-task-pr`,
+#   `pr merge-task-pr`, `pr merge-mg-pr` all detect prior state and
+#   either reuse or no-op. `branch next-task` walks past items already in
+#   their terminal state. A killed workflow can be restarted on the same
+#   inputs without manual cleanup, with the caveat that scope_reviewer
+#   and user_acceptance will re-run.
+#
+# Risk acknowledged (rubber-duck finding #7):
+#   `primary_completer` transitions tasks to their template's done state
+#   immediately after the task PR merges, before the MG PR merges. If the
+#   MG PR fails to merge afterwards, ADO will reflect tasks as Done while
+#   the feature branch lacks the work. Recovery: re-run this workflow;
+#   it will re-open and re-merge the MG PR (idempotent). The work is
+#   physically on the MG branch via the squash merges; only the
+#   feature-branch promotion is missing.
+
+workflow:
+  name: implement-mg
+  description: >-
+    Single merge-group lifecycle on the Rev 4 branch model. Creates the
+    MG branch, iterates tasks through coder → reviewer with per-task
+    branches and PRs, runs scope-level review, and opens + merges the
+    MG PR via the merge-commit-only path required by the ADR.
+  version: "1.0.0"
+  entry_point: branch_ensure_mg
+  metadata:
+    min_polyphony_version: "1.0.1"
+
+  limits:
+    # Per the rubber-duck pass — implement-mg's task loop is wider than
+    # implement-pg's because each task carries seven nodes
+    # (ensure-task → coder → reviewer → task-pr-open → task-pr-merge
+    #  → completer → router). Ten tasks ≈ 70 iterations baseline; budget
+    # 300 to cover changes-requested loops and the scope_reviewer
+    # round-trip without hitting the conductor cap.
+    max_iterations: 300
+
+  input:
+    work_item_id:
+      type: number
+      required: true
+      description: ADO work item ID of the parent for this MG # type is runtime-injected; do not hardcode type names
+    root_id:
+      type: number
+      required: true
+      description: ADO work item ID of the run's apex (focus) item
+    pg_number:
+      type: number
+      required: true
+      description: >-
+        Legacy merge-group number used by the existing `branch next-task`
+        and `branch close-scope` verbs to find tasks via `PG-N` tags.
+        Transitional — a follow-up PR will replace with `--mg-path PATH`.
+    mg_path:
+      type: string
+      required: true
+      description: >-
+        Canonical `_`-joined merge-group path (each segment matches
+        `^[a-z][a-z0-9-]{0,30}$`). Used to compute branch + PR names via
+        the Rev 4 grammar (`mg/{root}_{mg_path}`). Pass the top-level
+        segment for top-level MGs; pass `parent_child` for nested MGs.
+    work_item_ids:
+      type: array
+      required: true
+      description: Array of child work item IDs in this MG # type is runtime-injected; do not hardcode type names
+    feature_branch:
+      type: string
+      required: true
+      description: Parent feature branch that this MG branch ultimately promotes into
+
+tools:
+  - twig
+  - gh
+  - filesystem
+
+output:
+  # Workflow-scope output is rendered at end-of-run. Per M7, capital
+  # "True"/"False" is NOT coerced by _maybe_parse_json — pipe through
+  # `| string | lower` so the parent receives a real bool. Per M3,
+  # under StrictUndefined we must guard `scope_closer is defined`
+  # because several routes (dependency_gate reassign, user_acceptance
+  # abort, error fall-throughs) reach $end without running scope_closer.
+  merged: "{% if scope_closer is defined %}{{ (scope_closer.output.exit_code == 0) | string | lower }}{% else %}false{% endif %}"
+  pr_url: "{% if mg_pr_open is defined %}{{ mg_pr_open.output.pr_url | default('') }}{% else %}{% endif %}"
+  pr_number: "{% if mg_pr_open is defined %}{{ mg_pr_open.output.pr_number | default(0) }}{% else %}0{% endif %}"
+  mg_path: "{{ workflow.input.mg_path }}"
+
+agents:
+  # ── MG branch ensure ───────────────────────────────────────────────────
+  #
+  # Idempotently creates and checks out `mg/{root}_{mg_path}` from its
+  # parent (top-level → feature branch; nested → enclosing MG branch).
+  # Re-entry safe: if the branch already exists locally it is checked out;
+  # if it exists only on the remote it is fetched + tracked; if the base
+  # is missing remotely the verb returns RoutingFailure with a clear
+  # message.
+  #
+  # Invariants:
+  #   Pre:  feature branch exists on the remote (or, for nested MGs, the
+  #         enclosing MG branch exists on the remote).
+  #   Post: `mg/{root}_{mg_path}` is checked out and pushed to origin.
+  - name: branch_ensure_mg
+    type: script
+    description: Idempotently create or check out the MG branch via the Rev 4 grammar
+    command: polyphony
+    args:
+      - "branch"
+      - "ensure-mg"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
+    routes:
+      - to: guidance_loader
+
+  # ── Guidance loader ────────────────────────────────────────────────────
+  #
+  # Loads repo-specific agent guidance markdown from
+  # `.conductor/agent-guidance/` via `polyphony plan load-guidance`.
+  # Outputs a JSON role map (keys like "coder", "reviewer"). Coder and
+  # primary_reviewer consume their respective role keys via Jinja2
+  # conditionals so prompts degrade gracefully when no guidance files
+  # exist.
+  #
+  # Invariants:
+  #   Pre:  MG branch is checked out.
+  #   Post: output is a JSON object mapping role names to guidance content.
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for coder and reviewer prompts
+    command: polyphony
+    args:
+      - "plan"
+      - "load-guidance"
+    routes:
+      - to: primary_router
+
+  # ── Per-item router ───────────────────────────────────────────────────
+  #
+  # Determines the next task in this MG via `polyphony branch next-task`.
+  # Routes to task_branch_ensure for implementation or to dependency_check
+  # when all tasks are complete.
+  #
+  # Transitional bridge: `next-task` matches items by `PG-N` legacy tag
+  # (see ExtractLegacyPgTag in BranchCommands). A follow-up PR will add
+  # `--mg-path PATH` matching.
+  #
+  # Invariants:
+  #   Pre:  MG branch is checked out; tasks in this MG carry `PG-N` tags.
+  #   Post: output.action is `implement_item` or `all_items_done`;
+  #         output.primary_id and output.primary_title set when implementing.
+  - name: primary_router
+    type: script
+    description: Route to next implementable task within this MG
+    command: polyphony
+    args:
+      - "branch"
+      - "next-task"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+      - "--pg-number"
+      - "{{ workflow.input.pg_number }}"
+    routes:
+      - to: task_branch_ensure
+        when: "{{ primary_router.output.action == 'implement_item' }}"
+      - to: dependency_check
+        when: "{{ primary_router.output.action == 'all_items_done' }}"
+      # Catch-all per M4: unknown action from next-task should fail
+      # safely to dependency_check (the natural "we're done with tasks"
+      # path) rather than raise `No matching route found`.
+      - to: dependency_check
+
+  # ── Task branch ensure ────────────────────────────────────────────────
+  #
+  # Idempotently creates and checks out `task/{root}-{item_id}` from the
+  # MG branch. Re-entry safe.
+  #
+  # Invariants:
+  #   Pre:  primary_router selected a task (output.action == 'implement_item').
+  #   Post: `task/{root}-{primary_id}` is checked out and pushed to origin.
+  - name: task_branch_ensure
+    type: script
+    description: Idempotently create or check out the per-item task branch
+    command: polyphony
+    args:
+      - "branch"
+      - "ensure-task"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--item-id"
+      - "{{ primary_router.output.primary_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
+    routes:
+      - to: coder
+
+  # ── Coder agent ───────────────────────────────────────────────────────
+  #
+  # Implements a single task. Commits to the per-item task branch.
+  # Uses Opus 4.6 — same model used by implement-pg.yaml. Lint check
+  # accepts any "opus" model so the choice can evolve without lint churn.
+  #
+  # Invariants:
+  #   Pre:  Task branch is checked out.
+  #   Post: Code changes committed and pushed to the task branch.
+  - name: coder
+    type: agent
+    model: claude-opus-4.6
+    description: Implement a single task with code changes committed to the per-item task branch
+    tools:
+      - twig
+      - gh
+      - filesystem
+    prompt: |
+      You are the implementation coder for the polyphony SDLC workflow.
+
+      ## Your Mission
+
+      Implement the task described below. Write clean, production-quality code
+      that satisfies the acceptance criteria. Commit your changes to the current
+      task branch (which has already been created and checked out for you).
+
+      ## Context
+
+      - **Work Item ID:** {{ primary_router.output.primary_id }}
+      - **Work item title:** {{ primary_router.output.primary_title }}
+      - **Task branch:** `task/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`
+      - **Enclosing MG branch:** `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+      - **Parent work item:** {{ workflow.input.work_item_id }}
+      - **Run apex:** {{ workflow.input.root_id }}
+
+      ## Instructions
+
+      1. Read the full task description from ADO using `twig show {{ primary_router.output.primary_id }}`.
+      2. Understand the codebase context — read related files, understand patterns.
+      3. Implement the changes required by the task.
+      4. Write tests covering the new functionality.
+      5. Run the build and tests to verify correctness.
+      6. Commit and push your changes with a descriptive message including `AB#{{ primary_router.output.primary_id }}`.
+
+      ## Constraints
+
+      - Follow existing code conventions and patterns.
+      - Do NOT modify files outside the scope of this task.
+      - Do NOT skip tests — every implementation must have test coverage.
+      - Commit messages must reference the ADO work item: `AB#{{ primary_router.output.primary_id }}`.
+      - Stage only the files you actually modified for this task. Use
+        `git add <path1> <path2>` with explicit paths — never `git add -A`,
+        `git add .`, or `git add --all`. The working tree may contain
+        unrelated dirty files from concurrent human work or earlier
+        workflow iterations; sweeping them in pollutes the commit, breaks
+        AB# traceability, and creates phantom changes in PR review.
+
+      {% if primary_reviewer is defined and primary_reviewer.output is defined and primary_reviewer.output.verdict == 'changes_requested' and primary_reviewer.output.feedback %}
+      ## Previous Reviewer Feedback (this task)
+
+      Your previous attempt at this task was rejected by `primary_reviewer`. Address the
+      feedback below specifically — the implementation already exists on the branch;
+      do NOT re-research the problem from scratch and conclude "already implemented".
+      Apply the changes the reviewer asked for, commit, and let the reviewer re-check.
+
+      Treat each numbered bug or concern as a required change. If you disagree with a
+      finding, fix the others and explain in your commit message and via
+      `twig note --text "..."` why you did not apply that one.
+
+      {{ primary_reviewer.output.feedback }}
+      {% endif %}
+
+      {% if scope_reviewer is defined and scope_reviewer.output is defined and scope_reviewer.output.verdict == 'changes_requested' and scope_reviewer.output.feedback %}
+      ## Parent-level Reviewer Feedback (MG-wide)
+
+      The parent-level reviewer flagged the following MG-wide concerns from the previous
+      end-of-MG review. These may span multiple tasks — if the current task touches any
+      of them, address them here. Otherwise note that they will be picked up by the
+      task that owns them.
+
+      {{ scope_reviewer.output.feedback }}
+      {% endif %}
+
+      {% if guidance_loader.output.issue is defined and guidance_loader.output.issue %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.issue }}
+      {% endif %}
+    routes:
+      - to: primary_reviewer
+
+  # ── Primary reviewer ──────────────────────────────────────────────────
+  #
+  # Reviews the coder's per-task implementation for correctness, code
+  # quality, and alignment with the task requirements. Routes to
+  # task_pr_open when approved, back to coder when changes are requested.
+  #
+  # Invariants:
+  #   Pre:  Coder has committed changes to the task branch.
+  #   Post: output.verdict is 'approved' or 'changes_requested'.
+  - name: primary_reviewer
+    type: agent
+    model: claude-opus-4.6
+    description: Review per-item task implementation for correctness and quality
+    tools:
+      - twig
+      - filesystem
+    output:
+      # Schema mirrors this agent's JSON contract below. Required by M2:
+      # routes read primary_reviewer.output.verdict.
+      verdict:
+        type: string
+        description: Review outcome — "approved" or "changes_requested"
+      feedback:
+        type: string
+        description: Detailed review feedback
+      issues:
+        type: array
+        description: List of specific issues if changes_requested (empty if approved)
+        items:
+          type: string
+    prompt: |
+      You are the primary reviewer for the polyphony SDLC workflow.
+
+      ## Your Mission
+
+      Review the implementation of item {{ primary_router.output.primary_id }} on its
+      per-item task branch for correctness, code quality, and alignment with the work
+      item requirements.
+
+      ## Context
+
+      - **Work Item ID:** {{ primary_router.output.primary_id }}
+      - **Work item title:** {{ primary_router.output.primary_title }}
+      - **Task branch:** `task/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`
+      - **Enclosing MG branch:** `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+
+      {% if primary_reviewer is defined and primary_reviewer.output is defined and primary_reviewer.output.verdict == 'changes_requested' %}
+      ## ⚠️ This is a RE-REVIEW
+
+      You previously reviewed this item and requested changes. Your prior feedback:
+
+      {{ primary_reviewer.output.feedback }}
+
+      {% if primary_reviewer.output.issues is defined and primary_reviewer.output.issues | length > 0 %}
+      ### Prior issues flagged:
+      {% for issue in primary_reviewer.output.issues %}
+      {{ loop.index }}. {{ issue }}
+      {% endfor %}
+      {% endif %}
+
+      **Focus your review on whether the coder addressed the issues above.**
+      - Check each prior issue specifically — was it fixed, partially fixed, or ignored?
+      - Only flag NEW issues if they are substantive (bugs, missing tests, regressions).
+      - Do NOT re-flag issues that were adequately addressed.
+      - If all prior issues are resolved and no new substantive issues exist, approve.
+      {% endif %}
+
+      ## Instructions
+
+      1. Read the item description from ADO: `twig show {{ primary_router.output.primary_id }}`.
+      2. Inspect the latest commits on the task branch — start with
+         `git log --oneline mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}..HEAD`
+         and `git diff mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}...HEAD`
+         to see what the coder added on this task branch.
+      3. Read the modified source and test files in full as needed.
+      4. Verify:
+         - Requirements are met
+         - Code quality is acceptable
+         - Tests cover the implementation
+         - No regressions introduced
+      5. Return your verdict.
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "verdict": "approved | changes_requested",
+        "feedback": "Detailed review feedback",
+        "issues": ["List of specific issues if changes_requested"]
+      }
+      ```
+
+      ## Decision Criteria
+
+      - **Approve** if the implementation is correct, well-tested, and meets requirements.
+      - **Request changes** only for substantive issues (bugs, missing requirements, no tests).
+      - Do NOT request changes for style preferences or minor nits.
+
+      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.reviewer }}
+      {% endif %}
+    routes:
+      - to: task_pr_open
+        when: "{{ primary_reviewer.output.verdict == 'approved' }}"
+      - to: coder
+        when: "{{ primary_reviewer.output.verdict == 'changes_requested' }}"
+      # Catch-all per M4: an unexpected verdict value (typo, schema drift)
+      # routes back to coder for another iteration rather than raising
+      # `No matching route found`.
+      - to: coder
+
+  # ── Task PR open ──────────────────────────────────────────────────────
+  #
+  # Opens (or reuses) the per-item task PR. Head is the task branch;
+  # base is the MG branch. Idempotent — reuses an existing open PR for
+  # the same head/base pair.
+  #
+  # Invariants:
+  #   Pre:  Reviewer approved the task implementation.
+  #   Post: Task PR exists targeting the MG branch; output.pr_number set.
+  - name: task_pr_open
+    type: script
+    description: Open (or reuse) the per-item task PR targeting the MG branch
+    command: polyphony
+    args:
+      - "pr"
+      - "open-task-pr"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--item-id"
+      - "{{ primary_router.output.primary_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
+    routes:
+      - to: task_pr_merge
+
+  # ── Task PR merge ─────────────────────────────────────────────────────
+  #
+  # Merges the per-item task PR into the MG branch. Default method is
+  # squash (per the ADR — task PRs carry micro-history we do not want
+  # to pollute the MG branch with). Idempotent — recognises an already
+  # merged PR. Deletes the head branch on success.
+  #
+  # Invariants:
+  #   Pre:  Task PR is open and approved.
+  #   Post: Task PR is merged; head task branch deleted.
+  - name: task_pr_merge
+    type: script
+    description: Squash-merge the per-item task PR into the MG branch
+    command: polyphony
+    args:
+      - "pr"
+      - "merge-task-pr"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--item-id"
+      - "{{ primary_router.output.primary_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
+    routes:
+      - to: primary_completer
+
+  # ── Primary completer ─────────────────────────────────────────────────
+  #
+  # Transitions the completed task to its template's done state in ADO
+  # and adds a summary note. Then routes back to primary_router to pick
+  # up the next task.
+  #
+  # Risk acknowledged (rubber-duck #7): tasks transition to Done before
+  # the MG PR merges. If the MG PR fails to merge afterwards, ADO will
+  # report tasks as Done while the feature branch lacks the work. The
+  # work IS physically present on the MG branch via the squash merge —
+  # only the feature-branch promotion is missing. Recovery: re-run this
+  # workflow; the MG PR open + merge are idempotent.
+  #
+  # Invariants:
+  #   Pre:  Task PR is merged into MG branch.
+  #   Post: Item is transitioned to its template's done state in ADO; note added. # type is runtime-injected; do not hardcode type names
+  - name: primary_completer
+    type: script
+    description: Transition completed task to its template's done state and route to next
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $taskId = {{ primary_router.output.primary_id }};
+        twig set $taskId;
+        twig note --text 'Item implementation merged into MG branch via task PR';
+        $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
+        if (-not $validate.is_valid) { throw "Cannot transition task $($taskId): $($validate.message)" };
+        twig state $validate.target_state;
+        @{ child_id = $taskId; completed = $true; target_state = $validate.target_state } | ConvertTo-Json
+    routes:
+      - to: primary_router
+
+  # ── Dependency check ──────────────────────────────────────────────────
+  #
+  # Checks ADO predecessor links to determine if the MG is blocked by
+  # unresolved dependencies. Items with no predecessor links route
+  # directly to scope_reviewer (gate never fires).
+  #
+  # On re-entry, this re-runs and auto-clears blocks whose predecessors
+  # have since reached a terminal state.
+  #
+  # Invariants:
+  #   Pre:  primary_router.output.action == 'all_items_done'.
+  #   Post: output.status is 'blocked' or 'not_blocked'; blocking_items
+  #         populated if blocked.
+  - name: dependency_check
+    type: script
+    description: Check ADO predecessor links for blocking dependencies
+    command: polyphony
+    args:
+      - "branch"
+      - "check-deps"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: dependency_gate
+        when: "{{ dependency_check.output.status == 'blocked' }}"
+      - to: scope_reviewer
+        when: "{{ dependency_check.output.status == 'not_blocked' }}"
+      # Catch-all per M4: an unknown status value routes to the gate so
+      # a human resolves it rather than raising `No matching route found`.
+      - to: dependency_gate
+
+  # ── Dependency gate ───────────────────────────────────────────────────
+  #
+  # Fires when dependency_check detects unresolved predecessor links.
+  # Three options:
+  #   - Wait:     re-check (predecessors may complete on their own).
+  #   - Override: proceed despite unresolved dependencies (user accepts risk).
+  #   - Reassign: end this MG and track dependencies externally.
+  #
+  # Invariants:
+  #   Pre:  dependency_check.output.status == 'blocked'.
+  #   Post: User has chosen wait, override, or reassign.
+  - name: dependency_gate
+    type: human_gate
+    prompt: |
+      ## 🚫 Dependency Gate — MG `{{ workflow.input.mg_path }}`
+
+      Work item **{{ workflow.input.work_item_id }}** has unresolved predecessor
+      dependencies that may block PR submission.
+
+      ### Blocking Items
+
+      | # | Work Item | Title | State |
+      |---|-----------|-------|-------|
+      {% for item in dependency_check.output.blocking_items %}
+      | {{ loop.index }} | `{{ item.id }}` | {{ item.title }} | {{ item.state }} |
+      {% endfor %}
+
+      ---
+
+      **{{ dependency_check.output.blocking_items | length }}** predecessor(s) are
+      not yet complete.
+
+      > **Re-entry note:** Choosing **Wait** routes back to the dependency check.
+      > If the workflow resumes later, predecessors are re-checked automatically —
+      > any that completed in the interim will clear the block without user action.
+
+      Choose an action:
+      - **Wait** — re-check dependencies later (blockers may resolve on their own)
+      - **Override** — proceed to scope review despite unresolved dependencies (user accepts risk)
+      - **Reassign** — end this MG and track dependencies externally
+    options:
+      - label: "⏳ Wait"
+        value: wait
+        route: dependency_check
+      - label: "⏩ Override"
+        value: override
+        route: scope_reviewer
+      - label: "🔀 Reassign"
+        value: reassign
+        route: $end
+
+  # ── Scope reviewer ────────────────────────────────────────────────────
+  #
+  # Reviews the completed MG at the parent-scope level. Checks that all
+  # tasks are properly implemented, the overall solution is cohesive,
+  # and the MG is ready for promotion via its MG PR.
+  #
+  # Invariants:
+  #   Pre:  All tasks complete; dependencies resolved (or overridden).
+  #   Post: output.verdict is 'approved' or 'changes_requested'.
+  - name: scope_reviewer
+    type: agent
+    model: claude-opus-4.7
+    description: Review completed MG at the parent-scope level for cohesion and completeness
+    tools:
+      - twig
+      - filesystem
+    output:
+      # Schema mirrors this agent's JSON contract below. Required by M2:
+      # routes read scope_reviewer.output.verdict.
+      verdict:
+        type: string
+        description: Review outcome — "approved" or "changes_requested"
+      feedback:
+        type: string
+        description: Detailed scope-level review feedback (also rendered in the user_acceptance human gate, so write it for a human reader)
+      issues:
+        type: array
+        description: Specific issues if changes_requested (empty if approved)
+        items:
+          type: string
+    prompt: |
+      You are the parent-level reviewer for the polyphony SDLC workflow.
+
+      ## Your Mission
+
+      Review the completed merge group `{{ workflow.input.mg_path }}` for work item
+      {{ workflow.input.work_item_id }} at the parent level. Verify that the
+      overall solution is cohesive and ready for promotion via its MG PR.
+
+      ## Context
+
+      - **MG path:** `{{ workflow.input.mg_path }}`
+      - **MG branch:** `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+      - **Parent work item:** {{ workflow.input.work_item_id }}
+      - **Run apex:** {{ workflow.input.root_id }}
+      - **Tasks in this MG:** {{ workflow.input.work_item_ids | length }}
+        ({{ workflow.input.work_item_ids | join(', ') }})
+
+      ## Instructions
+
+      1. Read the parent work item description: `twig show {{ workflow.input.work_item_id }}`.
+      2. Inspect the MG branch in full:
+         - `git log --oneline {{ workflow.input.feature_branch }}..mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+           to see every commit added by this MG (one squash commit per task PR).
+         - `git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat`
+           for an aggregate file/line summary.
+         - Read the modified files in full as needed.
+      3. Verify:
+         - All acceptance criteria from the parent work item are met
+         - Tasks work together cohesively
+         - No integration issues between tasks
+         - Test coverage is adequate at the integration level
+      4. Return your verdict.
+
+         The `feedback` field will be rendered to the human in the
+         user_acceptance gate that follows — write a self-contained
+         summary the user can read without re-running git. Cover:
+         what changed, which files moved, what tests were added, and
+         any remaining concerns.
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "verdict": "approved | changes_requested",
+        "feedback": "Parent-level review feedback",
+        "issues": ["List of specific issues if changes_requested"]
+      }
+      ```
+    routes:
+      - to: user_acceptance
+        when: "{{ scope_reviewer.output.verdict == 'approved' }}"
+      - to: primary_router
+        when: "{{ scope_reviewer.output.verdict == 'changes_requested' }}"
+      # Catch-all per M4: unknown verdict (typo, schema drift) routes back
+      # to primary_router for another iteration rather than raising
+      # `No matching route found`.
+      - to: primary_router
+
+  # ── User acceptance gate ──────────────────────────────────────────────
+  #
+  # Optional human gate for user acceptance of the completed MG before
+  # MG PR submission.
+  #
+  # Invariants:
+  #   Pre:  scope_reviewer.output.verdict == 'approved'.
+  #   Post: User has accepted (proceed to MG PR), requested changes (loop), or aborted.
+  - name: user_acceptance
+    type: human_gate
+    prompt: |
+      ## ✅ MG `{{ workflow.input.mg_path }}` — Ready for MG PR
+
+      All tasks in MG `{{ workflow.input.mg_path }}` for work item
+      **{{ workflow.input.work_item_id }}** have been implemented, reviewed,
+      and merged into the MG branch.
+
+      ### Tasks completed: {{ workflow.input.work_item_ids | length }}
+
+      {% for task_id in workflow.input.work_item_ids %}
+      - `AB#{{ task_id }}`
+      {% endfor %}
+
+      ### Reviewer Summary
+
+      {{ scope_reviewer.output.feedback }}
+
+      ### Inspect the MG branch
+
+      ```
+      git log --oneline {{ workflow.input.feature_branch }}..mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}
+      git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat
+      git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}
+      ```
+
+      ---
+
+      Choose an action:
+      - **Accept** — proceed to open and merge the MG PR
+      - **Request Changes** — send back for additional work
+      - **Abort** — cancel this MG
+    options:
+      - label: "✅ Accept"
+        value: accepted
+        route: mg_pr_open
+      - label: "🔄 Request Changes"
+        value: changes
+        route: primary_router
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── MG PR open ────────────────────────────────────────────────────────
+  #
+  # Opens (or reuses) the MG PR. Head is the MG branch; base is the
+  # parent (enclosing MG branch when nested, feature branch when
+  # top-level). Idempotent — reuses an existing open PR for the same
+  # head/base pair.
+  #
+  # NOTE: A follow-up PR will plug in a platform-router (github / ado)
+  # for review-fix lifecycle on the MG PR. v1 opens and merges directly.
+  #
+  # Invariants:
+  #   Pre:  User accepted the MG.
+  #   Post: MG PR exists; output.pr_number and output.pr_url set.
+  - name: mg_pr_open
+    type: script
+    description: Open (or reuse) the MG PR targeting the parent branch
+    command: polyphony
+    args:
+      - "pr"
+      - "open-mg-pr"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
+    routes:
+      - to: mg_pr_merge
+
+  # ── MG PR merge ───────────────────────────────────────────────────────
+  #
+  # Merges the MG PR via merge-commit (hard-coded by the verb per ADR
+  # `docs/decisions/branch-model.md` — nested merge groups depend on git
+  # ancestry; squash and rebase would break the chain). Head branch is
+  # NOT deleted (sibling MGs may still depend on it).
+  #
+  # Idempotent — recognises an already merged PR.
+  #
+  # Invariants:
+  #   Pre:  MG PR is open.
+  #   Post: MG PR is merged into the parent branch.
+  - name: mg_pr_merge
+    type: script
+    description: Merge the MG PR via merge-commit (per the ADR)
+    command: polyphony
+    args:
+      - "pr"
+      - "merge-mg-pr"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
+    routes:
+      - to: scope_closer
+
+  # ── Scope closer ──────────────────────────────────────────────────────
+  #
+  # After the MG PR merges, transitions completed items in this MG to
+  # their template's done state in ADO. (Most are already Done from
+  # primary_completer; this step covers any that weren't and provides a
+  # consistent end-of-MG boundary.) Uses `polyphony branch close-scope`
+  # which validates each item before transitioning.
+  #
+  # Transitional bridge: uses `--pg-number N`. A follow-up PR will add
+  # `--mg-path PATH` matching.
+  #
+  # Invariants:
+  #   Pre:  MG PR merged.
+  #   Post: All MG items reflect their terminal state in ADO.
+  - name: scope_closer
+    type: script
+    description: Transition completed MG items to Done in ADO after MG PR merge
+    command: polyphony
+    args:
+      - "branch"
+      - "close-scope"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+      - "--pg-number"
+      - "{{ workflow.input.pg_number }}"
+    routes:
+      - to: $end
