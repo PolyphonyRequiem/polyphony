@@ -28,6 +28,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(ResolvedRule))]
 [JsonSerializable(typeof(BranchEnsureFeatureResult))]
 [JsonSerializable(typeof(BranchEnsureMergeGroupResult))]
+[JsonSerializable(typeof(BranchEnsurePlanResult))]
 [JsonSerializable(typeof(BranchEnsureTaskResult))]
 [JsonSerializable(typeof(BranchCheckDepsResult))]
 [JsonSerializable(typeof(BlockingItem))]
