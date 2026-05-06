@@ -509,19 +509,19 @@ agents:
         value: reassign
         route: $end
 
-  # ── Issue reviewer ─────────────────────────────────────────────────────
+  # ── Scope reviewer ─────────────────────────────────────────────────────
   #
-  # Reviews the completed PG at the issue level. Checks that all tasks are
-  # properly implemented, the overall solution is cohesive, and the PG is
-  # ready for PR submission.
+  # Reviews the completed PG at the parent-scope level. Checks that all
+  # child items are properly implemented, the overall solution is cohesive,
+  # and the PG is ready for PR submission.
   #
   # Invariants:
-  #   Pre:  All tasks complete; dependencies resolved (or overridden).
+  #   Pre:  All children complete; dependencies resolved (or overridden).
   #   Post: output.verdict is 'approved' or 'changes_requested'.
   - name: scope_reviewer
     type: agent
     model: claude-opus-4.7
-    description: Review completed PG at the issue level for cohesion and completeness
+    description: Review completed PG at the parent-scope level for cohesion and completeness
     tools:
       - twig
       - filesystem
@@ -533,7 +533,7 @@ agents:
         description: Review outcome — "approved" or "changes_requested"
       feedback:
         type: string
-        description: Detailed issue-level review feedback (also rendered in the user_acceptance human gate, so write it for a human reader)
+        description: Detailed scope-level review feedback (also rendered in the user_acceptance human gate, so write it for a human reader)
       issues:
         type: array
         description: Specific issues if changes_requested (empty if approved)

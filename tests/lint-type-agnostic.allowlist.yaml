@@ -1,0 +1,33 @@
+# Allowlist for tests/lint-type-agnostic.ps1
+#
+# Two sections:
+#   skip_files:           — repo-relative path globs (forward-slash) for files
+#                           the lint should not scan at all.
+#   allowed_substrings:   — substring patterns (regex, case-sensitive). When a
+#                           line is scanned, every match of an allowed pattern
+#                           is removed from the line BEFORE type-name detection
+#                           runs. This means a line containing both a legit
+#                           reference (e.g. "Feature branch") and an illegit
+#                           one (e.g. "Issue") still fails — only the legit
+#                           substring is masked.
+#
+# Add to allowed_substrings ONLY when the substring is unambiguous terminology
+# (branch / PR vocabulary, work-item ID references, CLI subcommand names),
+# never to silence a real type-name leak.
+
+skip_files: []
+
+allowed_substrings:
+  # Feature branch / Feature PR — branch and PR vocabulary, not the type "Feature"
+  - 'Feature\s+branch'
+  - 'Feature\s+Branch'
+  - 'Feature\s+PR'
+  - 'Feature[_-]PR'
+  - 'Feature[_-]Pr'
+  - 'Feature[_-]pr'
+  - 'feature[_-]pr'
+  - 'feature/[A-Za-z0-9_./-]+'
+  # CLI subcommand on the polyphony branch verb
+  - 'ensure-feature'
+  # Work-item ID references in prose (e.g. "Task 2681")
+  - 'Task\s+\d+'

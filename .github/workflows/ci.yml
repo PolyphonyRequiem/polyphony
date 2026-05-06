@@ -45,6 +45,14 @@ jobs:
         working-directory: polyphony
         run: dotnet test --no-build
 
+      - name: Lint (type-agnosticism)
+        # Runs the lint script against the actual repo (scripts/ + workflow YAMLs).
+        # Pester tests below validate the lint's behavior on synthetic inputs;
+        # this step is the gate that catches real regressions in shipped code.
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-type-agnostic.ps1 -Surface all
+
       - name: Install Pester
         shell: pwsh
         run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
