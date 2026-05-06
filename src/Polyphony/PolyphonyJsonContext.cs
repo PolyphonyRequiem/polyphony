@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Polyphony.Configuration;
+using Polyphony.Manifest;
 using Polyphony.Policy;
 using Polyphony.Sdlc;
 
@@ -66,6 +67,16 @@ namespace Polyphony;
 [JsonSerializable(typeof(RequirementsInputProvenance))]
 [JsonSerializable(typeof(StateNextReadyResult))]
 [JsonSerializable(typeof(ResolvedRequirementInputs))]
+[JsonSerializable(typeof(ManifestInitResult))]
+[JsonSerializable(typeof(ManifestReadResult))]
+[JsonSerializable(typeof(ManifestTopologyHashResult))]
+[JsonSerializable(typeof(ManifestRebaseRecordResult))]
+[JsonSerializable(typeof(ManifestApprovalRecordResult))]
+[JsonSerializable(typeof(RunManifest))]
+[JsonSerializable(typeof(MergeGroupEntry))]
+[JsonSerializable(typeof(RebaseRecord))]
+[JsonSerializable(typeof(HumanApprovalRecord))]
+[JsonSerializable(typeof(RetiredMergeGroupRecord))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
