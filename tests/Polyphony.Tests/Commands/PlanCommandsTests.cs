@@ -19,10 +19,10 @@ namespace Polyphony.Tests.Commands;
 public sealed class PlanCommandsTests : CommandTestBase
 {
     private PlanCommands CreateCommand() =>
-        new(new HierarchyWalker(Config, Repository), Repository, Config, new TwigClient(new FakeProcessRunner()));
+        new(new HierarchyWalker(Config, Repository), Repository, Config, new TwigClient(new FakeProcessRunner()), new GitClient(new FakeProcessRunner()));
 
     private PlanCommands CreateCommand(ProcessConfig config) =>
-        new(new HierarchyWalker(config, Repository), Repository, config, new TwigClient(new FakeProcessRunner()));
+        new(new HierarchyWalker(config, Repository), Repository, config, new TwigClient(new FakeProcessRunner()), new GitClient(new FakeProcessRunner()));
 
     // ─────────────────────────────────────────────────────────────────────────
     // depth-guard
