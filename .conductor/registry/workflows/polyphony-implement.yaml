@@ -516,6 +516,7 @@ for_each:
         mg_path: "{{ pg.mg_path }}"
         work_item_ids: "{{ pg.work_item_ids }}"
         feature_branch: "{{ pg.feature_branch }}"
+        platform: "{{ workflow.input.platform }}"
     routes:
       # Group results expose `errors` / `outputs` / `count`. There is no
       # `failed_count` / `succeeded_count` aggregate — derive from

@@ -43,10 +43,13 @@
 #      responsible for lock acquisition, manifest init, and final
 #      approval recording. Adding those here would defeat parallel-MG
 #      execution under one root.
-#   4. The MG PR merges directly via `polyphony pr merge-mg-pr` without a
-#      review-fix sub-workflow. A follow-up PR will plug in a
-#      platform-router that supports both GitHub and ADO MG-PR review
-#      lifecycles.
+#   4. The MG PR merges directly via `polyphony pr merge-mg-pr` on the
+#      GitHub leg (no review-fix sub-workflow at the MG layer per the
+#      ADR — review happens inside `scope_reviewer` upstream of the MG
+#      PR). The ADO leg uses a human-gate stub (matching `ado-pr.yaml`)
+#      until ADO connection inputs are threaded through the workflow
+#      stack and the ADO MG verbs (`pr open-mg-ado` + `pr merge-mg-ado`,
+#      shipped in PR #106) can be wired in.
 #
 # Re-entry behavior (P3):
 #   Every step in this workflow is idempotent — `branch ensure-mg`,
@@ -119,6 +122,15 @@ workflow:
       type: string
       required: true
       description: Parent feature branch that this MG branch ultimately promotes into
+    platform:
+      type: string
+      required: false
+      default: github
+      description: >-
+        PR platform — `github` (full lifecycle: open + merge MG PR via gh)
+        or `ado` (stub — opens a human gate so the operator manages the
+        MG PR manually in Azure DevOps). Mirrors the implement-pg.yaml
+        contract. Default github preserves pre-platform-router behavior.
 
 tools:
   - twig
@@ -752,7 +764,7 @@ agents:
     options:
       - label: "✅ Accept"
         value: accepted
-        route: mg_pr_open
+        route: pr_platform_router
       - label: "🔄 Request Changes"
         value: changes
         route: primary_router
@@ -760,18 +772,47 @@ agents:
         value: abort
         route: $end
 
-  # ── MG PR open ────────────────────────────────────────────────────────
+  # ── PR platform router ────────────────────────────────────────────────
   #
-  # Opens (or reuses) the MG PR. Head is the MG branch; base is the
-  # parent (enclosing MG branch when nested, feature branch when
-  # top-level). Idempotent — reuses an existing open PR for the same
-  # head/base pair.
-  #
-  # NOTE: A follow-up PR will plug in a platform-router (github / ado)
-  # for review-fix lifecycle on the MG PR. v1 opens and merges directly.
+  # Routes to the platform-specific MG-PR lifecycle leg based on the
+  # platform input (github | ado). Mirrors the pattern in
+  # implement-pg.yaml. ADO leg is a human-gate stub matching ado-pr.yaml
+  # — the ADO MG verbs (`pr open-mg-ado`, `pr merge-mg-ado`) exist (#106)
+  # but require organization/project/repository which the current
+  # implement-mg.yaml input contract does not yet thread through. A
+  # follow-up PR will plumb those inputs and replace the human gate with
+  # a real ADO leg using the verbs.
   #
   # Invariants:
-  #   Pre:  User accepted the MG.
+  #   Pre:  User accepted the MG; platform is 'github' or 'ado'.
+  #   Post: Routes to mg_pr_open (github) or mg_pr_human_gate_ado (ado).
+  - name: pr_platform_router
+    type: script
+    description: Route to platform-specific MG-PR lifecycle based on platform input
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{ platform = '{{ workflow.input.platform }}' } | ConvertTo-Json
+    routes:
+      - to: mg_pr_open
+        when: "{{ pr_platform_router.output.platform == 'github' }}"
+      - to: mg_pr_human_gate_ado
+        when: "{{ pr_platform_router.output.platform == 'ado' }}"
+      # Catch-all per M4: unknown platform value fails safely to $end
+      # rather than raising `No matching route found` mid-MG.
+      - to: $end
+
+  # ── MG PR open ────────────────────────────────────────────────────────
+  #
+  # GitHub leg of the platform router. Opens (or reuses) the MG PR via
+  # `polyphony pr open-mg-pr`. Head is the MG branch; base is the parent
+  # (enclosing MG branch when nested, feature branch when top-level).
+  # Idempotent — reuses an existing open PR for the same head/base pair.
+  #
+  # Invariants:
+  #   Pre:  Platform == 'github'; user accepted the MG.
   #   Post: MG PR exists; output.pr_number and output.pr_url set.
   - name: mg_pr_open
     type: script
@@ -812,6 +853,48 @@ agents:
       - "{{ workflow.input.mg_path }}"
     routes:
       - to: scope_closer
+
+  # ── ADO MG-PR human gate (stub) ───────────────────────────────────────
+  #
+  # ADO leg of the platform router. Stub — matches the pattern in
+  # ado-pr.yaml. The operator opens, reviews, and merges the MG PR
+  # manually in Azure DevOps, then accepts this gate to continue to
+  # scope_closer. Abort drops to $end without running scope_closer.
+  #
+  # A follow-up PR will replace this with real verbs once the ADO
+  # connection inputs (organization / project / repository) are threaded
+  # through the workflow stack. The verbs themselves exist (PR #106).
+  #
+  # Invariants:
+  #   Pre:  User accepted the MG; platform == 'ado'.
+  #   Post: Operator has manually opened + merged the MG PR in ADO, OR
+  #         aborted (which routes to $end without invoking scope_closer).
+  - name: mg_pr_human_gate_ado
+    type: human_gate
+    description: ADO MG-PR is operator-managed — merge in ADO, then accept
+    prompt: |
+      ## ADO MG-PR — operator action required
+
+      The MG branch (`mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`)
+      is ready to promote into `{{ workflow.input.feature_branch }}`.
+
+      Open, review, and **complete (merge-commit)** the MG PR in Azure
+      DevOps. Do NOT use squash or rebase — nested merge groups depend
+      on git ancestry per
+      `docs/decisions/branch-model.md`.
+
+      Then choose:
+
+      - **Accept** — continue to scope_closer (transitions completed
+        items to Done in ADO).
+      - **Abort** — exit without running scope_closer.
+    options:
+      - label: "✅ Accept (MG PR merged in ADO)"
+        value: accepted
+        route: scope_closer
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
 
   # ── Scope closer ──────────────────────────────────────────────────────
   #
