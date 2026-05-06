@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Polyphony.Manifest;
+using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
 namespace Polyphony.Commands;
@@ -99,19 +100,166 @@ internal static class PlanPrFrontMatter
     }
 
     /// <summary>
-    /// SKELETON — implementation lives in the P8b validator-impl PR
-    /// (<c>sdlc/p8b-validator-impl</c>). This default returns Absent for
-    /// any input so the surrounding code compiles before that PR lands.
-    /// Tests that exercise the strict path will fail until then; that's
-    /// expected and tracked.
+    /// Strict variant of <see cref="Parse"/> used by the
+    /// <c>polyphony pr validate-plan-diff</c> verb. Distinguishes three
+    /// outcomes — Absent, Malformed, Present — so the caller can decide
+    /// whether to block a parent-plan touch on the absence (or
+    /// well-formedness) of the front-matter, rather than silently treating
+    /// a malformed body as "no flag set".
+    ///
+    /// <list type="bullet">
+    ///   <item><b>Absent</b> — body is empty, contains no <c>---</c>-fenced
+    ///     block at the very start, or the fenced block contains only
+    ///     whitespace. Returns safe defaults with
+    ///     <see cref="PlanPrFrontMatterStrictResult.ErrorDetail"/> = <c>null</c>.</item>
+    ///   <item><b>Malformed</b> — fence found and contains content, but
+    ///     YamlDotNet failed to parse it; OR a recognized key carried the
+    ///     wrong YAML kind (e.g. <c>requests_parent_change: "yes"</c> as
+    ///     a string instead of a YAML bool, or
+    ///     <c>ancestor_plan_generations</c> as a sequence/scalar instead of
+    ///     a mapping, or any value in that mapping is non-integer).
+    ///     <see cref="PlanPrFrontMatterStrictResult.ErrorDetail"/> carries a
+    ///     short human-readable reason.</item>
+    ///   <item><b>Present</b> — well-formed YAML with all recognized keys
+    ///     of the correct shape. Missing recognized keys are allowed and
+    ///     default to <c>false</c> / empty map (still Present — sparse but
+    ///     correct).</item>
+    /// </list>
+    ///
+    /// <para>The lenient <see cref="Parse"/> entry-point is unchanged so
+    /// the polling verb keeps its forgiving behaviour.</para>
     /// </summary>
     public static PlanPrFrontMatterStrictResult ParseStrict(string body)
     {
-        return new PlanPrFrontMatterStrictResult(
-            FrontMatterStatus.Absent,
-            RequestsParentChange: false,
-            AncestorPlanGenerations: new Dictionary<string, int>(StringComparer.Ordinal),
-            ErrorDetail: null);
+        var emptyDict = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        if (string.IsNullOrEmpty(body))
+        {
+            return new PlanPrFrontMatterStrictResult(FrontMatterStatus.Absent, false, emptyDict, null);
+        }
+
+        var match = FenceRegex.Match(body);
+        if (!match.Success)
+        {
+            return new PlanPrFrontMatterStrictResult(FrontMatterStatus.Absent, false, emptyDict, null);
+        }
+
+        var yamlText = match.Groups["yaml"].Value;
+        if (string.IsNullOrWhiteSpace(yamlText))
+        {
+            return new PlanPrFrontMatterStrictResult(FrontMatterStatus.Absent, false, emptyDict, null);
+        }
+
+        YamlStream yaml;
+        try
+        {
+            yaml = new YamlStream();
+            using var reader = new StringReader(yamlText);
+            yaml.Load(reader);
+        }
+        catch (YamlException ex)
+        {
+            return new PlanPrFrontMatterStrictResult(
+                FrontMatterStatus.Malformed,
+                false,
+                emptyDict,
+                $"YAML parse error: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            return new PlanPrFrontMatterStrictResult(
+                FrontMatterStatus.Malformed,
+                false,
+                emptyDict,
+                $"YAML parse error: {ex.Message}");
+        }
+
+        if (yaml.Documents.Count == 0)
+        {
+            return new PlanPrFrontMatterStrictResult(FrontMatterStatus.Absent, false, emptyDict, null);
+        }
+
+        if (yaml.Documents[0].RootNode is not YamlMappingNode root)
+        {
+            return new PlanPrFrontMatterStrictResult(
+                FrontMatterStatus.Malformed,
+                false,
+                emptyDict,
+                "Front-matter root must be a YAML mapping.");
+        }
+
+        bool requestsParent = false;
+        if (root.Children.TryGetValue(new YamlScalarNode("requests_parent_change"), out var rpcNode))
+        {
+            if (rpcNode is not YamlScalarNode rpcScalar)
+            {
+                return new PlanPrFrontMatterStrictResult(
+                    FrontMatterStatus.Malformed,
+                    false,
+                    emptyDict,
+                    "'requests_parent_change' must be a YAML boolean (true|false).");
+            }
+
+            // Require a real YAML bool — reject quoted strings like "yes",
+            // numbers, etc. YamlDotNet tags real bools as
+            // "tag:yaml.org,2002:bool"; an untagged plain (unquoted)
+            // "true"/"false" scalar is also accepted as a YAML 1.1 bool.
+            var tag = rpcScalar.Tag.IsEmpty ? string.Empty : rpcScalar.Tag.Value ?? string.Empty;
+            var isPlainBool =
+                rpcScalar.Style == ScalarStyle.Plain
+                && (string.Equals(rpcScalar.Value, "true", StringComparison.Ordinal)
+                    || string.Equals(rpcScalar.Value, "false", StringComparison.Ordinal));
+            var isTaggedBool = tag.EndsWith(":bool", StringComparison.Ordinal);
+
+            if (!isPlainBool && !isTaggedBool)
+            {
+                return new PlanPrFrontMatterStrictResult(
+                    FrontMatterStatus.Malformed,
+                    false,
+                    emptyDict,
+                    $"'requests_parent_change' must be an unquoted YAML boolean (true|false); got '{rpcScalar.Value}'.");
+            }
+
+            requestsParent = string.Equals(rpcScalar.Value, "true", StringComparison.Ordinal);
+        }
+
+        IReadOnlyDictionary<string, int> generations = emptyDict;
+        if (root.Children.TryGetValue(new YamlScalarNode("ancestor_plan_generations"), out var apgNode))
+        {
+            if (apgNode is not YamlMappingNode apgMap)
+            {
+                return new PlanPrFrontMatterStrictResult(
+                    FrontMatterStatus.Malformed,
+                    false,
+                    emptyDict,
+                    "'ancestor_plan_generations' must be a YAML mapping of <ancestor-id> -> <generation:int>.");
+            }
+
+            var dict = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var kvp in apgMap.Children)
+            {
+                if (kvp.Key is not YamlScalarNode keyScalar || string.IsNullOrEmpty(keyScalar.Value))
+                {
+                    return new PlanPrFrontMatterStrictResult(
+                        FrontMatterStatus.Malformed,
+                        false,
+                        emptyDict,
+                        "'ancestor_plan_generations' keys must be non-empty scalars.");
+                }
+                if (kvp.Value is not YamlScalarNode valueScalar || !int.TryParse(valueScalar.Value, out var v))
+                {
+                    return new PlanPrFrontMatterStrictResult(
+                        FrontMatterStatus.Malformed,
+                        false,
+                        emptyDict,
+                        $"'ancestor_plan_generations[{keyScalar.Value}]' must be an integer.");
+                }
+                dict[keyScalar.Value!] = v;
+            }
+            generations = dict;
+        }
+
+        return new PlanPrFrontMatterStrictResult(FrontMatterStatus.Present, requestsParent, generations, null);
     }
 
     private static bool ReadBool(YamlMappingNode root, string key)
