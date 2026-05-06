@@ -4,10 +4,17 @@ platform_project: github.com/PolyphonyRequiem/polyphony
 created_at: 2026-05-06T22:51:24.0862179Z
 created_by: phase3-smoke
 branch_model_version: 1
-plan_generations: {}
+plan_generations:
+  root: 1
 topology_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 merge_groups: []
 rebases: []
 human_approvals: []
 retired_merge_group_ids: []
-merged_plan_prs: []
+merged_plan_prs:
+- pr_number: 112
+  item_key: root
+  merge_commit: e8dab9d3693e9b330fe9a88b1faf174edddc265f
+  previous_generation: 0
+  current_generation: 1
+  recorded_at: 2026-05-06T22:56:38.8136544Z
