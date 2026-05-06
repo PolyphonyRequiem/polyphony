@@ -483,8 +483,14 @@ public sealed partial class PrCommands
         }
 
         // ── 8. Checkout feature branch + reset to remote tip. ──────────────
+        // We re-fetch here because step 5's fetch happened BEFORE the gh-API
+        // merge in step 7, which advanced origin/{manifestBranch} on the
+        // server side (the merge commit landed there). Without a second
+        // fetch, our local origin/{manifestBranch} ref is stale and the
+        // post-merge manifest commit will fail to push as non-fast-forward.
         try
         {
+            await git.FetchAsync("origin", manifestBranch, ct).ConfigureAwait(false);
             await git.CheckoutAsync(manifestBranch, ct).ConfigureAwait(false);
             await git.ResetHardAsync($"origin/{manifestBranch}", ct).ConfigureAwait(false);
         }

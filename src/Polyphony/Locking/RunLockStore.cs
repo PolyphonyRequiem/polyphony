@@ -93,6 +93,7 @@ public sealed class RunLockStore
         if (!string.IsNullOrEmpty(dir))
         {
             Directory.CreateDirectory(dir);
+            EnsureLockDirGitignore(dir);
         }
 
         try
@@ -297,6 +298,41 @@ public sealed class RunLockStore
         catch (Exception ex)
         {
             return (null, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Drops a <c>.gitignore</c> file in the lock directory containing
+    /// <c>*</c> the first time the directory is created. Lock files
+    /// inside this directory are ephemeral runtime state — they MUST
+    /// NOT show up in <c>git status --porcelain</c> output, otherwise
+    /// every verb that acquires its own lock and then verifies a
+    /// clean worktree (merge-plan-pr, merge-plan-ado,
+    /// rebase-stale-descendant, recreate-stale-descendant) will
+    /// false-positive with <c>worktree_dirty</c>.
+    ///
+    /// <para>Idempotent: skips the write if the file already exists.
+    /// Best-effort: an IO failure here MUST NOT block lock acquisition.</para>
+    /// </summary>
+    private static void EnsureLockDirGitignore(string dir)
+    {
+        var gitignore = Path.Combine(dir, ".gitignore");
+        if (File.Exists(gitignore))
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(gitignore, "*\n");
+        }
+        catch (IOException)
+        {
+            // Best-effort — never block lock acquire on this.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Best-effort — never block lock acquire on this.
         }
     }
 }

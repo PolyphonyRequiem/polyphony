@@ -1,5 +1,7 @@
 using Polyphony.Locking;
 using Shouldly;
+using System.IO;
+using System.Linq;
 using Xunit;
 
 namespace Polyphony.Tests.Locking;
@@ -71,6 +73,40 @@ public sealed class RunLockStoreTests : IDisposable
 
         outcome.Acquired.ShouldBeTrue();
         File.Exists(path).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TryAcquire_DropsGitignoreInLockDir()
+    {
+        // Repro for the Phase 3 e2e smoke finding: lock files inside
+        // <repo>/.polyphony/locks/ must not show up as untracked in
+        // `git status --porcelain`, otherwise verbs that acquire the
+        // lock then verify a clean worktree (merge-plan-pr,
+        // merge-plan-ado, rebase-stale-descendant,
+        // recreate-stale-descendant) false-positive on worktree_dirty.
+        var path = Path.Combine(_dir, "smoke-lockdir", "run-99001.lock");
+
+        var outcome = _sut.TryAcquire(path, Candidate(), DateTime.UtcNow);
+
+        outcome.Acquired.ShouldBeTrue();
+        var gitignore = Path.Combine(Path.GetDirectoryName(path)!, ".gitignore");
+        File.Exists(gitignore).ShouldBeTrue();
+        File.ReadAllText(gitignore).ShouldBe("*\n");
+    }
+
+    [Fact]
+    public void TryAcquire_PreservesExistingGitignore()
+    {
+        var lockDir = Path.Combine(_dir, "preserve-gitignore");
+        Directory.CreateDirectory(lockDir);
+        var gitignore = Path.Combine(lockDir, ".gitignore");
+        File.WriteAllText(gitignore, "# custom\n*.tmp\n");
+
+        var path = Path.Combine(lockDir, "run-99001.lock");
+        var outcome = _sut.TryAcquire(path, Candidate(), DateTime.UtcNow);
+
+        outcome.Acquired.ShouldBeTrue();
+        File.ReadAllText(gitignore).ShouldBe("# custom\n*.tmp\n");
     }
 
     [Fact]
@@ -188,7 +224,10 @@ public sealed class RunLockStoreTests : IDisposable
 
         _sut.TryRelease(path, "tok-good");
 
-        Directory.GetFiles(_dir).ShouldBeEmpty();
+        // .gitignore is intentionally retained — it's not a tombstone.
+        Directory.GetFiles(_dir)
+            .Where(f => Path.GetFileName(f) != ".gitignore")
+            .ShouldBeEmpty();
     }
 
     [Fact]
