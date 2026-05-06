@@ -5,7 +5,7 @@ created_at: 2026-05-06T22:51:24.0862179Z
 created_by: phase3-smoke
 branch_model_version: 1
 plan_generations:
-  root: 1
+  root: 2
 topology_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 merge_groups: []
 rebases: []
@@ -18,3 +18,9 @@ merged_plan_prs:
   previous_generation: 0
   current_generation: 1
   recorded_at: 2026-05-06T22:56:38.8136544Z
+- pr_number: 114
+  item_key: root
+  merge_commit: e343fdcaddf7ec72bdf27d59ea52b077fff7c799
+  previous_generation: 1
+  current_generation: 2
+  recorded_at: 2026-05-06T23:00:49.7523929Z
