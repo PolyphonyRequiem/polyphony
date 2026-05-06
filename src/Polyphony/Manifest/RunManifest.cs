@@ -11,7 +11,7 @@ namespace Polyphony.Manifest;
 ///   <item><description>Identity: <see cref="Schema"/>, <see cref="RootId"/>, <see cref="PlatformProject"/>, <see cref="CreatedAt"/>, <see cref="CreatedBy"/>, <see cref="BranchModelVersion"/>.</description></item>
 ///   <item><description>Topology (hashed): <see cref="MergeGroups"/>. <see cref="TopologyHash"/> is the SHA-256 over the canonicalized form.</description></item>
 ///   <item><description>Plan generations (cross-cutting bookkeeping): <see cref="PlanGenerations"/>.</description></item>
-///   <item><description>Operational/audit (NOT hashed): <see cref="Rebases"/>, <see cref="HumanApprovals"/>, <see cref="RetiredMergeGroupIds"/>.</description></item>
+///   <item><description>Operational/audit (NOT hashed): <see cref="Rebases"/>, <see cref="HumanApprovals"/>, <see cref="RetiredMergeGroupIds"/>, <see cref="MergedPlanPrs"/>.</description></item>
 /// </list>
 /// </summary>
 public sealed class RunManifest
@@ -66,6 +66,16 @@ public sealed class RunManifest
 
     /// <summary>Retired merge-group ids — cannot be reused under this root.</summary>
     public List<RetiredMergeGroupRecord> RetiredMergeGroupIds { get; set; } = new();
+
+    /// <summary>
+    /// Idempotency ledger for plan-PR merges. Each entry records which
+    /// PR's merge caused which <see cref="PlanGenerations"/> bump, so
+    /// re-runs of <c>polyphony pr merge-plan-pr</c> after partial
+    /// failures are safe and cannot silently double-bump the counter.
+    /// Operational/audit only — NOT part of the topology hash. See
+    /// the ADR § Plan-merge idempotency ledger for semantics.
+    /// </summary>
+    public List<MergedPlanPrEntry> MergedPlanPrs { get; set; } = new();
 }
 
 /// <summary>
@@ -174,4 +184,47 @@ public sealed class RetiredMergeGroupRecord
 
     /// <summary>Free-form reason explaining why the MG was retired.</summary>
     public string? Reason { get; set; }
+}
+
+/// <summary>
+/// One entry in the plan-PR idempotency ledger
+/// (<see cref="RunManifest.MergedPlanPrs"/>). The ledger lets
+/// <c>polyphony pr merge-plan-pr</c> recognize "this PR's merge was
+/// already recorded" on retry without consulting the platform, so a
+/// partial-failure replay never double-bumps
+/// <see cref="RunManifest.PlanGenerations"/>.
+/// </summary>
+public sealed class MergedPlanPrEntry
+{
+    /// <summary>The platform PR number that was merged. Positive.</summary>
+    public int PrNumber { get; set; }
+
+    /// <summary>
+    /// The plan key whose generation the merge bumped. Either the
+    /// literal <c>"root"</c> (root plan) or a numeric work-item id as a
+    /// string (descendant plan), matching the
+    /// <see cref="RunManifest.PlanGenerations"/> key shape.
+    /// </summary>
+    public string ItemKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The platform-reported merge commit SHA. Required when present in
+    /// the ledger; the verb refuses to append an entry without one.
+    /// </summary>
+    public string MergeCommit { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The <see cref="RunManifest.PlanGenerations"/> value the entry
+    /// observed before bumping. Always &gt;= 0.
+    /// </summary>
+    public int PreviousGeneration { get; set; }
+
+    /// <summary>
+    /// The <see cref="RunManifest.PlanGenerations"/> value the entry
+    /// wrote after bumping. Always &gt; <see cref="PreviousGeneration"/>.
+    /// </summary>
+    public int CurrentGeneration { get; set; }
+
+    /// <summary>UTC timestamp when the entry was appended.</summary>
+    public DateTime RecordedAt { get; set; }
 }

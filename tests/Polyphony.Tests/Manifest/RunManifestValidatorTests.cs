@@ -217,6 +217,119 @@ public sealed class RunManifestValidatorTests
         issues.ShouldContain(s => s.Contains("rebases"));
     }
 
+    // -- merged_plan_prs --
+
+    private static MergedPlanPrEntry GoodLedgerEntry() => new()
+    {
+        PrNumber = 42,
+        ItemKey = "5678",
+        MergeCommit = "abc1234",
+        PreviousGeneration = 0,
+        CurrentGeneration = 1,
+        RecordedAt = new DateTime(2026, 5, 6, 19, 30, 0, DateTimeKind.Utc),
+    };
+
+    [Fact]
+    public void Validate_GoodLedgerEntry_HasNoIssues()
+    {
+        var manifest = GoodBaseline();
+        manifest.MergedPlanPrs.Add(GoodLedgerEntry());
+        RunManifestValidator.Validate(manifest).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Validate_RootItemKeyLedgerEntry_HasNoIssues()
+    {
+        var manifest = GoodBaseline();
+        var entry = GoodLedgerEntry();
+        entry.ItemKey = "root";
+        manifest.MergedPlanPrs.Add(entry);
+        RunManifestValidator.Validate(manifest).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Validate_LedgerEntryNonPositivePrNumber_ReportsIssue()
+    {
+        var manifest = GoodBaseline();
+        var entry = GoodLedgerEntry();
+        entry.PrNumber = 0;
+        manifest.MergedPlanPrs.Add(entry);
+        RunManifestValidator.Validate(manifest).ShouldContain(s => s.Contains("pr_number"));
+    }
+
+    [Fact]
+    public void Validate_LedgerDuplicatePrNumber_ReportsIssue()
+    {
+        var manifest = GoodBaseline();
+        manifest.MergedPlanPrs.Add(GoodLedgerEntry());
+        var dup = GoodLedgerEntry();
+        dup.PreviousGeneration = 1;
+        dup.CurrentGeneration = 2;
+        manifest.MergedPlanPrs.Add(dup);
+        RunManifestValidator.Validate(manifest).ShouldContain(s => s.Contains("duplicate"));
+    }
+
+    [Fact]
+    public void Validate_LedgerEmptyItemKey_ReportsIssue()
+    {
+        var manifest = GoodBaseline();
+        var entry = GoodLedgerEntry();
+        entry.ItemKey = "";
+        manifest.MergedPlanPrs.Add(entry);
+        RunManifestValidator.Validate(manifest).ShouldContain(s => s.Contains("item_key"));
+    }
+
+    [Fact]
+    public void Validate_LedgerNonRootNonNumericItemKey_ReportsIssue()
+    {
+        var manifest = GoodBaseline();
+        var entry = GoodLedgerEntry();
+        entry.ItemKey = "ROOT";
+        manifest.MergedPlanPrs.Add(entry);
+        RunManifestValidator.Validate(manifest).ShouldContain(s => s.Contains("item_key"));
+    }
+
+    [Fact]
+    public void Validate_LedgerEmptyMergeCommit_ReportsIssue()
+    {
+        var manifest = GoodBaseline();
+        var entry = GoodLedgerEntry();
+        entry.MergeCommit = "";
+        manifest.MergedPlanPrs.Add(entry);
+        RunManifestValidator.Validate(manifest).ShouldContain(s => s.Contains("merge_commit"));
+    }
+
+    [Fact]
+    public void Validate_LedgerCurrentNotGreaterThanPrevious_ReportsIssue()
+    {
+        var manifest = GoodBaseline();
+        var entry = GoodLedgerEntry();
+        entry.PreviousGeneration = 5;
+        entry.CurrentGeneration = 5;
+        manifest.MergedPlanPrs.Add(entry);
+        RunManifestValidator.Validate(manifest).ShouldContain(s => s.Contains("current_generation"));
+    }
+
+    [Fact]
+    public void Validate_LedgerNegativePreviousGeneration_ReportsIssue()
+    {
+        var manifest = GoodBaseline();
+        var entry = GoodLedgerEntry();
+        entry.PreviousGeneration = -1;
+        manifest.MergedPlanPrs.Add(entry);
+        RunManifestValidator.Validate(manifest).ShouldContain(s => s.Contains("previous_generation"));
+    }
+
+    [Fact]
+    public void Validate_LedgerMissingRecordedAt_ReportsIssue()
+    {
+        var manifest = GoodBaseline();
+        var entry = GoodLedgerEntry();
+        entry.RecordedAt = default;
+        manifest.MergedPlanPrs.Add(entry);
+        RunManifestValidator.Validate(manifest).ShouldContain(s => s.Contains("recorded_at"));
+    }
+
     [Fact]
     public void Validate_ApprovalMissingFields_ReportsIssue()
     {

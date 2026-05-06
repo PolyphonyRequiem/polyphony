@@ -391,6 +391,205 @@ public sealed class ManifestCommandsTests : IDisposable
         exit.ShouldBe(ExitCodes.CacheError);
     }
 
+    // -- record-plan-merge: idempotency ledger --
+
+    [Fact]
+    public async Task RecordPlanMerge_LegacyModeWithoutPrIdentity_BumpsAndWritesNoLedgerEntry()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(item: "root", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.Recorded.ShouldBeTrue();
+        result.PrNumber.ShouldBe(0);
+        result.MergeCommit.ShouldBe(string.Empty);
+
+        var manifest = RunManifestStore.LoadOrThrow(this.manifestPath);
+        manifest.MergedPlanPrs.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_FirstCallWithPrIdentity_BumpsAndAppendsLedgerEntry()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(
+                item: "5678",
+                path: this.manifestPath,
+                prNumber: 42,
+                mergeCommit: "abc1234"));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.ItemKey.ShouldBe("5678");
+        result.PreviousGeneration.ShouldBe(0);
+        result.CurrentGeneration.ShouldBe(1);
+        result.Recorded.ShouldBeTrue();
+        result.PrNumber.ShouldBe(42);
+        result.MergeCommit.ShouldBe("abc1234");
+
+        var manifest = RunManifestStore.LoadOrThrow(this.manifestPath);
+        manifest.PlanGenerations["5678"].ShouldBe(1);
+        manifest.MergedPlanPrs.Count.ShouldBe(1);
+
+        var entry = manifest.MergedPlanPrs[0];
+        entry.PrNumber.ShouldBe(42);
+        entry.ItemKey.ShouldBe("5678");
+        entry.MergeCommit.ShouldBe("abc1234");
+        entry.PreviousGeneration.ShouldBe(0);
+        entry.CurrentGeneration.ShouldBe(1);
+        entry.RecordedAt.ShouldNotBe(default);
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_RepeatedCallWithSamePrIdentity_IdempotentSkip()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(
+            item: "root", path: this.manifestPath, prNumber: 42, mergeCommit: "abc1234"));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(
+                item: "root",
+                path: this.manifestPath,
+                prNumber: 42,
+                mergeCommit: "abc1234"));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.Recorded.ShouldBeFalse();
+        result.PreviousGeneration.ShouldBe(0);
+        result.CurrentGeneration.ShouldBe(1);
+
+        // No double-bump: generation is still 1, ledger still has only one entry.
+        var manifest = RunManifestStore.LoadOrThrow(this.manifestPath);
+        manifest.PlanGenerations["root"].ShouldBe(1);
+        manifest.MergedPlanPrs.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_SamePrNumberDifferentItemKey_ReturnsConfigError()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(
+            item: "root", path: this.manifestPath, prNumber: 42, mergeCommit: "abc1234"));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(
+                item: "5678",
+                path: this.manifestPath,
+                prNumber: 42,
+                mergeCommit: "abc1234"));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.Error!.ShouldContain("PR #42");
+        result.Error!.ShouldContain("root");
+        result.Error!.ShouldContain("5678");
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_SamePrNumberDifferentMergeCommit_ReturnsConfigError()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(
+            item: "root", path: this.manifestPath, prNumber: 42, mergeCommit: "abc1234"));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(
+                item: "root",
+                path: this.manifestPath,
+                prNumber: 42,
+                mergeCommit: "deadbeef"));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.Error!.ShouldContain("PR #42");
+        result.Error!.ShouldContain("abc1234");
+        result.Error!.ShouldContain("deadbeef");
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_PrNumberWithoutMergeCommit_ReturnsConfigError()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(item: "root", path: this.manifestPath, prNumber: 42, mergeCommit: ""));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.Error!.ShouldContain("--merge-commit");
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_MergeCommitWithoutPrNumber_ReturnsConfigError()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(item: "root", path: this.manifestPath, prNumber: 0, mergeCommit: "abc1234"));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.Error!.ShouldContain("--pr-number");
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_TwoDifferentPrsForSameItem_AccumulatesBoth()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(
+            item: "5678", path: this.manifestPath, prNumber: 42, mergeCommit: "abc1234"));
+        await CaptureAsync(() => cmd.RecordPlanMerge(
+            item: "5678", path: this.manifestPath, prNumber: 43, mergeCommit: "def5678"));
+
+        var manifest = RunManifestStore.LoadOrThrow(this.manifestPath);
+        manifest.PlanGenerations["5678"].ShouldBe(2);
+        manifest.MergedPlanPrs.Count.ShouldBe(2);
+
+        manifest.MergedPlanPrs[0].PrNumber.ShouldBe(42);
+        manifest.MergedPlanPrs[0].PreviousGeneration.ShouldBe(0);
+        manifest.MergedPlanPrs[0].CurrentGeneration.ShouldBe(1);
+
+        manifest.MergedPlanPrs[1].PrNumber.ShouldBe(43);
+        manifest.MergedPlanPrs[1].PreviousGeneration.ShouldBe(1);
+        manifest.MergedPlanPrs[1].CurrentGeneration.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_LegacyAndPrIdentityCallsCoexist()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        // Legacy bump (no PR identity, no ledger entry).
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "root", path: this.manifestPath));
+
+        // PR-identity bump on the same item (separate transaction).
+        await CaptureAsync(() => cmd.RecordPlanMerge(
+            item: "root", path: this.manifestPath, prNumber: 99, mergeCommit: "feedface"));
+
+        var manifest = RunManifestStore.LoadOrThrow(this.manifestPath);
+        manifest.PlanGenerations["root"].ShouldBe(2);
+        manifest.MergedPlanPrs.Count.ShouldBe(1);
+        manifest.MergedPlanPrs[0].PrNumber.ShouldBe(99);
+        manifest.MergedPlanPrs[0].PreviousGeneration.ShouldBe(1);
+        manifest.MergedPlanPrs[0].CurrentGeneration.ShouldBe(2);
+    }
+
     // -- read-plan-generation --
 
     [Fact]

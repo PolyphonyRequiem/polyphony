@@ -97,6 +97,12 @@ public sealed record ManifestApprovalRecordResult
 /// JSON output for <c>polyphony manifest record-plan-merge</c>. Bumps the
 /// generation counter for the named plan (root or descendant) and reports
 /// the previous and current values.
+///
+/// <para>When the call carries a <c>--pr-number</c> and the verb finds a
+/// matching ledger entry, the bump is skipped (idempotent re-entry) and
+/// <see cref="Recorded"/> is <c>false</c>; the reported
+/// <see cref="PreviousGeneration"/> and <see cref="CurrentGeneration"/>
+/// then reflect the values that were written by the original recording.</para>
 /// </summary>
 public sealed record ManifestRecordPlanMergeResult
 {
@@ -114,8 +120,29 @@ public sealed record ManifestRecordPlanMergeResult
     /// <summary>Generation before the bump (0 if the entry was missing).</summary>
     public required int PreviousGeneration { get; init; }
 
-    /// <summary>Generation after the bump (always <c>previous + 1</c>).</summary>
+    /// <summary>Generation after the bump (always <c>previous + 1</c> on a fresh record).</summary>
     public required int CurrentGeneration { get; init; }
+
+    /// <summary>
+    /// True when this call wrote a new ledger entry and bumped the
+    /// generation. False when the verb detected that the supplied
+    /// <c>--pr-number</c> was already recorded with matching identity
+    /// and skipped the bump (idempotent re-entry).
+    /// </summary>
+    public required bool Recorded { get; init; }
+
+    /// <summary>
+    /// The PR number associated with this record, or <c>0</c> when the
+    /// call omitted <c>--pr-number</c> (legacy callers; no ledger entry
+    /// is appended).
+    /// </summary>
+    public required int PrNumber { get; init; }
+
+    /// <summary>
+    /// The merge commit SHA associated with this record, or empty when
+    /// the call omitted <c>--merge-commit</c>.
+    /// </summary>
+    public required string MergeCommit { get; init; }
 
     /// <summary>Validation error when the operation fails.</summary>
     public string? Error { get; init; }
