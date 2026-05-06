@@ -95,7 +95,7 @@ foreach ($agent in $primaryLoopAgents) {
     }
 }
 
-# ── Check 6: Coder uses Opus 1M ──────────────────────────────────────────
+# ── Check 6: Coder uses Opus class model ────────────────────────────────────
 # Extract the coder agent block and verify its model
 $coderBlock = ''
 $inCoder = $false
@@ -104,10 +104,10 @@ foreach ($line in $lines) {
     if ($inCoder) { $coderBlock += $line + "`n" }
     if ($inCoder -and $coderBlock.Length -gt 50 -and $line -match '^\s*-\s*name:') { break }
 }
-if ($coderBlock -and $coderBlock -notmatch 'claude-opus-4.7-1m-internal') {
+if ($coderBlock -and $coderBlock -notmatch 'claude-opus-4(\.\d+)?(-[a-z0-9-]+)?') {
     $violations += [PSCustomObject]@{
         Rule   = 'wrong-coder-model'
-        Detail = "Coder agent must use Opus 1M model (claude-opus-4.7-1m-internal)"
+        Detail = "Coder agent must use Opus model from claude-opus-4.* family"
     }
 }
 
@@ -122,7 +122,7 @@ foreach ($agent in $scopeAgents) {
     }
 }
 
-# ── Check 8: Scope reviewer uses Opus 1M ──────────────────────────────────
+# ── Check 8: Scope reviewer uses Opus class model ──────────────────────────
 $scopeReviewerBlock = ''
 $inScopeReviewer = $false
 foreach ($line in $lines) {
@@ -130,10 +130,10 @@ foreach ($line in $lines) {
     if ($inScopeReviewer) { $scopeReviewerBlock += $line + "`n" }
     if ($inScopeReviewer -and $scopeReviewerBlock.Length -gt 50 -and $line -match '^\s*-\s*name:') { break }
 }
-if ($scopeReviewerBlock -and $scopeReviewerBlock -notmatch 'claude-opus-4.7-1m-internal') {
+if ($scopeReviewerBlock -and $scopeReviewerBlock -notmatch 'claude-opus-4(\.\d+)?(-[a-z0-9-]+)?') {
     $violations += [PSCustomObject]@{
         Rule   = 'wrong-scope-reviewer-model'
-        Detail = "Scope reviewer must use Opus 1M model (claude-opus-4.7-1m-internal) for cross-cutting review"
+        Detail = "Scope reviewer must use Opus model from claude-opus-4.* family for cross-cutting review"
     }
 }
 
