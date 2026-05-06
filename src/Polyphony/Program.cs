@@ -33,4 +33,5 @@ app.Add<PrCommands>("pr");
 app.Add<ScopeCommands>("scope");
 app.Add<RootCommands>("root");
 app.Add<RequirementsCommands>("requirements");
+app.Add<MgCommands>("mg");
 app.Run(args);
