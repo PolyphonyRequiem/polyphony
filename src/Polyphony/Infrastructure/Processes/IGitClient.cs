@@ -77,4 +77,32 @@ public interface IGitClient
     /// the remote. Throws <see cref="ExternalToolException"/> on failure.
     /// </summary>
     Task FetchAsync(string remote, string refspec, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git status --porcelain</c>. Returns one entry per non-ignored
+    /// path in a non-clean state (modified, untracked, staged, etc.). An
+    /// empty list means the worktree is clean. Throws
+    /// <see cref="ExternalToolException"/> on unexpected non-zero exit.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetStatusAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git add {pathspec}</c>. Stages the supplied path (file or
+    /// directory). Throws <see cref="ExternalToolException"/> on failure.
+    /// </summary>
+    Task StageAsync(string pathspec, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git commit -m {message}</c>. Creates a commit with the supplied
+    /// message. Throws <see cref="ExternalToolException"/> on failure
+    /// (e.g. nothing staged, hook failure).
+    /// </summary>
+    Task CommitAsync(string message, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git reset --hard {refspec}</c>. Hard-resets the worktree and
+    /// index to the supplied ref (e.g. <c>origin/feature/123</c>).
+    /// Throws <see cref="ExternalToolException"/> on failure.
+    /// </summary>
+    Task ResetHardAsync(string refspec, CancellationToken ct = default);
 }

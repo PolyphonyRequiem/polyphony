@@ -21,7 +21,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new PrCommands(git, gh, twig, Repository, Config), runner);
+        return (new PrCommands(git, gh, twig, Repository, Config, new Polyphony.Locking.RunLockStore(), new Polyphony.Locking.RunLockPathResolver(git)), runner);
     }
 
     private static void StubGitRemoteOrigin(FakeProcessRunner runner, string url)

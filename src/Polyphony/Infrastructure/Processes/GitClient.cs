@@ -110,6 +110,45 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
             throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
     }
 
+    public async Task<IReadOnlyList<string>> GetStatusAsync(CancellationToken ct = default)
+    {
+        string[] args = ["status", "--porcelain"];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+            throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
+
+        return result.Stdout
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            // status --porcelain prefixes each entry with "XY " (the index/worktree status pair).
+            // Returning the raw lines is more useful for diagnostics than stripping.
+            .Select(line => line.TrimEnd('\r'))
+            .ToList();
+    }
+
+    public async Task StageAsync(string pathspec, CancellationToken ct = default)
+    {
+        string[] args = ["add", "--", pathspec];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+            throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
+    }
+
+    public async Task CommitAsync(string message, CancellationToken ct = default)
+    {
+        string[] args = ["commit", "-m", message];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+            throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
+    }
+
+    public async Task ResetHardAsync(string refspec, CancellationToken ct = default)
+    {
+        string[] args = ["reset", "--hard", refspec];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+            throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
+    }
+
     private static string? TrimOrNull(string raw)
     {
         var trimmed = raw.Trim();

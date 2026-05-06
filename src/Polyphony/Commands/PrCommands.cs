@@ -24,7 +24,9 @@ public sealed partial class PrCommands(
     IGhClient gh,
     ITwigClient twig,
     IWorkItemRepository repository,
-    ProcessConfig processConfig)
+    ProcessConfig processConfig,
+    Polyphony.Locking.RunLockStore lockStore,
+    Polyphony.Locking.RunLockPathResolver lockPathResolver)
 {
     private static readonly Regex PullUrlRegex =
         new(@"/pull/(\d+)", RegexOptions.Compiled);
