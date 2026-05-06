@@ -294,6 +294,79 @@ public sealed partial class PrCommands
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                 prState: poll.State);
 
+        // ── 6b. Stale-generation refusal (P6). Only meaningful for OPEN
+        // PRs — for MERGED PRs the merge already happened and we'd just
+        // be running the recovery path. Root plans skip the check (no
+        // ancestors). Snapshot lives in the PR body's front-matter.
+        if (string.Equals(poll.State, "OPEN", StringComparison.OrdinalIgnoreCase) && !isRootPlan)
+        {
+            var snapshot = PlanPrFrontMatter.Parse(poll.Body).AncestorPlanGenerations;
+
+            // Read the current manifest from the feature-branch tip without
+            // disturbing the worktree. If the file doesn't exist there yet,
+            // there's nothing to be stale against — fall through.
+            string? manifestYaml = null;
+            try
+            {
+                manifestYaml = await git.ShowFileAtRefAsync($"origin/{manifestBranch}", manifestPath, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
+                    $"Could not read manifest at origin/{manifestBranch}:{manifestPath} for staleness check: {ex.Message}",
+                    isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
+                    prState: poll.State);
+            }
+
+            if (manifestYaml is not null)
+            {
+                IReadOnlyDictionary<string, int> currentGens;
+                try
+                {
+                    var remoteManifest = RunManifestStore.Parse(manifestYaml);
+                    currentGens = remoteManifest.PlanGenerations;
+                }
+                catch (Exception ex)
+                {
+                    return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
+                        $"Could not parse manifest at origin/{manifestBranch}:{manifestPath} for staleness check: {ex.Message}",
+                        isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
+                        prState: poll.State);
+                }
+
+                var staleness = PlanGenerationStaleness.Check(snapshot, currentGens);
+                if (staleness.IsEmpty)
+                {
+                    // Descendant plan PR with no snapshot in body — refuse.
+                    // Root plans were already excluded above, so a descendant
+                    // without a snapshot indicates a hand-opened PR or one
+                    // pre-dating P3; we can't verify its safety.
+                    return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "stale_generation",
+                        $"PR #{prNumber} body has no ancestor_plan_generations snapshot in front-matter; descendant plan PRs must carry a snapshot to be merged safely. Re-open the PR via `polyphony pr open-plan-pr` to embed the current snapshot.",
+                        isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
+                        prState: poll.State);
+                }
+
+                if (staleness.IsStale)
+                {
+                    var staleEntries = staleness.StaleEntries
+                        .Select(e => new StaleAncestorEntry
+                        {
+                            AncestorKey = e.AncestorKey,
+                            SnapshotGeneration = e.SnapshotGeneration,
+                            CurrentGeneration = e.CurrentGeneration,
+                        })
+                        .ToList();
+
+                    return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "stale_generation",
+                        $"PR #{prNumber} ancestor plan-generation snapshot is stale vs the current manifest on origin/{manifestBranch}. Stale entries: {PlanGenerationStaleness.FormatStaleEntries(staleness.StaleEntries)}. Re-open the PR with the current snapshot before merging.",
+                        isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
+                        prState: poll.State, staleAncestors: staleEntries);
+                }
+            }
+        }
+
         // ── 7. Branch on PR state. ─────────────────────────────────────────
         string mergeCommit;
         bool alreadyMerged;
@@ -481,7 +554,8 @@ public sealed partial class PrCommands
         int prevGen = 0,
         int currGen = 0,
         bool manifestRecorded = false,
-        bool manifestPushed = false)
+        bool manifestPushed = false,
+        IReadOnlyList<StaleAncestorEntry>? staleAncestors = null)
     {
         EmitMergePlan(new PrMergePlanPrResult
         {
@@ -507,6 +581,7 @@ public sealed partial class PrCommands
             LockReleased = false,
             ErrorCode = errorCode,
             Error = message,
+            StaleAncestors = staleAncestors,
         });
         return ExitCodes.Success;  // routing-style: workflow branches on ErrorCode, not exit code
     }

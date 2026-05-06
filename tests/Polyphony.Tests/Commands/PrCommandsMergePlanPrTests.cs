@@ -110,10 +110,12 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
         string baseRefName,
         string headRefOid = "abc123",
         string? mergeCommitSha = null,
-        string mergedAt = "")
+        string mergedAt = "",
+        string body = "")
     {
         var mergeCommitClause = mergeCommitSha is null ? "null" : $$"""{"oid":"{{mergeCommitSha}}"}""";
         var mergedAtClause = string.IsNullOrEmpty(mergedAt) ? "null" : $"\"{mergedAt}\"";
+        var bodyClause = JsonEncodedText.Encode(body).Value;
         var json = $$"""
             {
               "number": {{prNumber}},
@@ -125,13 +127,47 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
               "baseRefName": "{{baseRefName}}",
               "mergedAt": {{mergedAtClause}},
               "mergeCommit": {{mergeCommitClause}},
-              "body": "",
+              "body": "{{bodyClause}}",
               "reviews": []
             }
             """;
         // poll-status uses a wide --json field set
         runner.WhenStartsWith("gh", ["pr", "view", prNumber.ToString()], new ProcessResult(0, json, ""));
     }
+
+    /// <summary>
+    /// Stub for <see cref="IGitClient.ShowFileAtRefAsync"/>. Use <c>missing: true</c>
+    /// to simulate the manifest file not existing at that revision.
+    /// </summary>
+    private void StubGitShowManifest(FakeProcessRunner runner, string branch, string yamlContent, bool missing = false)
+    {
+        var refspec = $"origin/{branch}:{_manifestPath}";
+        var result = missing
+            ? new ProcessResult(128, "", $"fatal: path '{_manifestPath}' does not exist in 'origin/{branch}'")
+            : new ProcessResult(0, yamlContent, "");
+        runner.WhenExact("git", ["show", refspec], result);
+    }
+
+    /// <summary>Builds a plan-PR body with YAML front-matter carrying an ancestor_plan_generations snapshot.</summary>
+    private static string MakeBodyWithSnapshot(IDictionary<string, int> snapshot, bool requestsParentChange = false)
+    {
+        var lines = new List<string>
+        {
+            "---",
+            $"requests_parent_change: {(requestsParentChange ? "true" : "false")}",
+            "ancestor_plan_generations:",
+        };
+        foreach (var (key, value) in snapshot)
+        {
+            // quote the key so numeric-string keys survive YAML round-trip cleanly
+            lines.Add($"  \"{key}\": {value}");
+        }
+        lines.Add("---");
+        lines.Add("");
+        lines.Add("Plan PR body.");
+        return string.Join("\n", lines);
+    }
+
 
     /// <summary>Stub for <see cref="IGhClient.MergePullRequestAsync"/>'s primary `gh pr merge` call AND its follow-up `gh pr view` reconcile.</summary>
     private static void StubPrMergeSuccess(FakeProcessRunner runner, int prNumber, string mergeSha)
@@ -492,4 +528,234 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
         result.ErrorCode.ShouldBe("ledger_conflict");
         result.Error.ShouldNotBeNull(); result.Error!.ShouldContain("'5678'");
     }
+
+    // ─── P6 stale-generation merge block ────────────────────────────────
+
+    /// <summary>
+    /// OPEN descendant plan PR whose body snapshot says the root ancestor
+    /// was at generation 1 when the PR was opened, but the manifest now
+    /// records generation 3 (someone merged 2 newer root-plan PRs while
+    /// this PR was open). Must refuse with <c>stale_generation</c> and
+    /// surface the diff in <see cref="PrMergePlanPrResult.StaleAncestors"/>.
+    /// </summary>
+    [Fact]
+    public async Task OpenDescendant_StaleSnapshot_BlocksWithStaleGeneration()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubEnvironmentDefaults(runner);
+        StubStatusClean(runner);
+        StubFetch(runner, "feature/100");
+
+        var snapshot = new Dictionary<string, int> { ["root"] = 1 };
+        StubPrPoll(runner, 42, "OPEN",
+            headRefName: "plan/100-1100", baseRefName: "plan/100",
+            body: MakeBodyWithSnapshot(snapshot));
+
+        // Manifest on the feature branch has root at generation 3 — newer than the snapshot.
+        var manifestYaml = """
+            schema: 1
+            root_id: 100
+            platform_project: github.com/owner/repo
+            created_at: 2026-05-06T00:00:00Z
+            created_by: test
+            branch_model_version: 1
+            plan_generations:
+              root: 3
+            merged_plan_prs: []
+            """;
+        StubGitShowManifest(runner, "feature/100", manifestYaml);
+        SeedManifest(100);
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergePlanPr(rootId: 100, itemId: 1100, prNumber: 42, manifestPath: _manifestPath));
+
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("stale_generation");
+        result.Error.ShouldNotBeNull();
+        result.Error!.ShouldContain("root: snapshot=1, current=3");
+        result.StaleAncestors.ShouldNotBeNull();
+        result.StaleAncestors!.Count.ShouldBe(1);
+        result.StaleAncestors[0].AncestorKey.ShouldBe("root");
+        result.StaleAncestors[0].SnapshotGeneration.ShouldBe(1);
+        result.StaleAncestors[0].CurrentGeneration.ShouldBe(3);
+        // No merge attempted, no ledger touched.
+        result.Merged.ShouldBeFalse();
+        result.ManifestRecorded.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// OPEN descendant plan PR with no front-matter at all (e.g. hand-opened
+    /// or pre-P3) cannot be safely merged — we have no way to verify it
+    /// was opened against the current ancestor state. Refuse with a clear
+    /// diagnostic pointing at <c>polyphony pr open-plan-pr</c>.
+    /// </summary>
+    [Fact]
+    public async Task OpenDescendant_EmptyBodyNoSnapshot_BlocksWithStaleGeneration()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubEnvironmentDefaults(runner);
+        StubStatusClean(runner);
+        StubFetch(runner, "feature/100");
+        StubPrPoll(runner, 42, "OPEN",
+            headRefName: "plan/100-1100", baseRefName: "plan/100",
+            body: "");  // no front-matter
+
+        var manifestYaml = """
+            schema: 1
+            root_id: 100
+            platform_project: github.com/owner/repo
+            created_at: 2026-05-06T00:00:00Z
+            created_by: test
+            branch_model_version: 1
+            plan_generations:
+              root: 1
+            merged_plan_prs: []
+            """;
+        StubGitShowManifest(runner, "feature/100", manifestYaml);
+        SeedManifest(100);
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergePlanPr(rootId: 100, itemId: 1100, prNumber: 42, manifestPath: _manifestPath));
+
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("stale_generation");
+        result.Error.ShouldNotBeNull();
+        result.Error!.ShouldContain("no ancestor_plan_generations snapshot");
+        result.Error.ShouldContain("polyphony pr open-plan-pr");
+        result.StaleAncestors.ShouldBeNull();  // empty case has no diff
+        result.Merged.ShouldBeFalse();
+        result.ManifestRecorded.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// MERGED PR with a snapshot that WOULD be stale if checked. The
+    /// staleness check is a pre-merge guard — once the platform records
+    /// the merge, we're in recovery mode and the only honest action is
+    /// to record the merge in the ledger. The stale snapshot is a
+    /// post-mortem signal for the operator, not a reason to refuse the
+    /// recovery path.
+    /// </summary>
+    [Fact]
+    public async Task MergedPr_StaleSnapshot_CheckSkipped_ProceedsToRecovery()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubEnvironmentDefaults(runner);
+        StubStatusClean(runner);
+        StubFetch(runner, "feature/100");
+
+        var snapshot = new Dictionary<string, int> { ["root"] = 1 };
+        StubPrPoll(runner, 42, "MERGED",
+            headRefName: "plan/100-1100", baseRefName: "plan/100",
+            mergeCommitSha: "deadbeef",
+            mergedAt: "2026-05-06T12:00:00Z",
+            body: MakeBodyWithSnapshot(snapshot));
+
+        // No StubGitShowManifest — the staleness check should never run for MERGED PRs,
+        // so an unstubbed `git show` would crash if it did. This is the assertion.
+        StubCheckout(runner, "feature/100");
+        StubResetHard(runner, "origin/feature/100");
+        StubAdd(runner, _manifestPath);
+        StubCommit(runner);
+        StubPush(runner, "feature/100");
+        SeedManifest(100,
+            planGenerations: new Dictionary<string, int>(StringComparer.Ordinal) { ["root"] = 5 });  // very stale
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergePlanPr(rootId: 100, itemId: 1100, prNumber: 42, manifestPath: _manifestPath));
+
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("");
+        result.Merged.ShouldBeTrue();
+        result.AlreadyMerged.ShouldBeTrue();
+        result.MergeCommit.ShouldBe("deadbeef");
+        result.ManifestRecorded.ShouldBeTrue();
+        result.ManifestPushed.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Root plan PR with empty body proceeds past the staleness gate
+    /// (root has no ancestors, so an empty snapshot is correct by design).
+    /// We assert by setting up a MERGED-state recovery — the staleness
+    /// check would have refused if it ran, but for root plans it's
+    /// skipped entirely.
+    /// </summary>
+    [Fact]
+    public async Task RootPlan_EmptyBody_SkipsStalenessCheck()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubEnvironmentDefaults(runner);
+        StubStatusClean(runner);
+        StubFetch(runner, "feature/100");
+        StubPrPoll(runner, 42, "MERGED",
+            headRefName: "plan/100", baseRefName: "feature/100",
+            mergeCommitSha: "deadbeef",
+            mergedAt: "2026-05-06T12:00:00Z",
+            body: "");
+
+        // No StubGitShowManifest — should never be called (root + MERGED both skip the check).
+        StubCheckout(runner, "feature/100");
+        StubResetHard(runner, "origin/feature/100");
+        StubAdd(runner, _manifestPath);
+        StubCommit(runner);
+        StubPush(runner, "feature/100");
+        SeedManifest(100);
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergePlanPr(rootId: 100, itemId: 100, prNumber: 42, manifestPath: _manifestPath));
+
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("");
+        result.IsRootPlan.ShouldBeTrue();
+        result.Merged.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// OPEN descendant plan PR whose snapshot matches the manifest exactly
+    /// — staleness check passes silently and the verb proceeds to the merge
+    /// step. We don't stub <c>gh pr merge</c>; the verb catches the
+    /// "no responder" exception and emits <c>merge_failed</c>. Seeing
+    /// that error code (instead of <c>stale_generation</c>) proves the
+    /// staleness check did NOT refuse the merge.
+    /// </summary>
+    [Fact]
+    public async Task OpenDescendant_FreshSnapshot_PassesStalenessCheck()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubEnvironmentDefaults(runner);
+        StubStatusClean(runner);
+        StubFetch(runner, "feature/100");
+
+        var snapshot = new Dictionary<string, int> { ["root"] = 2 };
+        StubPrPoll(runner, 42, "OPEN",
+            headRefName: "plan/100-1100", baseRefName: "plan/100",
+            body: MakeBodyWithSnapshot(snapshot));
+
+        var manifestYaml = """
+            schema: 1
+            root_id: 100
+            platform_project: github.com/owner/repo
+            created_at: 2026-05-06T00:00:00Z
+            created_by: test
+            branch_model_version: 1
+            plan_generations:
+              root: 2
+            merged_plan_prs: []
+            """;
+        StubGitShowManifest(runner, "feature/100", manifestYaml);
+        SeedManifest(100);
+
+        // Deliberately NO `gh pr merge` stub. The verb catches the
+        // "no responder" exception from FakeProcessRunner and surfaces it
+        // as `merge_failed` (not `stale_generation` — the assertion).
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergePlanPr(rootId: 100, itemId: 1100, prNumber: 42, manifestPath: _manifestPath));
+
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("merge_failed");
+        result.Error.ShouldNotBeNull();
+        result.Error!.ShouldContain("gh pr merge");
+        // StaleAncestors must be null — proves the staleness check did NOT fire.
+        result.StaleAncestors.ShouldBeNull();
+    }
 }
+
