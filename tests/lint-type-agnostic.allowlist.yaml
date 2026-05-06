@@ -15,7 +15,31 @@
 # (branch / PR vocabulary, work-item ID references, CLI subcommand names),
 # never to silence a real type-name leak.
 
-skip_files: []
+skip_files:
+  # Reference documentation under docs/ legitimately shows types as
+  # examples — process-config.yaml schema docs walk through Epic/Issue/Task
+  # in Basic/Agile/Scrum/CMMI templates, CLI reference shows JSON output
+  # with `"type": "Epic"`, glossary defines the type-agnosticism rule by
+  # naming what NOT to hardcode, ADRs reference historical context, etc.
+  # The lint targets EXECUTABLE artifacts (scripts, workflow YAMLs) and
+  # PRESCRIPTIVE skill content. Docs are descriptive — type-name mentions
+  # there flow data into the user's mental model, they don't bake polyphony
+  # behavior. If a new design doc emerges that should be type-agnostic, add
+  # a more specific carve-out (e.g. 'docs/design/**') here.
+  - 'docs/**'
+  # Planning archives — frozen artifacts that document the design as it was
+  # being formed; type-name references in these are historical record, not
+  # current spec, and rewriting them would destroy provenance. (Already
+  # covered by docs/** above; left explicit for clarity.)
+  - 'docs/projects/**'
+  # The principle file that DEFINES the type-agnosticism rule by example —
+  # it must reference type names to teach the lesson.
+  - '.github/skills/conductor-design/references/p05-type-agnostic.md'
+  # twig is the underlying ADO work-item tool — its skill docs describe ADO
+  # vocabulary (Epic / Issue / Task) by definition. Polyphony rides on top
+  # of twig but the skill files themselves are about twig's surface.
+  - '.github/skills/twig-cli/SKILL.md'
+  - '.github/skills/twig-sdlc/SKILL.md'
 
 allowed_substrings:
   # Feature branch / Feature PR — branch and PR vocabulary, not the type "Feature"
@@ -29,5 +53,18 @@ allowed_substrings:
   - 'feature/[A-Za-z0-9_./-]+'
   # CLI subcommand on the polyphony branch verb
   - 'ensure-feature'
-  # Work-item ID references in prose (e.g. "Task 2681")
+  # Work-item ID references in prose (e.g. "Task 2681", "Epic #1234")
   - 'Task\s+\d+'
+  - 'Epic\s+#\d+'
+  - 'Issue\s+#\d+'
+  # C# .NET BCL — Task<T>, Task.Run, async Task method signatures
+  - 'Task<[A-Za-z0-9_,\s<>?]+>'
+  - 'Task\.[A-Z][A-Za-z]+'
+  - 'async\s+Task\b'
+  - 'public\s+async\s+Task'
+  # Test fixture builder pattern — `.WithType("Epic")` etc. are example
+  # code in skill docs showing how to construct a test work item; the
+  # type literal here is data flowing into a generic builder, not a
+  # hardcoded type check.
+  - '\.WithType\("[A-Za-z][A-Za-z ]*"\)'
+  - 'WithType\("[A-Za-z][A-Za-z ]*"\)'

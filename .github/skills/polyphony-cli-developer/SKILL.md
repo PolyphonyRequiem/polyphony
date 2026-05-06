@@ -183,8 +183,10 @@ Inherits to give you:
 
 - `SqliteCacheStore Store` — in-memory SQLite (`Data Source=:memory:`).
 - `SqliteWorkItemRepository Repository` — twig repository wired to `Store`.
-- `ProcessConfig Config` — a default config with `Epic`/`Issue`/`Task` types and
-  `To Do`/`Doing`/`Done` transitions (`CommandTestBase.cs:93-113`).
+- `ProcessConfig Config` — a default 3-tier hierarchy with `To Do`/`Doing`/`Done`
+  transitions; type names are loaded from the canonical defaults at
+  `CommandTestBase.cs:93-113` (do NOT bake the names into your own assertions —
+  use `Config.Types.Keys` or facets instead).
 - `SeedAsync(params WorkItem[])` — persist work items into the store
   (`CommandTestBase.cs:87-91`).
 - `CaptureConsoleAsync(Func<Task<int>>)` — runs an async command body, captures

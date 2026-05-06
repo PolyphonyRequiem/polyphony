@@ -16,7 +16,11 @@
                   Every line is scanned (including comment lines), since
                   workflow YAML comments are spec-bearing and must follow
                   the same rule as everything else.
-        all     — both of the above (default).
+        skills  — agent-loadable skill content under .github/skills/.
+                  Every line is scanned. Markdown comments (rare) are not
+                  syntactically distinct, so no comment-skip applies.
+        docs    — repo documentation under docs/. Every line is scanned.
+        all     — all of the above (default).
 
     Allowlist:
         tests/lint-type-agnostic.allowlist.yaml (optional). Two sections:
@@ -34,7 +38,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('scripts', 'yaml', 'all')]
+    [ValidateSet('scripts', 'yaml', 'skills', 'docs', 'all')]
     [string]$Surface = 'all',
 
     [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
@@ -149,6 +153,16 @@ function Get-SurfaceFiles {
             if (-not (Test-Path -LiteralPath $dir)) { return @() }
             return @(Get-ChildItem -LiteralPath $dir -Filter '*.yaml' -Recurse -File)
         }
+        'skills' {
+            $dir = Join-Path $Root '.github/skills'
+            if (-not (Test-Path -LiteralPath $dir)) { return @() }
+            return @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -Recurse -File)
+        }
+        'docs' {
+            $dir = Join-Path $Root 'docs'
+            if (-not (Test-Path -LiteralPath $dir)) { return @() }
+            return @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -Recurse -File)
+        }
         default { throw "Unknown surface '$SurfaceName'." }
     }
 }
@@ -218,7 +232,7 @@ try {
     exit 2
 }
 
-$surfacesToScan = if ($Surface -eq 'all') { @('scripts', 'yaml') } else { @($Surface) }
+$surfacesToScan = if ($Surface -eq 'all') { @('scripts', 'yaml', 'skills', 'docs') } else { @($Surface) }
 $totalScanned = 0
 $allViolations = New-Object System.Collections.Generic.List[object]
 

@@ -39,7 +39,7 @@ file extension it has.
 4. **Workflow scripts live in the registry, not in consumer repos.** They are
    coupled to the workflows that invoke them — the script's stdout schema *is*
    the workflow's input schema. Coupling them physically matches the logical
-   coupling. Bug fixes ship atomically with the workflow version.
+   coupling. Defect fixes ship atomically with the workflow version.
 
 5. **CLI helper scripts ≠ workflow scripts.** Both can be `.ps1`, but their
    consumers differ:

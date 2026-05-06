@@ -101,7 +101,7 @@ args:
   - >-
     $taskId = {{ primary_router.output.primary_id }};
     twig set $taskId;
-    twig note --text 'Task completed and approved by reviewer';
+    twig note --text 'Item completed and approved by reviewer';
     twig state Done;            # ← hardcoded literal — replace with target_state
     @{ child_id = $taskId; completed = $true } | ConvertTo-Json
 ```

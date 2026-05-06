@@ -55,7 +55,7 @@ rubrics grounded in academic standards (IEEE 1016, ISO/IEC 25010) where applicab
 
 | Dimension | Weight | Measures |
 |-----------|--------|----------|
-| Functional correctness | 35% | Feature works as specified |
+| Functional correctness | 35% | Functionality works as specified |
 | UX coherence | 25% | Output formatting, help text, error messages are clear |
 | Non-regression | 20% | Existing features still work |
 | Documentation | 10% | Help text, README, command examples updated |

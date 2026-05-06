@@ -297,9 +297,9 @@ PGs are the unit of parallel work in the implementation phase. Each PG:
 
 1. **Branch creation** — `branch_manager` creates a PG branch (e.g., `feature/1234-pg-1`)
    targeting the feature branch
-2. **Task loop** — `primary_router` discovers the next implementable child; `coder` implements
+2. **Implementation loop** — `primary_router` discovers the next implementable child; `coder` implements
    it; `primary_reviewer` gates quality; loop until all children in the PG are complete
-3. **Issue review** — `scope_reviewer` checks
+3. **Scope review** — `scope_reviewer` checks
    acceptance criteria
 4. **PR creation** — `pr_submit` validates build/tests and creates a PR
 5. **PR lifecycle** — routed to `github-pr.yaml` or `ado-pr.yaml` for review/fix/merge
@@ -407,10 +407,10 @@ For full rationale and the three-layer truth model see
 4. The target repo has `.conductor/process-config.yaml` with type
    definitions, templates, and `polyphony validate-config` passes.
 
-### New Epic with a User Plan
+### New root work item with a User Plan
 
 ```powershell
-# Set up a worktree for the Epic
+# Set up a worktree for the root work item
 git worktree add -b sdlc/<ID> ../polyphony-<ID> main
 cd ../polyphony-<ID>
 dotnet restore
