@@ -66,17 +66,27 @@ public sealed class ProcessConfigBuilder
     }
 
     /// <summary>Configures the branch naming strategy.</summary>
+    /// <remarks>
+    /// <paramref name="mgBranch"/> is the canonical Phase-4 template (YAML key
+    /// <c>mg_branch</c>). <paramref name="pgBranchLegacy"/> populates the
+    /// deprecated <c>pg_branch</c> field directly without populating
+    /// <see cref="BranchStrategy.MgBranch"/> — used to exercise V-17 and the
+    /// loader's legacy-key fallback. Production tests should set only
+    /// <paramref name="mgBranch"/>.
+    /// </remarks>
     public ProcessConfigBuilder WithBranchStrategy(
         string featureBranch = "feature/{id}",
         string planningBranch = "planning/{id}",
-        string pgBranch = "feature/{id}-pg-{pg}",
-        string target = "main")
+        string mgBranch = "feature/{id}-mg-{n}",
+        string target = "main",
+        string? pgBranchLegacy = null)
     {
         _branchStrategy = new BranchStrategy
         {
             FeatureBranch = featureBranch,
             PlanningBranch = planningBranch,
-            PgBranch = pgBranch,
+            MgBranch = mgBranch,
+            PgBranch = pgBranchLegacy ?? "",
             Target = target,
         };
         return this;

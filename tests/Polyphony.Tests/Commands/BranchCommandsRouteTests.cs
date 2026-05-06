@@ -99,9 +99,9 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         StubSync(runner);
         StubConfig(runner);
         StubGitOrigin(runner);
-        StubRemoteBranches(runner, "feature/100-pg-1");
+        StubRemoteBranches(runner, "feature/100-mg-1");
         StubPrList(runner, "merged", "[]");
-        StubPrList(runner, "open", """[{"number":42,"headRefName":"feature/100-pg-1","url":"https://example.com/pr/42","mergedAt":null}]""");
+        StubPrList(runner, "open", """[{"number":42,"headRefName":"feature/100-mg-1","url":"https://example.com/pr/42","mergedAt":null}]""");
 
         var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing").Build();
         var task = new WorkItemBuilder().WithId(200).WithType("Task").WithTitle("T")
@@ -124,8 +124,8 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         StubSync(runner);
         StubConfig(runner);
         StubGitOrigin(runner);
-        StubRemoteBranches(runner, "feature/100-pg-1");
-        StubPrList(runner, "merged", """[{"number":7,"headRefName":"feature/100-pg-1","url":"https://example.com/pr/7","mergedAt":"2024-01-01T00:00:00Z"}]""");
+        StubRemoteBranches(runner, "feature/100-mg-1");
+        StubPrList(runner, "merged", """[{"number":7,"headRefName":"feature/100-mg-1","url":"https://example.com/pr/7","mergedAt":"2024-01-01T00:00:00Z"}]""");
         StubPrList(runner, "open", "[]");
 
         var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing").Build();
@@ -150,8 +150,8 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         StubSync(runner);
         StubConfig(runner);
         StubGitOrigin(runner);
-        StubRemoteBranches(runner, "feature/100-pg-1");
-        StubPrList(runner, "merged", """[{"number":7,"headRefName":"feature/100-pg-1","url":"https://example.com/pr/7","mergedAt":"2024-01-01T00:00:00Z"}]""");
+        StubRemoteBranches(runner, "feature/100-mg-1");
+        StubPrList(runner, "merged", """[{"number":7,"headRefName":"feature/100-mg-1","url":"https://example.com/pr/7","mergedAt":"2024-01-01T00:00:00Z"}]""");
         StubPrList(runner, "open", "[]");
 
         // Container Issue still in "To Do" → category Proposed → stale defense kicks in.

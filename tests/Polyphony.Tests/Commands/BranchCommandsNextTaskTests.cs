@@ -195,7 +195,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
             {
                 ["begin_implementation"] = "Doing",
             })
-            .WithBranchStrategy(featureBranch: "feature/{id}", pgBranch: "feature/{id}-pg-{n}")
+            .WithBranchStrategy(featureBranch: "feature/{id}", mgBranch: "feature/{id}-pg-{n}")
             .Build();
         var (cmd, runner) = CreateCommand(cfg);
         StubSync(runner);
@@ -221,7 +221,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
         StubConfig(runner);
-        StubBranch(runner, "feature/100-pg-1");
+        StubBranch(runner, "feature/100-mg-1");
         ExpectStateTransition(runner, 300, "Doing");
 
         var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing");
@@ -233,7 +233,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
             () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
         var result = Deserialize(output);
 
-        result.BranchName.ShouldBe("feature/100-pg-1");
+        result.BranchName.ShouldBe("feature/100-mg-1");
     }
 
     [Fact]

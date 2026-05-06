@@ -1,9 +1,10 @@
 namespace Polyphony.Configuration;
 
 /// <summary>
-/// Validates a <see cref="ProcessConfig"/> against 16 rules (V-1 through V-16).
+/// Validates a <see cref="ProcessConfig"/> against 18 rules (V-1 through V-18).
 /// Rules V-1–V-8, V-15, V-16 produce errors (block execution).
-/// Rules V-9–V-14 produce warnings (informational, file-existence checks).
+/// Rules V-9–V-14, V-17, V-18 produce warnings (informational, deprecation,
+/// file-existence checks).
 /// </summary>
 public static class ConfigValidator
 {
@@ -108,6 +109,26 @@ public static class ConfigValidator
             }
         }
 
+        // V-17: deprecation warning for legacy `branch_strategy.pg_branch` key.
+        // The loader has already copied PgBranch onto MgBranch for back-compat;
+        // we surface the warning here so operators see it via validate-config.
+        if (config.BranchStrategy is { } branchStrategy
+            && !string.IsNullOrEmpty(branchStrategy.PgBranch))
+        {
+            warnings.Add(Warning("V-17",
+                "branch_strategy.pg_branch is deprecated. Rename to branch_strategy.mg_branch. " +
+                "The PG → merge-group rename ships in Phase 4 of the PR-lifecycle overhaul; " +
+                "the legacy key continues to work during the migration window."));
+        }
+
+        // V-18: deprecation warning for legacy `pg_pr` review-policy key.
+        if (config.ReviewPolicies is { } reviewPolicies)
+        {
+            CheckLegacyPgPrKey(reviewPolicies.Planning, "planning", warnings);
+            CheckLegacyPgPrKey(reviewPolicies.Implementation, "implementation", warnings);
+            CheckLegacyPgPrKey(reviewPolicies.Remediation, "remediation", warnings);
+        }
+
         // V-9 through V-14: file-existence warnings (only when repoRoot is provided)
         if (repoRoot is not null)
         {
@@ -166,6 +187,24 @@ public static class ConfigValidator
     /// </summary>
     public static string ToSlug(string typeName) =>
         typeName.ToLowerInvariant().Replace(' ', '-');
+
+    /// <summary>
+    /// Adds a V-18 deprecation warning when the supplied policy dictionary
+    /// contains the legacy <c>pg_pr</c> key.
+    /// </summary>
+    private static void CheckLegacyPgPrKey(
+        Dictionary<string, ReviewPolicy>? policies,
+        string section,
+        List<ConfigValidationDiagnostic> warnings)
+    {
+        if (policies is null) return;
+        if (!policies.ContainsKey("pg_pr")) return;
+
+        warnings.Add(Warning("V-18",
+            $"review_policies.{section}.pg_pr is deprecated. Rename to mg_pr. " +
+            "The PG → merge-group rename ships in Phase 4 of the PR-lifecycle overhaul; " +
+            "the legacy key continues to work during the migration window."));
+    }
 
     private static ConfigValidationDiagnostic Error(string ruleId, string message) =>
         new() { RuleId = ruleId, Message = message, Severity = ConfigValidationSeverity.Error };
