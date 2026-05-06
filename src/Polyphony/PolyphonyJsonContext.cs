@@ -46,6 +46,11 @@ namespace Polyphony;
 [JsonSerializable(typeof(StatePreflightResult))]
 [JsonSerializable(typeof(PreflightCheck))]
 [JsonSerializable(typeof(PreflightDetails))]
+[JsonSerializable(typeof(ScopeCheckResult))]
+[JsonSerializable(typeof(ScopeListResult))]
+[JsonSerializable(typeof(ScopeListItem))]
+[JsonSerializable(typeof(ScopeMutationResult))]
+[JsonSerializable(typeof(RootResolveResult))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,

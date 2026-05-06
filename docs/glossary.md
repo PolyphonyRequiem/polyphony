@@ -34,7 +34,7 @@ A **facet** is a kind of work an item needs done. An item carries a SET of facet
 
 | Term | Definition |
 |---|---|
-| **Facet** | A kind of work the item carries. Replaces "facet". |
+| **Facet** | A kind of work the item carries. Replaces "capability". |
 | **Plannable facet** | The item needs decomposition into a plan and (optionally) child items before its other facets can begin. |
 | **Implementable facet** | The item carries code changes that land via PRs. |
 | **Actionable facet** | The item carries work that is done and recorded as evidence (e.g., infra change, approval, configuration), with or without code. Carries an **executor** property: `polyphony` (polyphony performs the action — evidence required) or `human` (action is outside polyphony's authority — no evidence required, only satisfaction recorded). |
@@ -47,8 +47,8 @@ A **facet** is a kind of work an item needs done. An item carries a SET of facet
 
 | Term | Definition |
 |---|---|
-| **Polyphony tag** | A tag stamped on every work item the polyphony pipeline owns. The root is tagged on first run; planning-seeded children are tagged at creation. |
-| **In-scope** | An item is in-scope for this run iff it is the root OR a descendant of the root that carries the polyphony tag. |
+| **Polyphony tag** | The `polyphony:*` namespace stamped on every work item the polyphony pipeline owns. The bare `polyphony` tag marks an in-scope descendant; `polyphony:root` marks a root; `polyphony:planned` is a status sub-tag set by the planner. Authoritative spec: `docs/polyphony-tags.md`. |
+| **In-scope** | An item is in-scope for this run iff it carries `polyphony:root` (it IS the root) OR it carries the bare `polyphony` tag (it is a tagged descendant). |
 | **Out-of-scope** | A descendant of the root that does NOT carry the polyphony tag. NOT operated on. Reported in close-out. Does NOT block close-out or the feature PR. |
 | **Scope renegotiation** | Mechanism for child planning to surface a request for parent-plan changes (e.g., "this child can't fit the parent's plan; please revise the parent"). The parent plan is not complete until consensus is reached with all child plans that requested changes. |
 
