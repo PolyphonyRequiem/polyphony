@@ -91,3 +91,45 @@ public sealed record GhPullRequestState(
     string? MergeCommitSha,
     string? HeadRefName,
     string? HeadRefOid);
+
+/// <summary>
+/// Single review record returned by <c>gh pr view --json reviews</c>.
+/// gh's review state values: <c>APPROVED</c>, <c>CHANGES_REQUESTED</c>,
+/// <c>COMMENTED</c>, <c>DISMISSED</c>, <c>PENDING</c>.
+/// </summary>
+/// <param name="Login">Reviewer's GitHub login (or empty when gh omits author).</param>
+/// <param name="State">Raw review state from gh.</param>
+/// <param name="SubmittedAt">When the review was submitted; null when gh omits it.</param>
+public sealed record GhPullRequestReview(
+    string Login,
+    string State,
+    DateTimeOffset? SubmittedAt);
+
+/// <summary>
+/// Rich state snapshot returned by <see cref="IGhClient.GetPullRequestPollDataAsync"/>.
+/// Captures everything <c>polyphony pr poll-status</c> needs to compose
+/// a platform-neutral status without making multiple gh calls.
+/// </summary>
+/// <param name="Number">PR number.</param>
+/// <param name="State">PR state from gh: <c>OPEN</c> | <c>CLOSED</c> | <c>MERGED</c>.</param>
+/// <param name="ReviewDecision">gh's aggregated decision: <c>APPROVED</c> | <c>CHANGES_REQUESTED</c> | <c>REVIEW_REQUIRED</c> | empty.</param>
+/// <param name="Mergeable">gh's mergeable status: <c>MERGEABLE</c> | <c>CONFLICTING</c> | <c>UNKNOWN</c>.</param>
+/// <param name="HeadRefName">Source branch name.</param>
+/// <param name="HeadRefOid">Current head SHA on the source branch.</param>
+/// <param name="BaseRefName">Target branch name.</param>
+/// <param name="MergeCommitSha">Merge commit SHA when state==MERGED, otherwise null.</param>
+/// <param name="MergedAt">When the PR was merged; null when not merged.</param>
+/// <param name="Body">PR description body — used to parse plan-PR front-matter.</param>
+/// <param name="Reviews">All reviews on the PR (oldest first per gh's ordering).</param>
+public sealed record GhPullRequestPollData(
+    int Number,
+    string State,
+    string ReviewDecision,
+    string Mergeable,
+    string? HeadRefName,
+    string? HeadRefOid,
+    string? BaseRefName,
+    string? MergeCommitSha,
+    DateTimeOffset? MergedAt,
+    string Body,
+    IReadOnlyList<GhPullRequestReview> Reviews);

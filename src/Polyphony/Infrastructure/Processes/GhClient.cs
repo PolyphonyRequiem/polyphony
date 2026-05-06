@@ -245,6 +245,21 @@ public sealed class GhClient : IGhClient
         return result.Succeeded ? ParsePrState(result.Stdout) : null;
     }
 
+    public async Task<GhPullRequestPollData?> GetPullRequestPollDataAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default)
+    {
+        string[] args =
+        [
+            "pr", "view", prNumber.ToString(),
+            "--repo", repoSlug,
+            "--json", "number,state,reviewDecision,reviews,headRefOid,baseRefName,headRefName,mergeable,mergedAt,mergeCommit,body",
+        ];
+        var result = await RunWithRetryAsync(args, ct).ConfigureAwait(false);
+        return result.Succeeded ? ParsePrPollData(result.Stdout) : null;
+    }
+
     /// <summary>
     /// Run an external command with the configured retry-on-timeout policy.
     /// Returns whatever <see cref="ProcessResult"/> the runner produced; the
@@ -466,5 +481,75 @@ public sealed class GhClient : IGhClient
         var headRefName = obj["headRefName"]?.GetValue<string>();
         var headRefOid = obj["headRefOid"]?.GetValue<string>();
         return new GhPullRequestState(number, state, mergeSha, headRefName, headRefOid);
+    }
+
+    private static GhPullRequestPollData? ParsePrPollData(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        JsonNode? node;
+        try { node = JsonNode.Parse(raw); }
+        catch (JsonException) { return null; }
+        if (node is not JsonObject obj) return null;
+
+        var number = obj["number"]?.GetValue<int>() ?? 0;
+        var state = obj["state"]?.GetValue<string>() ?? string.Empty;
+        // gh returns null/empty when no decision exists yet.
+        var reviewDecision = obj["reviewDecision"]?.GetValue<string>() ?? string.Empty;
+        var mergeable = obj["mergeable"]?.GetValue<string>() ?? "UNKNOWN";
+        var headRefName = obj["headRefName"]?.GetValue<string>();
+        var headRefOid = obj["headRefOid"]?.GetValue<string>();
+        var baseRefName = obj["baseRefName"]?.GetValue<string>();
+        var body = obj["body"]?.GetValue<string>() ?? string.Empty;
+
+        var mergeCommitNode = obj["mergeCommit"];
+        string? mergeSha = null;
+        if (mergeCommitNode is JsonObject mergeObj)
+        {
+            mergeSha = mergeObj["oid"]?.GetValue<string>();
+        }
+
+        DateTimeOffset? mergedAt = null;
+        var mergedAtRaw = obj["mergedAt"]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(mergedAtRaw)
+            && DateTimeOffset.TryParse(mergedAtRaw, out var parsedMergedAt))
+        {
+            mergedAt = parsedMergedAt;
+        }
+
+        var reviews = new List<GhPullRequestReview>();
+        if (obj["reviews"] is JsonArray reviewsArray)
+        {
+            foreach (var item in reviewsArray)
+            {
+                if (item is not JsonObject reviewObj) continue;
+                var login = string.Empty;
+                if (reviewObj["author"] is JsonObject authorObj)
+                {
+                    login = authorObj["login"]?.GetValue<string>() ?? string.Empty;
+                }
+                var reviewState = reviewObj["state"]?.GetValue<string>() ?? string.Empty;
+                DateTimeOffset? submittedAt = null;
+                var submittedAtRaw = reviewObj["submittedAt"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(submittedAtRaw)
+                    && DateTimeOffset.TryParse(submittedAtRaw, out var parsedAt))
+                {
+                    submittedAt = parsedAt;
+                }
+                reviews.Add(new GhPullRequestReview(login, reviewState, submittedAt));
+            }
+        }
+
+        return new GhPullRequestPollData(
+            number,
+            state,
+            reviewDecision,
+            mergeable,
+            headRefName,
+            headRefOid,
+            baseRefName,
+            mergeSha,
+            mergedAt,
+            body,
+            reviews);
     }
 }
