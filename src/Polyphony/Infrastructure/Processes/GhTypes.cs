@@ -133,3 +133,16 @@ public sealed record GhPullRequestPollData(
     DateTimeOffset? MergedAt,
     string Body,
     IReadOnlyList<GhPullRequestReview> Reviews);
+
+/// <summary>
+/// One file changed in a pull request, as reported by
+/// <c>gh pr view --json files</c>. Path is repo-relative and uses
+/// forward slashes regardless of platform.
+/// </summary>
+/// <param name="Path">Repo-relative path of the changed file.</param>
+/// <param name="Additions">Lines added (-1 if gh did not report).</param>
+/// <param name="Deletions">Lines deleted (-1 if gh did not report).</param>
+public sealed record GhPullRequestChangedFile(
+    string Path,
+    int Additions,
+    int Deletions);

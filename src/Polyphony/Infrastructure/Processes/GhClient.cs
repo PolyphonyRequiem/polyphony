@@ -260,6 +260,21 @@ public sealed class GhClient : IGhClient
         return result.Succeeded ? ParsePrPollData(result.Stdout) : null;
     }
 
+    public async Task<IReadOnlyList<GhPullRequestChangedFile>?> GetPullRequestFilesAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default)
+    {
+        string[] args =
+        [
+            "pr", "view", prNumber.ToString(),
+            "--repo", repoSlug,
+            "--json", "files",
+        ];
+        var result = await RunWithRetryAsync(args, ct).ConfigureAwait(false);
+        return result.Succeeded ? ParsePrFiles(result.Stdout) : null;
+    }
+
     /// <summary>
     /// Run an external command with the configured retry-on-timeout policy.
     /// Returns whatever <see cref="ProcessResult"/> the runner produced; the
@@ -551,5 +566,35 @@ public sealed class GhClient : IGhClient
             mergedAt,
             body,
             reviews);
+    }
+
+    /// <summary>
+    /// Parse <c>gh pr view --json files</c> output. Returns an empty list
+    /// when gh emits a well-formed JSON object with no <c>files</c> key
+    /// (very small PRs that only changed metadata can produce that). Returns
+    /// null only when the JSON itself is unparseable — caller treats null
+    /// as "PR not found".
+    /// </summary>
+    private static IReadOnlyList<GhPullRequestChangedFile>? ParsePrFiles(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        JsonNode? node;
+        try { node = JsonNode.Parse(raw); }
+        catch (JsonException) { return null; }
+        if (node is not JsonObject obj) return null;
+
+        var files = new List<GhPullRequestChangedFile>();
+        if (obj["files"] is not JsonArray arr) return files;
+
+        foreach (var item in arr)
+        {
+            if (item is not JsonObject fileObj) continue;
+            var path = fileObj["path"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(path)) continue;
+            var additions = fileObj["additions"]?.GetValue<int>() ?? -1;
+            var deletions = fileObj["deletions"]?.GetValue<int>() ?? -1;
+            files.Add(new GhPullRequestChangedFile(path, additions, deletions));
+        }
+        return files;
     }
 }
