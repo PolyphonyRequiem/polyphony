@@ -91,7 +91,7 @@ public sealed record PrMergePlanPrResult
     /// <c>pr_state_unmergeable</c>, <c>merge_failed</c>,
     /// <c>missing_merge_commit</c>, <c>ledger_conflict</c>,
     /// <c>manifest_push_rejected</c>, <c>stale_generation</c>,
-    /// <c>internal_error</c>. Empty string on success.
+    /// <c>validation_blocked</c>, <c>internal_error</c>. Empty string on success.
     /// </summary>
     public required string ErrorCode { get; init; }
 
