@@ -333,6 +333,8 @@ agents:
         when: "{{ state_detector.output.state == 'error' }}"
       - to: child_router
         when: "{{ state_detector.output.state == 'complete' }}"
+      - to: extract_parent_patch
+        when: "{{ state_detector.output.state == 'parent_change_pending' }}"
       - to: seeder
         when: "{{ state_detector.output.state == 'merged_unseeded' }}"
       - to: closed_unmerged_gate
@@ -939,7 +941,7 @@ agents:
     routes:
       - to: poll_error_gate
         when: "{{ poll_status.output.error is defined and poll_status.output.error }}"
-      - to: parent_change_blocked_exit
+      - to: extract_parent_patch
         when: "{{ poll_status.output.state == 'approved' and poll_status.output.metadata is defined and poll_status.output.metadata is not none and poll_status.output.metadata.requests_parent_change == true }}"
       - to: merge_plan_pr
         when: "{{ poll_status.output.state == 'approved' }}"
@@ -979,32 +981,50 @@ agents:
         value: abort
         route: $end
 
-  # ── Parent-change blocked exit (P8 placeholder) ────────────────────────
+  # ── Extract parent patch (P8d wiring) ──────────────────────────────────
   #
-  # Per design doc Q8: refuse to merge any plan PR with
-  # `requests_parent_change: true` and exit cleanly. The full P8
-  # renegotiation cascade lands in a later PR.
-  - name: parent_change_blocked_exit
-    type: human_gate
-    prompt: |
-      ## 🚧 Plan PR Requests Parent Change (P8 — not yet implemented)
-
-      The plan PR for work item **{{ workflow.input.work_item_id }}** is
-      approved but its body front-matter sets
-      `requests_parent_change: true`. The full parent-renegotiation cascade
-      (Phase 3 P8) is not yet implemented, so we cannot auto-promote this
-      plan into the parent.
-
-      - **PR:** {{ open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url }}
-
-      ---
-
-      Choose an action:
-      - **Acknowledge** — stop planning this branch (escalate to human)
-    options:
-      - label: "✅ Acknowledge"
-        value: acknowledge
-        route: $end
+  # Reached when either (a) state_detector returns parent_change_pending —
+  # i.e. an approved direct-child plan PR carries
+  # `requests_parent_change: true`, or (b) poll_status sees the same flag
+  # on a freshly-approved child PR mid-flight. In both cases we extract a
+  # bounded markdown diff for THIS work item's plan file out of the child
+  # PR, then re-prompt the architect to integrate or reject it.
+  #
+  # `parent_item_id` is the current workflow's `work_item_id` — that's the
+  # parent the child PR is asking to change.
+  #
+  # On state_detector entry, the child PR url comes from
+  # `state_detector.output.parent_change_pending_children[0]`. On
+  # poll_status entry, the child IS the current work_item_id but the
+  # child PR url is captured by poll_status itself; the verb only needs
+  # the URL, so we always read from state_detector when defined and fall
+  # back to the open_plan_pr / state_detector pr_url chain otherwise.
+  #
+  # Output schema (per polyphony.exe plan extract-parent-patch — Models/PlanExtractParentPatchResult.cs):
+  #   pr_url, pr_number, repo_slug, child_item_id, parent_item_id,
+  #   expected_parent_generation, head_sha, files_touched[],
+  #   parent_plan_diff, truncated, diff_size_bytes,
+  #   requests_parent_change, warnings[], error, error_code
+  #
+  # Always exits 0 (routing-style). Workflow branches on the presence of
+  # `error` inside the architect prompt — there is no error gate here
+  # because the architect is the consumer and is told to default to
+  # "reject by reasoning" when the diff is unusable.
+  - name: extract_parent_patch
+    type: script
+    description: Extract bounded parent-plan markdown diff from a child plan PR that requests parent change
+    command: polyphony
+    args:
+      - "plan"
+      - "extract-parent-patch"
+      - "--pr-url"
+      - "{{ state_detector.output.parent_change_pending_children[0].pr_url if (state_detector.output.parent_change_pending_children is defined and state_detector.output.parent_change_pending_children|length > 0) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url) }}"
+      - "--root-id"
+      - "{{ root_resolver.output.resolved_root_id }}"
+      - "--parent-item-id"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: architect
 
   # ── Pending-review gate (in-workflow human checkpoint) ────────────────
   #
