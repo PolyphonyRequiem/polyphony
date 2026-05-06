@@ -17,6 +17,10 @@ Describe 'lint-type-agnostic.ps1' {
         New-Item $script:ScriptsDir -ItemType Directory -Force | Out-Null
         New-Item $script:TestsDir -ItemType Directory -Force | Out-Null
         New-Item $script:WorkflowsDir -ItemType Directory -Force | Out-Null
+        $script:SkillsDir = Join-Path $script:TempRoot '.github' 'skills'
+        $script:DocsDir = Join-Path $script:TempRoot 'docs'
+        New-Item $script:SkillsDir -ItemType Directory -Force | Out-Null
+        New-Item $script:DocsDir -ItemType Directory -Force | Out-Null
 
         # Copy lint script into temp tests/ so $PSScriptRoot/.. resolves to
         # the temp repo root (where scripts/ and .conductor/ live).
@@ -222,6 +226,89 @@ $x = 1
 key: value
 '@
             $output = pwsh -NoProfile -File $script:TempLintScript -Surface all 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Default Surface all also catches skill violations' {
+            Set-Content (Join-Path $script:SkillsDir 'bad-skill.md') @'
+# Some Skill
+This skill describes Epic handling.
+'@
+            $output = pwsh -NoProfile -File $script:TempLintScript 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'skills'
+        }
+    }
+
+    Context 'Skills surface' {
+
+        It 'Passes when no .github/skills directory exists' {
+            Remove-Item $script:SkillsDir -Recurse -Force
+            $output = pwsh -NoProfile -File $script:TempLintScript -Surface skills 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Detects type names in skill markdown' {
+            Set-Content (Join-Path $script:SkillsDir 'a-skill.md') @'
+# A Skill
+Use Issue handling here.
+'@
+            $output = pwsh -NoProfile -File $script:TempLintScript -Surface skills 2>&1
+            $LASTEXITCODE | Should -Be 1
+        }
+
+        It 'Recurses into nested skill subdirectories' {
+            $sub = Join-Path $script:SkillsDir 'sub-skill' 'references'
+            New-Item $sub -ItemType Directory -Force | Out-Null
+            Set-Content (Join-Path $sub 'ref.md') @'
+Discussion of Task semantics.
+'@
+            $output = pwsh -NoProfile -File $script:TempLintScript -Surface skills 2>&1
+            $LASTEXITCODE | Should -Be 1
+        }
+
+        It 'Honors file-level skip for a skill' {
+            Set-Content (Join-Path $script:SkillsDir 'archival.md') @'
+This intentionally describes Epic / Issue / Task vocabulary.
+'@
+            Set-Content (Join-Path $script:TestsDir 'lint-type-agnostic.allowlist.yaml') @"
+skip_files:
+  - '.github/skills/archival.md'
+allowed_substrings: []
+"@
+            $output = pwsh -NoProfile -File $script:TempLintScript -Surface skills 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+    }
+
+    Context 'Docs surface' {
+
+        It 'Passes when no docs directory exists' {
+            Remove-Item $script:DocsDir -Recurse -Force
+            $output = pwsh -NoProfile -File $script:TempLintScript -Surface docs 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Detects type names in doc markdown when not skipped' {
+            Set-Content (Join-Path $script:DocsDir 'design.md') @'
+# Design
+
+The system handles Epic items differently.
+'@
+            $output = pwsh -NoProfile -File $script:TempLintScript -Surface docs 2>&1
+            $LASTEXITCODE | Should -Be 1
+        }
+
+        It 'Honors a directory-glob skip rule (docs/**)' {
+            Set-Content (Join-Path $script:DocsDir 'reference.md') @'
+The schema example shows Epic / Issue / Task hierarchies.
+'@
+            Set-Content (Join-Path $script:TestsDir 'lint-type-agnostic.allowlist.yaml') @"
+skip_files:
+  - 'docs/**'
+allowed_substrings: []
+"@
+            $output = pwsh -NoProfile -File $script:TempLintScript -Surface docs 2>&1
             $LASTEXITCODE | Should -Be 0
         }
     }
