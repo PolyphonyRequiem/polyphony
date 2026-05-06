@@ -105,4 +105,13 @@ public interface IGitClient
     /// Throws <see cref="ExternalToolException"/> on failure.
     /// </summary>
     Task ResetHardAsync(string refspec, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git show {refspec}:{path}</c>. Reads a file's contents at the
+    /// supplied revision without disturbing the worktree. Returns null
+    /// when the file does not exist at that revision; throws
+    /// <see cref="ExternalToolException"/> on other non-zero exits
+    /// (bad ref, repo error, etc.).
+    /// </summary>
+    Task<string?> ShowFileAtRefAsync(string refspec, string path, CancellationToken ct = default);
 }

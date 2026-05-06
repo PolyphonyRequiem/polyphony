@@ -317,5 +317,6 @@ public sealed class LockCommandsTests : IDisposable
         public Task StageAsync(string pathspec, CancellationToken ct = default) => Task.CompletedTask;
         public Task CommitAsync(string message, CancellationToken ct = default) => Task.CompletedTask;
         public Task ResetHardAsync(string refspec, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<string?> ShowFileAtRefAsync(string refspec, string path, CancellationToken ct = default) => Task.FromResult<string?>(null);
     }
 }

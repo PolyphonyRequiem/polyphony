@@ -149,6 +149,23 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
             throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
     }
 
+    public async Task<string?> ShowFileAtRefAsync(string refspec, string path, CancellationToken ct = default)
+    {
+        string[] args = ["show", $"{refspec}:{path}"];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        if (result.Succeeded) return result.Stdout;
+        // git exits non-zero when the ref or path doesn't exist; distinguish
+        // missing-path from real failures by sniffing stderr.
+        var stderr = result.Stderr ?? "";
+        if (stderr.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("exists on disk, but not in", StringComparison.OrdinalIgnoreCase)
+            || (stderr.Contains("path '", StringComparison.OrdinalIgnoreCase) && stderr.Contains("does not exist in", StringComparison.OrdinalIgnoreCase)))
+        {
+            return null;
+        }
+        throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, stderr);
+    }
+
     private static string? TrimOrNull(string raw)
     {
         var trimmed = raw.Trim();

@@ -90,10 +90,33 @@ public sealed record PrMergePlanPrResult
     /// <c>head_ref_mismatch</c>, <c>base_ref_mismatch</c>,
     /// <c>pr_state_unmergeable</c>, <c>merge_failed</c>,
     /// <c>missing_merge_commit</c>, <c>ledger_conflict</c>,
-    /// <c>manifest_push_rejected</c>, <c>internal_error</c>. Empty string on success.
+    /// <c>manifest_push_rejected</c>, <c>stale_generation</c>,
+    /// <c>internal_error</c>. Empty string on success.
     /// </summary>
     public required string ErrorCode { get; init; }
 
     /// <summary>Populated when the verb errored. Omitted on success.</summary>
     public string? Error { get; init; }
+
+    /// <summary>
+    /// Diff of stale ancestor entries when <see cref="ErrorCode"/> is
+    /// <c>stale_generation</c>. Omitted otherwise. Each entry names an
+    /// ancestor key whose generation in the manifest has advanced past
+    /// the snapshot embedded in the PR body's front-matter — i.e. another
+    /// plan-PR for that ancestor merged after this PR was opened.
+    /// </summary>
+    public IReadOnlyList<StaleAncestorEntry>? StaleAncestors { get; init; }
+}
+
+/// <summary>One stale-ancestor diff entry surfaced by <see cref="PrMergePlanPrResult.StaleAncestors"/>.</summary>
+public sealed record StaleAncestorEntry
+{
+    /// <summary>Ancestor key as it appears in the manifest (<c>"root"</c> or numeric id as string).</summary>
+    public required string AncestorKey { get; init; }
+
+    /// <summary>Generation captured in the PR body's snapshot at PR-open time.</summary>
+    public required int SnapshotGeneration { get; init; }
+
+    /// <summary>Generation currently recorded in the manifest.</summary>
+    public required int CurrentGeneration { get; init; }
 }
