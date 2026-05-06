@@ -19,7 +19,7 @@ namespace Polyphony.Commands;
 /// have been collapsed into the internal <see cref="GhClient"/> helper —
 /// they are NOT exposed as verbs.)
 /// </summary>
-public sealed class PrCommands(
+public sealed partial class PrCommands(
     IGitClient git,
     IGhClient gh,
     ITwigClient twig,
