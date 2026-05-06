@@ -25,13 +25,13 @@ public sealed partial class PrCommands
     ///   <item>If the snapshot matches the current manifest, returns the existing PR (<c>created=false, stale=false</c>) — the verb is idempotent.</item>
     ///   <item>If the snapshot is stale (any ancestor's manifest generation has advanced past the embedded value), returns <c>created=false, stale=true</c> with a non-zero exit code so the operator can decide. The verb refuses to silently rewrite the PR body — that's a P9 concern (ancestor cascade).</item>
     /// </list>
-    /// Fails with <c>RoutingFailure</c> when the head/base branch is missing on the remote, or when the manifest cannot be read.
+    /// Fails with <c>RoutingFailure</c> when the head/base branch is missing on the remote, or with <c>CacheError</c> when the manifest cannot be read from <c>origin/feature/{root}</c>.
     /// </summary>
     /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="itemId">ADO work-item id of the item this plan PR belongs to. Equal to <paramref name="rootId"/> for the root plan.</param>
     /// <param name="parentItemId">Immediate plan-tree parent's work-item id. Required for descendants of descendants; omit for root plan and direct children of root plan.</param>
     /// <param name="ancestorIds">Comma-separated ancestor chain (immediate parent first), used to compute the snapshot. For a child of root: <c>"root"</c>. For a deeper descendant: e.g. <c>"5678,root"</c>. Empty for the root plan.</param>
-    /// <param name="manifestPath">Path to the run manifest. Defaults to <c>.polyphony/run.yaml</c>.</param>
+    /// <param name="manifestPath">Path to the run manifest within the <c>origin/feature/{root}</c> blob. Defaults to <c>.polyphony/run.yaml</c>.</param>
     /// <param name="title">Optional PR title; deterministic fallback derived from the cached work-item title.</param>
     /// <param name="body">Optional PR body summary (rendered after the front-matter); minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
@@ -116,21 +116,39 @@ public sealed partial class PrCommands
             return ExitCodes.ConfigError;
         }
 
-        // ── 2. Read manifest + compute snapshot. ──────────────────────────
+        // ── 2. Read manifest from origin/feature/{root} + compute snapshot. ─
+        // The manifest is owned by the feature branch, NOT by the plan branch
+        // we are PR-promoting from. Reading the local working tree would pick
+        // up whatever the workflow happens to have checked out (often the
+        // plan branch itself). Always read from the remote feature ref so the
+        // snapshot reflects the authoritative manifest at PR-open time.
         IReadOnlyDictionary<string, int> snapshot;
+        var featureBranch = BranchNameBuilder.Feature(root).Value;
+        var manifestRef = $"origin/{featureBranch}";
         try
         {
-            var manifest = RunManifestStore.LoadOrThrow(manifestPath);
+            var manifestYaml = await git.ShowFileAtRefAsync(manifestRef, manifestPath, ct).ConfigureAwait(false);
+            if (manifestYaml is null)
+            {
+                EmitPlanPrError(rootId, itemId, parentItemId,
+                    $"manifest not found at {manifestRef}:{manifestPath} — ensure the feature branch has the manifest committed and pushed",
+                    headBranch, baseBranch);
+                return ExitCodes.CacheError;
+            }
+            var manifest = RunManifestStore.Parse(manifestYaml, $"{manifestRef}:{manifestPath}");
+            RunManifestValidator.ValidateOrThrow(manifest, $"{manifestRef}:{manifestPath}");
             snapshot = ComputeSnapshot(manifest.PlanGenerations, ancestorKeys);
-        }
-        catch (FileNotFoundException ex)
-        {
-            EmitPlanPrError(rootId, itemId, parentItemId, $"manifest not found: {ex.Message}", headBranch, baseBranch);
-            return ExitCodes.CacheError;
         }
         catch (InvalidOperationException ex)
         {
             EmitPlanPrError(rootId, itemId, parentItemId, $"manifest invalid: {ex.Message}", headBranch, baseBranch);
+            return ExitCodes.CacheError;
+        }
+        catch (ExternalToolException ex)
+        {
+            EmitPlanPrError(rootId, itemId, parentItemId,
+                $"git show failed for {manifestRef}:{manifestPath}: {ex.Message}",
+                headBranch, baseBranch);
             return ExitCodes.CacheError;
         }
 
