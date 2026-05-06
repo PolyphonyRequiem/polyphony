@@ -102,6 +102,14 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
             throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
     }
 
+    public async Task<ProcessResult> DeleteRemoteBranchAsync(string remote, string branch, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(remote);
+        ArgumentException.ThrowIfNullOrEmpty(branch);
+        string[] args = ["push", remote, "--delete", branch];
+        return await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+    }
+
     public async Task FetchAsync(string remote, string refspec, CancellationToken ct = default)
     {
         string[] args = ["fetch", remote, refspec];

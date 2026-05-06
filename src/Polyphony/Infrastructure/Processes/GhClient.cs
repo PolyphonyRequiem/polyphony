@@ -357,6 +357,38 @@ public sealed class GhClient : IGhClient
         }
     }
 
+    public async Task<bool> ClosePullRequestAsync(
+        string repoSlug,
+        int prNumber,
+        string commentBeforeClose,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoSlug);
+        if (prNumber <= 0) throw new ArgumentOutOfRangeException(nameof(prNumber), "PR number must be positive.");
+
+        // commentBeforeClose is optional — null/empty omits the --comment flag entirely.
+        // Mirrors the cascade-remedy contract of the sibling mutators
+        // (EditPullRequestBodyAsync / CommentPullRequestAsync): never throw on tool
+        // failure; surface a routable bool so the verb can react.
+        var args = string.IsNullOrEmpty(commentBeforeClose)
+            ? (string[])["pr", "close", prNumber.ToString(), "--repo", repoSlug]
+            : (string[])["pr", "close", prNumber.ToString(), "--repo", repoSlug, "--comment", commentBeforeClose];
+
+        try
+        {
+            var result = await RunWithRetryAsync(args, ct).ConfigureAwait(false);
+            return result.Succeeded;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (ExternalToolTimeoutException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Run an external command with the configured retry-on-timeout policy.
     /// Returns whatever <see cref="ProcessResult"/> the runner produced; the

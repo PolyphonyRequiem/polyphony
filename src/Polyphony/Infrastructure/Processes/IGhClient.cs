@@ -215,4 +215,37 @@ public interface IGhClient
         int prNumber,
         string body,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>gh pr close {prNumber} --repo {repoSlug} [--comment "{comment}"]</c> — close
+    /// an open pull request and optionally drop a closing comment in the same call.
+    /// Subject to the standard retry-on-timeout policy.
+    ///
+    /// <para>Used by the P9 cascade-remedy <c>recreate</c> path
+    /// (<c>polyphony plan recreate-stale-descendant</c>) to close a stale plan PR
+    /// before a fresh PR is opened from the new ancestor tip. Close failure is a
+    /// recoverable, routable outcome — not a fatal exception — so this method
+    /// <b>returns false on any failure</b> (non-zero exit, timeout) and never throws
+    /// <see cref="ExternalToolException"/> / <see cref="ExternalToolTimeoutException"/>.
+    /// Caller-driven cancellation still propagates as
+    /// <see cref="OperationCanceledException"/>.</para>
+    ///
+    /// <para>Idempotent: closing a PR that is already CLOSED returns true.
+    /// gh prints a benign "Pull request #N is already closed" notice and exits 0
+    /// in that case, so no special-casing is required by callers.</para>
+    /// </summary>
+    /// <param name="repoSlug">Owner/repo slug, e.g. <c>polyphonyrequiem/polyphony</c>.</param>
+    /// <param name="prNumber">PR number to close.</param>
+    /// <param name="commentBeforeClose">
+    /// Optional closing comment; passed via <c>--comment "{value}"</c>. Empty / null
+    /// omits the flag (close-only). The string is forwarded verbatim — quoting is
+    /// handled by the process runner.
+    /// </param>
+    /// <param name="ct">Cancellation token. Caller cancellation propagates immediately.</param>
+    /// <returns>True on a clean success (gh exit 0). False on any non-success outcome.</returns>
+    Task<bool> ClosePullRequestAsync(
+        string repoSlug,
+        int prNumber,
+        string commentBeforeClose,
+        CancellationToken ct = default);
 }
