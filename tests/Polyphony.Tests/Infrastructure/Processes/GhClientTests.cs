@@ -153,14 +153,42 @@ public sealed class GhClientTests
     }
 
     [Fact]
-    public async Task CreatePullRequestAsync_EmptyStdout_ThrowsExternalToolException()
+    public async Task GetPullRequestDiffAsync_Success_ReturnsStdout()
     {
         var fake = new FakeProcessRunner();
-        fake.WhenStartsWith("gh", ["pr", "create"],
-            new ProcessResult(0, "", ""));
+        var diff = "diff --git a/foo b/foo\n--- a/foo\n+++ b/foo\n@@ -1 +1 @@\n-old\n+new\n";
+        fake.WhenStartsWith("gh", ["pr", "diff"], new ProcessResult(0, diff, ""));
         var client = new GhClient(fake);
 
-        await Should.ThrowAsync<ExternalToolException>(async () =>
-            await client.CreatePullRequestAsync("o/r", "main", "feature/x", "t", "b"));
+        var result = await client.GetPullRequestDiffAsync("o/r", 42);
+
+        result.ShouldNotBeNull();
+        result.ShouldBe(diff);
+    }
+
+    [Fact]
+    public async Task GetPullRequestDiffAsync_NonZeroExit_ReturnsNull()
+    {
+        var fake = new FakeProcessRunner();
+        fake.WhenStartsWith("gh", ["pr", "diff"],
+            new ProcessResult(1, "", "no such PR"));
+        var client = new GhClient(fake);
+
+        var result = await client.GetPullRequestDiffAsync("o/r", 99);
+
+        result.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task GetPullRequestDiffAsync_PassesRepoSlugAndPrNumber()
+    {
+        var fake = new FakeProcessRunner();
+        fake.WhenExact("gh", ["pr", "diff", "123", "--repo", "o/r"],
+            new ProcessResult(0, "diff content", ""));
+        var client = new GhClient(fake);
+
+        var result = await client.GetPullRequestDiffAsync("o/r", 123);
+
+        result.ShouldBe("diff content");
     }
 }

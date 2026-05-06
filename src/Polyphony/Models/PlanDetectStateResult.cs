@@ -21,6 +21,12 @@ namespace Polyphony;
 ///         doesn't carry the planned tag yet. Run <c>polyphony plan seed-children</c>.</item>
 ///   <item><c>complete</c> — plan PR is merged AND the parent carries the
 ///         planned tag. Workflow is done.</item>
+///   <item><c>parent_change_pending</c> — plan PR is merged AND the parent
+///         carries the planned tag, BUT one or more direct children have an
+///         approved plan PR with <c>requests_parent_change: true</c>. The
+///         parent's plan must be re-opened to incorporate the requested
+///         changes. <see cref="ParentChangePendingChildren"/> lists the
+///         qualifying child PRs.</item>
 /// </list>
 /// </summary>
 public sealed record PlanDetectStateResult
@@ -54,6 +60,33 @@ public sealed record PlanDetectStateResult
     /// </summary>
     public IReadOnlyList<string> StaleAncestors { get; init; } = [];
 
+    /// <summary>
+    /// When <see cref="State"/> is <c>parent_change_pending</c>, lists the
+    /// direct-child plan PRs that are approved and request a change to the
+    /// parent's plan. Empty otherwise. Each entry carries enough metadata
+    /// for <c>polyphony plan extract-parent-patch</c> to render the child's
+    /// proposed parent-plan diff.
+    /// </summary>
+    public IReadOnlyList<ChildPendingParentChange> ParentChangePendingChildren { get; init; } = [];
+
     /// <summary>Error message on failure; null on success.</summary>
     public string? Error { get; init; }
 }
+
+/// <summary>
+/// Single entry in <see cref="PlanDetectStateResult.ParentChangePendingChildren"/>.
+/// Identifies one direct-child plan PR that triggered the parent
+/// <c>parent_change_pending</c> state.
+/// </summary>
+/// <param name="ChildItemId">Work item ID of the child whose plan PR requested parent change.</param>
+/// <param name="PrNumber">GitHub PR number for the child's plan PR.</param>
+/// <param name="PrUrl">Canonical URL for the child's plan PR.</param>
+/// <param name="ExpectedParentGeneration">Parent generation captured in the
+/// child PR's <c>ancestor_plan_generations</c> snapshot. Equals the parent's
+/// current generation at the moment of detection (otherwise the child PR
+/// would be classified stale rather than pending parent change).</param>
+public sealed record ChildPendingParentChange(
+    int ChildItemId,
+    int PrNumber,
+    string PrUrl,
+    int ExpectedParentGeneration);

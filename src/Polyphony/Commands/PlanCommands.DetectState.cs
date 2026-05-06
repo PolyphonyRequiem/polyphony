@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ConsoleAppFramework;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
@@ -216,18 +217,178 @@ public sealed partial class PlanCommands
 
         // MERGED — discriminate complete vs merged_unseeded via the planned tag.
         var seeded = await IsParentSeededAsync(itemId, plannedTag, ct).ConfigureAwait(false);
+        if (!seeded)
+        {
+            EmitDetectState(new PlanDetectStateResult
+            {
+                RootId = rootId,
+                ItemId = itemId,
+                PlanBranch = planBranch,
+                State = "merged_unseeded",
+                BranchExistsOnOrigin = branchExists,
+                PrNumber = latestPr.Number,
+                PrUrl = prUrl,
+                PrState = prState,
+            });
+            return ExitCodes.Success;
+        }
+
+        // Item's plan is merged AND children are seeded. Before declaring
+        // "complete", check whether any direct child has an approved plan
+        // PR with `requests_parent_change: true` against this item's
+        // current plan generation. If so, override to parent_change_pending
+        // so plan-level.yaml routes to the parent replan loop.
+        var pendingChildren = await CheckChildrenForParentChangeRequestsAsync(
+            rootId, itemId, slug, manifestRef, manifestPath, ct)
+            .ConfigureAwait(false);
+
         EmitDetectState(new PlanDetectStateResult
         {
             RootId = rootId,
             ItemId = itemId,
             PlanBranch = planBranch,
-            State = seeded ? "complete" : "merged_unseeded",
+            State = pendingChildren.Count > 0 ? "parent_change_pending" : "complete",
             BranchExistsOnOrigin = branchExists,
             PrNumber = latestPr.Number,
             PrUrl = prUrl,
             PrState = prState,
+            ParentChangePendingChildren = pendingChildren,
         });
         return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Enumerate direct children of <paramref name="parentItemId"/>, find any
+    /// open plan PRs whose review state is APPROVED, body has
+    /// <c>requests_parent_change: true</c>, and
+    /// <c>ancestor_plan_generations[parent_key]</c> equals the parent's
+    /// current plan generation in the manifest. Returns an entry per
+    /// qualifying child PR. Empty list when nothing qualifies (the common
+    /// case — the helper short-circuits cheap signals first).
+    /// </summary>
+    /// <remarks>
+    /// Best-effort: any failure to fetch children, manifest, or PR data
+    /// degrades to "no signal" (empty list) rather than failing the verb,
+    /// matching the existing detect-state fault-tolerance posture.
+    /// </remarks>
+    private async Task<IReadOnlyList<ChildPendingParentChange>> CheckChildrenForParentChangeRequestsAsync(
+        int rootId,
+        int parentItemId,
+        string slug,
+        string manifestRef,
+        string manifestPath,
+        CancellationToken ct)
+    {
+        // Snapshot key convention: "root" when parent IS root; "<parent_id>" otherwise.
+        var snapshotKey = parentItemId == rootId
+            ? "root"
+            : parentItemId.ToString(CultureInfo.InvariantCulture);
+
+        // Read parent's current generation from the manifest. If we cannot
+        // load it, no signal — return empty.
+        int parentCurrentGen;
+        try
+        {
+            var manifestYaml = await git.ShowFileAtRefAsync(manifestRef, manifestPath, ct)
+                .ConfigureAwait(false);
+            if (manifestYaml is null) return [];
+
+            var manifest = RunManifestStore.Parse(manifestYaml, manifestPath);
+            RunManifestValidator.ValidateOrThrow(manifest);
+            if (!manifest.PlanGenerations.TryGetValue(snapshotKey, out parentCurrentGen))
+            {
+                // Parent is "complete" but manifest has no generation entry —
+                // shouldn't happen if pr merge-plan-pr is consistent, but
+                // skip rather than crash.
+                return [];
+            }
+        }
+        catch
+        {
+            return [];
+        }
+
+        // Enumerate direct children via twig.
+        JsonNode? tree;
+        try
+        {
+            tree = await twig.ShowTreeAsync(parentItemId, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            return [];
+        }
+
+        if (tree?["children"] is not JsonArray children || children.Count == 0)
+        {
+            return [];
+        }
+
+        if (!RootId.TryParse(rootId, out var rootIdTyped))
+        {
+            return [];
+        }
+
+        var results = new List<ChildPendingParentChange>();
+        foreach (var childNode in children.OfType<JsonObject>())
+        {
+            var childId = childNode["id"]?.GetValue<int?>() ?? 0;
+            if (childId <= 0) continue;
+            if (!WorkItemId.TryParse(childId, out var childIdTyped)) continue;
+
+            var childPlanBranch = BranchNameBuilder.DescendantPlan(rootIdTyped, childIdTyped).Value;
+
+            IReadOnlyList<PullRequestSummary> childPrs;
+            try
+            {
+                childPrs = await gh.ListPullRequestsAsync(
+                    slug,
+                    new PrListFilters(Head: childPlanBranch, State: "open", Limit: 10),
+                    ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var pr in childPrs.OrderByDescending(p => p.Number))
+            {
+                GhPullRequestPollData? pollData;
+                try
+                {
+                    pollData = await gh.GetPullRequestPollDataAsync(slug, pr.Number, ct)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                    continue;
+                }
+                if (pollData is null) continue;
+
+                // Approved? Match the public PrCommands.PollStatus mapping.
+                var isApproved = string.Equals(pollData.State, "OPEN", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(pollData.ReviewDecision, "APPROVED", StringComparison.OrdinalIgnoreCase);
+                if (!isApproved) continue;
+
+                var fm = PlanPrFrontMatter.Parse(pollData.Body ?? string.Empty);
+                if (!fm.RequestsParentChange) continue;
+                if (!fm.AncestorPlanGenerations.TryGetValue(snapshotKey, out var snapshotGen)) continue;
+                if (snapshotGen != parentCurrentGen) continue;
+
+                results.Add(new ChildPendingParentChange(
+                    ChildItemId: childId,
+                    PrNumber: pr.Number,
+                    PrUrl: pr.Url ?? string.Empty,
+                    ExpectedParentGeneration: snapshotGen));
+
+                // One qualifying PR per child is enough; later open PRs for
+                // the same branch are stale by definition (we already took
+                // the highest-numbered one via OrderByDescending).
+                break;
+            }
+        }
+
+        return results;
     }
 
     private async Task<IReadOnlyList<string>> ComputeStaleAncestorsAsync(

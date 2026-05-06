@@ -275,6 +275,20 @@ public sealed class GhClient : IGhClient
         return result.Succeeded ? ParsePrFiles(result.Stdout) : null;
     }
 
+    public async Task<string?> GetPullRequestDiffAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default)
+    {
+        string[] args =
+        [
+            "pr", "diff", prNumber.ToString(),
+            "--repo", repoSlug,
+        ];
+        var result = await RunWithRetryAsync(args, ct).ConfigureAwait(false);
+        return result.Succeeded ? result.Stdout : null;
+    }
+
     /// <summary>
     /// Run an external command with the configured retry-on-timeout policy.
     /// Returns whatever <see cref="ProcessResult"/> the runner produced; the
