@@ -23,7 +23,18 @@ public sealed class FakeProcessRunner : IProcessRunner
     /// Responders are checked in registration order; the first match wins.
     /// </summary>
     public void When(Func<string, IReadOnlyList<string>, bool> match, ProcessResult response)
-        => _responders.Add(new Responder(match, response));
+        => _responders.Add(new Responder(match, (_, _) => Task.FromResult(response)));
+
+    /// <summary>
+    /// Register an async responder. The handler receives the linked
+    /// cancellation token (caller's CT linked with the per-attempt timeout
+    /// CTS in <see cref="GhClient"/>); honoring it is how tests simulate
+    /// timeout/cancellation behavior. Throw or return as appropriate.
+    /// </summary>
+    public void WhenAsync(
+        Func<string, IReadOnlyList<string>, bool> match,
+        Func<IReadOnlyList<string>, CancellationToken, Task<ProcessResult>> handler)
+        => _responders.Add(new Responder(match, handler));
 
     /// <summary>Convenience: match by exact executable name and full argument sequence.</summary>
     public void WhenExact(string exe, IReadOnlyList<string> args, ProcessResult response)
@@ -39,6 +50,29 @@ public sealed class FakeProcessRunner : IProcessRunner
                 && a.Take(argsPrefix.Count).SequenceEqual(argsPrefix, StringComparer.Ordinal),
             response);
 
+    /// <summary>
+    /// Convenience: register a sequence of responses for matching invocations.
+    /// The Nth matching call returns the Nth response; if more calls arrive
+    /// than responses, the last response is reused.
+    /// </summary>
+    public void WhenStartsWithSequence(string exe, IReadOnlyList<string> argsPrefix, params ProcessResult[] responses)
+    {
+        if (responses.Length == 0)
+        {
+            throw new ArgumentException("Must provide at least one response.", nameof(responses));
+        }
+        int call = -1;
+        WhenAsync(
+            (e, a) => e == exe
+                && a.Count >= argsPrefix.Count
+                && a.Take(argsPrefix.Count).SequenceEqual(argsPrefix, StringComparer.Ordinal),
+            (_, _) =>
+            {
+                var idx = Math.Min(Interlocked.Increment(ref call), responses.Length - 1);
+                return Task.FromResult(responses[idx]);
+            });
+    }
+
     public Task<ProcessResult> RunAsync(
         string executable,
         IReadOnlyList<string> arguments,
@@ -51,7 +85,7 @@ public sealed class FakeProcessRunner : IProcessRunner
         {
             if (responder.Match(executable, arguments))
             {
-                return Task.FromResult(responder.Response);
+                return responder.Handler(arguments, ct);
             }
         }
 
@@ -66,5 +100,5 @@ public sealed class FakeProcessRunner : IProcessRunner
 
     private sealed record Responder(
         Func<string, IReadOnlyList<string>, bool> Match,
-        ProcessResult Response);
+        Func<IReadOnlyList<string>, CancellationToken, Task<ProcessResult>> Handler);
 }
