@@ -70,14 +70,15 @@ public sealed class ProcessConfigBuilderTests
             .WithBranchStrategy(
                 featureBranch: "feature/{id}",
                 planningBranch: "planning/{id}",
-                pgBranch: "feature/{id}-pg-{pg}",
+                mgBranch: "feature/{id}-mg-{n}",
                 target: "develop")
             .Build();
 
         config.BranchStrategy.ShouldNotBeNull();
         config.BranchStrategy!.FeatureBranch.ShouldBe("feature/{id}");
         config.BranchStrategy.PlanningBranch.ShouldBe("planning/{id}");
-        config.BranchStrategy.PgBranch.ShouldBe("feature/{id}-pg-{pg}");
+        config.BranchStrategy.MgBranch.ShouldBe("feature/{id}-mg-{n}");
+        config.BranchStrategy.PgBranch.ShouldBe("");
         config.BranchStrategy.Target.ShouldBe("develop");
     }
 

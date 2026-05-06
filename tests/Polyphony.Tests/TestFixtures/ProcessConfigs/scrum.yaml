@@ -39,7 +39,7 @@ transitions:
 branch_strategy:
   feature_branch: "feature/{root_id}-{slug}"
   planning_branch: "planning/{root_id}"
-  pg_branch: "pg-{n}/{root_id}-{slug}"
+  mg_branch: "mg-{n}/{root_id}-{slug}"
   target: main
 
 platform: github

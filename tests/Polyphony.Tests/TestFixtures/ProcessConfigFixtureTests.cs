@@ -81,7 +81,7 @@ public sealed class ProcessConfigFixtureTests
         config.BranchStrategy.ShouldNotBeNull();
         config.BranchStrategy!.Target.ShouldBe("main");
         config.BranchStrategy.FeatureBranch.ShouldNotBeNullOrWhiteSpace();
-        config.BranchStrategy.PgBranch.ShouldNotBeNullOrWhiteSpace();
+        config.BranchStrategy.MgBranch.ShouldNotBeNullOrWhiteSpace();
     }
 
     [Theory]

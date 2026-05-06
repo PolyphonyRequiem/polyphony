@@ -323,6 +323,116 @@ public sealed class ValidateConfigCommandTests : IDisposable
 
     #endregion
 
+    #region V-17 / V-18 — legacy pg_branch / pg_pr deprecation warnings
+
+    [Fact]
+    public void LegacyPgBranchKey_EmitsV17Warning()
+    {
+        const string yaml = """
+            process_template: Basic
+            types:
+              Task:
+                facets: [implementable]
+            transitions:
+              Task:
+                begin_implementation: Doing
+            branch_strategy:
+              feature_branch: "feature/{root_id}"
+              pg_branch: "pg-{n}/{root_id}-{slug}"
+              target: main
+            """;
+        var configDir = CreateConfigDir(yaml);
+        var cmd = new ValidateConfigCommand();
+
+        var (exitCode, output) = CaptureConsole(() => cmd.ValidateConfig(configDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ConfigValidationResult);
+        result.ShouldNotBeNull();
+        result.IsValid.ShouldBeTrue();
+        result.Warnings.ShouldContain(w => w.RuleId == "V-17");
+    }
+
+    [Fact]
+    public void NewMgBranchKey_DoesNotEmitV17Warning()
+    {
+        const string yaml = """
+            process_template: Basic
+            types:
+              Task:
+                facets: [implementable]
+            transitions:
+              Task:
+                begin_implementation: Doing
+            branch_strategy:
+              feature_branch: "feature/{root_id}"
+              mg_branch: "mg-{n}/{root_id}-{slug}"
+              target: main
+            """;
+        var configDir = CreateConfigDir(yaml);
+        var cmd = new ValidateConfigCommand();
+
+        var (_, output) = CaptureConsole(() => cmd.ValidateConfig(configDir));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ConfigValidationResult);
+        result.ShouldNotBeNull();
+        result.Warnings.ShouldNotContain(w => w.RuleId == "V-17");
+    }
+
+    [Fact]
+    public void LegacyPgPrPolicyKey_EmitsV18Warning()
+    {
+        const string yaml = """
+            process_template: Basic
+            types:
+              Task:
+                facets: [implementable]
+            transitions:
+              Task:
+                begin_implementation: Doing
+            review_policies:
+              implementation:
+                pg_pr: { agent_review: true, human_review: false, auto_merge: true }
+            """;
+        var configDir = CreateConfigDir(yaml);
+        var cmd = new ValidateConfigCommand();
+
+        var (exitCode, output) = CaptureConsole(() => cmd.ValidateConfig(configDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ConfigValidationResult);
+        result.ShouldNotBeNull();
+        result.IsValid.ShouldBeTrue();
+        result.Warnings.ShouldContain(w => w.RuleId == "V-18");
+    }
+
+    [Fact]
+    public void NewMgPrPolicyKey_DoesNotEmitV18Warning()
+    {
+        const string yaml = """
+            process_template: Basic
+            types:
+              Task:
+                facets: [implementable]
+            transitions:
+              Task:
+                begin_implementation: Doing
+            review_policies:
+              implementation:
+                mg_pr: { agent_review: true, human_review: false, auto_merge: true }
+            """;
+        var configDir = CreateConfigDir(yaml);
+        var cmd = new ValidateConfigCommand();
+
+        var (_, output) = CaptureConsole(() => cmd.ValidateConfig(configDir));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ConfigValidationResult);
+        result.ShouldNotBeNull();
+        result.Warnings.ShouldNotContain(w => w.RuleId == "V-18");
+    }
+
+    #endregion
+
     public void Dispose()
     {
         foreach (var dir in _tempDirs)

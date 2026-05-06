@@ -159,6 +159,97 @@ public sealed class ProcessConfigLoaderTests
         Should.Throw<ArgumentException>(() => ProcessConfigLoader.GetParentTypeName(config, "Unknown"));
     }
 
+    [Fact]
+    public void Load_LegacyPgBranchOnly_CopiesOntoMgBranch()
+    {
+        var path = WriteTempConfig("""
+            process_template: Basic
+            types:
+              Task:
+                facets: [implementable]
+            transitions: {}
+            branch_strategy:
+              feature_branch: "feature/{root_id}"
+              pg_branch: "pg-{n}/{root_id}-{slug}"
+              target: main
+            """);
+
+        var config = ProcessConfigLoader.Load(path);
+
+        config.BranchStrategy.ShouldNotBeNull();
+        config.BranchStrategy!.PgBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
+        config.BranchStrategy.MgBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
+    }
+
+    [Fact]
+    public void Load_BothMgAndPgBranchSet_KeepsMgBranchAuthoritative()
+    {
+        var path = WriteTempConfig("""
+            process_template: Basic
+            types:
+              Task:
+                facets: [implementable]
+            transitions: {}
+            branch_strategy:
+              feature_branch: "feature/{root_id}"
+              mg_branch: "mg-{n}/{root_id}-{slug}"
+              pg_branch: "pg-{n}/{root_id}-{slug}"
+              target: main
+            """);
+
+        var config = ProcessConfigLoader.Load(path);
+
+        config.BranchStrategy.ShouldNotBeNull();
+        config.BranchStrategy!.MgBranch.ShouldBe("mg-{n}/{root_id}-{slug}");
+        config.BranchStrategy.PgBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
+    }
+
+    [Fact]
+    public void Load_LegacyPgPrPolicyOnly_CopiesOntoMgPr()
+    {
+        var path = WriteTempConfig("""
+            process_template: Basic
+            types:
+              Task:
+                facets: [implementable]
+            transitions: {}
+            review_policies:
+              implementation:
+                pg_pr: { agent_review: true, human_review: false, auto_merge: true }
+            """);
+
+        var config = ProcessConfigLoader.Load(path);
+
+        config.ReviewPolicies.ShouldNotBeNull();
+        var implementation = config.ReviewPolicies!.Implementation;
+        implementation.ShouldNotBeNull();
+        implementation!.ShouldContainKey("pg_pr");
+        implementation.ShouldContainKey("mg_pr");
+        implementation["mg_pr"].AutoMerge.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Load_BothPgPrAndMgPr_KeepsMgPrAuthoritative()
+    {
+        var path = WriteTempConfig("""
+            process_template: Basic
+            types:
+              Task:
+                facets: [implementable]
+            transitions: {}
+            review_policies:
+              implementation:
+                mg_pr: { agent_review: true, human_review: true, auto_merge: false }
+                pg_pr: { agent_review: true, human_review: false, auto_merge: true }
+            """);
+
+        var config = ProcessConfigLoader.Load(path);
+
+        var implementation = config.ReviewPolicies!.Implementation!;
+        implementation["mg_pr"].HumanReview.ShouldBeTrue();
+        implementation["mg_pr"].AutoMerge.ShouldBeFalse();
+    }
+
     private static string WriteTempConfig(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"polyphony-test-{Guid.NewGuid()}.yaml");
