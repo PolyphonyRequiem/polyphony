@@ -321,4 +321,261 @@ public sealed class ManifestCommandsTests : IDisposable
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestApprovalRecordResult)!;
         result.Error!.ShouldContain("non-empty");
     }
+
+    // -- record-plan-merge --
+
+    [Fact]
+    public async Task RecordPlanMerge_RootKey_FromZeroBumpsToOne()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(item: "root", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.ItemKey.ShouldBe("root");
+        result.PreviousGeneration.ShouldBe(0);
+        result.CurrentGeneration.ShouldBe(1);
+
+        var manifest = RunManifestStore.LoadOrThrow(this.manifestPath);
+        manifest.PlanGenerations["root"].ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_DescendantKey_AccumulatesAcrossInvocations()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "5678", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "5678", path: this.manifestPath));
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(item: "5678", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.PreviousGeneration.ShouldBe(2);
+        result.CurrentGeneration.ShouldBe(3);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("not-a-number")]
+    [InlineData("ROOT")]   // case-sensitive: only literal lowercase "root"
+    [InlineData("Root")]
+    public async Task RecordPlanMerge_InvalidItem_ReturnsConfigError(string item)
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(item: item, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
+        result.Error!.ShouldNotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_MissingFile_ReturnsCacheError()
+    {
+        var cmd = NewCommand();
+        var (exit, _) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(item: "root", path: Path.Combine(this.tempDir, "absent.yaml")));
+
+        exit.ShouldBe(ExitCodes.CacheError);
+    }
+
+    // -- read-plan-generation --
+
+    [Fact]
+    public async Task ReadPlanGeneration_MissingKey_ReturnsZeroAndPresentFalse()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGeneration(item: "root", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationResult)!;
+        result.Generation.ShouldBe(0);
+        result.Present.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ReadPlanGeneration_AfterRecord_ReflectsCurrentValue()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "5678", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "5678", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGeneration(item: "5678", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationResult)!;
+        result.Generation.ShouldBe(2);
+        result.Present.ShouldBeTrue();
+    }
+
+    // -- read-plan-generation-snapshot --
+
+    [Fact]
+    public async Task ReadPlanGenerationSnapshot_RootPlan_EmptyChain_ReturnsEmptySnapshot()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGenerationSnapshot(item: "root", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult)!;
+        result.ItemKey.ShouldBe("root");
+        result.ParentItemKey.ShouldBeNull();
+        result.ParentPlanGeneration.ShouldBe(0);
+        result.AncestorPlanGenerations.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ReadPlanGenerationSnapshot_ChildOfRoot_ProjectsRootGeneration()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "root", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "root", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGenerationSnapshot(item: "5678", ancestorIds: "root", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult)!;
+        result.ItemKey.ShouldBe("5678");
+        result.ParentItemKey.ShouldBe("root");
+        result.ParentPlanGeneration.ShouldBe(2);
+        result.AncestorPlanGenerations.Count.ShouldBe(1);
+        result.AncestorPlanGenerations["root"].ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ReadPlanGenerationSnapshot_Grandchild_ChainOrderingPreserved()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "root", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "5678", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "5678", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "5678", path: this.manifestPath));
+
+        // Grandchild item 9999, immediate parent = 5678, grandparent = root.
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGenerationSnapshot(item: "9999", ancestorIds: "5678,root", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult)!;
+        result.ParentItemKey.ShouldBe("5678");
+        result.ParentPlanGeneration.ShouldBe(3);
+        result.AncestorPlanGenerations["5678"].ShouldBe(3);
+        result.AncestorPlanGenerations["root"].ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ReadPlanGenerationSnapshot_AncestorWithoutRecordedGeneration_DefaultsToZero()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGenerationSnapshot(item: "5678", ancestorIds: "root", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult)!;
+        result.ParentItemKey.ShouldBe("root");
+        result.ParentPlanGeneration.ShouldBe(0);
+        result.AncestorPlanGenerations["root"].ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ReadPlanGenerationSnapshot_RootPlanWithAncestors_ReturnsConfigError()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGenerationSnapshot(item: "root", ancestorIds: "1234", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult)!;
+        result.Error!.ShouldContain("root plan must not declare ancestors");
+    }
+
+    [Fact]
+    public async Task ReadPlanGenerationSnapshot_SelfInAncestorChain_ReturnsConfigError()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGenerationSnapshot(item: "5678", ancestorIds: "root,5678", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult)!;
+        result.Error!.ShouldContain("must not appear in --ancestor-ids");
+    }
+
+    [Fact]
+    public async Task ReadPlanGenerationSnapshot_DuplicateAncestor_ReturnsConfigError()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGenerationSnapshot(item: "9999", ancestorIds: "5678,5678", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult)!;
+        result.Error!.ShouldContain("duplicate");
+    }
+
+    [Theory]
+    [InlineData("not-a-number")]
+    [InlineData("0")]
+    [InlineData("-7")]
+    public async Task ReadPlanGenerationSnapshot_InvalidAncestorEntry_ReturnsConfigError(string ancestor)
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGenerationSnapshot(item: "5678", ancestorIds: ancestor, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult)!;
+        result.Error!.ShouldContain("--ancestor-ids");
+    }
+
+    [Fact]
+    public async Task ReadPlanGenerationSnapshot_AncestorsWithSpaces_AreTrimmed()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+        await CaptureAsync(() => cmd.RecordPlanMerge(item: "root", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.ReadPlanGenerationSnapshot(item: "5678", ancestorIds: " root , 1234 ", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult)!;
+        result.ParentItemKey.ShouldBe("root");
+        result.AncestorPlanGenerations.Count.ShouldBe(2);
+        result.AncestorPlanGenerations["root"].ShouldBe(1);
+        result.AncestorPlanGenerations["1234"].ShouldBe(0);
+    }
 }

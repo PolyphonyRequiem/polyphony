@@ -310,6 +310,326 @@ public sealed partial class ManifestCommands
         }
     }
 
+    /// <summary>
+    /// Bumps <see cref="RunManifest.PlanGenerations"/> for the given plan
+    /// key by 1 (creating the entry if missing). The key is either the
+    /// literal <c>"root"</c> (root plan) or a positive numeric work-item
+    /// id (descendant plan), matching the convention used elsewhere in
+    /// the manifest.
+    ///
+    /// <para>Concurrency: the verb performs a best-effort atomic
+    /// load-mutate-save against the manifest file via
+    /// <see cref="RunManifestStore"/>. The caller is responsible for
+    /// holding the run lock for the run-cluster (typically via
+    /// <c>polyphony lock acquire</c>) when racing manifest mutations from
+    /// other processes. Without the lock, last-writer-wins.</para>
+    /// </summary>
+    /// <param name="item">Plan key: <c>root</c> or a positive numeric item id.</param>
+    /// <param name="path">Path to the manifest file.</param>
+    /// <param name="ct">Cancellation token.</param>
+    [Command("record-plan-merge")]
+    public Task<int> RecordPlanMerge(
+        string item,
+        string path = RunManifestStore.DefaultRelativePath,
+        CancellationToken ct = default)
+    {
+        _ = ct;
+
+        if (!TryNormalizePlanKey(item, out var itemKey, out var keyError))
+        {
+            EmitRecordPlanMergeError(path, item, keyError);
+            return Task.FromResult(ExitCodes.ConfigError);
+        }
+
+        try
+        {
+            var manifest = RunManifestStore.LoadOrThrow(path);
+            var previous = manifest.PlanGenerations.TryGetValue(itemKey, out var existing) ? existing : 0;
+            var current = previous + 1;
+            manifest.PlanGenerations[itemKey] = current;
+            RunManifestStore.Save(path, manifest);
+
+            Emit(new ManifestRecordPlanMergeResult
+            {
+                Path = path,
+                ItemKey = itemKey,
+                PreviousGeneration = previous,
+                CurrentGeneration = current,
+            });
+            return Task.FromResult(ExitCodes.Success);
+        }
+        catch (FileNotFoundException ex)
+        {
+            EmitRecordPlanMergeError(path, item, ex.Message);
+            return Task.FromResult(ExitCodes.CacheError);
+        }
+        catch (InvalidOperationException ex)
+        {
+            EmitRecordPlanMergeError(path, item, ex.Message);
+            return Task.FromResult(ExitCodes.ConfigError);
+        }
+    }
+
+    /// <summary>
+    /// Reads <see cref="RunManifest.PlanGenerations"/> for the given plan
+    /// key. Returns <c>0</c> with <c>present = false</c> when the key has
+    /// no recorded generation yet (i.e. no plan has been merged for this
+    /// item) — generations start at 0 by convention.
+    /// </summary>
+    /// <param name="item">Plan key: <c>root</c> or a positive numeric item id.</param>
+    /// <param name="path">Path to the manifest file.</param>
+    /// <param name="ct">Cancellation token.</param>
+    [Command("read-plan-generation")]
+    public Task<int> ReadPlanGeneration(
+        string item,
+        string path = RunManifestStore.DefaultRelativePath,
+        CancellationToken ct = default)
+    {
+        _ = ct;
+
+        if (!TryNormalizePlanKey(item, out var itemKey, out var keyError))
+        {
+            EmitReadPlanGenerationError(path, item, keyError);
+            return Task.FromResult(ExitCodes.ConfigError);
+        }
+
+        try
+        {
+            var manifest = RunManifestStore.LoadOrThrow(path);
+            var present = manifest.PlanGenerations.TryGetValue(itemKey, out var generation);
+            Emit(new ManifestReadPlanGenerationResult
+            {
+                Path = path,
+                ItemKey = itemKey,
+                Generation = present ? generation : 0,
+                Present = present,
+            });
+            return Task.FromResult(ExitCodes.Success);
+        }
+        catch (FileNotFoundException ex)
+        {
+            EmitReadPlanGenerationError(path, item, ex.Message);
+            return Task.FromResult(ExitCodes.CacheError);
+        }
+        catch (InvalidOperationException ex)
+        {
+            EmitReadPlanGenerationError(path, item, ex.Message);
+            return Task.FromResult(ExitCodes.ConfigError);
+        }
+    }
+
+    /// <summary>
+    /// Computes a plan-generation snapshot for a plan that is about to be
+    /// opened, recording the current generation of every declared
+    /// ancestor. The result is intended to be embedded in the plan PR's
+    /// body front-matter so that staleness can be detected later.
+    ///
+    /// <para>For the root plan, pass <c>--item root</c> and omit
+    /// <c>--ancestor-ids</c>. The result is an empty snapshot.</para>
+    ///
+    /// <para>For a descendant plan, pass the work-item id as
+    /// <c>--item</c> and the comma-separated ancestor chain as
+    /// <c>--ancestor-ids</c> in <em>immediate-parent-first</em> order
+    /// (e.g. <c>--ancestor-ids "1234,root"</c> for a grandchild whose
+    /// immediate parent is item 1234 and whose grandparent is the root
+    /// plan). The verb is purely projection: it does NOT consult the
+    /// work-item tree — the caller is expected to derive the chain via
+    /// twig or another hierarchy walker.</para>
+    /// </summary>
+    /// <param name="item">Plan key: <c>root</c> or a positive numeric item id.</param>
+    /// <param name="ancestorIds">Comma-separated ancestor chain (immediate parent first). Empty for the root plan.</param>
+    /// <param name="path">Path to the manifest file.</param>
+    /// <param name="ct">Cancellation token.</param>
+    [Command("read-plan-generation-snapshot")]
+    public Task<int> ReadPlanGenerationSnapshot(
+        string item,
+        string ancestorIds = "",
+        string path = RunManifestStore.DefaultRelativePath,
+        CancellationToken ct = default)
+    {
+        _ = ct;
+
+        if (!TryNormalizePlanKey(item, out var itemKey, out var keyError))
+        {
+            EmitSnapshotError(path, item, ancestorIds, keyError);
+            return Task.FromResult(ExitCodes.ConfigError);
+        }
+
+        if (!TryParseAncestorChain(ancestorIds, out var ancestorKeys, out var ancestorError))
+        {
+            EmitSnapshotError(path, item, ancestorIds, ancestorError);
+            return Task.FromResult(ExitCodes.ConfigError);
+        }
+
+        // Root-plan invariant: a root plan has no ancestors. Refuse a
+        // non-empty chain rather than silently producing an inconsistent
+        // snapshot — the caller has bug data and we should fail loud.
+        if (string.Equals(itemKey, "root", StringComparison.Ordinal) && ancestorKeys.Count > 0)
+        {
+            EmitSnapshotError(path, item, ancestorIds,
+                "root plan must not declare ancestors (got --ancestor-ids with entries).");
+            return Task.FromResult(ExitCodes.ConfigError);
+        }
+
+        // The plan key must not appear in its own ancestor chain.
+        if (ancestorKeys.Contains(itemKey))
+        {
+            EmitSnapshotError(path, item, ancestorIds,
+                $"--item value '{itemKey}' must not appear in --ancestor-ids.");
+            return Task.FromResult(ExitCodes.ConfigError);
+        }
+
+        try
+        {
+            var manifest = RunManifestStore.LoadOrThrow(path);
+
+            string? parentItemKey = ancestorKeys.Count == 0 ? null : ancestorKeys[0];
+            var parentGen = parentItemKey is null
+                ? 0
+                : (manifest.PlanGenerations.TryGetValue(parentItemKey, out var pg) ? pg : 0);
+
+            var snapshot = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var key in ancestorKeys)
+            {
+                snapshot[key] = manifest.PlanGenerations.TryGetValue(key, out var g) ? g : 0;
+            }
+
+            Emit(new ManifestReadPlanGenerationSnapshotResult
+            {
+                Path = path,
+                ItemKey = itemKey,
+                ParentItemKey = parentItemKey,
+                ParentPlanGeneration = parentGen,
+                AncestorPlanGenerations = snapshot,
+            });
+            return Task.FromResult(ExitCodes.Success);
+        }
+        catch (FileNotFoundException ex)
+        {
+            EmitSnapshotError(path, item, ancestorIds, ex.Message);
+            return Task.FromResult(ExitCodes.CacheError);
+        }
+        catch (InvalidOperationException ex)
+        {
+            EmitSnapshotError(path, item, ancestorIds, ex.Message);
+            return Task.FromResult(ExitCodes.ConfigError);
+        }
+    }
+
+    /// <summary>
+    /// Validates and normalizes a plan key (the <c>--item</c> arg). Returns
+    /// the canonical form: <c>"root"</c> for the root plan or the decimal
+    /// representation of a positive integer for descendants.
+    /// </summary>
+    private static bool TryNormalizePlanKey(string raw, out string itemKey, out string error)
+    {
+        itemKey = string.Empty;
+        error = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            error = "--item must be 'root' or a positive numeric work-item id.";
+            return false;
+        }
+
+        var trimmed = raw.Trim();
+        if (string.Equals(trimmed, "root", StringComparison.Ordinal))
+        {
+            itemKey = "root";
+            return true;
+        }
+
+        if (!int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var asInt) || asInt <= 0)
+        {
+            error = $"--item value '{raw}' must be 'root' or a positive numeric work-item id.";
+            return false;
+        }
+
+        itemKey = asInt.ToString(CultureInfo.InvariantCulture);
+        return true;
+    }
+
+    /// <summary>
+    /// Parses the <c>--ancestor-ids</c> argument: a comma-separated list
+    /// where each entry is either <c>"root"</c> or a positive numeric id.
+    /// Empty input parses to an empty list. Duplicates are rejected so the
+    /// snapshot map is unambiguous.
+    /// </summary>
+    private static bool TryParseAncestorChain(string raw, out List<string> ancestorKeys, out string error)
+    {
+        ancestorKeys = new List<string>();
+        error = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return true;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var entries = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var entry in entries)
+        {
+            if (!TryNormalizePlanKey(entry, out var key, out var perEntryError))
+            {
+                error = $"--ancestor-ids entry '{entry}' is invalid: {perEntryError}";
+                return false;
+            }
+
+            if (!seen.Add(key))
+            {
+                error = $"--ancestor-ids contains duplicate entry '{key}'.";
+                return false;
+            }
+
+            ancestorKeys.Add(key);
+        }
+
+        return true;
+    }
+
+    private static void EmitRecordPlanMergeError(string path, string item, string error)
+        => Emit(new ManifestRecordPlanMergeResult
+        {
+            Path = path,
+            ItemKey = item,
+            PreviousGeneration = 0,
+            CurrentGeneration = 0,
+            Error = error,
+        });
+
+    private static void EmitReadPlanGenerationError(string path, string item, string error)
+        => Emit(new ManifestReadPlanGenerationResult
+        {
+            Path = path,
+            ItemKey = item,
+            Generation = 0,
+            Present = false,
+            Error = error,
+        });
+
+    private static void EmitSnapshotError(string path, string item, string ancestorIds, string error)
+    {
+        _ = ancestorIds; // surfaced via Error message; kept for signature parity
+        Emit(new ManifestReadPlanGenerationSnapshotResult
+        {
+            Path = path,
+            ItemKey = item,
+            ParentItemKey = null,
+            ParentPlanGeneration = 0,
+            AncestorPlanGenerations = new Dictionary<string, int>(StringComparer.Ordinal),
+            Error = error,
+        });
+    }
+
+    private static void Emit(ManifestRecordPlanMergeResult r)
+        => Console.WriteLine(JsonSerializer.Serialize(r, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult));
+
+    private static void Emit(ManifestReadPlanGenerationResult r)
+        => Console.WriteLine(JsonSerializer.Serialize(r, PolyphonyJsonContext.Default.ManifestReadPlanGenerationResult));
+
+    private static void Emit(ManifestReadPlanGenerationSnapshotResult r)
+        => Console.WriteLine(JsonSerializer.Serialize(r, PolyphonyJsonContext.Default.ManifestReadPlanGenerationSnapshotResult));
+
     private static bool TryParseTimestamp(string raw, out DateTime value, out string error)
     {
         if (string.IsNullOrEmpty(raw))
