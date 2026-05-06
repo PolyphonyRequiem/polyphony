@@ -6,7 +6,7 @@
 # the sub-workflow cannot resolve issues (merged=false).
 #
 # Remediation cycle: merged=false → remediation_planner → remediation_seeder
-# → implement-pg (remediation PG) → feature_pr_updater (re-request review)
+# → implement-mg (remediation MG) → feature_pr_updater (re-request review)
 # → pr_platform_router (re-review). Capped at 3 cycles;
 # after that, a human gate fires for escalation.
 #
@@ -448,24 +448,39 @@ agents:
 
   # ── Remediation implementer ─────────────────────────────────────────────
   #
-  # Invokes implement-pg.yaml as a sub-workflow to execute the remediation
-  # PG. The remediation branch targets the feature branch (not main) so
-  # fixes land on the feature branch for the next review cycle. After
+  # Invokes implement-mg.yaml as a sub-workflow to execute the remediation
+  # MG. The remediation MG branch targets the feature branch (not main)
+  # so fixes land on the feature branch for the next review cycle. After
   # remediation merges, routes to feature_pr_updater which re-requests
   # review on the feature PR before looping back to pr_platform_router.
   #
+  # Uses implement-mg.yaml (not implement-pg.yaml) so the remediation
+  # path benefits from PR H's pr_platform_router — both GitHub (full
+  # lifecycle) and ADO (human-gate stub) are supported here.
+  #
   # Invariants:
-  #   Pre:  remediation_seeder.output.work_item_ids is a non-empty array.
-  #   Post: Remediation PG is implemented and merged into the feature branch.
+  #   Pre:  remediation_seeder.output.work_item_ids is a non-empty array;
+  #         work_item_ids carry the legacy `PG-{number}` tag for
+  #         `branch next-impl` / `branch close-scope` to find them.
+  #   Post: Remediation MG is implemented and merged into the feature branch.
   - name: remediation_implementer
     type: workflow
-    description: Execute remediation PG via implement-pg sub-workflow
-    workflow: ./implement-pg.yaml
+    description: Execute remediation MG via implement-mg sub-workflow
+    workflow: ./implement-mg.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
+      # Remediation runs at the apex layer — the apex IS the root for the
+      # remediation MG. Mirrors the synthesis in polyphony-implement.yaml's
+      # mg_execution_group input_mapping.
+      root_id: "{{ workflow.input.work_item_id }}"
       pg_number: "{{ remediation_seeder.output.pg_number }}"
+      # Synthesize Rev 4-valid mg_path from the legacy pg_number using the
+      # same `pg-{number}` convention pg_dispatcher uses in
+      # polyphony-implement.yaml. Items in the remediation PG still carry
+      # the legacy `PG-{number}` tag for `branch next-impl` /
+      # `branch close-scope` to find them.
+      mg_path: "pg-{{ remediation_seeder.output.pg_number }}"
       work_item_ids: "{{ remediation_seeder.output.work_item_ids }}"
-      branch_name: "{{ remediation_seeder.output.branch_name }}"
       feature_branch: "{{ workflow.input.feature_branch }}"
       platform: "{{ workflow.input.platform }}"
     routes:
