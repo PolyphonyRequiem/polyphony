@@ -1,24 +1,40 @@
 # plan-level — Recursive planning core for any plannable work item level.
 #
-# Replaces plan-design.yaml, plan-child.yaml, plan-issue.yaml, and
-# task-decomposition.yaml with a single type-agnostic workflow. Type
-# knowledge is injected at runtime via type_loader — no type-name literals
-# appear in this file.
+# v2.0 — Phase 3 P7b: replaces in-workflow LLM verdicts (technical_reviewer,
+# readability_reviewer, review_router, plan_approval) with platform-native
+# PR review.
+#
+# Lifecycle per invocation:
+#   1. resolve root + derive ancestor chain
+#   2. detect-state — find out where this plan tree branch already is
+#   3. branch on state:
+#        not_started     → architect → write_plan → ensure_plan_branch →
+#                          commit_and_push → open_plan_pr → plan_reviewer →
+#                          poll_status → route on review state
+#        awaiting_review → poll_status → route on review state
+#        stale_generation → architect (re-author against current ancestors)
+#        merged_unseeded → seeder → child_router (recurse)
+#        complete        → child_router (recurse only)
+#        closed_unmerged → blocked exit
+#        error           → state error gate
 #
 # Self-recursion: child_router discovers plannable children and invokes
-# this workflow per child with depth+1 (Task 2681).
+# this workflow per child with depth+1.
 #
 # Invariants:
 #   Pre:  work_item_id exists in ADO and is plannable per process-config.yaml.
-#   Post: Approved plan exists and child work items are seeded.
+#   Post: Either an approved + merged plan exists and child work items are
+#         seeded, OR the workflow exits with a structured "blocked" output
+#         that the caller can route on.
 
 workflow:
   name: plan-level
   description: >-
-    Recursive planning core. Plans a single hierarchy level by loading
-    type-specific context, running the architect agent with review pipeline,
-    and seeding child work items from the approved plan.
-  version: "1.0.1"
+    Recursive planning core (v2). Plans a single hierarchy level by writing
+    the architect's plan to a plan branch, opening a plan PR, surfacing
+    LLM advisory + human approval via native PR review, then merging and
+    seeding child work items.
+  version: "2.0.0"
   entry_point: depth_guard
   metadata:
     min_polyphony_version: "1.0.1"
@@ -34,27 +50,27 @@ workflow:
     work_item_id:
       type: number
       required: true
-      description: ADO work item ID to plan (type is runtime-injected; do not hardcode type names)
+      description: ADO work item id of the item being planned. (Type is runtime-injected; do not hardcode type names.)
     intent:
       type: string
       required: false
       default: resume
-      description: "new | redo | resume"
+      description: "new | redo | resume — currently only inspected by detect-state for routing on existing PRs"
     user_plan_path:
       type: string
       required: false
       default: ""
-      description: Path to user-authored plan document (refine, not discard)
+      description: Path to user-authored plan document (architect refines, not discards)
     depth:
       type: number
       required: false
       default: 0
-      description: Current recursion depth (0 = root level; type is runtime-injected; do not hardcode type names)
+      description: Current recursion depth (0 = root level)
     max_depth:
       type: number
       required: false
       default: 6
-      description: Maximum recursion depth before requiring human approval (type is runtime-injected; do not hardcode type names)
+      description: Maximum recursion depth before requiring human approval
 
 tools:
   - twig
@@ -87,37 +103,7 @@ agents:
       - to: depth_exceeded_gate
         when: "{{ depth_guard.output.allowed == false }}"
 
-  # ── Guidance loader ────────────────────────────────────────────────────
-  #
-  # Loads repo-specific agent guidance markdown from .conductor/agent-guidance/
-  # via load-agent-guidance.ps1. Outputs a JSON role map (keyed by filename
-  # without extension, e.g. "epic", "issue", "task"). The architect,
-  # technical_reviewer, and readability_reviewer agents consume their
-  # respective per-type keys via Jinja2 conditionals so prompts degrade
-  # gracefully when no guidance files exist.
-  #
-  # Invariants:
-  #   Pre:  depth_guard.output.allowed == true.
-  #   Post: output is a JSON object mapping role names to guidance content
-  #         (empty object {} when no agent-guidance directory exists).
-  - name: guidance_loader
-    type: script
-    description: Load agent guidance markdown files for planning agent prompts
-    command: polyphony
-    args:
-      - "plan"
-      - "load-guidance"
-    routes:
-      - to: type_loader
-
   # ── Depth exceeded gate ──────────────────────────────────────────────────
-  #
-  # Human notification that recursion depth has been exceeded. The user
-  # acknowledges and the workflow ends for this branch (P6).
-  #
-  # Invariants:
-  #   Pre:  depth_guard.output.allowed == false.
-  #   Post: User has acknowledged the depth limit; workflow ends.
   - name: depth_exceeded_gate
     type: human_gate
     prompt: |
@@ -139,15 +125,97 @@ agents:
         value: acknowledge
         route: $end
 
-  # ── Type loader ──────────────────────────────────────────────────────────
+  # ── Guidance loader ────────────────────────────────────────────────────
   #
-  # Loads type-specific context from .conductor/work-item-types/ for the
-  # given work item. Outputs the type name, semantic definition, plan
-  # template, and decomposition guidance — all consumed by the architect.
+  # Loads repo-specific agent guidance markdown. Architect and plan_reviewer
+  # consume their per-role keys via Jinja2 conditionals so prompts degrade
+  # gracefully when no guidance files exist.
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for planning agent prompts
+    command: polyphony
+    args:
+      - "plan"
+      - "load-guidance"
+    routes:
+      - to: root_resolver
+
+  # ── Root resolver ──────────────────────────────────────────────────────
+  #
+  # Resolves the run's root work-item id by walking up from work_item_id
+  # looking for the polyphony:root tag. plan-level.yaml is invoked from
+  # polyphony-planning.yaml which only knows work_item_id; the plan-PR
+  # verbs (branch ensure-plan, pr open-plan-pr, pr merge-plan-pr) need
+  # both root_id and item_id, so we derive root_id once at entry.
   #
   # Invariants:
-  #   Pre:  work_item_id exists in ADO; .conductor/work-item-types/ is configured.
-  #   Post: output contains { type, definition, template, decomposition_guidance }.
+  #   Pre:  work_item_id exists in ADO.
+  #   Post: output.resolved_root_id is set, OR fallback_required==true,
+  #         OR error is set.
+  - name: root_resolver
+    type: script
+    description: Resolve the run-root work-item id from the polyphony:root tag chain
+    command: polyphony
+    args:
+      - "root"
+      - "resolve"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: root_fallback_gate
+        when: "{{ root_resolver.output.fallback_required == true }}"
+      - to: root_resolver_error_gate
+        when: "{{ root_resolver.output.error is defined and root_resolver.output.error }}"
+      - to: type_loader
+
+  # ── Root fallback gate ──────────────────────────────────────────────
+  - name: root_fallback_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ No `polyphony:root` Ancestor Found
+
+      Plan-PR machinery requires a run-root work item tagged
+      `polyphony:root`. Walking ancestors of work item
+      **{{ workflow.input.work_item_id }}** did not find one within the
+      configured walk budget.
+
+      Tag the appropriate ancestor with `polyphony:root` (via
+      `polyphony root declare --work-item N`) and re-run, or acknowledge
+      to abort planning for this branch.
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning for this work item
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Root resolver error gate ──────────────────────────────────────────
+  - name: root_resolver_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Root Resolution Failed
+
+      Could not resolve the run root for work item
+      **{{ workflow.input.work_item_id }}**.
+
+      **Error:** {{ root_resolver.output.error if root_resolver.output.error is defined else "Unknown error — check that the work item exists in ADO." }}
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning for this work item
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Type loader ──────────────────────────────────────────────────────────
+  #
+  # Loads type-specific context from .conductor/work-item-types/. Outputs
+  # type name, semantic definition, plan template, and decomposition guidance.
   - name: type_loader
     type: script
     description: Load type-specific context from .conductor/work-item-types/
@@ -158,18 +226,11 @@ agents:
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
-      - to: route_check
+      - to: ancestor_chain
         when: "{{ type_loader.output.type is defined and type_loader.output.type != '' }}"
       - to: type_loader_error_gate
 
   # ── Type loader error gate ───────────────────────────────────────────────
-  #
-  # Human notification that type context loading failed. The user acknowledges
-  # and the workflow ends for this item.
-  #
-  # Invariants:
-  #   Pre:  type_loader has exited with a non-zero exit code.
-  #   Post: User has acknowledged the error; workflow ends.
   - name: type_loader_error_gate
     type: human_gate
     prompt: |
@@ -189,68 +250,177 @@ agents:
         value: abort
         route: $end
 
-  # ── Route check ──────────────────────────────────────────────────────────
+  # ── Ancestor chain derivation ─────────────────────────────────────────
   #
-  # Determines the current planning phase via Polyphony route. Enables
-  # re-entry (P3) by detecting whether the item needs planning, needs
-  # seeding, or is already planned.
+  # Walks the work-item parent chain from item to root and emits
+  # parent_item_id + ancestor_ids for the plan-PR verbs.
   #
   # Invariants:
-  #   Pre:  type_loader has completed successfully.
-  #   Post: output.phase is one of: needs_planning, needs_seeding, already_planned.
-  - name: route_check
+  #   Pre:  root_resolver succeeded; work_item_id is a descendant of root_id.
+  #   Post: output.parent_item_id, output.ancestor_ids, output.is_root_plan are set.
+  - name: ancestor_chain
     type: script
-    description: Detect planning phase via Polyphony route
+    description: Derive plan-tree ancestor chain (parent_item_id + ancestor_ids)
     command: polyphony
     args:
-      - "route"
-      - "--work-item"
+      - "plan"
+      - "derive-ancestor-chain"
+      - "--root-id"
+      - "{{ root_resolver.output.resolved_root_id }}"
+      - "--item-id"
       - "{{ workflow.input.work_item_id }}"
     routes:
+      - to: ancestor_chain_error_gate
+        when: "{{ ancestor_chain.output.error is defined and ancestor_chain.output.error }}"
+      - to: state_detector
+
+  # ── Ancestor chain error gate ─────────────────────────────────────────
+  - name: ancestor_chain_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Ancestor Chain Derivation Failed
+
+      Could not derive the plan-tree ancestor chain for work item
+      **{{ workflow.input.work_item_id }}** under root
+      **{{ root_resolver.output.resolved_root_id }}**.
+
+      **Error:** {{ ancestor_chain.output.error if ancestor_chain.output.error is defined else "Unknown error" }}
+
+      Common causes: work item is not actually a descendant of the root,
+      the parent chain is broken, or a cycle was detected.
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning for this work item
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── State detector ────────────────────────────────────────────────────
+  #
+  # The single oracle for "where is this plan tree branch right now?"
+  # Reads the plan branch on origin, the existing plan PR (if any), the
+  # PR's ancestor_plan_generations snapshot, and the current run manifest
+  # to decide which downstream path to take. Enables P3-style re-entry.
+  #
+  # States (see PlanDetectStateResult):
+  #   not_started       — no plan branch on origin
+  #   awaiting_review   — branch + open PR exist; plan is current
+  #   stale_generation  — branch + open PR exist; ancestor generations bumped
+  #   closed_unmerged   — PR exists but is closed without merge
+  #   merged_unseeded   — PR is merged but parent isn't tagged polyphony:planned
+  #   complete          — PR is merged AND parent is tagged polyphony:planned
+  #   error             — verb failed
+  #
+  # Invariants:
+  #   Pre:  root_id + item_id resolved.
+  #   Post: output.state is one of the values above.
+  - name: state_detector
+    type: script
+    description: Detect plan-tree state (not_started / awaiting_review / stale_generation / closed_unmerged / merged_unseeded / complete / error)
+    command: polyphony
+    args:
+      - "plan"
+      - "detect-state"
+      - "--root-id"
+      - "{{ root_resolver.output.resolved_root_id }}"
+      - "--item-id"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: state_detector_error_gate
+        when: "{{ state_detector.output.state == 'error' }}"
+      - to: child_router
+        when: "{{ state_detector.output.state == 'complete' }}"
+      - to: seeder
+        when: "{{ state_detector.output.state == 'merged_unseeded' }}"
+      - to: closed_unmerged_gate
+        when: "{{ state_detector.output.state == 'closed_unmerged' }}"
+      - to: poll_status
+        when: "{{ state_detector.output.state == 'awaiting_review' }}"
       - to: architect
-        when: "{{ route_check.output.phase == 'needs_planning' }}"
-      # needs_seeding is treated as needs_planning: if Polyphony route says we
-      # need to seed but the architect hasn't run in this invocation, we have
-      # no children input for the seeder. Re-run the architect; the marker-aware
-      # seeder will reconcile against existing children (idempotent), so this
-      # is safe and produces the right end state.
+        when: "{{ state_detector.output.state == 'stale_generation' }}"
       - to: architect
-        when: "{{ route_check.output.phase == 'needs_seeding' }}"
-      - to: $end
-        when: "{{ route_check.output.phase == 'already_planned' }}"
-      # Catch-all per M4: route_check is a polyphony script whose output
-      # domain isn't statically guaranteed. An unexpected phase value
-      # (typo, error path, schema drift) would otherwise raise
-      # `ValueError: No matching route found` mid-run.
-      - to: type_loader_error_gate
+        when: "{{ state_detector.output.state == 'not_started' }}"
+      # Catch-all per M4: unexpected state value should surface as a gate,
+      # not raise mid-run "no matching route".
+      - to: state_detector_error_gate
+
+  # ── State detector error gate ─────────────────────────────────────────
+  - name: state_detector_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Plan State Detection Failed
+
+      Could not detect plan-tree state for work item
+      **{{ workflow.input.work_item_id }}** under root
+      **{{ root_resolver.output.resolved_root_id }}**.
+
+      **State:** `{{ state_detector.output.state if state_detector.output.state is defined else "unknown" }}`
+      **Error:** {{ state_detector.output.error if state_detector.output.error is defined else "Unexpected state value — check polyphony plan detect-state output schema" }}
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning for this work item
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Closed-unmerged gate ───────────────────────────────────────────────
+  #
+  # Plan PR exists but was closed without merging. Operator likely chose
+  # to abandon this plan. Surface to user and end (do not auto-recreate).
+  - name: closed_unmerged_gate
+    type: human_gate
+    prompt: |
+      ## ℹ️ Plan PR Closed Without Merge
+
+      The plan PR for work item **{{ workflow.input.work_item_id }}** is
+      closed without being merged.
+
+      - **PR:** {{ state_detector.output.pr_url if state_detector.output.pr_url is defined else "(unknown)" }}
+      - **Branch:** `{{ state_detector.output.plan_branch }}`
+
+      The workflow will not auto-recreate the PR. To restart planning for
+      this item, delete the plan branch on origin and re-run.
+
+      ---
+
+      Choose an action:
+      - **Acknowledge** — stop planning this branch
+    options:
+      - label: "✅ Acknowledge"
+        value: acknowledge
+        route: $end
 
   # ── Architect agent ──────────────────────────────────────────────────────
   #
   # Core planning agent. Creates or refines a plan for the work item using
-  # type-specific definitions, templates, and decomposition guidance injected
-  # by type_loader. When user_plan_path is non-empty, refines the user plan
-  # rather than starting from scratch. Raises open questions as structured
-  # output rather than silently overriding user design decisions.
+  # type-specific definitions, templates, and decomposition guidance.
   #
-  # Invariants:
-  #   Pre:  route_check.output.phase == 'needs_planning'; type_loader outputs available.
-  #   Post: output.plan contains the plan artifact; output.open_questions may be non-empty.
+  # On stale_generation entry: must read existing plan from disk + PR
+  # comments, refine against current ancestors. The prompt instructs how.
+  #
+  # On revision loop entry (changes_requested from plan_reviewer/human):
+  # must read PR comments via gh and incorporate feedback.
+  #
+  # Outputs the same {plan, children, open_questions, summary} schema as
+  # v1.0 — the difference is what happens next: write_plan persists the
+  # markdown to disk; the seeder still consumes children; the open_questions
+  # gate still runs as before.
   - name: architect
     type: agent
     model: claude-opus-4.7
-    description: Create or refine a plan using type-specific context and decomposition guidance
+    description: Create or refine a plan using type-specific context, decomposition guidance, and any prior PR review feedback
     tools:
       - twig
       - gh
       - filesystem
     prompt: !file ../prompts/architect-plan-level.md
     output:
-      # Schema mirrors the JSON contract in prompts/architect-plan-level.md.
-      # Required by M2: routes and downstream prompts read
-      # `architect.output.plan`, `architect.output.children`, and
-      # `architect.output.open_questions` — without this schema the entire
-      # response lands in `output.result` and every named-field reference
-      # TemplateErrors.
       plan:
         type: string
         description: The full plan document in Markdown format
@@ -315,10 +485,6 @@ agents:
   # Resolves the open_questions policy domain for the current work item
   # type. Outputs mode, min_severity, and max_question_loops which drive
   # the routing decision below.
-  #
-  # Invariants:
-  #   Pre:  architect has completed; type_loader.output.type_name is available.
-  #   Post: output contains { mode, min_severity, max_question_loops }.
   - name: open_questions_policy
     type: script
     description: Resolve open_questions policy for routing decisions
@@ -335,14 +501,8 @@ agents:
 
   # ── Open questions loop counter ────────────────────────────────────────
   #
-  # Tracks the number of answer loops taken. Increments on each pass
-  # through the counter (i.e., each time the architect → gate → answer
-  # cycle completes). Mirrors the review_counter pattern in github-pr.yaml.
-  #
-  # Invariants:
-  #   Pre:  open_questions_policy has resolved.
-  #   Post: output.iteration is the current count (0-based on first pass);
-  #         output.cap_reached indicates whether max_question_loops is hit.
+  # Tracks the number of answer loops taken. Mirrors review_counter in
+  # github-pr.yaml.
   - name: open_questions_counter
     type: script
     description: Track open questions answer loop iteration count
@@ -362,10 +522,10 @@ agents:
         @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
     routes:
       # Policy mode=auto: skip gate entirely regardless of questions.
-      - to: review_group
+      - to: write_plan
         when: "{{ open_questions_policy.output.mode == 'auto' }}"
-      # Cap reached: auto-proceed to review (fail honestly, don't loop forever).
-      - to: review_group
+      # Cap reached: auto-proceed (fail honestly, don't loop forever).
+      - to: write_plan
         when: "{{ open_questions_counter.output.cap_reached == true }}"
       # Mode=manual: gate on ANY question present.
       - to: open_questions_gate
@@ -373,18 +533,10 @@ agents:
       # Mode=warning: gate only when questions at or above min_severity exist.
       - to: open_questions_gate
         when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
-      # Else: no gating questions — proceed to review.
-      - to: review_group
+      # Else: no gating questions — proceed to write_plan.
+      - to: write_plan
 
   # ── Open questions gate ──────────────────────────────────────────────────
-  #
-  # Surfaces the architect's open questions to the user. The user can
-  # provide answers (looping back to architect for revision) or proceed
-  # to review without answering (P6).
-  #
-  # Invariants:
-  #   Pre:  architect.output.open_questions is a non-empty array; policy mode != auto.
-  #   Post: User has answered questions or chosen to proceed.
   - name: open_questions_gate
     type: human_gate
     prompt: |
@@ -411,24 +563,17 @@ agents:
 
       Choose an action:
       - **Answer** — provide answers and revise the plan
-      - **Proceed** — continue to review without answering
+      - **Proceed** — continue (write plan + open PR for review)
     options:
       - label: "💬 Answer"
         value: answer
         route: open_questions_answer_counter
         prompt_for: answers
-      - label: "⏩ Proceed to Review"
+      - label: "⏩ Proceed"
         value: proceed
-        route: review_group
+        route: write_plan
 
   # ── Open questions answer counter increment ────────────────────────────
-  #
-  # Increments the loop counter when the user chooses "answer" so that
-  # the cap is enforced on the next pass through routing.
-  #
-  # Invariants:
-  #   Pre:  User selected "answer" at the open_questions_gate.
-  #   Post: Counter file incremented; routes back to architect.
   - name: open_questions_answer_counter
     type: script
     description: Increment open questions loop counter on answer route
@@ -448,209 +593,305 @@ agents:
     routes:
       - to: architect
 
-  # ── Review group (parallel) ──────────────────────────────────────────────
+  # ── Write plan to disk ─────────────────────────────────────────────────
   #
-  # Defined as a top-level `parallel:` block at the bottom of this file,
-  # alongside `for_each:` and `agents:`. Conductor's schema requires
-  # parallel/for_each groups to be siblings of `agents:`, NOT nested
-  # inside agents-list items — see the parallel: block below for the
-  # actual definition.
-
-  # ── Technical reviewer ───────────────────────────────────────────────────
-  #
-  # Reviews the architect's plan for technical soundness, feasibility,
-  # and alignment with the type's decomposition guidance. Scores 0-100.
+  # Persists architect.output.plan to plans/plan-{item_id}.md. Pure I/O —
+  # no git ops, no PR ops. ensure_plan_branch (next) owns branch state;
+  # commit_and_push (after that) owns commit + push.
   #
   # Invariants:
-  #   Pre:  architect.output.plan exists.
-  #   Post: output.score (0-100) and output.feedback (string) are set.
-  - name: technical_reviewer
+  #   Pre:  architect.output.plan is non-empty.
+  #   Post: plans/plan-{item_id}.md exists with the plan markdown; output.path
+  #         is the absolute path; output.unchanged indicates noop on resume.
+  - name: write_plan
+    type: script
+    description: Write architect's plan markdown to plans/plan-{item_id}.md
+    command: polyphony
+    args:
+      - "plan"
+      - "write-plan"
+      - "--item-id"
+      - "{{ workflow.input.work_item_id }}"
+      - "--content-json"
+      - "{{ architect.output.plan | tojson }}"
+    routes:
+      - to: write_plan_error_gate
+        when: "{{ write_plan.output.error is defined and write_plan.output.error }}"
+      - to: ensure_plan_branch
+
+  # ── Write plan error gate ──────────────────────────────────────────────
+  - name: write_plan_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Plan Write Failed
+
+      Could not write the plan for work item
+      **{{ workflow.input.work_item_id }}** to disk.
+
+      **Error:** {{ write_plan.output.error if write_plan.output.error is defined else "Unknown error" }}
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Ensure plan branch ────────────────────────────────────────────────
+  #
+  # Idempotently creates (or fast-forwards to) the plan branch and checks
+  # it out. Branch grammar from the Rev 4 ADR:
+  #   plan/{root_id}                  — root plan (base = feature/{root_id})
+  #   plan/{root_id}-{item_id}        — descendant plan (base = parent plan branch)
+  #
+  # Invariants:
+  #   Pre:  root_id + item_id resolved; ancestor_chain has parent_item_id.
+  #   Post: Worktree is on the plan branch; output.branch is the plan branch name.
+  - name: ensure_plan_branch
+    type: script
+    description: Idempotently create/checkout the plan branch off its parent base
+    command: polyphony
+    args:
+      - "branch"
+      - "ensure-plan"
+      - "--root-id"
+      - "{{ root_resolver.output.resolved_root_id }}"
+      - "--item-id"
+      - "{{ workflow.input.work_item_id }}"
+      - "--parent-item-id"
+      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+    routes:
+      - to: ensure_plan_branch_error_gate
+        when: "{{ ensure_plan_branch.output.error is defined and ensure_plan_branch.output.error }}"
+      - to: commit_and_push
+
+  # ── Ensure plan branch error gate ─────────────────────────────────────
+  - name: ensure_plan_branch_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Plan Branch Setup Failed
+
+      Could not create or check out the plan branch for work item
+      **{{ workflow.input.work_item_id }}**.
+
+      **Error:** {{ ensure_plan_branch.output.error if ensure_plan_branch.output.error is defined else "Unknown error" }}
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Commit and push ────────────────────────────────────────────────────
+  #
+  # Stages plans/plan-{item_id}.md, commits with a deterministic message,
+  # and pushes to origin. Idempotent — emits no_changes when nothing is
+  # staged (e.g., resume on already-pushed plan).
+  #
+  # Invariants:
+  #   Pre:  Worktree on plan branch; plans/plan-{item_id}.md exists.
+  #   Post: Either output.pushed == true (PR will be opened/updated next) OR
+  #         output.no_op_reason == 'no_changes' (PR may already exist with
+  #         this content; open_plan_pr handles reuse).
+  - name: commit_and_push
+    type: script
+    description: Stage plans/plan-{item_id}.md, commit, push to origin
+    command: polyphony
+    args:
+      - "plan"
+      - "commit-and-push"
+      - "--branch"
+      - "{{ ensure_plan_branch.output.branch }}"
+      - "--message"
+      - "plan({{ workflow.input.work_item_id }}): write plan-{{ workflow.input.work_item_id }}.md"
+      - "--paths"
+      - "plans/plan-{{ workflow.input.work_item_id }}.md"
+    routes:
+      - to: commit_and_push_error_gate
+        when: "{{ commit_and_push.output.error is defined and commit_and_push.output.error }}"
+      - to: open_plan_pr
+
+  # ── Commit and push error gate ────────────────────────────────────────
+  - name: commit_and_push_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Plan Commit/Push Failed
+
+      Could not commit and push the plan for work item
+      **{{ workflow.input.work_item_id }}**.
+
+      **Branch:** `{{ ensure_plan_branch.output.branch }}`
+      **Error:** {{ commit_and_push.output.error if commit_and_push.output.error is defined else "Unknown error" }}
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Open plan PR ───────────────────────────────────────────────────────
+  #
+  # Opens the plan PR (or returns the existing one) and embeds the
+  # ancestor_plan_generations snapshot in the PR body front-matter for
+  # later stale-generation detection at merge time.
+  #
+  # Reuse semantics: an existing PR with a matching snapshot is returned;
+  # an existing PR with a stale snapshot is rejected (operator decides).
+  #
+  # Invariants:
+  #   Pre:  commit_and_push produced a pushable plan branch.
+  #   Post: output.pr_url + output.pr_number identify the plan PR;
+  #         output.created indicates whether it was just opened.
+  - name: open_plan_pr
+    type: script
+    description: Open (or reuse) the plan PR with ancestor-generations snapshot
+    command: polyphony
+    args:
+      - "pr"
+      - "open-plan-pr"
+      - "--root-id"
+      - "{{ root_resolver.output.resolved_root_id }}"
+      - "--item-id"
+      - "{{ workflow.input.work_item_id }}"
+      - "--parent-item-id"
+      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+      - "--ancestor-ids"
+      - "{{ ancestor_chain.output.ancestor_ids }}"
+    routes:
+      - to: open_plan_pr_error_gate
+        when: "{{ open_plan_pr.output.error is defined and open_plan_pr.output.error }}"
+      - to: plan_reviewer
+
+  # ── Open plan PR error gate ────────────────────────────────────────────
+  - name: open_plan_pr_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Plan PR Open Failed
+
+      Could not open the plan PR for work item
+      **{{ workflow.input.work_item_id }}**.
+
+      **Branch:** `{{ ensure_plan_branch.output.branch }}`
+      **Error:** {{ open_plan_pr.output.error if open_plan_pr.output.error is defined else "Unknown error" }}
+
+      Common causes: stale ancestor snapshot on an existing PR (operator
+      must close/recreate); gh authentication missing; network timeout.
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Plan reviewer (LLM advisory) ───────────────────────────────────────
+  #
+  # Single LLM reviewer per design doc Q2. Posts an advisory PR comment
+  # via `gh pr review --comment --body` and returns. Does NOT vote
+  # approve/changes_requested — option 2 from the P7-pre identity model
+  # decision: LLM is advisory, human approval is the gate.
+  #
+  # Per Q5, the agent uses the gh tool directly; no aggregator script.
+  #
+  # Invariants:
+  #   Pre:  open_plan_pr produced output.pr_url + output.pr_number.
+  #   Post: A comment is posted on the PR; output.posted == true.
+  - name: plan_reviewer
     type: agent
     model: claude-opus-4.7
-    description: Review plan for technical soundness and feasibility
+    description: Post a single advisory review comment on the plan PR (LLM does NOT vote)
+    tools:
+      - gh
+      - filesystem
     output:
-      # Schema mirrors the JSON contract in this agent's prompt below.
-      # Required by M2: review_router and plan_approval read
-      # Accessible from review_router/templates as
-      # `review_group.outputs.technical_reviewer.score` / `.feedback`
-      # (parallel-group member outputs nest under `<group>.outputs.<agent>`,
-      # not as top-level context vars; see conductor-mechanics M8 and
-      # microsoft/conductor#140).
-      score:
+      posted:
+        type: boolean
+        description: Whether a comment was posted (true on success, false on skip/error)
+      pr_number:
         type: number
-        description: Numeric review score 0-100
-      feedback:
+        description: PR number that was reviewed
+      summary:
         type: string
-        description: Detailed feedback on the plan (full narrative — used in plan_approval display)
-      blocking_issues:
-        type: array
-        description: Issues that prevent the plan from passing review. The architect is asked to address ONLY these on revision (no nice-to-haves).
-        items:
-          type: string
-      suggestions:
-        type: array
-        description: Optional improvements that are NOT blocking. The architect may consider these but is explicitly asked to ignore them on revision.
-        items:
-          type: string
+        description: One-paragraph summary of the reviewer's overall assessment
       strengths:
         type: array
-        description: List of plan strengths
+        description: Plan strengths (also included in the posted comment)
         items:
           type: string
-      weaknesses:
+      concerns:
         type: array
-        description: List of plan weaknesses
+        description: Plan concerns (also included in the posted comment)
         items:
           type: string
     prompt: |
-      You are a technical reviewer for an SDLC planning workflow.
+      You are an advisory plan reviewer for an SDLC planning workflow.
 
       ## Your Mission
 
-      Review the following plan for technical soundness, feasibility, and
-      alignment with the decomposition guidance. Score the plan 0-100, and
-      separate your findings into **blocking issues** (must-fix to pass) and
-      **suggestions** (nice-to-haves the architect should ignore on revision).
+      Read the plan and post **one** advisory comment on the plan PR using
+      `gh pr review {{ open_plan_pr.output.pr_number }} --comment --body "..."`.
+      You do NOT vote `--approve` or `--request-changes` — human review is the
+      gate. Your job is to give the human reviewer a useful starting point.
 
       ## Context
 
       - **Work item:** {{ workflow.input.work_item_id }}
       - **Type definition:** {{ type_loader.output.definition }}
       - **Decomposition guidance:** {{ type_loader.output.decomposition_guidance }}
-
-      ## Plan to Review
-
-      {{ architect.output.plan }}
-
-      ## Scoring Criteria
-
-      | Criterion | Weight | Description |
-      |-----------|--------|-------------|
-      | Feasibility | 30% | Can the plan be implemented as described? |
-      | Completeness | 25% | Does the plan cover all aspects of the work item? |
-      | Decomposition | 25% | Are child items well-scoped and appropriately sized? |
-      | Alignment | 20% | Does the plan follow type-specific guidance? |
-
-      ## Blocking vs Suggestion — guidance
-
-      An issue is **blocking** if any of the following apply:
-      - The plan would fail acceptance criteria as written
-      - A design choice is technically infeasible or contradicts the type guidance
-      - A child item is missing, mis-sized, or has unclear acceptance criteria
-      - A dependency or risk is unaccounted for and would derail implementation
-
-      Everything else is a **suggestion** — stylistic preferences, additional
-      detail you'd like to see, alternative phrasings, etc. **Be conservative
-      with blocking issues** — every blocking item triggers a revision cycle,
-      and revision cycles are capped at 5.
-
-      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
-      ## Repo-Specific Guidance
-
-      {{ guidance_loader.output.reviewer }}
-      {% endif %}
-
-      ## Output
-
-      Return a JSON object:
-      ```json
-      {
-        "score": 0,
-        "feedback": "Detailed feedback on the plan",
-        "blocking_issues": ["Concrete issue 1 the architect must fix", "..."],
-        "suggestions": ["Optional nit 1", "..."],
-        "strengths": ["..."],
-        "weaknesses": ["..."]
-      }
-      ```
-
-      `blocking_issues` should be empty `[]` when the plan passes review (score
-      ≥ 90 with no must-fix items). Each item in `blocking_issues` should be a
-      single, actionable sentence — the architect will see these as a flat
-      list and address each one.
-
-  # ── Readability reviewer ─────────────────────────────────────────────────
-  #
-  # Reviews the plan for clarity, completeness of documentation, and
-  # readability by both humans and downstream agents. Scores 0-100.
-  #
-  # Invariants:
-  #   Pre:  architect.output.plan exists.
-  #   Post: output.score (0-100) and output.feedback (string) are set.
-  - name: readability_reviewer
-    type: agent
-    model: claude-sonnet-4.6
-    description: Review plan for clarity and completeness
-    output:
-      # Schema mirrors this agent's JSON contract below; matches
-      # technical_reviewer's shape so review_router can treat them
-      # interchangeably. Required by M2.
-      score:
-        type: number
-        description: Numeric review score 0-100
-      feedback:
-        type: string
-        description: Detailed feedback on the plan (full narrative — used in plan_approval display)
-      blocking_issues:
-        type: array
-        description: Issues that prevent the plan from passing review. The architect is asked to address ONLY these on revision (no nice-to-haves).
-        items:
-          type: string
-      suggestions:
-        type: array
-        description: Optional improvements that are NOT blocking. The architect may consider these but is explicitly asked to ignore them on revision.
-        items:
-          type: string
-      strengths:
-        type: array
-        description: List of plan strengths
-        items:
-          type: string
-      weaknesses:
-        type: array
-        description: List of plan weaknesses
-        items:
-          type: string
-    prompt: |
-      You are a readability reviewer for an SDLC planning workflow.
-
-      ## Your Mission
-
-      Review the following plan for clarity, completeness, and readability.
-      Score the plan 0-100, and separate your findings into **blocking
-      issues** (must-fix to pass) and **suggestions** (nice-to-haves the
-      architect should ignore on revision).
-
-      ## Context
-
-      - **Work item:** {{ workflow.input.work_item_id }}
       - **Plan template:** {{ type_loader.output.template }}
+      - **PR URL:** {{ open_plan_pr.output.pr_url }}
+      - **PR number:** {{ open_plan_pr.output.pr_number }}
+      - **Plan file path:** plans/plan-{{ workflow.input.work_item_id }}.md
 
-      ## Plan to Review
+      Read the plan from disk (the working tree is on the plan branch).
 
-      {{ architect.output.plan }}
+      ## Rubric (combined technical + readability)
 
-      ## Scoring Criteria
+      | Criterion | Weight | Notes |
+      |---|---|---|
+      | Feasibility | 25% | Can the plan be implemented as described? |
+      | Completeness | 20% | Does the plan cover all aspects of the work item? |
+      | Decomposition | 20% | Are child items well-scoped, sized, and dependency-correct? |
+      | Alignment | 15% | Does the plan follow the type's guidance? |
+      | Clarity | 10% | Is the plan easy for a downstream agent or human to act on? |
+      | Acceptance criteria | 10% | Are acceptance criteria present, testable, unambiguous? |
 
-      | Criterion | Weight | Description |
-      |-----------|--------|-------------|
-      | Clarity | 30% | Is the plan easy to understand? |
-      | Structure | 25% | Does it follow the template structure? |
-      | Completeness | 25% | Are acceptance criteria, scope, and goals clear? |
-      | Actionability | 20% | Can downstream agents and humans act on it? |
+      ## Comment shape
 
-      ## Blocking vs Suggestion — guidance
+      Post a single comment with this structure (markdown):
 
-      An issue is **blocking** if any of the following apply:
-      - A required template section is missing or so unclear it would block downstream work
-      - Acceptance criteria are absent, contradictory, or untestable
-      - Scope or goals are ambiguous in a way that would derail implementation
-      - The plan structure is so disorganized that a downstream agent could not act on it
+      ```
+      ### 🤖 Polyphony plan reviewer (advisory)
 
-      Everything else is a **suggestion** — phrasing, style, additional
-      examples, formatting preferences, etc. **Be conservative with blocking
-      issues** — every blocking item triggers a revision cycle, and revision
-      cycles are capped at 5.
+      **Summary:** <one paragraph>
+
+      **Strengths**
+      - …
+
+      **Concerns**
+      - …
+
+      **Suggested changes**
+      - … (only what would materially improve the plan; skip nits)
+
+      _This is an advisory comment from the polyphony plan_reviewer agent.
+      It does not vote — human review is the merge gate._
+      ```
+
+      Do **not** post multiple comments. If you've already posted a review on
+      this PR (use `gh pr view {{ open_plan_pr.output.pr_number }} --comments`
+      to check), post a new comment that explicitly references the prior one
+      (e.g., "## Re-review (revision N)").
 
       {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
       ## Repo-Specific Guidance
@@ -660,142 +901,309 @@ agents:
 
       ## Output
 
-      Return a JSON object:
+      After posting, return JSON:
       ```json
       {
-        "score": 0,
-        "feedback": "Detailed feedback on the plan",
-        "blocking_issues": ["Concrete issue 1 the architect must fix", "..."],
-        "suggestions": ["Optional nit 1", "..."],
+        "posted": true,
+        "pr_number": {{ open_plan_pr.output.pr_number }},
+        "summary": "<one paragraph>",
         "strengths": ["..."],
-        "weaknesses": ["..."]
+        "concerns": ["..."]
       }
       ```
+    routes:
+      - to: poll_status
 
-      `blocking_issues` should be empty `[]` when the plan passes review (score
-      ≥ 90 with no must-fix items). Each item should be a single, actionable
-      sentence.
-
-  # ── Review router ────────────────────────────────────────────────────────
+  # ── Poll status ───────────────────────────────────────────────────────
   #
-  # Evaluates combined review scores and routes accordingly. Scores below
-  # 90 loop back to the architect for revision; scores >= 90 proceed to
-  # human approval.
+  # Single-shot poll of the plan PR's aggregated review state. With
+  # --include-metadata, also returns metadata.requests_parent_change
+  # parsed from the PR body front-matter (used for the P8 deferred
+  # parent-change-request handling).
   #
   # Invariants:
-  #   Pre:  technical_reviewer and readability_reviewer have produced scores.
-  #   Post: Routes to architect (revise) or plan_approval based on scores.
-  - name: review_router
+  #   Pre:  open_plan_pr produced output.pr_url; plan_reviewer has posted (or
+  #         we're re-entering on awaiting_review and the prior reviewer comment
+  #         is already on the PR).
+  #   Post: output.state in {approved, changes_requested, pending, merged, closed}.
+  - name: poll_status
     type: script
-    description: Aggregate reviewer outputs and decide architect-revise vs plan_approval (5-revision cap, blocking-issue-aware)
+    description: Single-shot poll of plan PR review state (with metadata)
     command: polyphony
     args:
-      - "plan"
-      - "review"
-      - "--tech-reviewer-json"
-      - "{{ review_group.outputs.technical_reviewer | tojson }}"
-      - "--readability-reviewer-json"
-      - "{{ review_group.outputs.readability_reviewer | tojson }}"
-      - "--prior-cycle-count"
-      - "{{ context.history | select('equalto', 'review_router') | list | length }}"
+      - "pr"
+      - "poll-status"
+      - "--pr-url"
+      - "{{ open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url }}"
+      - "--include-metadata"
     routes:
-      - to: architect
-        when: "{{ review_router.output.passed == false }}"
-      - to: plan_approval
-        when: "{{ review_router.output.passed == true }}"
+      - to: poll_error_gate
+        when: "{{ poll_status.output.error is defined and poll_status.output.error }}"
+      - to: parent_change_blocked_exit
+        when: "{{ poll_status.output.state == 'approved' and poll_status.output.metadata is defined and poll_status.output.metadata is not none and poll_status.output.metadata.requests_parent_change == true }}"
+      - to: merge_plan_pr
+        when: "{{ poll_status.output.state == 'approved' }}"
+      - to: revise_counter
+        when: "{{ poll_status.output.state == 'changes_requested' }}"
+      - to: pending_review_gate
+        when: "{{ poll_status.output.state == 'pending' }}"
+      - to: seeder
+        when: "{{ poll_status.output.state == 'merged' }}"
+      - to: closed_unmerged_gate
+        when: "{{ poll_status.output.state == 'closed' }}"
+      # Catch-all per M4
+      - to: poll_error_gate
 
-  # ── Plan approval gate ───────────────────────────────────────────────────
-  #
-  # Human decision point for the final plan. Presents the plan with review
-  # scores and a link to the plan artifact. The user can approve (proceed
-  # to seeding), revise (loop back to architect), or reject (end) (P6, P13).
-  #
-  # Invariants:
-  #   Pre:  review_router.output.passed == true.
-  #   Post: User has approved, requested revision, or rejected the plan.
-  - name: plan_approval
+  # ── Poll error gate ───────────────────────────────────────────────────
+  - name: poll_error_gate
     type: human_gate
     prompt: |
-      ## 📋 Plan Approval — Work Item {{ workflow.input.work_item_id }}
+      ## ⚠️ Plan PR Poll Failed
 
-      {% if review_router.output.forced_by_cap %}
-      > ⚠️ **Revision cap hit.** The architect produced 5 revisions but the
-      > combined review score is still **{{ review_router.output.average_score }}**/100
-      > with **{{ review_router.output.blocking_issue_count }} blocking issue(s)
-      > unresolved**. Routing has been forced to this gate so a human can
-      > decide. Review the outstanding blocking issues below carefully before
-      > approving.
+      Could not read the plan PR review state for work item
+      **{{ workflow.input.work_item_id }}**.
 
-      ### Outstanding blocking issues
-
-      {{ review_router.output.combined_feedback }}
-      {% else %}
-      The architect's plan has passed review with an average score of
-      **{{ review_router.output.average_score }}**/100
-      (after {{ review_router.output.revision_cycles_completed }} revision
-      cycle(s); {{ review_router.output.blocking_issue_count }} blocking
-      issue(s) at pass time).
-      {% endif %}
-
-      ### Review Scores
-
-      | Reviewer | Score | Feedback |
-      |----------|-------|----------|
-      | Technical | {{ review_router.output.technical_score }} | {{ review_group.outputs.technical_reviewer.feedback }} |
-      | Readability | {{ review_router.output.readability_score }} | {{ review_group.outputs.readability_reviewer.feedback }} |
-
-      ### Plan Summary
-
-      {{ architect.output.plan }}
+      **State:** `{{ poll_status.output.state if poll_status.output.state is defined else "unknown" }}`
+      **Error:** {{ poll_status.output.error if poll_status.output.error is defined else "Unexpected state — check polyphony pr poll-status output schema" }}
 
       ---
 
       Choose an action:
-      - **Approve** — accept the plan and proceed to seed child work items
-      - **Revise** — send the plan back to the architect with feedback
-      - **Reject** — discard the plan and end planning for this item
+      - **Retry** — re-poll the PR
+      - **Abort** — cancel planning
     options:
-      - label: "✅ Approve"
-        value: approved
-        route: seeder
-      - label: "🔄 Revise"
-        value: revise
-        route: architect
-        prompt_for: revision_feedback
-      - label: "❌ Reject"
-        value: reject
+      - label: "🔄 Retry"
+        value: retry
+        route: poll_status
+      - label: "🛑 Abort"
+        value: abort
         route: $end
 
-  # ── Seeder script (P8 + P14) ─────────────────────────────────────────────
+  # ── Parent-change blocked exit (P8 placeholder) ────────────────────────
   #
-  # Deterministic seeder. Consumes architect.output.children (structured array)
-  # and reconciles against existing children of the parent work item via
-  # marker-aware idempotent matching, then sets the polyphony:planned tag on
-  # the parent. Replaces the prior LLM seeder agent (which re-parsed plan
-  # markdown and produced duplicates on re-runs).
+  # Per design doc Q8: refuse to merge any plan PR with
+  # `requests_parent_change: true` and exit cleanly. The full P8
+  # renegotiation cascade lands in a later PR.
+  - name: parent_change_blocked_exit
+    type: human_gate
+    prompt: |
+      ## 🚧 Plan PR Requests Parent Change (P8 — not yet implemented)
+
+      The plan PR for work item **{{ workflow.input.work_item_id }}** is
+      approved but its body front-matter sets
+      `requests_parent_change: true`. The full parent-renegotiation cascade
+      (Phase 3 P8) is not yet implemented, so we cannot auto-promote this
+      plan into the parent.
+
+      - **PR:** {{ open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url }}
+
+      ---
+
+      Choose an action:
+      - **Acknowledge** — stop planning this branch (escalate to human)
+    options:
+      - label: "✅ Acknowledge"
+        value: acknowledge
+        route: $end
+
+  # ── Pending-review gate (in-workflow human checkpoint) ────────────────
   #
-  # Match precedence per child entry:
-  #   1. Existing child whose description contains
-  #      <!-- polyphony:plan-child-id={id} --> matching the architect's id
-  #      → reused, no create.
-  #   2. Existing child with matching (title, type) under the parent → reused
-  #      with a warning (marker damaged or missing).
-  #   3. No match → create via `twig new`, embedding the marker as the last
-  #      line of description.
+  # When poll_status returns 'pending' we surface a gate with the PR URL
+  # so the human can review on GitHub/ADO and come back to continue.
   #
-  # On success (no errors), sets/merges `polyphony:planned` into the parent's
-  # System.Tags. The polyphony route command reads this tag to recognize the
-  # planned state without touching process-config.
+  # NOTE: design doc Q3 recommended option (b) "exit-with-pending" so the
+  # outer state_detector loop re-enters when human feedback lands. We
+  # currently use option (a) human_gate because polyphony-full.yaml's
+  # state_detector still uses the OLD single-string phase model and would
+  # infinite-loop on the awaiting_review state. Switch to option (b)
+  # lands with Phase 2c (workflow YAML migration to requirement+disposition).
+  - name: pending_review_gate
+    type: human_gate
+    prompt: |
+      ## ⏳ Plan PR Awaiting Review — Work Item {{ workflow.input.work_item_id }}
+
+      The plan PR is open and the polyphony plan_reviewer has posted an
+      advisory comment. Human review is required before merging.
+
+      - **PR:** {{ open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url }}
+      - **Branch:** `{{ ensure_plan_branch.output.branch if ensure_plan_branch.output.branch is defined else state_detector.output.plan_branch }}`
+
+      Review the PR on GitHub/ADO. Approve to proceed with merge + seeding,
+      or request changes to send the architect back for revision. Then
+      return here and click **Continue**.
+
+      ---
+
+      Choose an action:
+      - **Continue** — re-poll the PR for the updated state
+      - **Abort** — stop planning this branch
+    options:
+      - label: "🔄 Continue"
+        value: continue
+        route: poll_status
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Revise counter ────────────────────────────────────────────────────
+  #
+  # Tracks the number of architect-revision cycles when reviewers request
+  # changes. Capped at 5 to prevent runaway loops; on cap, escalates to a
+  # human gate that lets the operator approve the current plan, force a
+  # final revision, or abort.
+  - name: revise_counter
+    type: script
+    description: Track architect-revise loop iteration count (cap 5)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-plan-revise-{{ workflow.input.work_item_id }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        $maxRevisions = 5
+        $capReached = $count -ge $maxRevisions
+        @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached } | ConvertTo-Json
+    routes:
+      - to: revise_cap_gate
+        when: "{{ revise_counter.output.cap_reached == true }}"
+      - to: architect
+
+  # ── Revise cap gate ───────────────────────────────────────────────────
+  - name: revise_cap_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Revision Cap Hit — Work Item {{ workflow.input.work_item_id }}
+
+      The architect has produced **{{ revise_counter.output.max_revisions }}**
+      revisions but reviewers are still requesting changes.
+
+      - **PR:** {{ open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url }}
+
+      Decide what to do:
+
+      ---
+
+      Choose an action:
+      - **Re-poll** — perhaps reviewers approved since the last revision; check PR state again
+      - **Force revision** — send the architect through one more revision cycle
+      - **Abort** — stop planning this branch
+    options:
+      - label: "🔄 Re-poll PR"
+        value: repoll
+        route: poll_status
+      - label: "✏️ Force one more revision"
+        value: force
+        route: architect
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Merge plan PR ─────────────────────────────────────────────────────
+  #
+  # Atomic merge + manifest update. On success, plan_generations[item_key]
+  # is bumped in the run manifest and the manifest commit is pushed back
+  # to feature/{root}. On stale_generation error, surfaces a gate.
   #
   # Invariants:
-  #   Pre:  architect.output.children is a (possibly empty) array; type_loader
-  #         outputs available.
-  #   Post: Child work items exist in ADO with markers stamped; parent is
-  #         tagged polyphony:planned (only if no errors); output.seeded_count
-  #         + reused_count + error_count reflect the actual reconciliation.
+  #   Pre:  poll_status returned state == approved + requests_parent_change == false.
+  #   Post: PR is merged; manifest reflects new plan_generation; output.merged == true.
+  - name: merge_plan_pr
+    type: script
+    description: Merge plan PR + bump plan_generations in run manifest
+    command: polyphony
+    args:
+      - "pr"
+      - "merge-plan-pr"
+      - "--root-id"
+      - "{{ root_resolver.output.resolved_root_id }}"
+      - "--item-id"
+      - "{{ workflow.input.work_item_id }}"
+      - "--parent-item-id"
+      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+    routes:
+      - to: stale_generation_gate
+        when: "{{ merge_plan_pr.output.error_code is defined and merge_plan_pr.output.error_code == 'stale_generation' }}"
+      - to: merge_error_gate
+        when: "{{ merge_plan_pr.output.error_code is defined and merge_plan_pr.output.error_code != '' and merge_plan_pr.output.error_code != 'stale_generation' }}"
+      - to: seeder
+
+  # ── Stale generation gate ─────────────────────────────────────────────
+  #
+  # Plan PR snapshot is stale relative to current ancestor generations.
+  # Phase 3 P9 (ancestor cascade) will handle this automatically; until
+  # then, surface to a human.
+  - name: stale_generation_gate
+    type: human_gate
+    prompt: |
+      ## 🚧 Plan PR Snapshot Is Stale (P9 — ancestor cascade not yet implemented)
+
+      The plan PR for work item **{{ workflow.input.work_item_id }}** was
+      approved, but an ancestor's plan_generation has bumped since this
+      PR was opened.
+
+      - **Ancestor:** `{{ merge_plan_pr.output.ancestor_key }}`
+      - **PR snapshot generation:** {{ merge_plan_pr.output.snapshot_generation }}
+      - **Current manifest generation:** {{ merge_plan_pr.output.current_generation }}
+
+      The full ancestor-cascade rebase/recreate logic (Phase 3 P9) is not
+      yet implemented. Manually rebase or recreate the PR, then re-run.
+
+      ---
+
+      Choose an action:
+      - **Acknowledge** — stop planning this branch (escalate to human)
+    options:
+      - label: "✅ Acknowledge"
+        value: acknowledge
+        route: $end
+
+  # ── Merge error gate ──────────────────────────────────────────────────
+  - name: merge_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Plan PR Merge Failed
+
+      Could not merge the plan PR for work item
+      **{{ workflow.input.work_item_id }}**.
+
+      **Error code:** `{{ merge_plan_pr.output.error_code }}`
+
+      Common causes: lock acquisition failed (another run holds the
+      same-root lock); push conflict on manifest branch; gh CLI
+      authentication.
+
+      ---
+
+      Choose an action:
+      - **Retry** — re-attempt the merge
+      - **Abort** — cancel planning
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: merge_plan_pr
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Seeder ─────────────────────────────────────────────────────────────
+  #
+  # Idempotent seeder. Consumes architect.output.children and reconciles
+  # against existing children of the parent work item via marker-aware
+  # idempotent matching, then sets the polyphony:planned tag on the parent.
+  #
+  # NOTE: when state_detector routes us straight here (state == merged_unseeded
+  # on resume), architect.output.children is undefined. The seeder verb
+  # tolerates an empty children array and reconciles against existing children
+  # — it will warn but proceed and still set polyphony:planned.
   - name: seeder
     type: script
-    description: Idempotent seeder — marker-aware reconciliation, sets polyphony:planned tag (P8, P14)
+    description: Idempotent seeder — marker-aware reconciliation, sets polyphony:planned tag
     command: polyphony
     args:
       - "plan"
@@ -803,19 +1211,14 @@ agents:
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
       - "--children-json"
-      - "{{ architect.output.children | tojson }}"
+      - "{{ architect.output.children | tojson if architect.output.children is defined else '[]' }}"
     routes:
       - to: child_router
 
   # ── Child router ─────────────────────────────────────────────────────────
   #
-  # Discovers plannable children of the current work item using polyphony
-  # hierarchy. Filters by 'plannable' facet to determine which children
-  # need their own planning sub-workflow invocation.
-  #
-  # Invariants:
-  #   Pre:  Seeder has completed; child work items may exist.
-  #   Post: output.has_plannable_children is set; plannable_children array populated.
+  # Discovers plannable children of the current work item. Filters by
+  # 'plannable' facet via polyphony plan next-child.
   - name: child_router
     type: script
     description: Discover plannable children for recursive planning
@@ -829,22 +1232,10 @@ agents:
       - to: plan_children_group
         when: "{{ child_router.output.has_plannable_children == true }}"
       - to: $end
-        when: "{{ child_router.output.has_plannable_children == false }}"
-
-  # ── Plan children group (for_each) ──────────────────────────────────────
-  #
-  # Defined as a top-level `for_each:` block at the bottom of this file.
-  # Conductor's schema requires for_each groups to be siblings of `agents:`,
-  # NOT nested inside agents-list items — see the for_each: block below.
 
   # ── Plan children summary gate ───────────────────────────────────────────
   #
-  # Fires only when one or more child planning sub-workflows failed. Surfaces
-  # failures to the user so they can decide whether to abort or continue.
-  #
-  # Invariants:
-  #   Pre:  plan_children_group has completed with at least one failure.
-  #   Post: User has acknowledged the partial failure; workflow ends.
+  # Fires only when one or more child planning sub-workflows failed.
   - name: plan_children_summary_gate
     type: human_gate
     prompt: |
@@ -856,75 +1247,30 @@ agents:
       - **Failed:** {{ plan_children_group.errors | length }}
 
       Some child work items were not planned. Review the failures and re-run
-      planning for the affected items if needed.
+      with intent=resume to retry only the failed children.
 
       ---
 
       Choose an action:
-      - **Acknowledge** — accept the partial result and continue
+      - **Acknowledge** — finish this run
     options:
       - label: "✅ Acknowledge"
         value: acknowledge
         route: $end
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Parallel groups
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Plan children group (for_each) ─────────────────────────────────────
 #
-# Conductor's schema requires `parallel:` to be a top-level key (sibling of
-# `agents:`), NOT nested inside an agents-list item. Pydantic's AgentDef has
-# no `extra = "forbid"`, so misnesting silently drops the parallel field and
-# the wrapper is treated as a no-op `type: agent` that defaults to gpt-4o.
-# See dogfood_findings #8 (polyphony fix) and #9 (conductor schema hardening).
-
-parallel:
-  # ── Review group ─────────────────────────────────────────────────────────
-  #
-  # Runs technical and readability reviews in parallel. Both reviewers
-  # score the plan 0-100 independently. Uses fail_fast to abort early
-  # if either reviewer encounters an error.
-  #
-  # Invariants:
-  #   Pre:  architect.output.plan is a complete plan artifact.
-  #   Post: Both reviewers have produced scores and feedback.
-  - name: review_group
-    description: Parallel plan review (technical + readability)
-    agents:
-      - technical_reviewer
-      - readability_reviewer
-    failure_mode: fail_fast
-    routes:
-      - to: review_router
-
-# ─────────────────────────────────────────────────────────────────────────────
-# For-each groups
-# ─────────────────────────────────────────────────────────────────────────────
-#
-# Same constraint as parallel: must be a top-level key. Each entry requires
-# `type: for_each` as a discriminator (see ForEachDef.type in schema.py).
-
+# Self-recursion: invokes plan-level.yaml for each plannable child with
+# depth+1. Conductor schema requires for_each at the workflow root, not
+# nested under agents.
 for_each:
-  # ── Plan children group ──────────────────────────────────────────────────
-  #
-  # Self-recursion: invokes plan-level.yaml for each plannable child with
-  # depth+1. This enables any hierarchy depth to be planned with a single
-  # workflow file. Conductor enforces max_depth to prevent runaway recursion.
-  #
-  # Invariants:
-  #   Pre:  child_router.output.has_plannable_children == true.
-  #   Post: Each plannable child has been planned (or depth-limited).
   - name: plan_children_group
-    type: for_each
-    description: Recursive per-child planning
-    # Bare dotted path per M8 — Jinja `{{ }}` wrappers are rejected by
-    # `validate_source_format` (and even when accepted, are misleading).
-    source: child_router.output.plannable_children
-    as: child
-    max_concurrent: 3
+    description: Recursively plan each plannable child
+    items: "{{ child_router.output.plannable_children }}"
+    item_var: child
+    max_concurrent: 1
     failure_mode: continue_on_error
-    agent:
-      name: plan_child
+    workflow:
       type: workflow
       workflow: ./plan-level.yaml
       max_depth: 6
@@ -932,13 +1278,7 @@ for_each:
         work_item_id: "{{ child.id }}"
         depth: "{{ workflow.input.depth + 1 }}"
         max_depth: "{{ workflow.input.max_depth }}"
-        intent: "{{ workflow.input.intent }}"
-        user_plan_path: ""
     routes:
-      # Per M8: parallel/for_each groups expose `outputs`/`errors`/`count`,
-      # NOT `failed_count`/`succeeded_count`. Derive failure presence from
-      # `errors | length`.
       - to: plan_children_summary_gate
-        when: "{{ (plan_children_group.errors | length) > 0 }}"
+        when: "{{ plan_children_group.errors | length > 0 }}"
       - to: $end
-        when: "{{ (plan_children_group.errors | length) == 0 }}"
