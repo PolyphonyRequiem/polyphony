@@ -137,6 +137,24 @@ public sealed class AdoCreatePullRequestRequest
 }
 
 /// <summary>
+/// Wire-level body for
+/// <c>PATCH /_apis/git/repositories/{repo}/pullRequests/{pr}/reviewers/{reviewerId}</c>.
+/// AOT-safe: registered in <see cref="PolyphonyJsonContext"/>. Only the
+/// <c>vote</c> field is sent — ADO ignores other fields on this verb when
+/// the reviewer already exists.
+/// </summary>
+public sealed class AdoSetReviewerVoteRequest
+{
+    /// <summary>
+    /// ADO reviewer vote enum: <c>10</c> approved, <c>5</c> approved with
+    /// suggestions, <c>0</c> reset, <c>-5</c> waiting for author, <c>-10</c>
+    /// rejected.
+    /// </summary>
+    [JsonPropertyName("vote")]
+    public int Vote { get; set; }
+}
+
+/// <summary>
 /// Wire-level envelope for the ADO PR list response (<c>{ "value": [...] }</c>).
 /// </summary>
 public sealed class AdoPullRequestListResponse
