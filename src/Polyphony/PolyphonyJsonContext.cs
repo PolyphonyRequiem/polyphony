@@ -1,6 +1,8 @@
 using System.Text.Json.Serialization;
 using Polyphony.Configuration;
 using Polyphony.Manifest;
+using Polyphony.Locking;
+using Polyphony.Models;
 using Polyphony.Policy;
 using Polyphony.Sdlc;
 
@@ -78,6 +80,11 @@ namespace Polyphony;
 [JsonSerializable(typeof(HumanApprovalRecord))]
 [JsonSerializable(typeof(RetiredMergeGroupRecord))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSerializable(typeof(RunLock))]
+[JsonSerializable(typeof(AcquireLockResult))]
+[JsonSerializable(typeof(ReleaseLockResult))]
+[JsonSerializable(typeof(ForceReleaseLockResult))]
+[JsonSerializable(typeof(LockStatusResult))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
