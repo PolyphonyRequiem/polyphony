@@ -539,8 +539,14 @@ public sealed partial class PrCommands
         }
 
         // ── 7. Checkout feature branch + reset to remote tip. ──────────────
+        // Re-fetch first: step 4's fetch happened BEFORE the ADO complete-PR
+        // call advanced origin/{manifestBranch} server-side. Without a
+        // second fetch, our local origin/{manifestBranch} ref is stale and
+        // the post-merge manifest commit will fail to push as
+        // non-fast-forward.
         try
         {
+            await git.FetchAsync("origin", manifestBranch, ct).ConfigureAwait(false);
             await git.CheckoutAsync(manifestBranch, ct).ConfigureAwait(false);
             await git.ResetHardAsync($"origin/{manifestBranch}", ct).ConfigureAwait(false);
         }
