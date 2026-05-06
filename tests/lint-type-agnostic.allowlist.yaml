@@ -51,6 +51,17 @@ allowed_substrings:
   - 'Feature[_-]pr'
   - 'feature[_-]pr'
   - 'feature/[A-Za-z0-9_./-]+'
+  # Task branch / Task PR — polyphony branch and PR vocabulary, parallel to
+  # Feature branch / Feature PR. Not the type "Task". (Phase 4 onward.)
+  - 'Task\s+branch'
+  - 'Task\s+branches'
+  - 'Task\s+PR'
+  - 'Task\s+PRs'
+  - 'Task[_-]PR'
+  - 'Task[_-]Pr'
+  - 'Task[_-]pr'
+  - 'task[_-]pr'
+  - 'task/[A-Za-z0-9_{}./-]+'
   # CLI subcommand on the polyphony branch verb
   - 'ensure-feature'
   # Work-item ID references in prose (e.g. "Task 2681", "Epic #1234")
