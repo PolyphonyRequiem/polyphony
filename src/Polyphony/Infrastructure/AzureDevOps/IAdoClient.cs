@@ -128,4 +128,40 @@ public interface IAdoClient
         string title,
         string description,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Compose the platform-neutral PR poll snapshot consumed by
+    /// <c>polyphony pr poll-status-ado</c>. Mirrors
+    /// <see cref="Polyphony.Infrastructure.Processes.IGhClient.GetPullRequestPollDataAsync"/>
+    /// so the verb output is identical regardless of platform.
+    ///
+    /// <para>
+    /// Composes the result from two ADO REST calls:
+    /// <list type="bullet">
+    ///   <item><c>GET /_apis/git/repositories/{repo}/pullrequests/{prId}</c> —
+    ///     PR detail (state, refs, last merge source/commit, body).</item>
+    ///   <item><c>GET /_apis/git/repositories/{repo}/pullrequests/{prId}/reviewers</c> —
+    ///     reviewer list with the vote enum.</item>
+    /// </list>
+    /// Both calls go through <see cref="AdoClientPolicy"/> for retry/timeout
+    /// shaping. Returns <c>null</c> when the PR detail call returns 404 (the
+    /// reviewers call is skipped in that case).
+    /// </para>
+    ///
+    /// <para>Throws on the same conditions as
+    /// <see cref="ListPullRequestsAsync"/>: <see cref="HttpRequestException"/>
+    /// for 401/403/5xx, <see cref="TimeoutException"/> when retries are
+    /// exhausted, and <see cref="InvalidOperationException"/> when no PAT is
+    /// configured.</para>
+    /// </summary>
+    /// <param name="repositoryId">
+    /// Repository identifier — either the GUID or the (URL-safe) name. Both
+    /// are accepted by the ADO REST endpoint.
+    /// </param>
+    Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
+        string organization,
+        string project,
+        string repositoryId,
+        int pullRequestId,
+        CancellationToken ct = default);
 }

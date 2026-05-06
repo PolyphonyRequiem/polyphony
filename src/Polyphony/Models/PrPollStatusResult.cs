@@ -122,4 +122,15 @@ public sealed record PrPollStatusResult
 
     /// <summary>Populated when the verb errored. Omitted on success.</summary>
     public string? Error { get; init; }
+
+    /// <summary>
+    /// Machine-readable error code that pairs with <see cref="Error"/>. Used by
+    /// the platform-specific verbs (e.g. <c>pr poll-status-ado</c>) to surface
+    /// a stable enum the consuming workflow can branch on without parsing
+    /// human-readable error text. Vocabulary is verb-defined; ADO uses
+    /// <c>pr_not_found</c>, <c>ado_timeout</c>, <c>ado_failed</c>,
+    /// <c>invalid_argument</c>, <c>no_pat</c>. Omitted on success and on
+    /// errors where no stable code is available.
+    /// </summary>
+    public string? ErrorCode { get; init; }
 }
