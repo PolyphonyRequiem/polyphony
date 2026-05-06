@@ -30,7 +30,7 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
         return (new PrCommands(git, gh, twig, Repository, Config, new Polyphony.Locking.RunLockStore(), new Polyphony.Locking.RunLockPathResolver(git)), runner);
     }
 
-    private static string SeedManifest(int rootId, Dictionary<string, int>? planGenerations = null)
+    private static string SeedManifest(FakeProcessRunner runner, int rootId, Dictionary<string, int>? planGenerations = null)
     {
         var path = Path.Combine(Path.GetTempPath(),
             "polyphony-tests-" + Guid.NewGuid().ToString("N") + ".yaml");
@@ -45,8 +45,18 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
             PlanGenerations = planGenerations ?? new Dictionary<string, int>(StringComparer.Ordinal),
         };
         RunManifestStore.Save(path, manifest);
+        // Verb reads manifest from origin/feature/{root}:<path> via `git show`.
+        // Stub the call with the on-disk YAML we just wrote.
+        var yaml = File.ReadAllText(path);
+        runner.WhenExact("git", ["show", $"origin/feature/{rootId}:{path}"],
+            new ProcessResult(0, yaml, ""));
         return path;
     }
+
+    /// <summary>Stub `git show origin/feature/{rootId}:{path}` to look like the file is missing at that ref.</summary>
+    private static void StubManifestMissingAtRef(FakeProcessRunner runner, int rootId, string path)
+        => runner.WhenExact("git", ["show", $"origin/feature/{rootId}:{path}"],
+            new ProcessResult(128, "", $"fatal: path '{path}' does not exist in 'origin/feature/{rootId}'"));
 
     private static void StubLsRemote(FakeProcessRunner runner, string branch, bool exists)
         => runner.WhenExact("git", ["ls-remote", "--heads", "origin", $"refs/heads/{branch}"],
@@ -207,14 +217,15 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_ManifestMissing_ReturnsCacheError()
     {
-        var (cmd, _) = CreateCommand();
+        var (cmd, runner) = CreateCommand();
         var bogusPath = Path.Combine(Path.GetTempPath(),
             "polyphony-missing-" + Guid.NewGuid().ToString("N") + ".yaml");
+        StubManifestMissingAtRef(runner, rootId: 100, path: bogusPath);
 
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.OpenPlanPr(rootId: 100, itemId: 100, manifestPath: bogusPath));
         exit.ShouldBe(ExitCodes.CacheError);
-        Parse(output).Error!.ShouldContain("manifest not found");
+        Parse(output).Error!.ShouldContain("manifest not found at origin/feature/100");
     }
 
     // ─── Branch existence ────────────────────────────────────────────────
@@ -222,8 +233,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_HeadBranchMissingOnRemote_ReturnsRoutingFailure()
     {
-        var manifestPath = SeedManifest(rootId: 100);
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100);
         StubLsRemote(runner, "plan/100", exists: false);
 
         var (exit, output) = await CaptureConsoleAsync(
@@ -238,8 +249,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_BaseBranchMissingOnRemote_ReturnsRoutingFailure()
     {
-        var manifestPath = SeedManifest(rootId: 100);
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100);
         StubLsRemote(runner, "plan/100", exists: true);
         StubLsRemote(runner, "feature/100", exists: false);
 
@@ -254,8 +265,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_RootPlan_CreatesNewPr()
     {
-        var manifestPath = SeedManifest(rootId: 100);
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100);
         StubLsRemote(runner, "plan/100", exists: true);
         StubLsRemote(runner, "feature/100", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
@@ -284,8 +295,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_ChildOfRoot_CreatesNewPr()
     {
-        var manifestPath = SeedManifest(rootId: 100, planGenerations: new() { ["root"] = 2 });
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100, planGenerations: new() { ["root"] = 2 });
         StubLsRemote(runner, "plan/100-5678", exists: true);
         StubLsRemote(runner, "plan/100", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
@@ -310,9 +321,9 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_DescendantWithExplicitParent_CreatesNewPr()
     {
-        var manifestPath = SeedManifest(rootId: 100,
-            planGenerations: new() { ["root"] = 1, ["5678"] = 3 });
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100,
+            planGenerations: new() { ["root"] = 1, ["5678"] = 3 });
         StubLsRemote(runner, "plan/100-9999", exists: true);
         StubLsRemote(runner, "plan/100-5678", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
@@ -341,8 +352,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_AncestorMissingFromManifest_DefaultsToZero()
     {
-        var manifestPath = SeedManifest(rootId: 100);
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100);
         StubLsRemote(runner, "plan/100-5678", exists: true);
         StubLsRemote(runner, "plan/100", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
@@ -359,9 +370,9 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_PrCreateBodyContainsFrontMatter()
     {
-        var manifestPath = SeedManifest(rootId: 100,
-            planGenerations: new() { ["root"] = 2, ["5678"] = 4 });
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100,
+            planGenerations: new() { ["root"] = 2, ["5678"] = 4 });
         StubLsRemote(runner, "plan/100-9999", exists: true);
         StubLsRemote(runner, "plan/100-5678", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
@@ -403,8 +414,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_ExistingPrWithMatchingSnapshot_ReturnsReuse()
     {
-        var manifestPath = SeedManifest(rootId: 100, planGenerations: new() { ["root"] = 2 });
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100, planGenerations: new() { ["root"] = 2 });
         StubLsRemote(runner, "plan/100-5678", exists: true);
         StubLsRemote(runner, "plan/100", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
@@ -427,8 +438,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_ExistingPrWithStaleSnapshot_ReturnsStale()
     {
-        var manifestPath = SeedManifest(rootId: 100, planGenerations: new() { ["root"] = 5 });
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100, planGenerations: new() { ["root"] = 5 });
         StubLsRemote(runner, "plan/100-5678", exists: true);
         StubLsRemote(runner, "plan/100", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
@@ -453,8 +464,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_ExistingPrWithNoFrontMatter_TreatedAsStaleWhenSnapshotNonEmpty()
     {
-        var manifestPath = SeedManifest(rootId: 100, planGenerations: new() { ["root"] = 1 });
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100, planGenerations: new() { ["root"] = 1 });
         StubLsRemote(runner, "plan/100-5678", exists: true);
         StubLsRemote(runner, "plan/100", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
@@ -474,8 +485,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_GhCreateReturnsEmptyUrl_ReturnsRoutingFailure()
     {
-        var manifestPath = SeedManifest(rootId: 100);
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100);
         StubLsRemote(runner, "plan/100", exists: true);
         StubLsRemote(runner, "feature/100", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
@@ -494,8 +505,8 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_JsonContract_IsSnakeCase()
     {
-        var manifestPath = SeedManifest(rootId: 100);
         var (cmd, runner) = CreateCommand();
+        var manifestPath = SeedManifest(runner, rootId: 100);
         StubLsRemote(runner, "plan/100", exists: true);
         StubLsRemote(runner, "feature/100", exists: true);
         StubGitOriginUrl(runner, "https://github.com/owner/repo.git");
