@@ -34,4 +34,5 @@ app.Add<ScopeCommands>("scope");
 app.Add<RootCommands>("root");
 app.Add<RequirementsCommands>("requirements");
 app.Add<MgCommands>("mg");
+app.Add<ManifestCommands>("manifest");
 app.Run(args);
