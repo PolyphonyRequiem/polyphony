@@ -88,12 +88,12 @@ public sealed class BranchCommandsLoadTreeTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(() => cmd.LoadTree(100));
         var result = Deserialize(output);
 
-        result.PrGroups.Count.ShouldBe(1);
-        result.PrGroups[0].Name.ShouldBe("PG-1");
-        result.PrGroups[0].MergedPr.ShouldBe(0);
-        result.PrGroups[0].Completed.ShouldBeFalse();
-        result.PendingPgs.ShouldContain("PG-1");
-        result.NextPg.ShouldBe("PG-1");
+        result.MergeGroups.Count.ShouldBe(1);
+        result.MergeGroups[0].Name.ShouldBe("PG-1");
+        result.MergeGroups[0].MergedPr.ShouldBe(0);
+        result.MergeGroups[0].Completed.ShouldBeFalse();
+        result.PendingMergeGroups.ShouldContain("PG-1");
+        result.NextMergeGroup.ShouldBe("PG-1");
         result.TaggedItems.ShouldBe(0);
         result.UntaggedItems.ShouldBe(3);
     }
@@ -121,12 +121,12 @@ public sealed class BranchCommandsLoadTreeTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(() => cmd.LoadTree(100));
         var result = Deserialize(output);
 
-        result.PrGroups.Count.ShouldBe(2);
+        result.MergeGroups.Count.ShouldBe(2);
         // Sorted by N (PG-1 before PG-2).
-        result.PrGroups[0].Name.ShouldBe("PG-1");
-        result.PrGroups[1].Name.ShouldBe("PG-2");
-        result.PrGroups[0].BranchNameSuggestion.ShouldStartWith("feature/pg-1");
-        result.NextPg.ShouldBe("PG-1");
+        result.MergeGroups[0].Name.ShouldBe("PG-1");
+        result.MergeGroups[1].Name.ShouldBe("PG-2");
+        result.MergeGroups[0].BranchNameSuggestion.ShouldStartWith("feature/pg-1");
+        result.NextMergeGroup.ShouldBe("PG-1");
         result.TaggedItems.ShouldBe(4);
         result.WorkTree.EpicId.ShouldBe(100);
         result.WorkTree.WorkItems.Count.ShouldBe(2);
@@ -149,11 +149,11 @@ public sealed class BranchCommandsLoadTreeTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(() => cmd.LoadTree(100));
         var result = Deserialize(output);
 
-        var pg = result.PrGroups.Single();
+        var pg = result.MergeGroups.Single();
         pg.MergedPr.ShouldBe(42);
         pg.Completed.ShouldBeTrue();
-        result.CompletedPgs.ShouldContain("PG-1");
-        result.NextPg.ShouldBe("");
+        result.CompletedMergeGroups.ShouldContain("PG-1");
+        result.NextMergeGroup.ShouldBe("");
     }
 
     [Fact]
@@ -173,12 +173,12 @@ public sealed class BranchCommandsLoadTreeTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(() => cmd.LoadTree(100));
         var result = Deserialize(output);
 
-        var pg = result.PrGroups.Single();
+        var pg = result.MergeGroups.Single();
         pg.Completed.ShouldBeTrue();
         pg.NeedsReconciliation.ShouldBeTrue();
         pg.StaleDoingChildIds.ShouldContain(300);
-        result.PgsNeedingReconciliation.Count.ShouldBe(1);
-        result.PgsNeedingReconciliation[0].StaleDoingChildIds.ShouldContain(300);
+        result.MergeGroupsNeedingReconciliation.Count.ShouldBe(1);
+        result.MergeGroupsNeedingReconciliation[0].StaleDoingChildIds.ShouldContain(300);
     }
 
     [Fact]
@@ -199,8 +199,8 @@ public sealed class BranchCommandsLoadTreeTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(() => cmd.LoadTree(100));
         var result = Deserialize(output);
 
-        result.PrGroups.Single().MergedPr.ShouldBe(0);
-        result.PrGroups.Single().Completed.ShouldBeFalse();
+        result.MergeGroups.Single().MergedPr.ShouldBe(0);
+        result.MergeGroups.Single().Completed.ShouldBeFalse();
     }
 
     [Fact]

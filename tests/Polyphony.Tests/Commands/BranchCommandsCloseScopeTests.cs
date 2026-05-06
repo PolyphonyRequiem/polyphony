@@ -70,7 +70,7 @@ public sealed class BranchCommandsCloseScopeTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(() => cmd.CloseScope(workItem: 100, pgNumber: 3, prNumber: 42));
         var result = Deserialize(output);
 
-        result.PgName.ShouldBe("PG-3");
+        result.MergeGroupName.ShouldBe("PG-3");
         result.PrNumber.ShouldBe(42);
         result.AdoWorkspace.ShouldBe("org/proj");
     }
@@ -97,7 +97,7 @@ public sealed class BranchCommandsCloseScopeTests : CommandTestBase
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Deserialize(output);
-        result.PgName.ShouldBe("PG-1");
+        result.MergeGroupName.ShouldBe("PG-1");
         result.PrNumber.ShouldBe(7);
         result.TotalClosed.ShouldBe(2);
         result.TotalFailed.ShouldBe(0);

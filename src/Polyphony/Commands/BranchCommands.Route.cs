@@ -9,7 +9,7 @@ using Twig.Domain.Services.Process;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony branch route</c>: classifies every PR group in the
+/// <c>polyphony branch route</c>: classifies every merge group in the
 /// hierarchy and reports the next action the workflow should take —
 /// create_branch, submit_pr, or all_complete. Migrated from
 /// <c>scripts/pg-router.ps1</c>.
@@ -17,14 +17,17 @@ namespace Polyphony.Commands;
 public sealed partial class BranchCommands
 {
     /// <summary>
-    /// Routes a work-item hierarchy to its next PR-group action.
+    /// Routes a work-item hierarchy to its next merge-group action.
     /// </summary>
     /// <param name="workItem">ADO work item ID — root of the hierarchy.</param>
     /// <param name="pgNumber">
-    /// Optional PG number (e.g. 2) to scope routing to. When supplied,
-    /// the named PG is selected as <c>current_pg</c> regardless of
-    /// whether earlier PGs are still incomplete — required for parallel
-    /// for_each dispatch where each invocation must route on its own PG.
+    /// Optional merge-group number (e.g. 2) to scope routing to. When
+    /// supplied, the named merge group is selected as <c>current_pg</c>
+    /// (legacy JSON wire key) regardless of whether earlier merge groups
+    /// are still incomplete — required for parallel for_each dispatch
+    /// where each invocation must route on its own merge group.
+    /// Operator-facing flag name preserved as <c>--pg-number</c> until
+    /// the workflow rewire PR ships.
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("route")]
@@ -47,7 +50,7 @@ public sealed partial class BranchCommands
             var rootItem = await repository.GetByIdAsync(workItem, ct).ConfigureAwait(false);
             var hint = rootItem is not null ? BranchNameResolver.Resolve(processConfig, rootItem) : null;
 
-            // Build PG groups (or a single fallback PG-1 when no tags exist).
+            // Build merge groups (or a single fallback PG-1 when no tags exist).
             var groups = BuildRouteGroups(workItem, hierarchy, allItems, hint);
 
             // Resolve repo + remote branches + PR lists; degrade gracefully on failure.
@@ -58,8 +61,8 @@ public sealed partial class BranchCommands
 
             var classified = ClassifyGroups(groups, allItems, remoteBranches, mergedPrs, openPrs);
 
-            // PG scoping: parallel dispatch overrides "first non-completed".
-            ClassifiedPg? current;
+            // Merge-group scoping: parallel dispatch overrides "first non-completed".
+            ClassifiedMergeGroup? current;
             if (pgNumber > 0)
             {
                 current = classified
@@ -75,23 +78,23 @@ public sealed partial class BranchCommands
             }
 
             var workspace = await ResolveAdoWorkspaceAsync(ct).ConfigureAwait(false);
-            var completedPgs = classified.Where(c => c.Completed).Select(c => c.Group.Name).ToList();
-            var remainingPgs = classified.Where(c => !c.Completed).Select(c => c.Group.Name).ToList();
+            var completedMergeGroups = classified.Where(c => c.Completed).Select(c => c.Group.Name).ToList();
+            var remainingMergeGroups = classified.Where(c => !c.Completed).Select(c => c.Group.Name).ToList();
 
             if (current is null)
             {
                 result = new BranchRouteResult
                 {
                     Action = "all_complete",
-                    CurrentPg = "",
+                    CurrentMergeGroup = "",
                     BranchName = "",
                     WorkItemIds = [],
                     ChildIds = [],
                     PrNumber = 0,
                     PrUrl = "",
-                    CompletedPgs = completedPgs,
-                    RemainingPgs = [],
-                    TotalPgs = classified.Count,
+                    CompletedMergeGroups = completedMergeGroups,
+                    RemainingMergeGroups = [],
+                    TotalMergeGroups = classified.Count,
                     AdoWorkspace = workspace,
                 };
             }
@@ -100,15 +103,15 @@ public sealed partial class BranchCommands
                 result = new BranchRouteResult
                 {
                     Action = current.Action,
-                    CurrentPg = current.Group.Name,
+                    CurrentMergeGroup = current.Group.Name,
                     BranchName = current.Group.BranchName,
                     WorkItemIds = current.Group.WorkItemIds,
                     ChildIds = current.Group.ChildIds,
                     PrNumber = current.PrNumber,
                     PrUrl = current.PrUrl,
-                    CompletedPgs = completedPgs,
-                    RemainingPgs = remainingPgs,
-                    TotalPgs = classified.Count,
+                    CompletedMergeGroups = completedMergeGroups,
+                    RemainingMergeGroups = remainingMergeGroups,
+                    TotalMergeGroups = classified.Count,
                     AdoWorkspace = workspace,
                 };
             }
@@ -116,7 +119,7 @@ public sealed partial class BranchCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            result = EmptyRouteResult($"Error routing PG: {ex.Message}",
+            result = EmptyRouteResult($"Error routing merge group: {ex.Message}",
                 await TryResolveAdoWorkspaceAsync(ct).ConfigureAwait(false));
         }
 
@@ -124,22 +127,22 @@ public sealed partial class BranchCommands
         return ExitCodes.Success;
     }
 
-    private List<RoutePgGroup> BuildRouteGroups(
+    private List<RouteMergeGroup> BuildRouteGroups(
         int rootId,
         HierarchyResult root,
         IReadOnlyList<HierarchyResult> allItems,
         WorkspaceHint? hint)
     {
-        var pgMap = new Dictionary<string, (List<int> Implementable, List<int> Container)>(StringComparer.Ordinal);
+        var mergeGroupMap = new Dictionary<string, (List<int> Implementable, List<int> Container)>(StringComparer.Ordinal);
         foreach (var item in allItems)
         {
-            var tag = ExtractPgTag(item.Tags);
+            var tag = ExtractLegacyPgTag(item.Tags);
             if (tag is null) continue;
 
-            if (!pgMap.TryGetValue(tag, out var bucket))
+            if (!mergeGroupMap.TryGetValue(tag, out var bucket))
             {
                 bucket = (new List<int>(), new List<int>());
-                pgMap[tag] = bucket;
+                mergeGroupMap[tag] = bucket;
             }
 
             var isImplementable = item.Facets.Contains("implementable");
@@ -156,8 +159,8 @@ public sealed partial class BranchCommands
             }
         }
 
-        var groups = new List<RoutePgGroup>();
-        if (pgMap.Count == 0)
+        var groups = new List<RouteMergeGroup>();
+        if (mergeGroupMap.Count == 0)
         {
             // Fallback: synthesize a single PG-1 from the whole tree.
             var taskIds = allItems
@@ -178,7 +181,7 @@ public sealed partial class BranchCommands
                     return pln && (!imp || hc);
                 })
                 .Select(i => i.WorkItemId).ToList();
-            groups.Add(new RoutePgGroup(
+            groups.Add(new RouteMergeGroup(
                 Name: "PG-1",
                 BranchName: ResolveFeatureBranch(hint, rootId, root.Title),
                 ChildIds: taskIds,
@@ -186,12 +189,12 @@ public sealed partial class BranchCommands
         }
         else
         {
-            foreach (var name in pgMap.Keys.OrderBy(SortKeyForPg))
+            foreach (var name in mergeGroupMap.Keys.OrderBy(SortKeyForLegacyPgTag))
             {
-                var bucket = pgMap[name];
-                groups.Add(new RoutePgGroup(
+                var bucket = mergeGroupMap[name];
+                groups.Add(new RouteMergeGroup(
                     Name: name,
-                    BranchName: ResolvePgBranch(hint, rootId, name),
+                    BranchName: ResolveLegacyMergeGroupBranch(hint, rootId, name),
                     ChildIds: bucket.Implementable,
                     WorkItemIds: bucket.Container));
             }
@@ -200,28 +203,28 @@ public sealed partial class BranchCommands
         return groups;
     }
 
-    private static List<ClassifiedPg> ClassifyGroups(
-        IReadOnlyList<RoutePgGroup> groups,
+    private static List<ClassifiedMergeGroup> ClassifyGroups(
+        IReadOnlyList<RouteMergeGroup> groups,
         IReadOnlyList<HierarchyResult> allItems,
         IReadOnlyList<string> remoteBranches,
         IReadOnlyList<PullRequestSummary> mergedPrs,
         IReadOnlyList<PullRequestSummary> openPrs)
     {
-        var classified = new List<ClassifiedPg>(groups.Count);
-        foreach (var pg in groups)
+        var classified = new List<ClassifiedMergeGroup>(groups.Count);
+        foreach (var mg in groups)
         {
             var mergedPr = mergedPrs.FirstOrDefault(p =>
-                string.Equals(p.HeadRefName, pg.BranchName, StringComparison.Ordinal));
+                string.Equals(p.HeadRefName, mg.BranchName, StringComparison.Ordinal));
             var openPr = openPrs.FirstOrDefault(p =>
-                string.Equals(p.HeadRefName, pg.BranchName, StringComparison.Ordinal));
+                string.Equals(p.HeadRefName, mg.BranchName, StringComparison.Ordinal));
 
             if (mergedPr is not null)
             {
                 // Stale-branch defense: a merged PR with all containers still
                 // in the proposed/initial category is most likely a leftover
                 // from a prior failed run.
-                var stale = pg.WorkItemIds.Count > 0
-                    && !pg.WorkItemIds.Any(id =>
+                var stale = mg.WorkItemIds.Count > 0
+                    && !mg.WorkItemIds.Any(id =>
                     {
                         var item = allItems.FirstOrDefault(i => i.WorkItemId == id);
                         if (item is null) return false;
@@ -231,35 +234,35 @@ public sealed partial class BranchCommands
 
                 if (!stale)
                 {
-                    classified.Add(new ClassifiedPg(pg, "all_complete", true,
+                    classified.Add(new ClassifiedMergeGroup(mg, "all_complete", true,
                         mergedPr.Number, mergedPr.Url ?? ""));
                     continue;
                 }
 
-                classified.Add(new ClassifiedPg(pg, "create_branch", false, 0, ""));
+                classified.Add(new ClassifiedMergeGroup(mg, "create_branch", false, 0, ""));
                 continue;
             }
 
             if (openPr is not null)
             {
-                classified.Add(new ClassifiedPg(pg, "submit_pr", false,
+                classified.Add(new ClassifiedMergeGroup(mg, "submit_pr", false,
                     openPr.Number, openPr.Url ?? ""));
                 continue;
             }
 
             // No merged or open PR — fall back to ADO-state-only completion.
             // Prefer issue states when present; else use task states.
-            var allDone = pg.WorkItemIds.Count > 0
-                ? pg.WorkItemIds.All(id => IsItemTerminal(id, allItems))
-                : pg.ChildIds.Count > 0 && pg.ChildIds.All(id => IsItemTerminal(id, allItems));
+            var allDone = mg.WorkItemIds.Count > 0
+                ? mg.WorkItemIds.All(id => IsItemTerminal(id, allItems))
+                : mg.ChildIds.Count > 0 && mg.ChildIds.All(id => IsItemTerminal(id, allItems));
 
             if (allDone)
             {
-                classified.Add(new ClassifiedPg(pg, "all_complete", true, 0, ""));
+                classified.Add(new ClassifiedMergeGroup(mg, "all_complete", true, 0, ""));
             }
             else
             {
-                classified.Add(new ClassifiedPg(pg, "create_branch", false, 0, ""));
+                classified.Add(new ClassifiedMergeGroup(mg, "create_branch", false, 0, ""));
             }
         }
         return classified;
@@ -271,16 +274,24 @@ public sealed partial class BranchCommands
         return item is not null && IsTerminalCategory(item.State);
     }
 
-    private static string ResolvePgBranch(WorkspaceHint? hint, int rootId, string pgName)
+    /// <summary>
+    /// Resolves the merge-group branch name by substituting the legacy
+    /// <c>{n}</c>/<c>{pg}</c> placeholders in the user's
+    /// <c>pg_branch</c> template against the <c>PG-N</c> tag suffix.
+    /// "Legacy" because the template surface and tag format both flip in
+    /// the workflow rewire PR; until then this still consumes
+    /// <c>WorkspaceHint.MergeGroupBranch</c> as a free-form template.
+    /// </summary>
+    private static string ResolveLegacyMergeGroupBranch(WorkspaceHint? hint, int rootId, string mergeGroupName)
     {
-        if (hint is { PgBranch: { Length: > 0 } template })
+        if (hint is { MergeGroupBranch: { Length: > 0 } template })
         {
-            var pgNum = ExtractPgNumber(pgName);
+            var num = ExtractLegacyPgNumber(mergeGroupName);
             return template
-                .Replace("{n}", pgNum, StringComparison.OrdinalIgnoreCase)
-                .Replace("{pg}", pgNum, StringComparison.OrdinalIgnoreCase);
+                .Replace("{n}", num, StringComparison.OrdinalIgnoreCase)
+                .Replace("{pg}", num, StringComparison.OrdinalIgnoreCase);
         }
-        var slug = Slugify(pgName);
+        var slug = Slugify(mergeGroupName);
         var b = $"feature/{rootId}-{slug}";
         return b.Length > 60 ? b[..60] : b;
     }
@@ -338,15 +349,15 @@ public sealed partial class BranchCommands
     private static BranchRouteResult EmptyRouteResult(string error, string adoWorkspace) => new()
     {
         Action = "error",
-        CurrentPg = "",
+        CurrentMergeGroup = "",
         BranchName = "",
         WorkItemIds = [],
         ChildIds = [],
         PrNumber = 0,
         PrUrl = "",
-        CompletedPgs = [],
-        RemainingPgs = [],
-        TotalPgs = 0,
+        CompletedMergeGroups = [],
+        RemainingMergeGroups = [],
+        TotalMergeGroups = 0,
         AdoWorkspace = adoWorkspace,
         Error = error,
     };
@@ -355,14 +366,14 @@ public sealed partial class BranchCommands
         => Console.WriteLine(JsonSerializer.Serialize(
             result, PolyphonyJsonContext.Default.BranchRouteResult));
 
-    private sealed record RoutePgGroup(
+    private sealed record RouteMergeGroup(
         string Name,
         string BranchName,
         IReadOnlyList<int> ChildIds,
         IReadOnlyList<int> WorkItemIds);
 
-    private sealed record ClassifiedPg(
-        RoutePgGroup Group,
+    private sealed record ClassifiedMergeGroup(
+        RouteMergeGroup Group,
         string Action,
         bool Completed,
         int PrNumber,

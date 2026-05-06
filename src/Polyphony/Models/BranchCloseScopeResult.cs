@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Polyphony;
 
 /// <summary>An item that was successfully transitioned to a terminal state.</summary>
@@ -18,11 +20,16 @@ public sealed record FailedClosure
 
 /// <summary>
 /// Result of <c>polyphony branch close-scope</c>. Mirrors the JSON shape
-/// emitted by the legacy <c>scripts/scope-closer.ps1</c>.
+/// emitted by the legacy <c>scripts/scope-closer.ps1</c>. JSON wire key
+/// <c>pg_name</c> is preserved via
+/// <see cref="JsonPropertyNameAttribute"/> until the workflow rewire PR
+/// ships.
 /// </summary>
 public sealed record BranchCloseScopeResult
 {
-    public required string PgName { get; init; }
+    [JsonPropertyName("pg_name")]
+    public required string MergeGroupName { get; init; }
+
     public required int PrNumber { get; init; }
     public required IReadOnlyList<ClosedItem> ClosedItems { get; init; }
     public required IReadOnlyList<FailedClosure> FailedClosures { get; init; }

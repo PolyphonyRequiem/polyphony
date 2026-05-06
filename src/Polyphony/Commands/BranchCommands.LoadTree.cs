@@ -8,9 +8,11 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// <c>polyphony branch load-tree</c>: discover the work-item hierarchy
-/// rooted at the given epic, group children into PR groups via PG-N tags,
-/// match each PG to its merged PR (if any), and emit completion +
-/// reconciliation summaries. Migrated from <c>scripts/load-work-tree.ps1</c>.
+/// rooted at the given epic, group children into merge groups via
+/// <c>PG-N</c> tags (legacy tag format until prompt-migration PR
+/// lands), match each merge group to its merged PR (if any), and emit
+/// completion + reconciliation summaries. Migrated from
+/// <c>scripts/load-work-tree.ps1</c>.
 /// </summary>
 public sealed partial class BranchCommands
 {
@@ -19,7 +21,8 @@ public sealed partial class BranchCommands
 
     /// <summary>
     /// Loads the work-item tree rooted at <paramref name="workItem"/>,
-    /// discovers PR groups, and reports completion + reconciliation status.
+    /// discovers merge groups, and reports completion + reconciliation
+    /// status.
     /// </summary>
     /// <param name="workItem">ADO work item ID — root of the hierarchy (typically an epic).</param>
     /// <param name="ct">Cancellation token.</param>
@@ -48,14 +51,14 @@ public sealed partial class BranchCommands
             var repoSlug = await TryResolveRepoSlugAsync(ct).ConfigureAwait(false);
             var mergedPrs = await TryListMergedPrsAsync(repoSlug, ct).ConfigureAwait(false);
 
-            var prGroups = BuildPrGroups(hierarchy, allItems, mergedPrs);
+            var mergeGroups = BuildMergeGroups(hierarchy, allItems, mergedPrs);
 
-            var completed = prGroups.Where(p => p.Completed).Select(p => p.Name).ToList();
-            var pending = prGroups.Where(p => !p.Completed).Select(p => p.Name).ToList();
-            var nextPg = pending.Count > 0 ? pending[0] : "";
-            var reconcile = prGroups
+            var completed = mergeGroups.Where(p => p.Completed).Select(p => p.Name).ToList();
+            var pending = mergeGroups.Where(p => !p.Completed).Select(p => p.Name).ToList();
+            var nextMergeGroup = pending.Count > 0 ? pending[0] : "";
+            var reconcile = mergeGroups
                 .Where(p => p.NeedsReconciliation)
-                .Select(p => new PgReconciliation
+                .Select(p => new MergeGroupReconciliation
                 {
                     Name = p.Name,
                     NonDoneChildIds = p.NonDoneChildIds,
@@ -64,7 +67,7 @@ public sealed partial class BranchCommands
                 })
                 .ToList();
 
-            var taggedCount = allItems.Count(i => ExtractPgTag(i.Tags) is not null);
+            var taggedCount = allItems.Count(i => ExtractLegacyPgTag(i.Tags) is not null);
             var totalTasks = allItems.Count(i =>
                 i.Facets.Contains("implementable") && !i.Facets.Contains("plannable"));
             var totalIssues = allItems.Count(i => i.Facets.Contains("plannable"));
@@ -76,11 +79,11 @@ public sealed partial class BranchCommands
             result = new BranchLoadTreeResult
             {
                 WorkTree = workTree,
-                PrGroups = prGroups,
-                CompletedPgs = completed,
-                PendingPgs = pending,
-                NextPg = nextPg,
-                PgsNeedingReconciliation = reconcile,
+                MergeGroups = mergeGroups,
+                CompletedMergeGroups = completed,
+                PendingMergeGroups = pending,
+                NextMergeGroup = nextMergeGroup,
+                MergeGroupsNeedingReconciliation = reconcile,
                 TotalTasks = totalTasks,
                 TotalIssues = totalIssues,
                 TaggedItems = taggedCount,
@@ -137,23 +140,23 @@ public sealed partial class BranchCommands
         };
     }
 
-    private static IReadOnlyList<PullRequestGroup> BuildPrGroups(
+    private static IReadOnlyList<MergeGroup> BuildMergeGroups(
         HierarchyResult root,
         IReadOnlyList<HierarchyResult> allItems,
         IReadOnlyList<PullRequestSummary> mergedPrs)
     {
-        // Group items by their PG-N tag — replicates Group-ByPG semantics
-        // from scripts/lib/pg-helpers.ps1.
-        var pgMap = new Dictionary<string, (List<int> Implementable, List<int> Container)>(StringComparer.Ordinal);
+        // Group items by their PG-N tag (legacy planner-emitted format) —
+        // replicates Group-ByPG semantics from scripts/lib/pg-helpers.ps1.
+        var groupMap = new Dictionary<string, (List<int> Implementable, List<int> Container)>(StringComparer.Ordinal);
         foreach (var item in allItems)
         {
-            var tag = ExtractPgTag(item.Tags);
+            var tag = ExtractLegacyPgTag(item.Tags);
             if (tag is null) continue;
 
-            if (!pgMap.TryGetValue(tag, out var bucket))
+            if (!groupMap.TryGetValue(tag, out var bucket))
             {
                 bucket = (new List<int>(), new List<int>());
-                pgMap[tag] = bucket;
+                groupMap[tag] = bucket;
             }
 
             var isImplementable = item.Facets.Contains("implementable");
@@ -170,8 +173,8 @@ public sealed partial class BranchCommands
             }
         }
 
-        var groups = new List<PullRequestGroup>();
-        if (pgMap.Count == 0)
+        var groups = new List<MergeGroup>();
+        if (groupMap.Count == 0)
         {
             // Fallback: no PG tags found → synthesize a single PG-1.
             var slug = Slugify(root.Title);
@@ -181,16 +184,16 @@ public sealed partial class BranchCommands
             var issueIds = allItems
                 .Where(i => i.Facets.Contains("plannable"))
                 .Select(i => i.WorkItemId).ToList();
-            groups.Add(BuildOnePg("PG-1", taskIds, issueIds, NewBranchName($"pg-1-{slug}"),
+            groups.Add(BuildOneMergeGroup("PG-1", taskIds, issueIds, NewBranchName($"pg-1-{slug}"),
                 allItems, mergedPrs, isFallback: true));
         }
         else
         {
-            foreach (var name in pgMap.Keys.OrderBy(SortKeyForPg))
+            foreach (var name in groupMap.Keys.OrderBy(SortKeyForLegacyPgTag))
             {
-                var bucket = pgMap[name];
+                var bucket = groupMap[name];
                 var branch = NewBranchName(Slugify(name));
-                groups.Add(BuildOnePg(name, bucket.Implementable, bucket.Container, branch,
+                groups.Add(BuildOneMergeGroup(name, bucket.Implementable, bucket.Container, branch,
                     allItems, mergedPrs, isFallback: false));
             }
         }
@@ -198,7 +201,7 @@ public sealed partial class BranchCommands
         return groups;
     }
 
-    private static PullRequestGroup BuildOnePg(
+    private static MergeGroup BuildOneMergeGroup(
         string name,
         IReadOnlyList<int> taskIds,
         IReadOnlyList<int> issueIds,
@@ -211,12 +214,13 @@ public sealed partial class BranchCommands
         var mergedPr = match?.Number ?? 0;
 
         var allIds = taskIds.Concat(issueIds).ToHashSet();
-        var pgItems = allItems.Where(i => allIds.Contains(i.WorkItemId)).ToList();
-        var allDone = pgItems.Count > 0 && pgItems.All(i => IsTerminalCategory(i.State));
+        var groupItems = allItems.Where(i => allIds.Contains(i.WorkItemId)).ToList();
+        var allDone = groupItems.Count > 0 && groupItems.All(i => IsTerminalCategory(i.State));
 
-        // Fallback PG only counts as "completed" once both the PR is merged
-        // AND every item is terminal — preserves the load-work-tree.ps1
-        // semantic where ungrouped scopes need both signals to close.
+        // Fallback merge group only counts as "completed" once both the PR
+        // is merged AND every item is terminal — preserves the
+        // load-work-tree.ps1 semantic where ungrouped scopes need both
+        // signals to close.
         var completed = isFallback ? mergedPr > 0 && allDone : mergedPr > 0;
 
         IReadOnlyList<int> nonDoneChildren = [];
@@ -238,7 +242,7 @@ public sealed partial class BranchCommands
                 .Select(i => i.WorkItemId).ToList();
         }
 
-        return new PullRequestGroup
+        return new MergeGroup
         {
             Name = name,
             ChildIds = taskIds,
@@ -253,11 +257,11 @@ public sealed partial class BranchCommands
         };
     }
 
-    private static int SortKeyForPg(string pg)
+    private static int SortKeyForLegacyPgTag(string tag)
     {
         // "PG-3" → 3; non-conforming names sort last.
-        if (pg.StartsWith("PG-", StringComparison.Ordinal)
-            && int.TryParse(pg[3..], out var n))
+        if (tag.StartsWith("PG-", StringComparison.Ordinal)
+            && int.TryParse(tag[3..], out var n))
         {
             return n;
         }
@@ -309,11 +313,11 @@ public sealed partial class BranchCommands
     private static BranchLoadTreeResult EmptyLoadTreeResult(int workItem, string error, string adoWorkspace) => new()
     {
         WorkTree = new WorkTree { EpicId = workItem, EpicTitle = "", EpicType = "", WorkItems = [] },
-        PrGroups = [],
-        CompletedPgs = [],
-        PendingPgs = [],
-        NextPg = "",
-        PgsNeedingReconciliation = [],
+        MergeGroups = [],
+        CompletedMergeGroups = [],
+        PendingMergeGroups = [],
+        NextMergeGroup = "",
+        MergeGroupsNeedingReconciliation = [],
         TotalTasks = 0,
         TotalIssues = 0,
         TaggedItems = 0,

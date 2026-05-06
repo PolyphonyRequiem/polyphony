@@ -56,7 +56,7 @@ public sealed class BranchNameResolverTests
     }
 
     [Fact]
-    public void Resolve_PgBranch_SubstitutesPlaceholders()
+    public void Resolve_MergeGroupBranch_SubstitutesPlaceholders()
     {
         var config = new ProcessConfigBuilder()
             .WithType("Epic", ["plannable"])
@@ -67,7 +67,10 @@ public sealed class BranchNameResolverTests
         var hint = BranchNameResolver.Resolve(config, item);
 
         hint.ShouldNotBeNull();
-        hint.PgBranch.ShouldBe("feature/50-pg-test");
+        // The YAML config key (BranchStrategy.PgBranch) is preserved per
+        // the compatibility-bridge plan; the WorkspaceHint surface is now
+        // MergeGroupBranch even though the JSON wire key remains pg_branch.
+        hint.MergeGroupBranch.ShouldBe("feature/50-pg-test");
     }
 
     [Fact]

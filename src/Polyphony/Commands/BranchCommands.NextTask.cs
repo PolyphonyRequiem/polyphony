@@ -7,19 +7,20 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// <c>polyphony branch next-task</c>: select the next implementable item
-/// in a PG and transition it to its in-progress state.
+/// in a merge group and transition it to its in-progress state.
 /// Migrated from <c>scripts/task-router.ps1</c>.
 /// </summary>
 public sealed partial class BranchCommands
 {
     /// <summary>
-    /// Picks the next non-terminal implementable item in the named PG,
-    /// transitions it via <c>begin_implementation</c>, and emits the
-    /// branch name + workspace metadata the workflow needs to start work.
+    /// Picks the next non-terminal implementable item in the named merge
+    /// group, transitions it via <c>begin_implementation</c>, and emits
+    /// the branch name + workspace metadata the workflow needs to start
+    /// work.
     /// </summary>
     /// <param name="workItem">ADO work item ID — root of the hierarchy.</param>
-    /// <param name="pgName">PG name (e.g. "PG-1"). Either this or pg-number is required.</param>
-    /// <param name="pgNumber">PG number (e.g. 1). Convenience for callers that track PG as int.</param>
+    /// <param name="pgName">Merge-group name (e.g. "PG-1"). Either this or pg-number is required. Operator-facing flag name preserved as <c>--pg-name</c> until the workflow rewire PR ships.</param>
+    /// <param name="pgNumber">Merge-group number (e.g. 1). Convenience for callers that track merge groups as ints.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("next-task")]
     public async Task<int> NextTask(
@@ -28,11 +29,11 @@ public sealed partial class BranchCommands
         int pgNumber = 0,
         CancellationToken ct = default)
     {
-        var resolvedPg = string.IsNullOrEmpty(pgName) && pgNumber > 0
+        var resolvedMergeGroup = string.IsNullOrEmpty(pgName) && pgNumber > 0
             ? $"PG-{pgNumber}"
             : pgName;
 
-        if (string.IsNullOrEmpty(resolvedPg))
+        if (string.IsNullOrEmpty(resolvedMergeGroup))
         {
             EmitNextTask(EmptyNextTaskResult("Either --pg-name or --pg-number must be provided.", "", ""));
             return ExitCodes.Success;
@@ -46,7 +47,7 @@ public sealed partial class BranchCommands
             var hierarchy = await walker.WalkAsync(workItem, maxDepth: 3, ct).ConfigureAwait(false);
             if (hierarchy is null)
             {
-                EmitNextTask(EmptyNextTaskResult($"Work item {workItem} not found", resolvedPg,
+                EmitNextTask(EmptyNextTaskResult($"Work item {workItem} not found", resolvedMergeGroup,
                     await TryResolveAdoWorkspaceAsync(ct).ConfigureAwait(false)));
                 return ExitCodes.Success;
             }
@@ -59,23 +60,23 @@ public sealed partial class BranchCommands
             var implementable = nodes.Where(n => n.Node.Facets.Contains("implementable")).ToList();
 
             // Same fallback ladder as task-router.ps1:
-            //   1. items directly tagged with the PG
-            //   2. items whose parent container is tagged with the PG
+            //   1. items directly tagged with the merge group
+            //   2. items whose parent container is tagged with the merge group
             //   3. issue-as-task: plannable+implementable, tagged, no children
             //   4. all implementable items
             var candidates = implementable
-                .Where(n => string.Equals(ExtractPgTag(n.Node.Tags), resolvedPg, StringComparison.Ordinal))
+                .Where(n => string.Equals(ExtractLegacyPgTag(n.Node.Tags), resolvedMergeGroup, StringComparison.Ordinal))
                 .ToList();
 
             if (candidates.Count == 0)
             {
-                var pgContainerIds = nodes
+                var mergeGroupContainerIds = nodes
                     .Where(n => n.Node.Facets.Contains("plannable")
-                        && string.Equals(ExtractPgTag(n.Node.Tags), resolvedPg, StringComparison.Ordinal))
+                        && string.Equals(ExtractLegacyPgTag(n.Node.Tags), resolvedMergeGroup, StringComparison.Ordinal))
                     .Select(n => n.Node.WorkItemId)
                     .ToHashSet();
                 candidates = implementable
-                    .Where(n => n.Parent is not null && pgContainerIds.Contains(n.Parent.Node.WorkItemId))
+                    .Where(n => n.Parent is not null && mergeGroupContainerIds.Contains(n.Parent.Node.WorkItemId))
                     .ToList();
             }
 
@@ -85,7 +86,7 @@ public sealed partial class BranchCommands
                     .Where(n =>
                         n.Node.Facets.Contains("plannable")
                         && n.Node.Facets.Contains("implementable")
-                        && string.Equals(ExtractPgTag(n.Node.Tags), resolvedPg, StringComparison.Ordinal)
+                        && string.Equals(ExtractLegacyPgTag(n.Node.Tags), resolvedMergeGroup, StringComparison.Ordinal)
                         && (n.Node.Children is null || n.Node.Children.Length == 0))
                     .ToList();
             }
@@ -110,7 +111,7 @@ public sealed partial class BranchCommands
                     ContainerTitle = "",
                     ContainerType = "",
                     RemainingCount = 0,
-                    CurrentPg = resolvedPg,
+                    CurrentMergeGroup = resolvedMergeGroup,
                     BranchName = "",
                     AdoWorkspace = workspace,
                 };
@@ -144,12 +145,13 @@ public sealed partial class BranchCommands
             // Walk up to find the nearest plannable ancestor (the container).
             var (containerId, containerTitle, containerType) = FindNearestPlannableAncestorWithType(next);
 
-            // Resolve branch name: prefer config-driven workspace_hint.pg_branch
-            // pattern, fall back to feature/{rootId}-{slug-of-pg}.
+            // Resolve branch name: prefer config-driven workspace_hint
+            // merge-group-branch pattern (legacy JSON wire key
+            // "pg_branch"), fall back to feature/{rootId}-{slug-of-mg}.
             var rootItem = await repository.GetByIdAsync(workItem, ct).ConfigureAwait(false);
             var hint = rootItem is not null ? BranchNameResolver.Resolve(processConfig, rootItem) : null;
 
-            var branchName = await ResolveBranchNameAsync(hint, resolvedPg, workItem, ct).ConfigureAwait(false);
+            var branchName = await ResolveBranchNameAsync(hint, resolvedMergeGroup, workItem, ct).ConfigureAwait(false);
 
             result = new BranchNextTaskResult
             {
@@ -161,7 +163,7 @@ public sealed partial class BranchCommands
                 ContainerTitle = containerTitle,
                 ContainerType = containerType,
                 RemainingCount = nonTerminal.Count,
-                CurrentPg = resolvedPg,
+                CurrentMergeGroup = resolvedMergeGroup,
                 BranchName = branchName,
                 AdoWorkspace = workspace,
             };
@@ -170,7 +172,7 @@ public sealed partial class BranchCommands
         catch (Exception ex)
         {
             result = EmptyNextTaskResult($"Error routing next task: {ex.Message}",
-                resolvedPg, await TryResolveAdoWorkspaceAsync(ct).ConfigureAwait(false));
+                resolvedMergeGroup, await TryResolveAdoWorkspaceAsync(ct).ConfigureAwait(false));
         }
 
         EmitNextTask(result);
@@ -178,21 +180,23 @@ public sealed partial class BranchCommands
     }
 
     private async Task<string> ResolveBranchNameAsync(
-        WorkspaceHint? hint, string pgName, int rootId, CancellationToken ct)
+        WorkspaceHint? hint, string mergeGroupName, int rootId, CancellationToken ct)
     {
         string expected;
-        if (hint is { PgBranch: { Length: > 0 } pgBranchTemplate })
+        if (hint is { MergeGroupBranch: { Length: > 0 } template })
         {
-            // Substitute {n} OR {pg} (the PG number) into the configured
-            // pg_branch template — accept both conventions used in the wild.
-            var pgNum = ExtractPgNumber(pgName);
-            expected = pgBranchTemplate
-                .Replace("{n}", pgNum, StringComparison.OrdinalIgnoreCase)
-                .Replace("{pg}", pgNum, StringComparison.OrdinalIgnoreCase);
+            // Substitute {n} OR {pg} (the merge-group number) into the
+            // configured branch template — accept both conventions used
+            // in the wild. Legacy template tokens preserved until the
+            // workflow rewire PR ships.
+            var num = ExtractLegacyPgNumber(mergeGroupName);
+            expected = template
+                .Replace("{n}", num, StringComparison.OrdinalIgnoreCase)
+                .Replace("{pg}", num, StringComparison.OrdinalIgnoreCase);
         }
         else
         {
-            var slug = Slugify(pgName);
+            var slug = Slugify(mergeGroupName);
             expected = $"feature/{rootId}-{slug}";
             if (expected.Length > 60) expected = expected[..60];
         }
@@ -203,10 +207,16 @@ public sealed partial class BranchCommands
         return string.Equals(current, expected, StringComparison.Ordinal) ? current : expected;
     }
 
-    private static string ExtractPgNumber(string pgName)
+    /// <summary>
+    /// Parses the legacy <c>PG-N</c> merge-group name format to extract
+    /// the numeric suffix. "Legacy" because the planner-emitted format
+    /// is scheduled to flip in the prompt-migration PR; until then this
+    /// reader only accepts <c>PG-N</c>.
+    /// </summary>
+    private static string ExtractLegacyPgNumber(string mergeGroupName)
     {
-        if (pgName.StartsWith("PG-", StringComparison.Ordinal)
-            && int.TryParse(pgName[3..], out var n))
+        if (mergeGroupName.StartsWith("PG-", StringComparison.Ordinal)
+            && int.TryParse(mergeGroupName[3..], out var n))
         {
             return n.ToString();
         }
@@ -247,7 +257,7 @@ public sealed partial class BranchCommands
 
     private sealed record NodeWithParent(HierarchyResult Node, NodeWithParent? Parent);
 
-    private static BranchNextTaskResult EmptyNextTaskResult(string error, string pg, string adoWorkspace) => new()
+    private static BranchNextTaskResult EmptyNextTaskResult(string error, string mergeGroup, string adoWorkspace) => new()
     {
         Action = "error",
         PrimaryId = 0,
@@ -257,7 +267,7 @@ public sealed partial class BranchCommands
         ContainerTitle = "",
         ContainerType = "",
         RemainingCount = 0,
-        CurrentPg = pg,
+        CurrentMergeGroup = mergeGroup,
         BranchName = "",
         AdoWorkspace = adoWorkspace,
         Error = error,
