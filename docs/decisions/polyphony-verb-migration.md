@@ -13,7 +13,7 @@ Migrated scripts cluster into four lifecycle groups, registered via
 |---|---|---|
 | `polyphony state ...` | Pre-flight, lifecycle phase detection, type-context loading | `preflight`, `detect`, `load-type`, `load-guidance` |
 | `polyphony plan ...` | Planning-stage helpers | `depth-guard`, `next-child`, `review`, `seed-children` |
-| `polyphony branch ...` | Branch / PG / task / dependency lifecycle on a feature branch | `load-tree`, `route`, `next-task`, `check-deps`, `close-scope` |
+| `polyphony branch ...` | Branch / PG / task / dependency lifecycle on a feature branch | `load-tree`, `route`, `next-impl`, `check-deps`, `close-scope` |
 | `polyphony pr ...` | PR submission and feature-PR creation | `create-feature-pr` (gh helpers internalised, not exposed) |
 
 Existing top-level verbs (`route`, `validate`, `validate-config`, `hierarchy`, `health`)
@@ -36,7 +36,7 @@ post-mortems:
 | `load-agent-guidance.ps1` | `polyphony state load-guidance` |
 | `load-work-tree.ps1` | `polyphony branch load-tree` |
 | `pg-router.ps1` | `polyphony branch route` |
-| `task-router.ps1` | `polyphony branch next-task` |
+| `impl-router.ps1` | `polyphony branch next-impl` |
 | `dependency-check.ps1` | `polyphony branch check-deps` |
 | `scope-closer.ps1` | `polyphony branch close-scope` |
 | `feature-pr-creator.ps1` | `polyphony pr create-feature-pr` |

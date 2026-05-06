@@ -280,7 +280,7 @@ The tables below are the quick-reference index.
 | `polyphony branch route`        | PG lifecycle — pick the next PG action.                       |
 | `polyphony branch load-tree`    | Hierarchy → PG-grouped tree with completion + branch state.   |
 | `polyphony branch ensure-feature` | Idempotently ensure the feature branch exists.              |
-| `polyphony branch next-task`    | Within-PG task selection via facet filtering.            |
+| `polyphony branch next-impl`    | Within-PG task selection via facet filtering.            |
 | `polyphony branch check-deps`   | ADO predecessor link check.                                   |
 | `polyphony branch close-scope`  | Validate then transition leaf items at scope close.           |
 

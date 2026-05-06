@@ -340,7 +340,7 @@ public sealed class PolicyCommandsTests : CommandTestBase
     [Fact]
     public void Resolve_AllAcceptanceCriteriaFromPlanMd()
     {
-        // 1. pr.by_type.Task: { mode: auto } → Task PR resolves to mode=auto
+        // 1. pr.by_type.Task: { mode: auto } → Impl PR resolves to mode=auto
         using var fx = new PolicyFileFixture();
         fx.WritePolicy("""
             schema_version: 1
@@ -352,10 +352,10 @@ public sealed class PolicyCommandsTests : CommandTestBase
             """);
 
         var cmd = CreateCommand();
-        var (_, taskPrOutput) = CaptureConsole(() => cmd.Resolve("type:Task", "pr", fx.PolicyPath));
-        var taskPr = JsonSerializer.Deserialize(taskPrOutput, PolyphonyJsonContext.Default.ResolvedRule);
-        taskPr.ShouldNotBeNull();
-        taskPr.Mode.ShouldBe("auto");
+        var (_, implPrOutput) = CaptureConsole(() => cmd.Resolve("type:Task", "pr", fx.PolicyPath));
+        var implPr = JsonSerializer.Deserialize(implPrOutput, PolyphonyJsonContext.Default.ResolvedRule);
+        implPr.ShouldNotBeNull();
+        implPr.Mode.ShouldBe("auto");
 
         // 2. approvals.root.mode: manual → root approvals stays manual
         var (_, rootApprovalOutput) = CaptureConsole(() => cmd.Resolve("root", "approvals", fx.PolicyPath));

@@ -39,7 +39,7 @@ public sealed record PrMergeMergeGroupResult
     /// <summary>
     /// Always false for merge-group PRs — nested MG branches must persist
     /// for the ancestry chain. Included in the output for symmetry with
-    /// <c>PrMergeTaskResult</c>.
+    /// <c>PrMergeImplResult</c>.
     /// </summary>
     public required bool DeleteBranch { get; init; }
 

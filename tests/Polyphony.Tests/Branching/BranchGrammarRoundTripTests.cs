@@ -63,9 +63,9 @@ public sealed class BranchGrammarRoundTripTests
                     hyphenInternal),
                 "mg/1234_data-layer-migrations (Rev 3 collision case, now safe)"),
             new(
-                BranchNameBuilder.Task(rootId, itemId),
-                new ParsedBranch.Task(BranchName.CreateUnsafe("task/1234-5678"), rootId, itemId),
-                "task/1234-5678"),
+                BranchNameBuilder.Impl(rootId, itemId),
+                new ParsedBranch.Impl(BranchName.CreateUnsafe("impl/1234-5678"), rootId, itemId),
+                "impl/1234-5678"),
             new(
                 BranchNameBuilder.Evidence(rootId, evidenceItemId),
                 new ParsedBranch.Evidence(BranchName.CreateUnsafe("evidence/1234-9999"), rootId, evidenceItemId),
@@ -99,7 +99,7 @@ public sealed class BranchGrammarRoundTripTests
                 ParsedBranch.RootPlan rp => BranchNameBuilder.RootPlan(rp.RootId),
                 ParsedBranch.DescendantPlan dp => BranchNameBuilder.DescendantPlan(dp.RootId, dp.ItemId),
                 ParsedBranch.MergeGroup mg => BranchNameBuilder.MergeGroup(mg.RootId, mg.Path),
-                ParsedBranch.Task t => BranchNameBuilder.Task(t.RootId, t.ItemId),
+                ParsedBranch.Impl t => BranchNameBuilder.Impl(t.RootId, t.ItemId),
                 ParsedBranch.Evidence e => BranchNameBuilder.Evidence(e.RootId, e.ItemId),
                 ParsedBranch.Unrecognized u => throw new InvalidOperationException(
                     $"Builder round-trip not defined for Unrecognized: {u.Raw}"),

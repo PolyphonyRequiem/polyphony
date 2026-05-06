@@ -1,7 +1,7 @@
 # implement-mg — Single MG (merge-group) lifecycle on the Rev 4 branch model.
 #
 # Drives one merge group through: branch creation → per-task implementation
-# loop with per-task PRs → MG-level review and acceptance → MG PR creation
+# loop with per-impl PRs → MG-level review and acceptance → MG PR creation
 # and merge → scope closure.
 #
 # Companion to implement-pg.yaml. While implement-pg commits straight to the
@@ -12,9 +12,9 @@
 #     grammar). Created via `polyphony branch ensure-mg`.
 #
 #   - Each task in the MG is implemented on its own per-item branch
-#     `task/{root}-{item_id}` and promoted into the MG branch via a
-#     squash-merged task PR (`polyphony pr open-task-pr` +
-#     `polyphony pr merge-task-pr`).
+#     `impl/{root}-{item_id}` and promoted into the MG branch via a
+#     squash-merged impl PR (`polyphony pr open-impl-pr` +
+#     `polyphony pr merge-impl-pr`).
 #
 #   - The MG itself is promoted into the feature branch (or its parent MG)
 #     via a merge-commit-only MG PR (`polyphony pr open-mg-pr` +
@@ -25,12 +25,12 @@
 # Invariants:
 #   Pre:  Items in this MG carry `PG-{pg_number}` legacy tags (transitional
 #         bridge — see "Transitional notes" below). Feature branch exists.
-#   Post: Each task PR merged into the MG branch; MG PR merged into the
+#   Post: Each impl PR merged into the MG branch; MG PR merged into the
 #         enclosing branch (parent MG when nested, feature when top-level);
 #         all items transitioned to Done in ADO.
 #
 # Transitional notes (TODO follow-up PRs):
-#   1. `polyphony branch next-task --pg-number N` and `branch route`
+#   1. `polyphony branch next-impl --pg-number N` and `branch route`
 #      currently match items by `PG-N` tag (ExtractLegacyPgTag in
 #      BranchCommands). Items in this MG MUST carry that legacy tag for
 #      this workflow to find them. A follow-up PR will introduce
@@ -50,16 +50,16 @@
 #
 # Re-entry behavior (P3):
 #   Every step in this workflow is idempotent — `branch ensure-mg`,
-#   `branch ensure-task`, `pr open-mg-pr`, `pr open-task-pr`,
-#   `pr merge-task-pr`, `pr merge-mg-pr` all detect prior state and
-#   either reuse or no-op. `branch next-task` walks past items already in
+#   `branch ensure-impl`, `pr open-mg-pr`, `pr open-impl-pr`,
+#   `pr merge-impl-pr`, `pr merge-mg-pr` all detect prior state and
+#   either reuse or no-op. `branch next-impl` walks past items already in
 #   their terminal state. A killed workflow can be restarted on the same
 #   inputs without manual cleanup, with the caveat that scope_reviewer
 #   and user_acceptance will re-run.
 #
 # Risk acknowledged (rubber-duck finding #7):
 #   `primary_completer` transitions tasks to their template's done state
-#   immediately after the task PR merges, before the MG PR merges. If the
+#   immediately after the impl PR merges, before the MG PR merges. If the
 #   MG PR fails to merge afterwards, ADO will reflect tasks as Done while
 #   the feature branch lacks the work. Recovery: re-run this workflow;
 #   it will re-open and re-merge the MG PR (idempotent). The work is
@@ -81,7 +81,7 @@ workflow:
   limits:
     # Per the rubber-duck pass — implement-mg's task loop is wider than
     # implement-pg's because each task carries seven nodes
-    # (ensure-task → coder → reviewer → task-pr-open → task-pr-merge
+    # (ensure-impl → coder → reviewer → impl-pr-open → impl-pr-merge
     #  → completer → router). Ten tasks ≈ 70 iterations baseline; budget
     # 300 to cover changes-requested loops and the scope_reviewer
     # round-trip without hitting the conductor cap.
@@ -100,7 +100,7 @@ workflow:
       type: number
       required: true
       description: >-
-        Legacy merge-group number used by the existing `branch next-task`
+        Legacy merge-group number used by the existing `branch next-impl`
         and `branch close-scope` verbs to find tasks via `PG-N` tags.
         Transitional — a follow-up PR will replace with `--mg-path PATH`.
     mg_path:
@@ -189,11 +189,11 @@ agents:
 
   # ── Per-item router ───────────────────────────────────────────────────
   #
-  # Determines the next task in this MG via `polyphony branch next-task`.
-  # Routes to task_branch_ensure for implementation or to dependency_check
+  # Determines the next task in this MG via `polyphony branch next-impl`.
+  # Routes to impl_branch_ensure for implementation or to dependency_check
   # when all tasks are complete.
   #
-  # Transitional bridge: `next-task` matches items by `PG-N` legacy tag
+  # Transitional bridge: `next-impl` matches items by `PG-N` legacy tag
   # (see ExtractLegacyPgTag in BranchCommands). A follow-up PR will add
   # `--mg-path PATH` matching.
   #
@@ -207,36 +207,36 @@ agents:
     command: polyphony
     args:
       - "branch"
-      - "next-task"
+      - "next-impl"
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
       - "--pg-number"
       - "{{ workflow.input.pg_number }}"
     routes:
-      - to: task_branch_ensure
+      - to: impl_branch_ensure
         when: "{{ primary_router.output.action == 'implement_item' }}"
       - to: dependency_check
         when: "{{ primary_router.output.action == 'all_items_done' }}"
-      # Catch-all per M4: unknown action from next-task should fail
+      # Catch-all per M4: unknown action from next-impl should fail
       # safely to dependency_check (the natural "we're done with tasks"
       # path) rather than raise `No matching route found`.
       - to: dependency_check
 
-  # ── Task branch ensure ────────────────────────────────────────────────
+  # ── Impl branch ensure ────────────────────────────────────────────────
   #
-  # Idempotently creates and checks out `task/{root}-{item_id}` from the
+  # Idempotently creates and checks out `impl/{root}-{item_id}` from the
   # MG branch. Re-entry safe.
   #
   # Invariants:
   #   Pre:  primary_router selected a task (output.action == 'implement_item').
-  #   Post: `task/{root}-{primary_id}` is checked out and pushed to origin.
-  - name: task_branch_ensure
+  #   Post: `impl/{root}-{primary_id}` is checked out and pushed to origin.
+  - name: impl_branch_ensure
     type: script
-    description: Idempotently create or check out the per-item task branch
+    description: Idempotently create or check out the per-item impl branch
     command: polyphony
     args:
       - "branch"
-      - "ensure-task"
+      - "ensure-impl"
       - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--item-id"
@@ -248,17 +248,17 @@ agents:
 
   # ── Coder agent ───────────────────────────────────────────────────────
   #
-  # Implements a single task. Commits to the per-item task branch.
+  # Implements a single task. Commits to the per-item impl branch.
   # Uses Opus 4.6 — same model used by implement-pg.yaml. Lint check
   # accepts any "opus" model so the choice can evolve without lint churn.
   #
   # Invariants:
-  #   Pre:  Task branch is checked out.
-  #   Post: Code changes committed and pushed to the task branch.
+  #   Pre:  Impl branch is checked out.
+  #   Post: Code changes committed and pushed to the impl branch.
   - name: coder
     type: agent
     model: claude-opus-4.6
-    description: Implement a single task with code changes committed to the per-item task branch
+    description: Implement a single task with code changes committed to the per-item impl branch
     tools:
       - twig
       - gh
@@ -270,13 +270,13 @@ agents:
 
       Implement the task described below. Write clean, production-quality code
       that satisfies the acceptance criteria. Commit your changes to the current
-      task branch (which has already been created and checked out for you).
+      impl branch (which has already been created and checked out for you).
 
       ## Context
 
       - **Work Item ID:** {{ primary_router.output.primary_id }}
       - **Work item title:** {{ primary_router.output.primary_title }}
-      - **Task branch:** `task/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`
+      - **Impl branch:** `impl/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`
       - **Enclosing MG branch:** `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
       - **Parent work item:** {{ workflow.input.work_item_id }}
       - **Run apex:** {{ workflow.input.root_id }}
@@ -341,10 +341,10 @@ agents:
   #
   # Reviews the coder's per-task implementation for correctness, code
   # quality, and alignment with the task requirements. Routes to
-  # task_pr_open when approved, back to coder when changes are requested.
+  # impl_pr_open when approved, back to coder when changes are requested.
   #
   # Invariants:
-  #   Pre:  Coder has committed changes to the task branch.
+  #   Pre:  Coder has committed changes to the impl branch.
   #   Post: output.verdict is 'approved' or 'changes_requested'.
   - name: primary_reviewer
     type: agent
@@ -373,14 +373,14 @@ agents:
       ## Your Mission
 
       Review the implementation of item {{ primary_router.output.primary_id }} on its
-      per-item task branch for correctness, code quality, and alignment with the work
+      per-item impl branch for correctness, code quality, and alignment with the work
       item requirements.
 
       ## Context
 
       - **Work Item ID:** {{ primary_router.output.primary_id }}
       - **Work item title:** {{ primary_router.output.primary_title }}
-      - **Task branch:** `task/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`
+      - **Impl branch:** `impl/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`
       - **Enclosing MG branch:** `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
 
       {% if primary_reviewer is defined and primary_reviewer.output is defined and primary_reviewer.output.verdict == 'changes_requested' %}
@@ -407,10 +407,10 @@ agents:
       ## Instructions
 
       1. Read the item description from ADO: `twig show {{ primary_router.output.primary_id }}`.
-      2. Inspect the latest commits on the task branch — start with
+      2. Inspect the latest commits on the impl branch — start with
          `git log --oneline mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}..HEAD`
          and `git diff mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}...HEAD`
-         to see what the coder added on this task branch.
+         to see what the coder added on this impl branch.
       3. Read the modified source and test files in full as needed.
       4. Verify:
          - Requirements are met
@@ -442,7 +442,7 @@ agents:
       {{ guidance_loader.output.reviewer }}
       {% endif %}
     routes:
-      - to: task_pr_open
+      - to: impl_pr_open
         when: "{{ primary_reviewer.output.verdict == 'approved' }}"
       - to: coder
         when: "{{ primary_reviewer.output.verdict == 'changes_requested' }}"
@@ -451,22 +451,22 @@ agents:
       # `No matching route found`.
       - to: coder
 
-  # ── Task PR open ──────────────────────────────────────────────────────
+  # ── Impl PR open ──────────────────────────────────────────────────────
   #
-  # Opens (or reuses) the per-item task PR. Head is the task branch;
+  # Opens (or reuses) the per-item impl PR. Head is the impl branch;
   # base is the MG branch. Idempotent — reuses an existing open PR for
   # the same head/base pair.
   #
   # Invariants:
   #   Pre:  Reviewer approved the task implementation.
-  #   Post: Task PR exists targeting the MG branch; output.pr_number set.
-  - name: task_pr_open
+  #   Post: Impl PR exists targeting the MG branch; output.pr_number set.
+  - name: impl_pr_open
     type: script
-    description: Open (or reuse) the per-item task PR targeting the MG branch
+    description: Open (or reuse) the per-item impl PR targeting the MG branch
     command: polyphony
     args:
       - "pr"
-      - "open-task-pr"
+      - "open-impl-pr"
       - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--item-id"
@@ -474,25 +474,25 @@ agents:
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
     routes:
-      - to: task_pr_merge
+      - to: impl_pr_merge
 
-  # ── Task PR merge ─────────────────────────────────────────────────────
+  # ── Impl PR merge ─────────────────────────────────────────────────────
   #
-  # Merges the per-item task PR into the MG branch. Default method is
-  # squash (per the ADR — task PRs carry micro-history we do not want
+  # Merges the per-item impl PR into the MG branch. Default method is
+  # squash (per the ADR — impl PRs carry micro-history we do not want
   # to pollute the MG branch with). Idempotent — recognises an already
   # merged PR. Deletes the head branch on success.
   #
   # Invariants:
-  #   Pre:  Task PR is open and approved.
-  #   Post: Task PR is merged; head task branch deleted.
-  - name: task_pr_merge
+  #   Pre:  Impl PR is open and approved.
+  #   Post: Impl PR is merged; head impl branch deleted.
+  - name: impl_pr_merge
     type: script
-    description: Squash-merge the per-item task PR into the MG branch
+    description: Squash-merge the per-item impl PR into the MG branch
     command: polyphony
     args:
       - "pr"
-      - "merge-task-pr"
+      - "merge-impl-pr"
       - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--item-id"
@@ -516,7 +516,7 @@ agents:
   # workflow; the MG PR open + merge are idempotent.
   #
   # Invariants:
-  #   Pre:  Task PR is merged into MG branch.
+  #   Pre:  Impl PR is merged into MG branch.
   #   Post: Item is transitioned to its template's done state in ADO; note added. # type is runtime-injected; do not hardcode type names
   - name: primary_completer
     type: script
@@ -528,7 +528,7 @@ agents:
       - >-
         $taskId = {{ primary_router.output.primary_id }};
         twig set $taskId;
-        twig note --text 'Item implementation merged into MG branch via task PR';
+        twig note --text 'Item implementation merged into MG branch via impl PR';
         $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
         if (-not $validate.is_valid) { throw "Cannot transition task $($taskId): $($validate.message)" };
         twig state $validate.target_state;
@@ -671,7 +671,7 @@ agents:
       1. Read the parent work item description: `twig show {{ workflow.input.work_item_id }}`.
       2. Inspect the MG branch in full:
          - `git log --oneline {{ workflow.input.feature_branch }}..mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
-           to see every commit added by this MG (one squash commit per task PR).
+           to see every commit added by this MG (one squash commit per impl PR).
          - `git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat`
            for an aggregate file/line summary.
          - Read the modified files in full as needed.

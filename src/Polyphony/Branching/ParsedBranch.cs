@@ -47,10 +47,10 @@ internal abstract record ParsedBranch
     public sealed record MergeGroup(BranchName Branch, RootId RootId, MergeGroupPath Path) : ParsedBranch;
 
     /// <summary>
-    /// <c>task/{root_id}-{item_id}</c> — a task branch (flat; PR base
+    /// <c>impl/{root_id}-{item_id}</c> — an impl branch (flat; PR base
     /// records the enclosing MG).
     /// </summary>
-    public sealed record Task(BranchName Branch, RootId RootId, WorkItemId ItemId) : ParsedBranch;
+    public sealed record Impl(BranchName Branch, RootId RootId, WorkItemId ItemId) : ParsedBranch;
 
     /// <summary>
     /// <c>evidence/{root_id}-{item_id}</c> — an evidence branch (Phase 6).

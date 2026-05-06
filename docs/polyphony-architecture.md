@@ -31,7 +31,7 @@ From orchestration down to backing store:
 │   plan {depth-guard, next-child, load-type, load-guidance,                │
 │          review, seed-children}                                           │
 │   policy {load, validate, resolve}                                        │
-│   branch {route, load-tree, ensure-feature, next-task,                    │
+│   branch {route, load-tree, ensure-feature, next-impl,                    │
 │           check-deps, close-scope}                                        │
 │   pr {create-feature-pr}                                                  │
 │   src/Polyphony/Commands/*.cs                                             │

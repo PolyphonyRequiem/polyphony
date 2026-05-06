@@ -13,10 +13,10 @@ using Xunit;
 namespace Polyphony.Tests.Commands;
 
 /// <summary>
-/// Tests for <c>polyphony branch ensure-task</c>. Idempotent task-branch
+/// Tests for <c>polyphony branch ensure-impl</c>. Idempotent impl-branch
 /// materialization with base = enclosing merge group.
 /// </summary>
-public sealed class BranchCommandsEnsureTaskTests : CommandTestBase
+public sealed class BranchCommandsEnsureImplTests : CommandTestBase
 {
     private static (BranchCommands Command, FakeProcessRunner Runner) CreateCommand()
     {
@@ -58,54 +58,54 @@ public sealed class BranchCommandsEnsureTaskTests : CommandTestBase
         => runner.WhenExact("git", ["fetch", "origin", refspec], new ProcessResult(0, "", ""));
 
     [Fact]
-    public async Task EnsureTask_InvalidRootId_ReturnsConfigError()
+    public async Task EnsureImpl_InvalidRootId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureTask(rootId: 0, itemId: 200, mgPath: "core"));
+            () => cmd.EnsureImpl(rootId: 0, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureImplResult)!;
         result.Error!.ShouldContain("rootId");
     }
 
     [Fact]
-    public async Task EnsureTask_InvalidItemId_ReturnsConfigError()
+    public async Task EnsureImpl_InvalidItemId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureTask(rootId: 100, itemId: -5, mgPath: "core"));
+            () => cmd.EnsureImpl(rootId: 100, itemId: -5, mgPath: "core"));
         exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureImplResult)!;
         result.Error!.ShouldContain("itemId");
     }
 
     [Fact]
-    public async Task EnsureTask_InvalidMgPath_ReturnsConfigError()
+    public async Task EnsureImpl_InvalidMgPath_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureTask(rootId: 100, itemId: 200, mgPath: "INVALID"));
+            () => cmd.EnsureImpl(rootId: 100, itemId: 200, mgPath: "INVALID"));
         exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureImplResult)!;
         result.Error!.ShouldContain("merge-group path");
     }
 
     [Fact]
-    public async Task EnsureTask_AllMissing_CreatesFromMgBaseAndPushes()
+    public async Task EnsureImpl_AllMissing_CreatesFromMgBaseAndPushes()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemote(runner, "task/100-200", exists: false);
-        StubLocalBranchExists(runner, "task/100-200", exists: false);
+        StubLsRemote(runner, "impl/100-200", exists: false);
+        StubLocalBranchExists(runner, "impl/100-200", exists: false);
         StubLsRemote(runner, "mg/100_core", exists: true);
         StubLocalBranchExists(runner, "mg/100_core", exists: true);
-        StubCreateBranch(runner, "task/100-200", "mg/100_core");
-        StubPush(runner, "task/100-200");
+        StubCreateBranch(runner, "impl/100-200", "mg/100_core");
+        StubPush(runner, "impl/100-200");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureTask(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.EnsureImpl(rootId: 100, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureTaskResult)!;
-        result.Branch.ShouldBe("task/100-200");
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureImplResult)!;
+        result.Branch.ShouldBe("impl/100-200");
         result.BaseBranch.ShouldBe("mg/100_core");
         result.Action.ShouldBe("created");
         result.Pushed.ShouldBeTrue();
@@ -116,88 +116,88 @@ public sealed class BranchCommandsEnsureTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task EnsureTask_BaseMgMissing_ReturnsRoutingFailure()
+    public async Task EnsureImpl_BaseMgMissing_ReturnsRoutingFailure()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemote(runner, "task/100-200", exists: false);
-        StubLocalBranchExists(runner, "task/100-200", exists: false);
+        StubLsRemote(runner, "impl/100-200", exists: false);
+        StubLocalBranchExists(runner, "impl/100-200", exists: false);
         StubLsRemote(runner, "mg/100_core", exists: false);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureTask(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.EnsureImpl(rootId: 100, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureImplResult)!;
         result.Error!.ShouldContain("ensure-mg");
     }
 
     [Fact]
-    public async Task EnsureTask_TargetExistsLocally_JustChecksOut()
+    public async Task EnsureImpl_TargetExistsLocally_JustChecksOut()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemote(runner, "task/100-200", exists: true);
-        StubLocalBranchExists(runner, "task/100-200", exists: true);
-        StubCheckout(runner, "task/100-200");
+        StubLsRemote(runner, "impl/100-200", exists: true);
+        StubLocalBranchExists(runner, "impl/100-200", exists: true);
+        StubCheckout(runner, "impl/100-200");
         StubLsRemote(runner, "mg/100_core", exists: true);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureTask(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.EnsureImpl(rootId: 100, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureImplResult)!;
         result.Action.ShouldBe("checked_out");
         result.Pushed.ShouldBeFalse();
         result.RemoteExisted.ShouldBeTrue();
     }
 
     [Fact]
-    public async Task EnsureTask_BaseRemoteOnly_FetchesBeforeCreate()
+    public async Task EnsureImpl_BaseRemoteOnly_FetchesBeforeCreate()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemote(runner, "task/100-200", exists: false);
-        StubLocalBranchExists(runner, "task/100-200", exists: false);
+        StubLsRemote(runner, "impl/100-200", exists: false);
+        StubLocalBranchExists(runner, "impl/100-200", exists: false);
         StubLsRemote(runner, "mg/100_core", exists: true);
         StubLocalBranchExists(runner, "mg/100_core", exists: false);
         StubFetch(runner, "mg/100_core");
         StubCheckoutTracking(runner, "mg/100_core");
-        StubCreateBranch(runner, "task/100-200", "mg/100_core");
-        StubPush(runner, "task/100-200");
+        StubCreateBranch(runner, "impl/100-200", "mg/100_core");
+        StubPush(runner, "impl/100-200");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureTask(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.EnsureImpl(rootId: 100, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureImplResult)!;
         result.BaseFetched.ShouldBeTrue();
     }
 
     [Fact]
-    public async Task EnsureTask_NestedMgPath_BuildsCorrectBaseBranch()
+    public async Task EnsureImpl_NestedMgPath_BuildsCorrectBaseBranch()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemote(runner, "task/100-200", exists: false);
-        StubLocalBranchExists(runner, "task/100-200", exists: false);
+        StubLsRemote(runner, "impl/100-200", exists: false);
+        StubLocalBranchExists(runner, "impl/100-200", exists: false);
         StubLsRemote(runner, "mg/100_core_api", exists: true);
         StubLocalBranchExists(runner, "mg/100_core_api", exists: true);
-        StubCreateBranch(runner, "task/100-200", "mg/100_core_api");
-        StubPush(runner, "task/100-200");
+        StubCreateBranch(runner, "impl/100-200", "mg/100_core_api");
+        StubPush(runner, "impl/100-200");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureTask(rootId: 100, itemId: 200, mgPath: "core_api"));
+            () => cmd.EnsureImpl(rootId: 100, itemId: 200, mgPath: "core_api"));
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureImplResult)!;
         result.BaseBranch.ShouldBe("mg/100_core_api");
         result.MgPath.ShouldBe("core_api");
     }
 
     [Fact]
-    public async Task EnsureTask_JsonContract_PreservesSnakeCaseKeys()
+    public async Task EnsureImpl_JsonContract_PreservesSnakeCaseKeys()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemote(runner, "task/100-200", exists: true);
-        StubLocalBranchExists(runner, "task/100-200", exists: true);
-        StubCheckout(runner, "task/100-200");
+        StubLsRemote(runner, "impl/100-200", exists: true);
+        StubLocalBranchExists(runner, "impl/100-200", exists: true);
+        StubCheckout(runner, "impl/100-200");
         StubLsRemote(runner, "mg/100_core", exists: true);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureTask(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.EnsureImpl(rootId: 100, itemId: 200, mgPath: "core"));
 
         output.ShouldContain("\"branch\"");
         output.ShouldContain("\"base_branch\"");

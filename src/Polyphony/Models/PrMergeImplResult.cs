@@ -1,17 +1,17 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output of <c>polyphony pr merge-task-pr</c>: merges the per-item task PR
+/// Output of <c>polyphony pr merge-impl-pr</c>: merges the per-item impl PR
 /// into its enclosing merge-group branch. Default merge method is squash;
 /// override only when the planner has a reason. Branch identifiers are
 /// echoed for workflow logging.
 /// </summary>
-public sealed record PrMergeTaskResult
+public sealed record PrMergeImplResult
 {
     /// <summary>The PR number that was merged. Zero on error.</summary>
     public required int PrNumber { get; init; }
 
-    /// <summary>The task branch (head). Format: <c>task/{root}-{item}</c>.</summary>
+    /// <summary>The impl branch (head). Format: <c>impl/{root}-{item}</c>.</summary>
     public required string HeadBranch { get; init; }
 
     /// <summary>The enclosing merge-group branch (base).</summary>

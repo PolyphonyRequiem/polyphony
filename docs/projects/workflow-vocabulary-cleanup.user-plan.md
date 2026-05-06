@@ -25,7 +25,7 @@ architect prompt.
 The **implementation layer regresses against this pattern.**
 `implement-pg.yaml`, the platform PR sub-workflows (`github-pr.yaml`,
 `ado-pr.yaml`, `feature-pr.yaml`), `close-out.yaml`, and the routing scripts
-(`task-router.ps1`, `pg-router.ps1`, `dependency-check.ps1`) hard-code
+(`impl-router.ps1`, `pg-router.ps1`, `dependency-check.ps1`) hard-code
 ADO-Basic type names — `task_id`, `task_title`, `issue_id`, `issue_title`,
 agent names like `task_router` / `task_reviewer` / `issue_reviewer` /
 `task_completer`, prose like `"Task ID: ..."` and `"Issue-level item for
@@ -107,7 +107,7 @@ The architect should refine into ordered Tasks/PGs. This is the v1 scope:
    - `issue_reviewer` → `parent_reviewer`
    - `task_completer` → `implementable_completer`
 
-3. **Schema field renames** in `pg-router.ps1`, `task-router.ps1`,
+3. **Schema field renames** in `pg-router.ps1`, `impl-router.ps1`,
    `dependency-check.ps1`, and any contract tests:
    - `task_id`, `task_title` → `primary_id`, `primary_title`
    - `task_ids` → `primary_ids`

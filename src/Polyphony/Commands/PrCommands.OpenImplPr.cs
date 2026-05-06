@@ -8,8 +8,8 @@ namespace Polyphony.Commands;
 public sealed partial class PrCommands
 {
     /// <summary>
-    /// Open (or reuse) the pull request that promotes a task branch into
-    /// its enclosing merge-group branch. Head is <c>task/{root_id}-{item_id}</c>;
+    /// Open (or reuse) the pull request that promotes a impl branch into
+    /// its enclosing merge-group branch. Head is <c>impl/{root_id}-{item_id}</c>;
     /// base is <c>mg/{root_id}_{mg_path}</c>. Reuses an existing open PR
     /// for the same head/base pair instead of creating a duplicate.
     /// </summary>
@@ -19,8 +19,8 @@ public sealed partial class PrCommands
     /// <param name="title">Optional PR title; deterministic fallback derived from the cached work-item title.</param>
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
-    [Command("open-task-pr")]
-    public async Task<int> OpenTaskPr(
+    [Command("open-impl-pr")]
+    public async Task<int> OpenImplPr(
         int rootId,
         int itemId,
         string mgPath,
@@ -30,19 +30,19 @@ public sealed partial class PrCommands
     {
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
-            EmitTaskError(rootId, itemId, mgPath, $"rootId must be positive (got {rootId})");
+            EmitImplError(rootId, itemId, mgPath, $"rootId must be positive (got {rootId})");
             return ExitCodes.ConfigError;
         }
 
         if (!WorkItemId.TryParse(itemId, out var item))
         {
-            EmitTaskError(rootId, itemId, mgPath, $"itemId must be positive (got {itemId})");
+            EmitImplError(rootId, itemId, mgPath, $"itemId must be positive (got {itemId})");
             return ExitCodes.ConfigError;
         }
 
         if (!MergeGroupPath.TryParse(mgPath, out var path) || path is null)
         {
-            EmitTaskError(
+            EmitImplError(
                 rootId,
                 itemId,
                 mgPath,
@@ -50,7 +50,7 @@ public sealed partial class PrCommands
             return ExitCodes.ConfigError;
         }
 
-        var headBranch = BranchNameBuilder.Task(root, item).Value;
+        var headBranch = BranchNameBuilder.Impl(root, item).Value;
         var baseBranch = BranchNameBuilder.MergeGroup(root, path).Value;
 
         try
@@ -58,29 +58,29 @@ public sealed partial class PrCommands
             var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", ct).ConfigureAwait(false);
             if (headRefs.Count == 0)
             {
-                EmitTaskError(rootId, itemId, mgPath, $"head branch '{headBranch}' does not exist on remote", headBranch: headBranch, baseBranch: baseBranch);
+                EmitImplError(rootId, itemId, mgPath, $"head branch '{headBranch}' does not exist on remote", headBranch: headBranch, baseBranch: baseBranch);
                 return ExitCodes.RoutingFailure;
             }
 
             var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{baseBranch}", ct).ConfigureAwait(false);
             if (baseRefs.Count == 0)
             {
-                EmitTaskError(rootId, itemId, mgPath, $"base branch '{baseBranch}' does not exist on remote", headBranch: headBranch, baseBranch: baseBranch);
+                EmitImplError(rootId, itemId, mgPath, $"base branch '{baseBranch}' does not exist on remote", headBranch: headBranch, baseBranch: baseBranch);
                 return ExitCodes.RoutingFailure;
             }
 
             var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
             if (string.IsNullOrEmpty(slug))
             {
-                EmitTaskError(rootId, itemId, mgPath, "Could not resolve repo slug from origin remote", headBranch: headBranch, baseBranch: baseBranch);
+                EmitImplError(rootId, itemId, mgPath, "Could not resolve repo slug from origin remote", headBranch: headBranch, baseBranch: baseBranch);
                 return ExitCodes.RoutingFailure;
             }
 
             var prTitle = string.IsNullOrWhiteSpace(title)
-                ? await ResolveTaskPrTitleAsync(itemId, ct).ConfigureAwait(false)
+                ? await ResolveImplPrTitleAsync(itemId, ct).ConfigureAwait(false)
                 : title;
             var prBody = string.IsNullOrWhiteSpace(body)
-                ? BuildDefaultTaskBody(rootId, itemId, path.Canonical, headBranch, baseBranch)
+                ? BuildDefaultImplBody(rootId, itemId, path.Canonical, headBranch, baseBranch)
                 : body;
 
             var existing = await gh.ListPullRequestsAsync(
@@ -90,7 +90,7 @@ public sealed partial class PrCommands
             if (existing.Count > 0)
             {
                 var found = existing[0];
-                EmitTask(new PrOpenTaskResult
+                EmitImpl(new PrOpenImplResult
                 {
                     PrNumber = found.Number,
                     PrUrl = found.Url ?? "",
@@ -108,12 +108,12 @@ public sealed partial class PrCommands
             var url = await gh.CreatePullRequestAsync(slug, baseBranch, headBranch, prTitle, prBody, ct).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(url))
             {
-                EmitTaskError(rootId, itemId, mgPath, "gh pr create failed — no URL returned", headBranch: headBranch, baseBranch: baseBranch);
+                EmitImplError(rootId, itemId, mgPath, "gh pr create failed — no URL returned", headBranch: headBranch, baseBranch: baseBranch);
                 return ExitCodes.RoutingFailure;
             }
 
             var trimmedUrl = url.Trim();
-            EmitTask(new PrOpenTaskResult
+            EmitImpl(new PrOpenImplResult
             {
                 PrNumber = ExtractPrNumber(trimmedUrl),
                 PrUrl = trimmedUrl,
@@ -130,14 +130,14 @@ public sealed partial class PrCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitTaskError(rootId, itemId, mgPath, ex.Message, headBranch: headBranch, baseBranch: baseBranch);
+            EmitImplError(rootId, itemId, mgPath, ex.Message, headBranch: headBranch, baseBranch: baseBranch);
             return ExitCodes.RoutingFailure;
         }
     }
 
-    private async Task<string> ResolveTaskPrTitleAsync(int itemId, CancellationToken ct)
+    private async Task<string> ResolveImplPrTitleAsync(int itemId, CancellationToken ct)
     {
-        var fallback = $"task #{itemId}";
+        var fallback = $"impl #{itemId}";
         try
         {
             var tree = await twig.ShowTreeAsync(itemId, ct).ConfigureAwait(false);
@@ -150,21 +150,21 @@ public sealed partial class PrCommands
         }
     }
 
-    private static string BuildDefaultTaskBody(int rootId, int itemId, string mgPath, string headBranch, string baseBranch)
+    private static string BuildDefaultImplBody(int rootId, int itemId, string mgPath, string headBranch, string baseBranch)
     {
         var sb = new System.Text.StringBuilder();
-        sb.Append("## Task #").Append(itemId).Append(" for root #").Append(rootId).Append("\n\n");
+        sb.Append("## Impl #").Append(itemId).Append(" for root #").Append(rootId).Append("\n\n");
         sb.Append("Promotes `").Append(headBranch).Append("` into merge group `").Append(mgPath)
           .Append("` (base `").Append(baseBranch).Append("`).\n\n");
         sb.Append("AB#").Append(itemId).Append('\n');
         return sb.ToString();
     }
 
-    private static void EmitTask(PrOpenTaskResult result)
+    private static void EmitImpl(PrOpenImplResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
-            result, PolyphonyJsonContext.Default.PrOpenTaskResult));
+            result, PolyphonyJsonContext.Default.PrOpenImplResult));
 
-    private static void EmitTaskError(
+    private static void EmitImplError(
         int rootId,
         int itemId,
         string mgPath,
@@ -172,7 +172,7 @@ public sealed partial class PrCommands
         string headBranch = "",
         string baseBranch = "")
     {
-        EmitTask(new PrOpenTaskResult
+        EmitImpl(new PrOpenImplResult
         {
             PrNumber = 0,
             PrUrl = "",

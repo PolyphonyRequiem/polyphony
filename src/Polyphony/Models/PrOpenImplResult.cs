@@ -1,12 +1,12 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output of <c>polyphony pr open-task-pr</c>: opens (or reuses) the pull
-/// request that promotes a task branch into its enclosing merge-group
-/// branch. Head is <c>task/{root}-{item}</c>; base is
+/// Output of <c>polyphony pr open-impl-pr</c>: opens (or reuses) the pull
+/// request that promotes a impl branch into its enclosing merge-group
+/// branch. Head is <c>impl/{root}-{item}</c>; base is
 /// <c>mg/{root}_{mg_path}</c>.
 /// </summary>
-public sealed record PrOpenTaskResult
+public sealed record PrOpenImplResult
 {
     /// <summary>The PR number assigned by GitHub. Zero when no PR exists yet.</summary>
     public required int PrNumber { get; init; }
@@ -17,7 +17,7 @@ public sealed record PrOpenTaskResult
     /// <summary>The PR title (computed if not supplied as input).</summary>
     public required string Title { get; init; }
 
-    /// <summary>The fully-qualified head branch (e.g. <c>task/123-456</c>).</summary>
+    /// <summary>The fully-qualified head branch (e.g. <c>impl/123-456</c>).</summary>
     public required string HeadBranch { get; init; }
 
     /// <summary>The fully-qualified base branch (the enclosing merge-group branch).</summary>

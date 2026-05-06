@@ -262,9 +262,9 @@ Return a JSON object with this structure:
 ```json
 {
   "plan": "The full plan document in Markdown format",
-  "tasks": [
+  "children": [
     {
-      "task_id": "task-1",
+      "child_id": "task-1",
       "title": "Short one-line title",
       "type": "Task",
       "description": "Markdown description of the work",
@@ -287,25 +287,25 @@ Return a JSON object with this structure:
 }
 ```
 
-### `tasks` field — read this carefully
+### `children` field — read this carefully
 
-The seeder consumes `tasks` directly to create child work items
-deterministically. The `plan` markdown is for humans; `tasks` is the machine
+The seeder consumes `children` directly to create child work items
+deterministically. The `plan` markdown is for humans; `children` is the machine
 contract.
 
 1. **Stable IDs.** Use `task-1`, `task-2`, … in the order they appear. When
-   re-invoked to revise, **preserve the `task_id` of any task that survives**
-   the revision — the seeder matches against existing children by `task_id`
-   to keep re-seeding idempotent. Renumbering surviving tasks causes duplicate
+   re-invoked to revise, **preserve the `child_id` of any child entry that survives**
+   the revision — the seeder matches against existing children by `child_id`
+   to keep re-seeding idempotent. Renumbering surviving children causes duplicate
    work items.
 2. **`type` must be valid.** Use only types listed in the decomposition
    guidance for the parent's child types.
-3. **Tasks mirror the plan.** Every task in `tasks` should also appear in the
+3. **Children mirror the plan.** Every child entry in `children` should also appear in the
    plan markdown (and vice versa). Keep them in sync — the array is the
    structured view of the decomposition the markdown narrates.
 4. **`pg`** is optional — omit when no PG grouping is needed.
-5. **`depends_on`** references other `task_id` values in this same plan.
-6. **Atomic items emit `tasks: []`.** If you decide the work item needs no
+5. **`depends_on`** references other `child_id` values in this same plan.
+6. **Atomic items emit `children: []`.** If you decide the work item needs no
    decomposition, emit an empty array — the seeder will set the `planned` tag
    on the parent and the workflow will route to implementation directly.
 

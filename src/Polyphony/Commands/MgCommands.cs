@@ -19,7 +19,7 @@ public sealed partial class MgCommands
 {
     /// <summary>
     /// Decide whether a child item under an enclosing merge group becomes
-    /// its own nested MG (<c>nest</c>) or stays flat as a task PR
+    /// its own nested MG (<c>nest</c>) or stays flat as a impl PR
     /// (<c>flat</c>). Implements ADR <c>docs/decisions/branch-model.md</c>
     /// § Nested-MG trigger: default-nest when the child is
     /// <c>implementable AND decomposable</c>. Planner overrides
@@ -106,7 +106,7 @@ public sealed partial class MgCommands
         {
             EmitFlat(typedRootId, typedItemId, parentPath, hasImplementable, decomposable,
                 overrideApplied: "flat",
-                reason: "planner override: --override-flat forces task PR even when default trigger would nest");
+                reason: "planner override: --override-flat forces impl PR even when default trigger would nest");
             return Task.FromResult(ExitCodes.Success);
         }
 
@@ -176,7 +176,7 @@ public sealed partial class MgCommands
             Decision = "nest",
             NestedMgId = nestedId.Value,
             NestedMgPath = nestedPath.Canonical,
-            TaskBranch = null,
+            ImplBranch = null,
             HasImplementable = hasImplementable,
             Decomposable = decomposable,
             OverrideApplied = overrideApplied,
@@ -201,7 +201,7 @@ public sealed partial class MgCommands
             Decision = "flat",
             NestedMgId = null,
             NestedMgPath = null,
-            TaskBranch = BranchNameBuilder.Task(rootId, itemId).Value,
+            ImplBranch = BranchNameBuilder.Impl(rootId, itemId).Value,
             HasImplementable = hasImplementable,
             Decomposable = decomposable,
             OverrideApplied = overrideApplied,
@@ -225,7 +225,7 @@ public sealed partial class MgCommands
             Decision = "error",
             NestedMgId = null,
             NestedMgPath = null,
-            TaskBranch = null,
+            ImplBranch = null,
             HasImplementable = hasImplementable,
             Decomposable = decomposable,
             OverrideApplied = "",

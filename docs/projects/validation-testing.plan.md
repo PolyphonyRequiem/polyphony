@@ -20,7 +20,7 @@ Phases 1–3 delivered a working type-agnostic SDLC system:
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
 | Phase 1 | Polyphony Core Engine — `route`, `validate`, `hierarchy` commands | ✅ Done |
-| Phase 2 | Generic Workflow Scripts — `detect-state`, `pg-router`, `task-router`, etc. | ✅ Done |
+| Phase 2 | Generic Workflow Scripts — `detect-state`, `pg-router`, `impl-router`, etc. | ✅ Done |
 | Phase 3 | Workflow YAML Refactoring — 9 conductor YAMLs, recursive planning, parallel PG execution | ✅ Done |
 
 ### Existing Test Coverage
@@ -40,7 +40,7 @@ PowerShell scripts have Pester test suites:
 | Script | Test File | Key Scenarios |
 |--------|-----------|---------------|
 | `detect-state.ps1` | 43 KB test file | Phase detection, intent conflicts, plan discovery |
-| `task-router.ps1` | 367 KB test file | 4 fallback levels, branch naming |
+| `impl-router.ps1` | 367 KB test file | 4 fallback levels, branch naming |
 | `pg-router.ps1` | 28.7 KB test file | PG grouping, PR status, stale branch |
 | `child-router.ps1` | 13 tests | Plannable discovery, error handling |
 | Lint scripts | 6 test files | Type-agnostic compliance, routing, PR flows |
@@ -704,7 +704,7 @@ pg_router (pg-router.ps1)
   ├─ action=submit_pr       → pr_submit (re-entry: PR not yet created)
   └─ action=all_complete    → $end
 
-task_router (task-router.ps1)
+task_router (impl-router.ps1)
   ├─ action=implement_task → coder → reducer_code → task_reviewer
   │   ├─ verdict=approved          → task_completer → task_router (loop)
   │   └─ verdict=changes_requested → coder (fix loop)
@@ -721,7 +721,7 @@ pr_submit → pr_platform_router
 
 **PR platform routing for twig repo:** `process-config.yaml` specifies `platform: github`. The `pr_platform_router` in `implement-pg.yaml` routes to `github-pr.yaml` (lines 672–675). Confirmed: `ado-pr.yaml` is never selected for this repo.
 
-**Task routing:** `task-router.ps1` filters by `implementable` facet and PG tag, with 4 fallback levels: direct tag match → children of tagged containers → issue-as-task (plannable+implementable) → all implementable items. This is type-agnostic — no hardcoded type names.
+**Task routing:** `impl-router.ps1` filters by `implementable` facet and PG tag, with 4 fallback levels: direct tag match → children of tagged containers → issue-as-task (plannable+implementable) → all implementable items. This is type-agnostic — no hardcoded type names.
 
 #### Script Output Contract Verification
 
@@ -733,7 +733,7 @@ Key scripts produce JSON output consumed by workflow route conditions:
 | `preflight-lite.ps1` | `ready`, `summary`, `checks[]` | Planning/implement preflight gates | ✅ |
 | `detect-state.ps1` | `phase`, `work_item_id`, `work_item_type`, `work_item_state`, `intent` | Root workflow phase routing | ✅ |
 | `pg-router.ps1` | `action`, `pr_groups[]`, `feature_branch` | `implement-pg.yaml` routes on `action` | ✅ |
-| `task-router.ps1` | `action`, `task_id`, `task_title`, `branch_name` | `implement-pg.yaml` routes on `action` | ✅ |
+| `impl-router.ps1` | `action`, `task_id`, `task_title`, `branch_name` | `implement-pg.yaml` routes on `action` | ✅ |
 | `load-work-tree.ps1` | `pr_groups[]`, `completed_pgs`, `pending_pgs` | `twig-sdlc-v2-implement.yaml` routes on `pending_pgs` length | ✅ |
 | `scope-closer.ps1` | exit code 0/1 | `implement-pg.yaml` merged output | ✅ |
 | `dependency-check.ps1` | `status`, `blocking_items[]` | `implement-pg.yaml` dependency gate | ✅ |
@@ -766,7 +766,7 @@ Epic (Doing, children seeded) ──detect-state──→ ready_for_implementati
   └─ twig-sdlc-v2-implement.yaml
        ├─ load-work-tree.ps1 (discover PG structure)
        └─ implement-pg.yaml × N (parallel, max 3 concurrent)
-            ├─ task-router.ps1 (next implementable Task)
+            ├─ impl-router.ps1 (next implementable Task)
             ├─ coder → reviewer → completer (per Task)
             ├─ pr_platform_router → github-pr.yaml (platform: github)
             └─ scope-closer.ps1 (transition Tasks to Done)

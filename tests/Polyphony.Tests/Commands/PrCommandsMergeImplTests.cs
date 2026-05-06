@@ -9,12 +9,12 @@ using Xunit;
 namespace Polyphony.Tests.Commands;
 
 /// <summary>
-/// Tests for <c>polyphony pr merge-task-pr</c>. Merges the per-item task
+/// Tests for <c>polyphony pr merge-impl-pr</c>. Merges the per-item task
 /// PR into its enclosing merge-group branch. Default method is squash;
 /// supports operator overrides via <c>--method</c>; idempotent when the
 /// PR is already merged on the server.
 /// </summary>
-public sealed class PrCommandsMergeTaskTests : CommandTestBase
+public sealed class PrCommandsMergeImplTests : CommandTestBase
 {
     private (PrCommands Command, FakeProcessRunner Runner) CreateCommand()
     {
@@ -34,7 +34,7 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
                 && a.Take(2).SequenceEqual(new[] { "pr", "list" }, StringComparer.Ordinal)
                 && a.Contains("open"),
             (_, _) => Task.FromResult(new ProcessResult(0,
-                $$"""[{"number":{{prNumber}},"url":"https://x","headRefName":"task/100-200"}]""", "")));
+                $$"""[{"number":{{prNumber}},"url":"https://x","headRefName":"impl/100-200"}]""", "")));
 
     private static void StubPrListMergedEmpty(FakeProcessRunner runner)
         => runner.WhenAsync(
@@ -52,7 +52,7 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
                 && a.Take(2).SequenceEqual(new[] { "pr", "list" }, StringComparer.Ordinal)
                 && a.Contains("merged"),
             (_, _) => Task.FromResult(new ProcessResult(0,
-                $$"""[{"number":{{prNumber}},"url":"https://x","headRefName":"task/100-200","mergedAt":"2026-05-06T00:00:00Z"}]""", "")));
+                $$"""[{"number":{{prNumber}},"url":"https://x","headRefName":"impl/100-200","mergedAt":"2026-05-06T00:00:00Z"}]""", "")));
 
     private static void StubPrListOpenEmpty(FakeProcessRunner runner)
         => runner.WhenAsync(
@@ -66,71 +66,71 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
 
     private static void StubPrViewMerged(FakeProcessRunner runner, string sha = "deadbeef")
         => runner.WhenStartsWith("gh", ["pr", "view"], new ProcessResult(0,
-            $$"""{"number":42,"state":"MERGED","mergeCommit":{"oid":"{{sha}}"},"headRefName":"task/100-200","headRefOid":"x"}""", ""));
+            $$"""{"number":42,"state":"MERGED","mergeCommit":{"oid":"{{sha}}"},"headRefName":"impl/100-200","headRefOid":"x"}""", ""));
 
     [Fact]
-    public async Task MergeTaskPr_InvalidRootId_ReturnsConfigError()
+    public async Task MergeImplPr_InvalidRootId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 0, itemId: 200, mgPath: "core"));
+            () => cmd.MergeImplPr(rootId: 0, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
         result.Error!.ShouldContain("rootId");
     }
 
     [Fact]
-    public async Task MergeTaskPr_InvalidItemId_ReturnsConfigError()
+    public async Task MergeImplPr_InvalidItemId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 0, mgPath: "core"));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 0, mgPath: "core"));
         exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
         result.Error!.ShouldContain("itemId");
     }
 
     [Fact]
-    public async Task MergeTaskPr_InvalidMgPath_ReturnsConfigError()
+    public async Task MergeImplPr_InvalidMgPath_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "BAD!"));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "BAD!"));
         exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
         result.Error!.ShouldContain("merge-group path");
     }
 
     [Fact]
-    public async Task MergeTaskPr_InvalidMethod_ReturnsConfigError()
+    public async Task MergeImplPr_InvalidMethod_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "core", method: "ff-only"));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core", method: "ff-only"));
         exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
         result.Error!.ShouldContain("merge method");
     }
 
     [Fact]
-    public async Task MergeTaskPr_NoMatchingPr_ReturnsRoutingFailure()
+    public async Task MergeImplPr_NoMatchingPr_ReturnsRoutingFailure()
     {
         var (cmd, runner) = CreateCommand();
         StubGitRemoteOrigin(runner, "https://github.com/o/r.git");
         StubPrListBothEmpty(runner);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core"));
 
         exit.ShouldBe(ExitCodes.RoutingFailure);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
         result.Error!.ShouldContain("no pull request");
-        result.HeadBranch.ShouldBe("task/100-200");
+        result.HeadBranch.ShouldBe("impl/100-200");
         result.BaseBranch.ShouldBe("mg/100_core");
     }
 
     [Fact]
-    public async Task MergeTaskPr_HappyPath_DefaultSquashMergeReturnsSuccess()
+    public async Task MergeImplPr_HappyPath_DefaultSquashMergeReturnsSuccess()
     {
         var (cmd, runner) = CreateCommand();
         StubGitRemoteOrigin(runner, "https://github.com/o/r.git");
@@ -139,10 +139,10 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
         StubPrViewMerged(runner, sha: "deadbeef");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core"));
 
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
         result.Merged.ShouldBeTrue();
         result.AlreadyMerged.ShouldBeFalse();
         result.PrNumber.ShouldBe(42);
@@ -158,7 +158,7 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task MergeTaskPr_OverrideMethodToMerge_PassesMergeFlag()
+    public async Task MergeImplPr_OverrideMethodToMerge_PassesMergeFlag()
     {
         var (cmd, runner) = CreateCommand();
         StubGitRemoteOrigin(runner, "https://github.com/o/r.git");
@@ -167,16 +167,16 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
         StubPrViewMerged(runner);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "core", method: "merge"));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core", method: "merge"));
 
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
         result.Method.ShouldBe("merge");
         runner.Invocations.Single(i => i.Arguments[1] == "merge").Arguments.ShouldContain("--merge");
     }
 
     [Fact]
-    public async Task MergeTaskPr_AlreadyMerged_ReturnsAlreadyMergedSuccess()
+    public async Task MergeImplPr_AlreadyMerged_ReturnsAlreadyMergedSuccess()
     {
         var (cmd, runner) = CreateCommand();
         StubGitRemoteOrigin(runner, "https://github.com/o/r.git");
@@ -184,10 +184,10 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
         StubPrListMerged(runner, prNumber: 17);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core"));
 
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
         result.AlreadyMerged.ShouldBeTrue();
         result.Merged.ShouldBeTrue();
         result.PrNumber.ShouldBe(17);
@@ -196,7 +196,7 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task MergeTaskPr_AdminFlag_PassesAdminFlag()
+    public async Task MergeImplPr_AdminFlag_PassesAdminFlag()
     {
         var (cmd, runner) = CreateCommand();
         StubGitRemoteOrigin(runner, "https://github.com/o/r.git");
@@ -205,13 +205,13 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
         StubPrViewMerged(runner);
 
         await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "core", admin: true));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core", admin: true));
 
         runner.Invocations.Single(i => i.Arguments[1] == "merge").Arguments.ShouldContain("--admin");
     }
 
     [Fact]
-    public async Task MergeTaskPr_DeleteBranchFalse_OmitsDeleteFlag()
+    public async Task MergeImplPr_DeleteBranchFalse_OmitsDeleteFlag()
     {
         var (cmd, runner) = CreateCommand();
         StubGitRemoteOrigin(runner, "https://github.com/o/r.git");
@@ -220,16 +220,16 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
         StubPrViewMerged(runner);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "core", deleteBranch: false));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core", deleteBranch: false));
 
         var merge = runner.Invocations.Single(i => i.Arguments[1] == "merge");
         merge.Arguments.ShouldNotContain("--delete-branch");
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
         result.DeleteBranch.ShouldBeFalse();
     }
 
     [Fact]
-    public async Task MergeTaskPr_MatchHeadCommit_PassesFlagAndValue()
+    public async Task MergeImplPr_MatchHeadCommit_PassesFlagAndValue()
     {
         var (cmd, runner) = CreateCommand();
         StubGitRemoteOrigin(runner, "https://github.com/o/r.git");
@@ -238,7 +238,7 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
         StubPrViewMerged(runner);
 
         await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "core", matchHeadCommit: "abc123"));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core", matchHeadCommit: "abc123"));
 
         var merge = runner.Invocations.Single(i => i.Arguments[1] == "merge");
         var idx = merge.Arguments.ToList().IndexOf("--match-head-commit");
@@ -247,7 +247,7 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task MergeTaskPr_NestedMgPath_ResolvesNestedBaseBranch()
+    public async Task MergeImplPr_NestedMgPath_ResolvesNestedBaseBranch()
     {
         var (cmd, runner) = CreateCommand();
         StubGitRemoteOrigin(runner, "https://github.com/o/r.git");
@@ -256,10 +256,10 @@ public sealed class PrCommandsMergeTaskTests : CommandTestBase
         StubPrViewMerged(runner);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.MergeTaskPr(rootId: 100, itemId: 200, mgPath: "core_auth"));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core_auth"));
 
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeTaskResult)!;
-        result.HeadBranch.ShouldBe("task/100-200");
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeImplResult)!;
+        result.HeadBranch.ShouldBe("impl/100-200");
         result.BaseBranch.ShouldBe("mg/100_core_auth");
         result.MgPath.ShouldBe("core_auth");
     }

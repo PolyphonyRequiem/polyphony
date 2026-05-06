@@ -11,7 +11,7 @@ using Twig.Domain.Services.Process;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// Branch-lifecycle verbs: load-tree, route, next-task, check-deps,
+/// Branch-lifecycle verbs: load-tree, route, next-impl, check-deps,
 /// close-scope. Migrated from the corresponding <c>scripts/*.ps1</c>
 /// helpers so the workflow YAMLs can shell out to <c>polyphony branch
 /// &lt;verb&gt;</c> instead of pwsh script files.

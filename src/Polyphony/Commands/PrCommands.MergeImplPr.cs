@@ -8,10 +8,10 @@ namespace Polyphony.Commands;
 public sealed partial class PrCommands
 {
     /// <summary>
-    /// Merge the per-item task PR into its enclosing merge-group branch.
+    /// Merge the per-item impl PR into its enclosing merge-group branch.
     /// Identifies the PR by its (head, base) pair: head is
-    /// <c>task/{root_id}-{item_id}</c>, base is <c>mg/{root_id}_{mg_path}</c>.
-    /// Default merge method is squash because task PRs carry micro-history
+    /// <c>impl/{root_id}-{item_id}</c>, base is <c>mg/{root_id}_{mg_path}</c>.
+    /// Default merge method is squash because impl PRs carry micro-history
     /// we do not want to pollute the merge-group branch with; the planner
     /// may override per item via <paramref name="method"/>.
     /// </summary>
@@ -28,8 +28,8 @@ public sealed partial class PrCommands
     /// commit. Use to guard against races between status checks and merge.
     /// </param>
     /// <param name="ct">Cancellation token.</param>
-    [Command("merge-task-pr")]
-    public async Task<int> MergeTaskPr(
+    [Command("merge-impl-pr")]
+    public async Task<int> MergeImplPr(
         int rootId,
         int itemId,
         string mgPath,
@@ -41,19 +41,19 @@ public sealed partial class PrCommands
     {
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
-            EmitMergeTaskError(rootId, itemId, mgPath, method, deleteBranch, $"rootId must be positive (got {rootId})");
+            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, $"rootId must be positive (got {rootId})");
             return ExitCodes.ConfigError;
         }
 
         if (!WorkItemId.TryParse(itemId, out var item))
         {
-            EmitMergeTaskError(rootId, itemId, mgPath, method, deleteBranch, $"itemId must be positive (got {itemId})");
+            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, $"itemId must be positive (got {itemId})");
             return ExitCodes.ConfigError;
         }
 
         if (!MergeGroupPath.TryParse(mgPath, out var path) || path is null)
         {
-            EmitMergeTaskError(
+            EmitMergeImplError(
                 rootId,
                 itemId,
                 mgPath,
@@ -65,11 +65,11 @@ public sealed partial class PrCommands
 
         if (!TryParseMethod(method, out var mergeMethod, out var methodError))
         {
-            EmitMergeTaskError(rootId, itemId, mgPath, method, deleteBranch, methodError);
+            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, methodError);
             return ExitCodes.ConfigError;
         }
 
-        var headBranch = BranchNameBuilder.Task(root, item).Value;
+        var headBranch = BranchNameBuilder.Impl(root, item).Value;
         var baseBranch = BranchNameBuilder.MergeGroup(root, path).Value;
 
         try
@@ -77,21 +77,21 @@ public sealed partial class PrCommands
             var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
             if (string.IsNullOrEmpty(slug))
             {
-                EmitMergeTaskError(rootId, itemId, mgPath, method, deleteBranch, "Could not resolve repo slug from origin remote", headBranch, baseBranch);
+                EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, "Could not resolve repo slug from origin remote", headBranch, baseBranch);
                 return ExitCodes.RoutingFailure;
             }
 
             var resolution = await FindPrForMergeAsync(slug, headBranch, baseBranch, ct).ConfigureAwait(false);
             if (resolution.Error is not null)
             {
-                EmitMergeTaskError(rootId, itemId, mgPath, method, deleteBranch, resolution.Error, headBranch, baseBranch);
+                EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, resolution.Error, headBranch, baseBranch);
                 return ExitCodes.RoutingFailure;
             }
 
             // Idempotent: if the matching PR is already merged, treat as success.
             if (resolution.AlreadyMergedPr is { } already)
             {
-                EmitMergeTask(new PrMergeTaskResult
+                EmitMergeImpl(new PrMergeImplResult
                 {
                     PrNumber = already.Number,
                     HeadBranch = headBranch,
@@ -113,7 +113,7 @@ public sealed partial class PrCommands
             var result = await gh.MergePullRequestAsync(
                 slug, openPr.Number, mergeMethod, admin, deleteBranch, mergeMatch, ct).ConfigureAwait(false);
 
-            EmitMergeTask(new PrMergeTaskResult
+            EmitMergeImpl(new PrMergeImplResult
             {
                 PrNumber = openPr.Number,
                 HeadBranch = headBranch,
@@ -132,16 +132,16 @@ public sealed partial class PrCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitMergeTaskError(rootId, itemId, mgPath, method, deleteBranch, ex.Message, headBranch, baseBranch);
+            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, ex.Message, headBranch, baseBranch);
             return ExitCodes.RoutingFailure;
         }
     }
 
-    private static void EmitMergeTask(PrMergeTaskResult result)
+    private static void EmitMergeImpl(PrMergeImplResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
-            result, PolyphonyJsonContext.Default.PrMergeTaskResult));
+            result, PolyphonyJsonContext.Default.PrMergeImplResult));
 
-    private static void EmitMergeTaskError(
+    private static void EmitMergeImplError(
         int rootId,
         int itemId,
         string mgPath,
@@ -151,7 +151,7 @@ public sealed partial class PrCommands
         string headBranch = "",
         string baseBranch = "")
     {
-        EmitMergeTask(new PrMergeTaskResult
+        EmitMergeImpl(new PrMergeImplResult
         {
             PrNumber = 0,
             HeadBranch = headBranch,

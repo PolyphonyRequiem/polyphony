@@ -6,9 +6,9 @@ using Polyphony.Routing;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony branch next-task</c>: select the next implementable item
+/// <c>polyphony branch next-impl</c>: select the next implementable item
 /// in a merge group and transition it to its in-progress state.
-/// Migrated from <c>scripts/task-router.ps1</c>.
+/// Migrated from <c>scripts/impl-router.ps1</c>.
 /// </summary>
 public sealed partial class BranchCommands
 {
@@ -22,8 +22,8 @@ public sealed partial class BranchCommands
     /// <param name="pgName">Merge-group name (e.g. "PG-1"). Either this or pg-number is required. Operator-facing flag name preserved as <c>--pg-name</c> until the workflow rewire PR ships.</param>
     /// <param name="pgNumber">Merge-group number (e.g. 1). Convenience for callers that track merge groups as ints.</param>
     /// <param name="ct">Cancellation token.</param>
-    [Command("next-task")]
-    public async Task<int> NextTask(
+    [Command("next-impl")]
+    public async Task<int> NextImpl(
         int workItem,
         string pgName = "",
         int pgNumber = 0,
@@ -35,11 +35,11 @@ public sealed partial class BranchCommands
 
         if (string.IsNullOrEmpty(resolvedMergeGroup))
         {
-            EmitNextTask(EmptyNextTaskResult("Either --pg-name or --pg-number must be provided.", "", ""));
+            EmitNextImpl(EmptyNextImplResult("Either --pg-name or --pg-number must be provided.", "", ""));
             return ExitCodes.Success;
         }
 
-        BranchNextTaskResult result;
+        BranchNextImplResult result;
         try
         {
             await twig.SyncAsync(ct).ConfigureAwait(false);
@@ -47,7 +47,7 @@ public sealed partial class BranchCommands
             var hierarchy = await walker.WalkAsync(workItem, maxDepth: 3, ct).ConfigureAwait(false);
             if (hierarchy is null)
             {
-                EmitNextTask(EmptyNextTaskResult($"Work item {workItem} not found", resolvedMergeGroup,
+                EmitNextImpl(EmptyNextImplResult($"Work item {workItem} not found", resolvedMergeGroup,
                     await TryResolveAdoWorkspaceAsync(ct).ConfigureAwait(false)));
                 return ExitCodes.Success;
             }
@@ -59,7 +59,7 @@ public sealed partial class BranchCommands
             var nodes = FlattenWithParents(hierarchy).ToList();
             var implementable = nodes.Where(n => n.Node.Facets.Contains("implementable")).ToList();
 
-            // Same fallback ladder as task-router.ps1:
+            // Same fallback ladder as impl-router.ps1:
             //   1. items directly tagged with the merge group
             //   2. items whose parent container is tagged with the merge group
             //   3. issue-as-task: plannable+implementable, tagged, no children
@@ -101,7 +101,7 @@ public sealed partial class BranchCommands
 
             if (nonTerminal.Count == 0)
             {
-                result = new BranchNextTaskResult
+                result = new BranchNextImplResult
                 {
                     Action = "all_items_done",
                     PrimaryId = 0,
@@ -115,7 +115,7 @@ public sealed partial class BranchCommands
                     BranchName = "",
                     AdoWorkspace = workspace,
                 };
-                EmitNextTask(result);
+                EmitNextImpl(result);
                 return ExitCodes.Success;
             }
 
@@ -153,7 +153,7 @@ public sealed partial class BranchCommands
 
             var branchName = await ResolveBranchNameAsync(hint, resolvedMergeGroup, workItem, ct).ConfigureAwait(false);
 
-            result = new BranchNextTaskResult
+            result = new BranchNextImplResult
             {
                 Action = "implement_item",
                 PrimaryId = next.Node.WorkItemId,
@@ -171,11 +171,11 @@ public sealed partial class BranchCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            result = EmptyNextTaskResult($"Error routing next task: {ex.Message}",
+            result = EmptyNextImplResult($"Error routing next task: {ex.Message}",
                 resolvedMergeGroup, await TryResolveAdoWorkspaceAsync(ct).ConfigureAwait(false));
         }
 
-        EmitNextTask(result);
+        EmitNextImpl(result);
         return ExitCodes.Success;
     }
 
@@ -257,7 +257,7 @@ public sealed partial class BranchCommands
 
     private sealed record NodeWithParent(HierarchyResult Node, NodeWithParent? Parent);
 
-    private static BranchNextTaskResult EmptyNextTaskResult(string error, string mergeGroup, string adoWorkspace) => new()
+    private static BranchNextImplResult EmptyNextImplResult(string error, string mergeGroup, string adoWorkspace) => new()
     {
         Action = "error",
         PrimaryId = 0,
@@ -273,9 +273,9 @@ public sealed partial class BranchCommands
         Error = error,
     };
 
-    private static void EmitNextTask(BranchNextTaskResult result)
+    private static void EmitNextImpl(BranchNextImplResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
             result,
-            PolyphonyJsonContext.Default.BranchNextTaskResult));
+            PolyphonyJsonContext.Default.BranchNextImplResult));
 }
 

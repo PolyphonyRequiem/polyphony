@@ -191,7 +191,7 @@ a PG-level PR, and closes completed work items in ADO after merge.
 |-------|------|-------------|
 | `pg_router` | script | Determine current PG action via `pg-router.ps1` |
 | `branch_manager` | script | Create/checkout PG branch |
-| `primary_router` | script | Route to next implementable child via `polyphony branch next-task` |
+| `primary_router` | script | Route to next implementable child via `polyphony branch next-impl` |
 | `coder` | agent (Opus 1M) | Implement a single task with incremental commits |
 | `primary_reviewer` | agent (Opus) | Per-task quality gate with re-review awareness |
 | `primary_reviewer` | agent (Sonnet) | Per-child quality gate |

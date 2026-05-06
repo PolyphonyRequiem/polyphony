@@ -42,7 +42,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
             new ProcessResult(0, $$"""{"id":{{newId}},"title":"Created"}""", ""));
 
     [Fact]
-    public async Task SeedChildren_EmptyTasks_StampsTagAndReturnsZeroCounts()
+    public async Task SeedChildren_EmptyChildren_StampsTagAndReturnsZeroCounts()
     {
         var (cmd, runner) = CreateCommand();
         StubShowTreeNoChildren(runner, 100);
@@ -53,7 +53,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.WorkItemId.ShouldBe(100);
-        result.TaskCount.ShouldBe(0);
+        result.ChildCount.ShouldBe(0);
         result.SeededCount.ShouldBe(0);
         result.ReusedCount.ShouldBe(0);
         result.ErrorCount.ShouldBe(0);
@@ -80,7 +80,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_NewTask_CreatesChildAndStampsTag()
+    public async Task SeedChildren_NewChild_CreatesChildAndStampsTag()
     {
         var (cmd, runner) = CreateCommand();
         StubShowTreeNoChildren(runner, 100);
@@ -88,8 +88,8 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var tasks = """[{"child_id":"task-1","title":"Do thing","type":"Task","description":"Body."}]""";
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
+        var children = """[{"child_id":"task-1","title":"Do thing","type":"Task","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.SeededCount.ShouldBe(1);
@@ -107,14 +107,14 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     public async Task SeedChildren_MarkerMatch_ReusesExistingChildNoCreate()
     {
         var (cmd, runner) = CreateCommand();
-        var children = """[{"id":222,"type":"Task","title":"Existing","fields":{"System.Description":"body\n\n<!-- polyphony:plan-child-id=task-1 -->"}}]""";
-        StubShowTreeChildren(runner, 100, children);
+        var existing = """[{"id":222,"type":"Task","title":"Existing","fields":{"System.Description":"body\n\n<!-- polyphony:plan-child-id=task-1 -->"}}]""";
+        StubShowTreeChildren(runner, 100, existing);
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
         // No StubCreateChild — must NOT be called.
 
-        var tasks = """[{"child_id":"task-1","title":"Different Title","type":"Task","description":"Body."}]""";
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
+        var children = """[{"child_id":"task-1","title":"Different Title","type":"Task","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ReusedCount.ShouldBe(1);
@@ -130,13 +130,13 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     public async Task SeedChildren_TitleTypeFallback_ReusesAndAddsWarning()
     {
         var (cmd, runner) = CreateCommand();
-        var children = """[{"id":333,"type":"Task","title":"Do thing","fields":{"System.Description":"no marker here"}}]""";
-        StubShowTreeChildren(runner, 100, children);
+        var existing = """[{"id":333,"type":"Task","title":"Do thing","fields":{"System.Description":"no marker here"}}]""";
+        StubShowTreeChildren(runner, 100, existing);
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var tasks = """[{"child_id":"task-1","title":"Do thing","type":"Task","description":"Body."}]""";
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
+        var children = """[{"child_id":"task-1","title":"Do thing","type":"Task","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ReusedCount.ShouldBe(1);
@@ -147,14 +147,14 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_TaskMissingId_RecordsErrorAndSkipsTagging()
+    public async Task SeedChildren_ChildMissingId_RecordsErrorAndSkipsTagging()
     {
         var (cmd, runner) = CreateCommand();
         StubShowTreeNoChildren(runner, 100);
         // No show / patch stubs for tagging — must NOT be called when errors > 0.
 
-        var tasks = """[{"title":"Missing id","type":"Task","description":"Body."}]""";
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
+        var children = """[{"title":"Missing id","type":"Task","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ErrorCount.ShouldBe(1);
@@ -166,13 +166,13 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_TaskMissingTitleOrType_RecordsError()
+    public async Task SeedChildren_ChildMissingTitleOrType_RecordsError()
     {
         var (cmd, runner) = CreateCommand();
         StubShowTreeNoChildren(runner, 100);
 
-        var tasks = """[{"child_id":"task-1","description":"Body."}]""";
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
+        var children = """[{"child_id":"task-1","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ErrorCount.ShouldBe(1);
@@ -189,8 +189,8 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var tasks = """[{"child_id":"task-1","title":"X","type":"Task","description":"Body.","acceptance_criteria":["AC one","AC two"]}]""";
-        var (exit, _) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
+        var children = """[{"child_id":"task-1","title":"X","type":"Task","description":"Body.","acceptance_criteria":["AC one","AC two"]}]""";
+        var (exit, _) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
         exit.ShouldBe(ExitCodes.Success);
 
         var createCall = runner.Invocations.First(i => i.Executable == "twig" && i.Arguments.Contains("new"));
@@ -226,8 +226,8 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var tasks = """[{"child_id":"task-1","title":"X","type":"Task","description":"Body."}]""";
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, tasks));
+        var children = """[{"child_id":"task-1","title":"X","type":"Task","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.SeededCount.ShouldBe(1);
@@ -244,7 +244,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, "[]"));
         output.ShouldContain("\"work_item_id\"", Case.Sensitive);
-        output.ShouldContain("\"task_count\"", Case.Sensitive);
+        output.ShouldContain("\"child_count\"", Case.Sensitive);
         output.ShouldContain("\"seeded_count\"", Case.Sensitive);
         output.ShouldContain("\"planned_tag_set\"", Case.Sensitive);
         output.ShouldContain("\"planned_tag_already\"", Case.Sensitive);

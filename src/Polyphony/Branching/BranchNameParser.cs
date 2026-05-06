@@ -31,8 +31,8 @@ internal static partial class BranchNameParser
     [GeneratedRegex($"^plan/(?<root>{PositiveIntPattern})-(?<item>{PositiveIntPattern})$", RegexOptions.CultureInvariant)]
     private static partial Regex DescendantPlanRegex();
 
-    [GeneratedRegex($"^task/(?<root>{PositiveIntPattern})-(?<item>{PositiveIntPattern})$", RegexOptions.CultureInvariant)]
-    private static partial Regex TaskRegex();
+    [GeneratedRegex($"^impl/(?<root>{PositiveIntPattern})-(?<item>{PositiveIntPattern})$", RegexOptions.CultureInvariant)]
+    private static partial Regex ImplRegex();
 
     [GeneratedRegex($"^evidence/(?<root>{PositiveIntPattern})-(?<item>{PositiveIntPattern})$", RegexOptions.CultureInvariant)]
     private static partial Regex EvidenceRegex();
@@ -72,7 +72,7 @@ internal static partial class BranchNameParser
 
         // Order matters only for disambiguation; the patterns are
         // mutually exclusive at the prefix level (feature/, plan/, mg/,
-        // task/, evidence/) so any order is correct. Listed in the
+        // impl/, evidence/) so any order is correct. Listed in the
         // ADR's display order for readability.
 
         var featureMatch = FeatureRegex().Match(raw);
@@ -111,12 +111,12 @@ internal static partial class BranchNameParser
             return true;
         }
 
-        var taskMatch = TaskRegex().Match(raw);
-        if (taskMatch.Success)
+        var implMatch = ImplRegex().Match(raw);
+        if (implMatch.Success)
         {
-            var rootId = ParsePositiveInt(taskMatch.Groups["root"].Value);
-            var itemId = ParsePositiveItem(taskMatch.Groups["item"].Value);
-            parsed = new ParsedBranch.Task(BranchName.CreateUnsafe(raw), rootId, itemId);
+            var rootId = ParsePositiveInt(implMatch.Groups["root"].Value);
+            var itemId = ParsePositiveItem(implMatch.Groups["item"].Value);
+            parsed = new ParsedBranch.Impl(BranchName.CreateUnsafe(raw), rootId, itemId);
             return true;
         }
 
