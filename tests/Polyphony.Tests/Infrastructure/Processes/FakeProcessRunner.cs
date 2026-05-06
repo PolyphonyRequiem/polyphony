@@ -77,9 +77,10 @@ public sealed class FakeProcessRunner : IProcessRunner
         string executable,
         IReadOnlyList<string> arguments,
         CancellationToken ct = default,
-        string? workingDirectory = null)
+        string? workingDirectory = null,
+        string? stdin = null)
     {
-        _invocations.Add(new RecordedInvocation(executable, arguments.ToArray(), workingDirectory));
+        _invocations.Add(new RecordedInvocation(executable, arguments.ToArray(), workingDirectory, stdin));
 
         foreach (var responder in _responders)
         {
@@ -96,7 +97,8 @@ public sealed class FakeProcessRunner : IProcessRunner
     public sealed record RecordedInvocation(
         string Executable,
         IReadOnlyList<string> Arguments,
-        string? WorkingDirectory);
+        string? WorkingDirectory,
+        string? Stdin = null);
 
     private sealed record Responder(
         Func<string, IReadOnlyList<string>, bool> Match,

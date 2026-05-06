@@ -161,4 +161,58 @@ public interface IGhClient
         string repoSlug,
         int prNumber,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>gh pr edit {prNumber} --repo {repoSlug} --body-file -</c> — replace
+    /// the body of an existing pull request. The body is piped via stdin
+    /// (<c>--body-file -</c>) to avoid hitting platform argument-length limits
+    /// on large plan-PR bodies. Subject to the same retry-on-timeout policy
+    /// as every other <c>gh</c> call (<see cref="GhClientPolicy"/>).
+    ///
+    /// <para>Used by the P9 cascade remedy
+    /// (<c>polyphony plan rebase-stale-descendant</c>) to rewrite the
+    /// <c>ancestor_plan_generations</c> front-matter snapshot after a
+    /// successful auto-rebase. Body-edit failure on that path is a
+    /// recoverable, routable outcome — not a fatal exception — so this
+    /// method <b>returns false on any failure</b> (non-zero exit, timeout,
+    /// caller cancellation aside) and never throws
+    /// <see cref="ExternalToolException"/> /
+    /// <see cref="ExternalToolTimeoutException"/>. Caller-driven cancellation
+    /// still propagates as <see cref="OperationCanceledException"/>.</para>
+    /// </summary>
+    /// <param name="repoSlug">Owner/repo slug, e.g. <c>polyphonyrequiem/polyphony</c>.</param>
+    /// <param name="prNumber">PR number whose body will be replaced.</param>
+    /// <param name="body">New body content. Written verbatim to gh's stdin (UTF-8, no extra newline).</param>
+    /// <param name="ct">Cancellation token. Caller cancellation propagates immediately.</param>
+    /// <returns>True on a clean success (gh exit 0). False on any non-success outcome.</returns>
+    Task<bool> EditPullRequestBodyAsync(
+        string repoSlug,
+        int prNumber,
+        string body,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>gh pr comment {prNumber} --repo {repoSlug} --body-file -</c> — post a
+    /// comment to a pull request. Body via stdin (same rationale as
+    /// <see cref="EditPullRequestBodyAsync"/>). Subject to the standard
+    /// retry-on-timeout policy.
+    ///
+    /// <para>Used for non-fatal cascade-remedy annotations (e.g. "🔄
+    /// Auto-rebased onto <c>{parent}</c> after ancestor plan_generation
+    /// bumped"). Comment-post failure must not poison the rebased outcome,
+    /// so this method <b>returns false on any failure</b> (non-zero exit,
+    /// timeout) and never throws <see cref="ExternalToolException"/> /
+    /// <see cref="ExternalToolTimeoutException"/>. Caller-driven cancellation
+    /// still propagates as <see cref="OperationCanceledException"/>.</para>
+    /// </summary>
+    /// <param name="repoSlug">Owner/repo slug, e.g. <c>polyphonyrequiem/polyphony</c>.</param>
+    /// <param name="prNumber">PR number to comment on.</param>
+    /// <param name="body">Comment body. Written verbatim to gh's stdin (UTF-8, no extra newline).</param>
+    /// <param name="ct">Cancellation token. Caller cancellation propagates immediately.</param>
+    /// <returns>True on a clean success (gh exit 0). False on any non-success outcome.</returns>
+    Task<bool> CommentPullRequestAsync(
+        string repoSlug,
+        int prNumber,
+        string body,
+        CancellationToken ct = default);
 }

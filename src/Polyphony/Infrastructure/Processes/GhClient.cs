@@ -289,6 +289,74 @@ public sealed class GhClient : IGhClient
         return result.Succeeded ? result.Stdout : null;
     }
 
+    public async Task<bool> EditPullRequestBodyAsync(
+        string repoSlug,
+        int prNumber,
+        string body,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoSlug);
+        ArgumentNullException.ThrowIfNull(body);
+        if (prNumber <= 0) throw new ArgumentOutOfRangeException(nameof(prNumber), "PR number must be positive.");
+
+        string[] args =
+        [
+            "pr", "edit", prNumber.ToString(),
+            "--repo", repoSlug,
+            "--body-file", "-",
+        ];
+
+        // Cascade-remedy contract: never throw. Any failure (timeout exhausted,
+        // non-zero exit) becomes a routable false. Caller-driven cancellation
+        // still escapes as OperationCanceledException — that's not a tool
+        // failure, it's the orchestrator pulling the plug.
+        try
+        {
+            var result = await RunWithRetryAsync(args, ct, stdin: body).ConfigureAwait(false);
+            return result.Succeeded;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (ExternalToolTimeoutException)
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> CommentPullRequestAsync(
+        string repoSlug,
+        int prNumber,
+        string body,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoSlug);
+        ArgumentNullException.ThrowIfNull(body);
+        if (prNumber <= 0) throw new ArgumentOutOfRangeException(nameof(prNumber), "PR number must be positive.");
+
+        string[] args =
+        [
+            "pr", "comment", prNumber.ToString(),
+            "--repo", repoSlug,
+            "--body-file", "-",
+        ];
+
+        try
+        {
+            var result = await RunWithRetryAsync(args, ct, stdin: body).ConfigureAwait(false);
+            return result.Succeeded;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (ExternalToolTimeoutException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Run an external command with the configured retry-on-timeout policy.
     /// Returns whatever <see cref="ProcessResult"/> the runner produced; the
@@ -297,13 +365,14 @@ public sealed class GhClient : IGhClient
     /// </summary>
     private async Task<ProcessResult> RunWithRetryAsync(
         IReadOnlyList<string> args,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? stdin = null)
     {
         for (int attempt = 1; attempt <= _policy.MaxAttempts; attempt++)
         {
             try
             {
-                return await RunSingleAttemptAsync(args, ct).ConfigureAwait(false);
+                return await RunSingleAttemptAsync(args, ct, stdin).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -328,11 +397,12 @@ public sealed class GhClient : IGhClient
 
     private async Task<ProcessResult> RunSingleAttemptAsync(
         IReadOnlyList<string> args,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? stdin = null)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(_policy.PerAttemptTimeout);
-        return await _runner.RunAsync(Exe, args, timeoutCts.Token).ConfigureAwait(false);
+        return await _runner.RunAsync(Exe, args, timeoutCts.Token, stdin: stdin).ConfigureAwait(false);
     }
 
     private async Task DelayBackoffAsync(int attemptJustFailed, CancellationToken ct)

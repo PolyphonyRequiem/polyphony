@@ -321,5 +321,9 @@ public sealed class LockCommandsTests : IDisposable
         public Task<ProcessResult> WorktreeAddAsync(string branch, string path, string? gitRef, CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
         public Task<ProcessResult> WorktreeRemoveAsync(string path, bool force, CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
         public Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
+        public Task<RebaseOutcome> RebaseOntoAsync(string newBase, string oldBase, string head, CancellationToken ct = default)
+            => Task.FromResult<RebaseOutcome>(new RebaseOutcome.Failed("not implemented"));
+        public Task<string?> MergeBaseAsync(string a, string b, CancellationToken ct = default) => Task.FromResult<string?>(null);
+        public Task<bool> IsAncestorAsync(string maybeAncestor, string descendant, CancellationToken ct = default) => Task.FromResult(false);
     }
 }

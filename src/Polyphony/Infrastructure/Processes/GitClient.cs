@@ -188,6 +188,142 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
     public Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default)
         => runner.RunAsync(Exe, ["worktree", "list", "--porcelain"], ct);
 
+    public async Task<RebaseOutcome> RebaseOntoAsync(
+        string newBase,
+        string oldBase,
+        string head,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(newBase);
+        ArgumentException.ThrowIfNullOrEmpty(oldBase);
+        ArgumentException.ThrowIfNullOrEmpty(head);
+
+        // 1. Detach onto the head we plan to replay.
+        string[] checkoutArgs = ["checkout", "--detach", head];
+        var checkout = await runner.RunAsync(Exe, checkoutArgs, ct).ConfigureAwait(false);
+        if (!checkout.Succeeded)
+        {
+            return new RebaseOutcome.Failed(
+                string.IsNullOrEmpty(checkout.Stderr) ? checkout.Stdout : checkout.Stderr);
+        }
+
+        // 2. Replay only [oldBase..head] onto newBase.
+        string[] rebaseArgs = ["rebase", "--onto", newBase, oldBase, "HEAD"];
+        var rebase = await runner.RunAsync(Exe, rebaseArgs, ct).ConfigureAwait(false);
+
+        if (rebase.Succeeded)
+        {
+            // 3a. Capture the new HEAD sha.
+            var head2 = await runner.RunAsync(Exe, ["rev-parse", "HEAD"], ct).ConfigureAwait(false);
+            if (!head2.Succeeded)
+            {
+                // Should be rare — rebase succeeded but rev-parse failed. Treat as Failed
+                // for caller routing rather than guessing a SHA from rebase stdout.
+                return new RebaseOutcome.Failed(
+                    string.IsNullOrEmpty(head2.Stderr) ? head2.Stdout : head2.Stderr);
+            }
+            return new RebaseOutcome.Clean(head2.Stdout.Trim());
+        }
+
+        // 3b. Conflict OR hard failure. Sniff before aborting because git
+        // reports CONFLICT lines on stdout and we want to preserve them.
+        var conflicts = ParseConflictedFiles(rebase.Stdout, rebase.Stderr);
+
+        // Always abort defensively so the worktree returns to detached-HEAD
+        // state at `head` with no .git/rebase-* directory left behind.
+        await TryRebaseAbortAsync(ct).ConfigureAwait(false);
+
+        if (conflicts.Count > 0)
+        {
+            return new RebaseOutcome.Conflict(conflicts);
+        }
+
+        return new RebaseOutcome.Failed(
+            string.IsNullOrEmpty(rebase.Stderr) ? rebase.Stdout : rebase.Stderr);
+    }
+
+    public async Task<string?> MergeBaseAsync(string a, string b, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(a);
+        ArgumentException.ThrowIfNullOrEmpty(b);
+
+        var result = await runner.RunAsync(Exe, ["merge-base", a, b], ct).ConfigureAwait(false);
+        return result.Succeeded ? TrimOrNull(result.Stdout) : null;
+    }
+
+    public async Task<bool> IsAncestorAsync(string maybeAncestor, string descendant, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(maybeAncestor);
+        ArgumentException.ThrowIfNullOrEmpty(descendant);
+
+        string[] args = ["merge-base", "--is-ancestor", maybeAncestor, descendant];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        return result.ExitCode switch
+        {
+            // git's documented contract: exit 0 = ancestor, exit 1 = not.
+            0 => true,
+            1 => false,
+            _ => throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr),
+        };
+    }
+
+    private async Task TryRebaseAbortAsync(CancellationToken ct)
+    {
+        // Best-effort. If there's no rebase in progress git exits non-zero;
+        // we don't care because the worktree is already where we want it.
+        try
+        {
+            await runner.RunAsync(Exe, ["rebase", "--abort"], ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Swallow — rebase --abort is purely a cleanup gesture.
+        }
+    }
+
+    private static IReadOnlyList<string> ParseConflictedFiles(string stdout, string stderr)
+    {
+        // git rebase emits lines like:
+        //   CONFLICT (content): Merge conflict in path/to/file
+        //   CONFLICT (rename/delete): foo.txt deleted in HEAD and renamed to bar.txt in <commit>
+        // The path is everything after the last " in " on a "CONFLICT (content):" line, which
+        // is brittle for the general case but reliable for `Merge conflict in <path>`.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var files = new List<string>();
+        foreach (var raw in (stdout + "\n" + stderr).Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            if (!line.Contains("CONFLICT", StringComparison.Ordinal)) continue;
+
+            // "Merge conflict in <path>" — preferred shape
+            var marker = "Merge conflict in ";
+            var idx = line.IndexOf(marker, StringComparison.Ordinal);
+            if (idx >= 0)
+            {
+                var path = line[(idx + marker.Length)..].Trim();
+                if (path.Length > 0 && seen.Add(path))
+                {
+                    files.Add(path);
+                }
+                continue;
+            }
+
+            // Fallback: take whatever is between the last "): " and end-of-line
+            // for non-content conflicts (rename/delete, modify/delete, etc.).
+            // This is best-effort — the exact format varies by conflict kind.
+            var colon = line.IndexOf("): ", StringComparison.Ordinal);
+            if (colon >= 0)
+            {
+                var rest = line[(colon + 3)..].Trim();
+                if (rest.Length > 0 && seen.Add(rest))
+                {
+                    files.Add(rest);
+                }
+            }
+        }
+        return files;
+    }
+
     private static string? TrimOrNull(string raw)
     {
         var trimmed = raw.Trim();
