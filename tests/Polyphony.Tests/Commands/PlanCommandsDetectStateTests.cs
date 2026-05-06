@@ -425,21 +425,321 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase
 
     // ─── Custom planned-tag override ──────────────────────────────────────
 
+    // ─── parent_change_pending ────────────────────────────────────────────
+
+    private static void StubPrPollWithReview(
+        FakeProcessRunner runner,
+        int prNumber,
+        string state,
+        string reviewDecision,
+        string headRef,
+        string body = "")
+    {
+        var bodyJson = JsonEncodedText.Encode(body).Value;
+        var json = $$"""
+            {
+              "number": {{prNumber}},
+              "state": "{{state}}",
+              "reviewDecision": "{{reviewDecision}}",
+              "mergeable": "MERGEABLE",
+              "headRefName": "{{headRef}}",
+              "headRefOid": "abc123",
+              "baseRefName": "feature/100",
+              "mergedAt": null,
+              "mergeCommit": null,
+              "body": "{{bodyJson}}",
+              "reviews": []
+            }
+            """;
+        runner.WhenStartsWith("gh", ["pr", "view", prNumber.ToString()], new ProcessResult(0, json, ""));
+    }
+
+    private static void StubTwigShowTreeWithChildren(
+        FakeProcessRunner runner,
+        int parentId,
+        params int[] childIds)
+    {
+        var children = string.Join(",", childIds.Select(id => $$"""{"id":{{id}},"title":"Child {{id}}"}"""));
+        var json = $$"""{"id":{{parentId}},"title":"Parent","children":[{{children}}]}""";
+        runner.WhenExact("twig", ["show", parentId.ToString(), "--tree", "--output", "json"],
+            new ProcessResult(0, json, ""));
+    }
+
+    /// <summary>
+    /// Build a plan-PR body whose front-matter has both
+    /// <c>requests_parent_change</c> set explicitly AND a snapshot map.
+    /// </summary>
+    private static string MakePrBodyWithFlag(bool requestsParentChange, IDictionary<string, int> snapshot)
+    {
+        var lines = new List<string>
+        {
+            "---",
+            $"requests_parent_change: {(requestsParentChange ? "true" : "false")}",
+            "ancestor_plan_generations:",
+        };
+        foreach (var (k, v) in snapshot)
+        {
+            lines.Add($"  \"{k}\": {v}");
+        }
+        lines.Add("---");
+        lines.Add("");
+        lines.Add("Plan PR body");
+        return string.Join("\n", lines);
+    }
+
     [Fact]
-    public async Task DetectState_CustomPlannedTag_RespectsOverride()
+    public async Task DetectState_CompleteWithNoChildren_StaysComplete()
     {
         var (cmd, runner) = CreateCommand();
         StubRemoteUrl(runner);
         StubLsRemote(runner, ChildPlanBranch, exists: true);
         StubPrListSingle(runner, 42, ChildPlanBranch);
         StubPrPoll(runner, 42, "MERGED");
-        StubTwigShowWithTags(runner, ChildId, tags: "polyphony;custom:planned-marker");
+        StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
+        StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+        StubTwigShowTreeWithChildren(runner, ChildId);  // no children
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.DetectState(RootId, ChildId, plannedTag: "custom:planned-marker"));
+            () => cmd.DetectState(RootId, ChildId));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.State.ShouldBe("complete");
+        result.ParentChangePendingChildren.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task DetectState_CompleteWithChildButPrPending_StaysComplete()
+    {
+        var (cmd, runner) = CreateCommand();
+        const int grandchildId = 300;
+        const string grandchildPlanBranch = "plan/100-300";
+
+        // Parent setup → reaches "complete".
+        StubRemoteUrl(runner);
+        StubLsRemote(runner, ChildPlanBranch, exists: true);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", ChildPlanBranch,
+                "--state", "all", "--limit", "50",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
+        StubPrPoll(runner, 42, "MERGED");
+        StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
+        StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        // Child of itemId=200 has a PR but it's pending review (not approved).
+        StubTwigShowTreeWithChildren(runner, ChildId, grandchildId);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", grandchildPlanBranch,
+                "--state", "open", "--limit", "10",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":99,"headRefName":"{{grandchildPlanBranch}}","url":"https://gh/pr/99"}]""", ""));
+        StubPrPollWithReview(runner, 99, "OPEN", "REVIEW_REQUIRED", grandchildPlanBranch,
+            MakePrBodyWithFlag(true, new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.DetectState(RootId, ChildId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("complete");
+        result.ParentChangePendingChildren.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task DetectState_CompleteWithApprovedChildButFlagFalse_StaysComplete()
+    {
+        var (cmd, runner) = CreateCommand();
+        const int grandchildId = 300;
+        const string grandchildPlanBranch = "plan/100-300";
+
+        StubRemoteUrl(runner);
+        StubLsRemote(runner, ChildPlanBranch, exists: true);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", ChildPlanBranch,
+                "--state", "all", "--limit", "50",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
+        StubPrPoll(runner, 42, "MERGED");
+        StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
+        StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        StubTwigShowTreeWithChildren(runner, ChildId, grandchildId);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", grandchildPlanBranch,
+                "--state", "open", "--limit", "10",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":99,"headRefName":"{{grandchildPlanBranch}}","url":"https://gh/pr/99"}]""", ""));
+        // Approved but flag is false.
+        StubPrPollWithReview(runner, 99, "OPEN", "APPROVED", grandchildPlanBranch,
+            MakePrBodyWithFlag(false, new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.DetectState(RootId, ChildId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("complete");
+    }
+
+    [Fact]
+    public async Task DetectState_CompleteWithApprovedChildButStaleSnapshot_StaysComplete()
+    {
+        var (cmd, runner) = CreateCommand();
+        const int grandchildId = 300;
+        const string grandchildPlanBranch = "plan/100-300";
+
+        StubRemoteUrl(runner);
+        StubLsRemote(runner, ChildPlanBranch, exists: true);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", ChildPlanBranch,
+                "--state", "all", "--limit", "50",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
+        StubPrPoll(runner, 42, "MERGED");
+        StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
+        // Manifest says parent gen=2; child snapshot says gen=1 → stale → not pending.
+        StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 2 }));
+
+        StubTwigShowTreeWithChildren(runner, ChildId, grandchildId);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", grandchildPlanBranch,
+                "--state", "open", "--limit", "10",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":99,"headRefName":"{{grandchildPlanBranch}}","url":"https://gh/pr/99"}]""", ""));
+        StubPrPollWithReview(runner, 99, "OPEN", "APPROVED", grandchildPlanBranch,
+            MakePrBodyWithFlag(true, new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.DetectState(RootId, ChildId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("complete");
+    }
+
+    [Fact]
+    public async Task DetectState_CompleteWithApprovedChildRequestingChange_ParentChangePending()
+    {
+        var (cmd, runner) = CreateCommand();
+        const int grandchildId = 300;
+        const string grandchildPlanBranch = "plan/100-300";
+
+        StubRemoteUrl(runner);
+        StubLsRemote(runner, ChildPlanBranch, exists: true);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", ChildPlanBranch,
+                "--state", "all", "--limit", "50",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
+        StubPrPoll(runner, 42, "MERGED");
+        StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
+        StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        StubTwigShowTreeWithChildren(runner, ChildId, grandchildId);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", grandchildPlanBranch,
+                "--state", "open", "--limit", "10",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":99,"headRefName":"{{grandchildPlanBranch}}","url":"https://gh/pr/99"}]""", ""));
+        StubPrPollWithReview(runner, 99, "OPEN", "APPROVED", grandchildPlanBranch,
+            MakePrBodyWithFlag(true, new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.DetectState(RootId, ChildId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("parent_change_pending");
+        result.ParentChangePendingChildren.ShouldHaveSingleItem();
+        var entry = result.ParentChangePendingChildren[0];
+        entry.ChildItemId.ShouldBe(grandchildId);
+        entry.PrNumber.ShouldBe(99);
+        entry.ExpectedParentGeneration.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task DetectState_RootCompleteWithApprovedChildRequestingChange_UsesRootKey()
+    {
+        // Parent IS root → snapshot key must be "root", not the numeric id.
+        var (cmd, runner) = CreateCommand();
+        const int childOfRoot = 200;
+        const string childOfRootPlanBranch = "plan/100-200";
+
+        StubRemoteUrl(runner);
+        StubLsRemote(runner, RootPlanBranch, exists: true);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", RootPlanBranch,
+                "--state", "all", "--limit", "50",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":11,"headRefName":"{{RootPlanBranch}}","url":"https://gh/pr/11"}]""", ""));
+        StubPrPoll(runner, 11, "MERGED");
+        StubTwigShowWithTags(runner, RootId, tags: "polyphony;polyphony:planned");
+        StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { ["root"] = 1 }));
+
+        StubTwigShowTreeWithChildren(runner, RootId, childOfRoot);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", childOfRootPlanBranch,
+                "--state", "open", "--limit", "10",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":77,"headRefName":"{{childOfRootPlanBranch}}","url":"https://gh/pr/77"}]""", ""));
+        StubPrPollWithReview(runner, 77, "OPEN", "APPROVED", childOfRootPlanBranch,
+            MakePrBodyWithFlag(true, new Dictionary<string, int> { ["root"] = 1 }));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.DetectState(rootId: RootId, itemId: RootId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("parent_change_pending");
+        result.ParentChangePendingChildren.ShouldHaveSingleItem();
+        result.ParentChangePendingChildren[0].ChildItemId.ShouldBe(childOfRoot);
+    }
+
+    [Fact]
+    public async Task DetectState_CompleteWithMultipleQualifyingChildren_AllListed()
+    {
+        var (cmd, runner) = CreateCommand();
+        const int grandchildA = 300;
+        const int grandchildB = 400;
+
+        StubRemoteUrl(runner);
+        StubLsRemote(runner, ChildPlanBranch, exists: true);
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", ChildPlanBranch,
+                "--state", "all", "--limit", "50",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
+        StubPrPoll(runner, 42, "MERGED");
+        StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
+        StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        StubTwigShowTreeWithChildren(runner, ChildId, grandchildA, grandchildB);
+
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", $"plan/100-{grandchildA}",
+                "--state", "open", "--limit", "10",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":71,"headRefName":"plan/100-{{grandchildA}}","url":"https://gh/pr/71"}]""", ""));
+        StubPrPollWithReview(runner, 71, "OPEN", "APPROVED", $"plan/100-{grandchildA}",
+            MakePrBodyWithFlag(true, new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        runner.WhenExact("gh",
+            ["pr", "list", "--repo", "acme/repo", "--head", $"plan/100-{grandchildB}",
+                "--state", "open", "--limit", "10",
+                "--json", "number,headRefName,url,mergedAt"],
+            new ProcessResult(0, $$"""[{"number":72,"headRefName":"plan/100-{{grandchildB}}","url":"https://gh/pr/72"}]""", ""));
+        StubPrPollWithReview(runner, 72, "OPEN", "APPROVED", $"plan/100-{grandchildB}",
+            MakePrBodyWithFlag(true, new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.DetectState(RootId, ChildId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("parent_change_pending");
+        result.ParentChangePendingChildren.Count.ShouldBe(2);
+        result.ParentChangePendingChildren.Select(c => c.ChildItemId)
+            .ShouldBe(new[] { grandchildA, grandchildB }, ignoreOrder: true);
     }
 }

@@ -148,4 +148,17 @@ public interface IGhClient
         string repoSlug,
         int prNumber,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>gh pr diff {prNumber} --repo {repoSlug}</c> — return the unified
+    /// diff text. Used by <c>polyphony plan extract-parent-patch</c> to
+    /// extract just the hunks touching a parent's plan file.
+    /// Returns null when the PR cannot be found (non-zero exit). Throws
+    /// <see cref="ExternalToolTimeoutException"/> when every attempt timed
+    /// out — same contract as <see cref="GetPullRequestPollDataAsync"/>.
+    /// </summary>
+    Task<string?> GetPullRequestDiffAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default);
 }
