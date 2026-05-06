@@ -22,6 +22,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Polyphony.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\..\twig2\src\Twig.Domain\Twig.Domain.csproj" />
     <ProjectReference Include="..\..\..\twig2\src\Twig.Infrastructure\Twig.Infrastructure.csproj" />
   </ItemGroup>
