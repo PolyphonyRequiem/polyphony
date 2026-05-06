@@ -248,7 +248,7 @@ agents:
     routes:
       - to: state_detector
         # Re-discover phase after planning + seeding. State_detector will see
-        # the new children (Tasks under Issue) and route to implementation.
+        # the new child items under the parent and route to implementation.
         # P3: Re-Entry by State Discovery.
 
   # ── Implementation sub-workflow ───────────────────────────────────────
@@ -349,7 +349,7 @@ agents:
   #
   # Invariants:
   #   Pre:  Feature PR merged or user chose to skip.
-  #   Post: Observations recorded; routes to epic_closer.
+  #   Post: Observations recorded; routes to root_closer.
   - name: close_out
     type: workflow
     description: Post-implementation close-out and observation filing
@@ -358,9 +358,9 @@ agents:
       work_item_id: "{{ workflow.input.work_item_id }}"
       feature_branch: "{{ state_detector.output.workspace_hint.feature_branch | default('') }}"
     routes:
-      - to: epic_closer
+      - to: root_closer
 
-  # ── Epic closer ──────────────────────────────────────────────────────
+  # ── Root closer ──────────────────────────────────────────────────────
   #
   # Transitions the root work item to Done via the all_children_complete
   # event. Validates the precondition (all children in terminal state)
@@ -370,7 +370,7 @@ agents:
   # Invariants:
   #   Pre:  Close-out has completed; all child work items should be Done.
   #   Post: Root work item transitioned to Done (or left as-is on failure).
-  - name: epic_closer
+  - name: root_closer
     type: script
     description: Transition root work item to Done via all_children_complete
     command: pwsh
