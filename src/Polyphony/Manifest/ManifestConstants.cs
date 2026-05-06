@@ -44,13 +44,13 @@ public static class ManifestIsolation
 /// <summary>
 /// Wire-string constants for the <c>nesting_override</c> sentinel value
 /// <c>"flat"</c>. The override field accepts <c>null</c> (no override),
-/// the literal <c>"flat"</c> (force flat task PR), or any valid
+/// the literal <c>"flat"</c> (force flat impl PR), or any valid
 /// <c>MergeGroupId</c> (name the nested MG explicitly). <c>"flat"</c> is
 /// reserved and MUST NOT be used as an MG id even though it parses as a
 /// valid MG-id grammar string.
 /// </summary>
 public static class ManifestOverride
 {
-    /// <summary>Reserved sentinel value forcing a flat task PR for the child.</summary>
+    /// <summary>Reserved sentinel value forcing a flat impl PR for the child.</summary>
     public const string Flat = "flat";
 }

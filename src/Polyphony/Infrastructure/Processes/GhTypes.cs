@@ -48,7 +48,7 @@ public enum GhMergeMethod
     /// git ancestry to know what is already integrated.</summary>
     Merge,
 
-    /// <summary>Squash merge. Default for task PRs whose micro-history we do
+    /// <summary>Squash merge. Default for impl PRs whose micro-history we do
     /// not want to pollute the merge-group branch.</summary>
     Squash,
 

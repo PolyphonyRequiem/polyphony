@@ -7,8 +7,8 @@
     2. Required inputs: work_item_id, root_id, pg_number, mg_path,
        work_item_ids, feature_branch
     3. Required outputs: merged, pr_url, pr_number, mg_path
-    4. Primary loop agents: primary_router, task_branch_ensure, coder,
-       primary_reviewer, task_pr_open, task_pr_merge, primary_completer
+    4. Primary loop agents: primary_router, impl_branch_ensure, coder,
+       primary_reviewer, impl_pr_open, impl_pr_merge, primary_completer
     5. Coder + scope_reviewer use an "opus" model (flexible match — versioning
        drift across opus revisions does not break this lint, unlike
        lint-implement-pg.ps1 which pins claude-opus-4.7-1m-internal and
@@ -20,9 +20,9 @@
        with options wait, override, reassign
     9. User acceptance human_gate
     10. Scope closer script
-    11. MG branch + task branch verbs use the new Rev 4 grammar verbs:
-        branch ensure-mg + branch ensure-task; pr open-mg-pr,
-        pr open-task-pr, pr merge-mg-pr, pr merge-task-pr
+    11. MG branch + impl branch verbs use the new Rev 4 grammar verbs:
+        branch ensure-mg + branch ensure-impl; pr open-mg-pr,
+        pr open-impl-pr, pr merge-mg-pr, pr merge-impl-pr
     12. All route targets reference valid agent names or $end
     Exits 0 if clean, 1 if violations found.
 #>
@@ -105,11 +105,11 @@ foreach ($output in $requiredOutputs) {
 # ── Check 5: Primary loop agents ─────────────────────────────────────────
 $primaryLoopAgents = @(
     'primary_router',
-    'task_branch_ensure',
+    'impl_branch_ensure',
     'coder',
     'primary_reviewer',
-    'task_pr_open',
-    'task_pr_merge',
+    'impl_pr_open',
+    'impl_pr_merge',
     'primary_completer'
 )
 foreach ($agent in $primaryLoopAgents) {
@@ -188,11 +188,11 @@ foreach ($agent in $prAgents) {
 # back to the implement-pg shape and PR C's purpose is defeated.
 $grammarVerbs = @(
     @{ Verb = 'branch ensure-mg';     Pattern = '"ensure-mg"' },
-    @{ Verb = 'branch ensure-task';   Pattern = '"ensure-task"' },
+    @{ Verb = 'branch ensure-impl';   Pattern = '"ensure-impl"' },
     @{ Verb = 'pr open-mg-pr';        Pattern = '"open-mg-pr"' },
-    @{ Verb = 'pr open-task-pr';      Pattern = '"open-task-pr"' },
+    @{ Verb = 'pr open-impl-pr';      Pattern = '"open-impl-pr"' },
     @{ Verb = 'pr merge-mg-pr';       Pattern = '"merge-mg-pr"' },
-    @{ Verb = 'pr merge-task-pr';     Pattern = '"merge-task-pr"' }
+    @{ Verb = 'pr merge-impl-pr';     Pattern = '"merge-impl-pr"' }
 )
 foreach ($entry in $grammarVerbs) {
     if (-not $content.Contains($entry.Pattern)) {
@@ -269,7 +269,7 @@ foreach ($agentName in $schemaAgents) {
 
 # ── Check 16: max_iterations is high enough for the task loop ────────────
 # The MG task loop is wider than implement-pg's because each task has
-# seven nodes (ensure-task → coder → reviewer → task-pr-open → task-pr-merge
+# seven nodes (ensure-impl → coder → reviewer → impl-pr-open → impl-pr-merge
 # → completer → router). Ten tasks ~= 70 iterations baseline, doubled by
 # changes-requested loops. Anything < 200 risks hitting the cap on
 # medium-sized MGs.

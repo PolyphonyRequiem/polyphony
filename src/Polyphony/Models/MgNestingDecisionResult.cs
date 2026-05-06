@@ -3,7 +3,7 @@ namespace Polyphony;
 /// <summary>
 /// Output of <c>polyphony mg nesting-decision</c>: given a child item
 /// and its enclosing merge group, decides whether the child becomes its
-/// own nested merge group or stays flat as a task PR. Per ADR
+/// own nested merge group or stays flat as a impl PR. Per ADR
 /// <c>docs/decisions/branch-model.md</c> § Nested-MG trigger: default
 /// nest when child is implementable AND decomposable; planner can
 /// override either way per child.
@@ -19,7 +19,7 @@ public sealed record MgNestingDecisionResult
     /// <summary>Echoed path of the enclosing merge group.</summary>
     public required string ParentMgPath { get; init; }
 
-    /// <summary>The decision: <c>nest</c> (child becomes a nested MG) or <c>flat</c> (child becomes a task PR).</summary>
+    /// <summary>The decision: <c>nest</c> (child becomes a nested MG) or <c>flat</c> (child becomes a impl PR).</summary>
     public required string Decision { get; init; }
 
     /// <summary>The nested MG id when <see cref="Decision"/> is <c>nest</c>; null otherwise.</summary>
@@ -28,8 +28,8 @@ public sealed record MgNestingDecisionResult
     /// <summary>The nested MG path (parent path + nested id) when nesting; null otherwise.</summary>
     public string? NestedMgPath { get; init; }
 
-    /// <summary>The task branch name (<c>task/{root}-{item}</c>) when flat; null otherwise.</summary>
-    public string? TaskBranch { get; init; }
+    /// <summary>The impl branch name (<c>impl/{root}-{item}</c>) when flat; null otherwise.</summary>
+    public string? ImplBranch { get; init; }
 
     /// <summary>Echo of the workflow-supplied has_implementable input.</summary>
     public required bool HasImplementable { get; init; }

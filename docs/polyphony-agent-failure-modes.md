@@ -35,7 +35,7 @@ to `twig state`. This is the established way to derive the state name."*
 **What happened:** I went looking for hardcoded state names ("the literal `Done`" / "the
 literal `Doing`") and grep'd only `workflows/`. I found one (`workflows/implement-pg.yaml:370`)
 and reported "one site to fix". The audit was wrong — there is also
-`scripts/task-router.ps1:106` (`twig state Doing --output json …`), and the workflow
+`scripts/impl-router.ps1:106` (`twig state Doing --output json …`), and the workflow
 literal at `implement-pg.yaml:370` is itself an inline pwsh fragment, not a YAML
 attribute. Both of these are "scripts that hardcode state names", and I missed half the
 problem because I treated workflow YAML and helper scripts as if they were one layer.
@@ -47,7 +47,7 @@ plus `polyphony-workflow-author.skill.md` (the canonical helper-scripts table an
 **What it would have said:** *"Workflow YAMLs in `workflows/` and PowerShell helpers in
 `scripts/` are two distinct layers, both of which can shell out to twig directly. Audits
 of state-name literals must search both directories. The existing anti-patterns are
-`workflows/implement-pg.yaml:370` and `scripts/task-router.ps1:106`."* The skill
+`workflows/implement-pg.yaml:370` and `scripts/impl-router.ps1:106`."* The skill
 literally cites both sites by line number.
 
 ---

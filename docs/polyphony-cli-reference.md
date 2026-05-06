@@ -119,19 +119,19 @@ CLI.
 | `plan` | `load-type` | Load type-definition + template + decomposition guidance | config files | — |
 | `plan` | `load-guidance` | Load `agent-guidance/*.md` into a role map | config files | — |
 | `plan` | `review` | Aggregate technical+readability reviewer JSON; emit pass/fail | (args only) | — |
-| `plan` | `seed-children` | Idempotently reconcile architect's task list as ADO children | twig cache | twig (writes) |
+| `plan` | `seed-children` | Idempotently reconcile architect's child list as ADO children | twig cache | twig (writes) |
 | `policy` | `load` | Load `policy.yaml` (or defaults) and emit a snapshot | policy file | — |
 | `policy` | `validate` | Schema-validate `policy.yaml` without applying defaults | policy file | — |
 | `policy` | `resolve` | Effective rule for `<scope>` within `<domain>` (most-specific wins) | policy file | — |
 | `branch` | `route` | Classify each PR group; emit next action (create/submit/all_complete) | twig cache, git, gh | — |
 | `branch` | `load-tree` | Discover hierarchy + PG groups + per-PG completion status | twig cache, git, gh | — |
-| `branch` | `next-task` | Pick the next implementable item in a PG; transition it to in-progress | twig cache | twig (state) |
+| `branch` | `next-impl` | Pick the next implementable item in a PG; transition it to in-progress | twig cache | twig (state) |
 | `branch` | `ensure-feature` | Idempotently create+push a feature branch if missing | git | git (push) |
 | `branch` | `check-deps` | Check ADO predecessor links for blocking dependencies | twig | — |
 | `branch` | `close-scope` | Close all non-terminal items in a PG scope to their target state | twig cache | twig (state) |
 | `pr` | `create-feature-pr` | Create the feature PR; reuse existing open PR for same head/base | git, gh | gh (PR create) |
 
-Three of these verbs (`plan seed-children`, `branch next-task`, `branch close-scope`,
+Three of these verbs (`plan seed-children`, `branch next-impl`, `branch close-scope`,
 `branch ensure-feature`, `pr create-feature-pr`) write through subordinate
 CLIs (twig, git, gh). The pure read+decision verbs are everything else.
 
@@ -706,17 +706,17 @@ Default `max-cycles=5`. The verb always exits 0; the workflow routes on
 ### `polyphony plan seed-children`
 
 ```text
-polyphony plan seed-children --work-item <id> --tasks-json <json> [--planned-tag <tag>]
+polyphony plan seed-children --work-item <id> --children-json <json> [--planned-tag <tag>]
 ```
 
 The most consequential planning verb. Idempotently reconciles an
-architect-emitted task list (`architect.output.tasks`) against the existing
+architect-emitted child list (`architect.output.children`) against the existing
 children of a parent work item.
 
-Match precedence per task:
+Match precedence per child entry:
 
 1. **Marker match** — existing child whose description contains
-   `<!-- polyphony:plan-task-id={id} -->` matching the architect's id → reused
+   `<!-- polyphony:plan-child-id={id} -->` matching the architect's id → reused
    (no create).
 2. **Title+type match** — existing child with the same `(title, type)` under
    the parent → reused with a warning (marker damaged or missing).
@@ -742,12 +742,12 @@ Five verbs that own the lifecycle of a PR group's branch:
 | `branch route` | classify | Decide next action across all PGs |
 | `branch load-tree` | overview | Discover PGs + their completion status |
 | `branch ensure-feature` | start | Create feature branch if missing |
-| `branch next-task` | execute | Pick next implementable item; transition to in-progress |
+| `branch next-impl` | execute | Pick next implementable item; transition to in-progress |
 | `branch check-deps` | guard | Block work if predecessor links aren't terminal |
 | `branch close-scope` | finish | Close all items in a PG to their target state after merge |
 
 Together they replace what was a sprawling set of PowerShell scripts
-(`pg-router.ps1`, `load-work-tree.ps1`, `task-router.ps1`, `dependency-check.ps1`,
+(`pg-router.ps1`, `load-work-tree.ps1`, `impl-router.ps1`, `dependency-check.ps1`,
 `scope-closer.ps1`). The migration gave each of them:
 
 - A unit-tested JSON contract.
@@ -782,10 +782,10 @@ from `--base-branch` (default `main`) and pushes. Default remote is `origin`.
 The root workflow calls this once after state detection. Sub-workflows trust
 the branch name as an input rather than re-running the check.
 
-### `polyphony branch next-task`
+### `polyphony branch next-impl`
 
 ```text
-polyphony branch next-task --work-item <id> --pg-name <PG-N>
+polyphony branch next-impl --work-item <id> --pg-name <PG-N>
                               # (or --pg-number <int>)
 ```
 

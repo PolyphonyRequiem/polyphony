@@ -64,7 +64,7 @@ Two parallel tracks delivered as 8 phases:
 |---|---|
 | `polyphony state <verb>` | preflight-check, preflight-lite, detect-state |
 | `polyphony plan <verb>` | depth-guard, child-router, load-type-context, load-agent-guidance, review-router, seeder |
-| `polyphony branch <verb>` | load-work-tree, pg-router, task-router, dependency-check, scope-closer |
+| `polyphony branch <verb>` | load-work-tree, pg-router, impl-router, dependency-check, scope-closer |
 | `polyphony pr <verb>` | feature-pr-creator (invoke-gh and resolve-gh-token collapse to internal C# helpers, NOT public verbs) |
 
 **Hard cutover** — no `.ps1` shims; scripts are deleted at end of Phase 6.
@@ -180,7 +180,7 @@ through these verbs completes end-to-end against this very Epic.
 
 - Migrate `load-work-tree.ps1` → `polyphony branch load-tree`
 - Migrate `pg-router.ps1` → `polyphony branch route` (or `next-action`)
-- Migrate `task-router.ps1` → `polyphony branch next-task`
+- Migrate `impl-router.ps1` → `polyphony branch next-impl`
 - Migrate `dependency-check.ps1` → `polyphony branch check-deps`
 - Migrate `scope-closer.ps1` → `polyphony branch close-scope`
 - These shell out to twig — test fixtures must mock the twig CLI.

@@ -3,7 +3,7 @@ name: polyphony-branch-model
 description: >-
   Activate when planning or implementing work that creates, names, or merges
   branches in a polyphony SDLC run. Covers the canonical branch tree
-  (`feature/{root}` integration trunk; recursive `plan/`, `mg/`, `task/`,
+  (`feature/{root}` integration trunk; recursive `plan/`, `mg/`, `impl/`,
   `evidence/` branches), driver-enforced promotion gates, stable
   planner-declared MG ids, default-nest trigger for decomposable+implementable
   children, mandatory merge commits at promote-chain layers, the run manifest
@@ -45,12 +45,12 @@ main
       │
       ├── mg/{root_id}_{mg_id}                       ← top MG (mg_id = stable string;
       │    │                                            mg_path = mg_id at top level)
-      │    ├── task/{root_id}-{item_id}              ← task branch (always exists, flat)
+      │    ├── impl/{root_id}-{item_id}              ← impl branch (always exists, flat)
       │    └── mg/{root_id}_{mg_id}_{nested_mg_id}   ← nested MG; mg_path joins with `_`;
       │         │                                       nested_mg_id is planner-declared
       │         │                                       or item-{child_id}
-      │         ├── task/{root_id}-{owner_item_id}   ← non-leaf owner's own task branch
-      │         └── task/{root_id}-{descendant_id}   ← descendant tasks
+      │         ├── impl/{root_id}-{owner_item_id}   ← non-leaf owner's own impl branch
+      │         └── impl/{root_id}-{descendant_id}   ← descendant tasks
       │
       └── evidence/{root_id}-{item_id}            ← evidence branch (Phase 6)
 ```
@@ -64,7 +64,7 @@ main
 | `plan/{r}-{item_id}` | descendant plan, **flat** — leaf item id only | parent's plan branch |
 | `mg/{r}_{mg_id}` | top MG, `mg_id` = planner-declared stable id | `feature/{r}` |
 | `mg/{r}_{mg_path}` | nested MG; `mg_path` = `_`-joined chain of `mg_id` segments; terminal segment is planner-declared or `item-{child_id}` | parent MG branch |
-| `task/{r}-{item_id}` | task, **flat** — leaf item id only | enclosing MG branch |
+| `impl/{r}-{item_id}` | task, **flat** — leaf item id only | enclosing MG branch |
 | `evidence/{r}-{item_id}` | one per item with evidence | `feature/{r}` |
 
 ### Hard rules
@@ -72,22 +72,22 @@ main
 - **Three delimiters, one role each** (Rev 4):
   - `/` — separates the ref-class prefix from the payload. Reserved.
   - `-` — separates `{root_id}` from a single payload segment in
-    `task/`, `plan/`, `evidence/`, and lives inside MG ids.
+    `impl/`, `plan/`, `evidence/`, and lives inside MG ids.
   - `_` — the **MG hierarchy delimiter**. Appears only inside `mg/`
     branch payloads. Unambiguous because the MG id grammar
     `^[a-z][a-z0-9-]{0,30}$` excludes `_`.
 - Never use `/` for hierarchy — git treats `/` as ref namespacing and
   `mg/X` precludes `mg/X/Y`.
 - **One ref-class prefix per branch kind:** `feature/`, `plan/`, `mg/`,
-  `task/`, `evidence/`. Don't invent new prefixes without an ADR amendment.
+  `impl/`, `evidence/`. Don't invent new prefixes without an ADR amendment.
 - **Depth 3 = warning, depth 5 = hard stop** for MG nesting. Override
   beyond 5 requires `--allow-deep-nesting` plus recorded human approval.
-- **Task PRs always exist** for every implementable item — leaf or non-leaf.
-  The task PR is the per-item review surface; do not skip it.
-- **Implementable non-leaf items get their own task branch under their
-  nested MG** (alongside the descendants' task branches).
-- **The PR base branch carries the topology** for flat task/plan
-  branches. Task branch `task/1234-5678` based on `mg/1234_data-layer`
+- **Impl PRs always exist** for every implementable item — leaf or non-leaf.
+  The impl PR is the per-item review surface; do not skip it.
+- **Implementable non-leaf items get their own impl branch under their
+  nested MG** (alongside the descendants' impl branches).
+- **The PR base branch carries the topology** for flat impl/plan
+  branches. Impl branch `impl/1234-5678` based on `mg/1234_data-layer`
   unambiguously belongs to the `data-layer` MG; the manifest records the
   edge.
 
@@ -97,7 +97,7 @@ main
 
 | Layer | Head | Base | Merge mode policy | Merge method |
 |---|---|---|---|---|
-| Task PR | `task/{r}-{item_id}` | enclosing `mg/{r}_{mg_path}` | `(scope, task_pr)` | squash OR merge |
+| Impl PR | `impl/{r}-{item_id}` | enclosing `mg/{r}_{mg_path}` | `(scope, impl_pr)` | squash OR merge |
 | Nested MG PR | `mg/{r}_{mg_path}` (terminal segment is the nested id) | `mg/{r}_{parent_mg_path}` | `(scope, mg_pr)` | **merge commit (mandatory)** |
 | Top MG PR | `mg/{r}_{mg_id}` | `feature/{r}` | `(scope, mg_pr)` | **merge commit (mandatory)** |
 | Plan PR (descendant) | `plan/{r}-{item_id}` | parent's plan branch | `(scope, plan_pr)` | **merge commit (mandatory)** |
@@ -121,9 +121,9 @@ Returns one of: `auto`, `manual`, `warning`, `policy_aware_blocked`.
 
 | PR kind | Gate fires when |
 |---|---|
-| Task PR | Owning item's `implementation_merged` is `ready` AND task PR has aggregated platform status `approved`. |
-| Nested MG PR | All task PRs and grandchild MG PRs in this MG have merged. |
-| Top MG PR | All task PRs and nested MG PRs in this MG have merged. |
+| Impl PR | Owning item's `implementation_merged` is `ready` AND impl PR has aggregated platform status `approved`. |
+| Nested MG PR | All impl PRs and grandchild MG PRs in this MG have merged. |
+| Top MG PR | All impl PRs and nested MG PRs in this MG have merged. |
 | Plan PR | All child plan PRs (if any) have merged AND `plan_reviewed` for the owning item is `ready`. |
 | Evidence PR | Owning item's `action_satisfied` is `ready` AND evidence artifact passes verification. |
 | Feature PR | All top MG PRs, root plan PR, all evidence PRs merged AND every in-scope item's full requirement set is `satisfied`. |
@@ -192,7 +192,7 @@ the tree.
 # In the parent's plan
 children_overrides:
   - id: 4567
-    merge_group_nesting: flat        # force task branch even though trigger fires
+    merge_group_nesting: flat        # force impl branch even though trigger fires
     reason: "single-file change, nesting overhead not worth it"
 
   - id: 4568
@@ -233,23 +233,23 @@ topology stability.
 
 ---
 
-## Implementable non-leaf items — they own a task PR too
+## Implementable non-leaf items — they own a impl PR too
 
 If an item is **both** `implementable` and `decomposable`, it owns a
-nested MG **and** its own task branch under that MG:
+nested MG **and** its own impl branch under that MG:
 
 ```
 mg/{r}_{parent_mg_path}_{nested_mg_id}    ← child's nested MG
                                              nested_mg_id is planner-declared
                                              or item-{child_id}
- ├── task/{r}-{child_id}                    ← child's own task branch
- ├── task/{r}-{descendant_a_id}             ← flat task names; PR base = enclosing MG
- └── task/{r}-{descendant_b_id}
+ ├── impl/{r}-{child_id}                    ← child's own impl branch
+ ├── impl/{r}-{descendant_a_id}             ← flat task names; PR base = enclosing MG
+ └── impl/{r}-{descendant_b_id}
 ```
 
 This satisfies `RequirementKind.ImplementationMerged` for the child
 without breaking per-item review attribution. Direct commits to the MG
-branch are forbidden — always go through a task PR.
+branch are forbidden — always go through a impl PR.
 
 ---
 
@@ -351,7 +351,7 @@ Choice driven by `(scope, cross_mg_code_dep)` policy.
 Auto-rebase under remedy 2 is only safe **before the downstream MG branch
 or any of its descendant task / nested-MG branches are materialized.**
 Once they exist, rebasing the downstream MG branch invalidates SHAs that
-underpin open task PRs and reviewer comments.
+underpin open impl PRs and reviewer comments.
 
 Rule: the driver auto-rebases when
 
@@ -360,12 +360,12 @@ Rule: the driver auto-rebases when
 
 When downstream branches **are** materialized:
 
-1. Mark the downstream MG (and its task PRs) `stale: cross_mg_code_dep`
+1. Mark the downstream MG (and its impl PRs) `stale: cross_mg_code_dep`
    in the run manifest.
 2. Post a comment on each affected open PR explaining why.
 3. Apply `(scope, cross_mg_code_dep_rebase)` policy:
    - `auto` → driver schedules an audited rebase of the downstream MG
-     branch and re-bases each open task PR onto it; every commit is
+     branch and re-bases each open impl PR onto it; every commit is
      recorded in the run manifest.
    - `warning` → schedules the rebase, posts the warning, requires
      reviewer acknowledgement on each affected PR before merging.
@@ -490,12 +490,12 @@ regenerated plan content.
 
 ## Isolation scope ↔ branch contract
 
-| Isolation | Worktree | Where agent commits | Task branches | Task PRs |
+| Isolation | Worktree | Where agent commits | Impl branches | Impl PRs |
 |---|---|---|---|---|
-| `per-merge-group` (default) | One per MG | Task branch in shared MG worktree (sequential) | ✓ | ✓ |
-| `per-item` | One per implementable item | Task branch in per-item worktree (parallel) | ✓ | ✓ |
+| `per-merge-group` (default) | One per MG | Impl branch in shared MG worktree (sequential) | ✓ | ✓ |
+| `per-item` | One per implementable item | Impl branch in per-item worktree (parallel) | ✓ | ✓ |
 
-**Task branches and task PRs always exist.** Isolation changes *where*
+**Impl branches and impl PRs always exist.** Isolation changes *where*
 the agent works, not *whether* per-item review surfaces exist. A
 pseudo-mode that writes straight to the MG branch was rejected — it
 breaks per-item review attribution.
@@ -504,8 +504,8 @@ breaks per-item review attribution.
 > says "Integration step is a no-op; items already commit to the MG
 > branch." That predates this ADR and is wrong post-Phase 4. Updated
 > language: "per-merge-group serializes items in a single worktree;
-> each item still opens its own task PR; the integration step is a
-> sequence of task-PR merges into the MG branch." Phase 4b cleans this
+> each item still opens its own impl PR; the integration step is a
+> sequence of impl-PR merges into the MG branch." Phase 4b cleans this
 > up.
 
 ---
@@ -531,18 +531,18 @@ polyphony pr open-mg-pr --root 1234 --mg-path data-layer --nested-mg-id migratio
 # nested_mg_id = item-4567 and the branch becomes mg/1234_data-layer_item-4567.
 ```
 
-### Open a task PR (including for an implementable non-leaf)
+### Open a impl PR (including for an implementable non-leaf)
 
 ```powershell
-polyphony branch ensure-task-branch --root 1234 --mg-path data-layer_migrations --item 5678
-polyphony pr open-task-pr --root 1234 --mg-path data-layer_migrations --item 5678
-# Branch: task/1234-5678, base: mg/1234_data-layer_migrations
+polyphony branch ensure-impl-branch --root 1234 --mg-path data-layer_migrations --item 5678
+polyphony pr open-impl-pr --root 1234 --mg-path data-layer_migrations --item 5678
+# Branch: impl/1234-5678, base: mg/1234_data-layer_migrations
 ```
 
-### Resolve merge mode for a task PR
+### Resolve merge mode for a impl PR
 
 ```powershell
-polyphony policy resolve --scope type:DefaultLeafType --domain task_pr
+polyphony policy resolve --scope type:DefaultLeafType --domain impl_pr
 # { mode: "auto" }
 ```
 
@@ -554,13 +554,13 @@ names from the config, not from this skill.)
 1. Does the child have the `implementable` facet?
    - No → no MG concern; the child is plannable-only or actionable-only.
 2. Is the child `decomposable: true`?
-   - No → task branch in parent MG.
+   - No → impl branch in parent MG.
    - Yes → **nested MG** (default). Determine `nested_mg_id`:
      - If you're naming it: set `children_overrides[].nested_mg_id` in the
        parent plan to a meaningful kebab-case id (e.g. `data-migrations`).
      - If you don't name it: driver defaults to `item-{child_id}`
        (e.g. `item-4567`).
-   - Branch: `mg/{r}_{parent_mg_path}_{nested_mg_id}`. Add a task branch
+   - Branch: `mg/{r}_{parent_mg_path}_{nested_mg_id}`. Add a impl branch
      for the child's own implementation under it.
 
 ### Resume detection
@@ -588,12 +588,12 @@ polyphony policy resolve --scope root --domain cross_mg_code_dep
 |---|---|---|
 | `mg/1234/data/migrations` (slash separators) | `mg/1234_data_migrations` | Git ref namespace conflict |
 | `mg/1234-data-layer-migrations` (Rev 3 hyphen-joined `mg_path`) | `mg/1234_data-layer_migrations` (Rev 4 `_`-joined) | Hyphen-joining `mg_path` collides — top-level `data-layer-migrations` looks identical to nested `migrations` under `data-layer` |
-| `task/1234-data-layer-migrations-5678` (Rev 3 path-encoded) | `task/1234-5678` (Rev 4 flat) | Item IDs are project-unique; the PR base branch records the enclosing MG |
+| `impl/1234-data-layer-migrations-5678` (Rev 3 path-encoded) | `impl/1234-5678` (Rev 4 flat) | Item IDs are project-unique; the PR base branch records the enclosing MG |
 | Number MGs `1, 2, 3` (positional) | Use planner-declared stable ids | Reorder/remove without renaming |
 | Trust git ancestry to enforce ordering | Driver gates on PR state + requirement disposition | Git doesn't know task→MG→feature semantics |
 | Squash-merge an MG or plan PR | Use a merge commit | Squash destroys integration-event boundary |
-| Skip task PRs when isolation is per-MG | Always open task PRs | Per-item review attribution non-negotiable |
-| Skip the implementable non-leaf's own task PR | It still gets one under its nested MG | Required for `implementation_merged` |
+| Skip impl PRs when isolation is per-MG | Always open impl PRs | Per-item review attribution non-negotiable |
+| Skip the implementable non-leaf's own impl PR | It still gets one under its nested MG | Required for `implementation_merged` |
 | Encode cross-item dependencies in branch names | Use `cross_item_edges` in the plan | Branch tree is substrate, not order encoding |
 | Add a new branch prefix without an ADR | Amend the ADR | Five prefixes is the contract |
 | Auto-rebase a stale child plan branch silently | Block + comment + audit-record the rebase | Renegotiation must be auditable |
@@ -611,8 +611,8 @@ working around the rules. The ADR at `docs/decisions/branch-model.md`
 explicitly invites revisits when:
 
 - Planners regularly hit the depth-3 warning.
-- Reviewers complain about per-task PR fatigue (likely the answer is
-  `task_pr` mode `auto`; if API/CI fatigue, propose `task_pr_granularity`
+- Reviewers complain about per-impl PR fatigue (likely the answer is
+  `impl_pr` mode `auto`; if API/CI fatigue, propose `impl_pr_granularity`
   with `batched` opt-in).
 - A future phase needs cross-tree branch references.
 

@@ -67,7 +67,7 @@ Each item carries a list of REQUIREMENTS it must satisfy before close-out. Each 
 
 | Term | Definition |
 |---|---|
-| **Trunk flow** | The architectural default: there is no global "plan everything, then implement everything" phase boundary. The driver dispatches items from the worklist in dependency-edge order; each item's facets fire as their requirements become `ready`. Plan PRs and task PRs interleave naturally. **Replaces the implicit waterfall of plan-then-implement.** |
+| **Trunk flow** | The architectural default: there is no global "plan everything, then implement everything" phase boundary. The driver dispatches items from the worklist in dependency-edge order; each item's facets fire as their requirements become `ready`. Plan PRs and impl PRs interleave naturally. **Replaces the implicit waterfall of plan-then-implement.** |
 | **Plan-then-implement** | An optional, conservative `execution_mode` config setting. When enabled, the driver auto-injects edges making every implementable in the tree depend on every plannable in the tree being `satisfied`. Operators who want the waterfall behavior opt in here; the driver itself is unchanged. |
 | **Within-item facet order** | Within a single item carrying multiple facets: `plannable` always fires first when present. The order between `actionable` and `implementable` (when both are present) is **declared by the planner per item** (rule **B**). The planner annotates each item with `facet_order: [a, i]` or `facet_order: [i, a]` based on whether the action is preparatory (e.g., provision infra) or follow-up (e.g., audit, telemetry verification). |
 | **Successor item** | A separate work item linked by a successor dependency edge to capture an ordering that crosses item boundaries. Used when the within-item facet rule isn't enough — e.g., "deploy to prod" follows the implementation of a feature is its own item with a successor edge from the implementation. |
@@ -106,20 +106,20 @@ Edges enter the dependency graph through three distinct sources. Each source has
 | **Feature branch** | The single branch that aggregates all work — plans + code + evidence — for the run. Always corresponds to the root item. Merged to `main` via the feature PR. | `feature/{root_id}` |
 | **Plan branch** | A branch where plan documents for a single decomposable item are authored, reviewed, and from which approved plans promote up. | `plan/{root_id}` for the root; `plan/{root_id}-{child_id}-…` for descendants (hyphens, not slashes — git ref hierarchy collision rule) |
 | **Merge group (MG) branch** | A branch holding the integrated code changes for one merge group. **MG replaces "PG"** — "Processing Group" was originally "Pull Request Group"; "merge group" is clearer. | `mg/{root_id}-{n}` (top level) or `mg/{root_id}-{parent_n}-{n}` (nested) |
-| **Task branch** | A branch holding the code changes for a single implementable leaf. | `task/{root_id}-{n}-{item_id}` |
+| **Impl branch** | A branch holding the code changes for a single implementable leaf. | `impl/{root_id}-{n}-{item_id}` |
 | **Evidence branch** | A branch holding evidence artifacts for an actionable item that requires evidence. | `evidence/{root_id}-{item_id}` |
-| **Promote** | A merge whose target is the immediate parent in the branch hierarchy (Task → MG → feature; Sub-MG → MG → feature; Plan(child) → Plan(parent) → feature; Evidence → feature). **Replaces "bubble-up merge".** | Same primitive at every layer. |
+| **Promote** | A merge whose target is the immediate parent in the branch hierarchy (Impl → MG → feature; Sub-MG → MG → feature; Plan(child) → Plan(parent) → feature; Evidence → feature). **Replaces "bubble-up merge".** | Same primitive at every layer. |
 
 ## Pull requests
 
 | Term | Definition | Head → Base |
 |---|---|---|
-| **Task PR** | Promotes one task's code into its parent merge group branch. | `task/{r}-{n}-{t}` → `mg/{r}-{n}` |
+| **Impl PR** | Promotes one impl's code into its parent merge group branch. | `impl/{r}-{n}-{i}` → `mg/{r}-{n}` |
 | **MG PR** | Promotes one merge group's integrated code into its parent (feature branch or parent MG). | `mg/{r}-{n}` → `feature/{r}` (or `mg/{r}-{parent_n}` if nested) |
 | **Plan PR** | Promotes an approved plan up one layer; the root plan promotes into the feature branch. | `plan/{r}-…-{c}` → `plan/{r}-…` (or `plan/{r}` → `feature/{r}`) |
 | **Evidence PR** | Promotes an actionable item's evidence into the feature branch. | `evidence/{r}-{i}` → `feature/{r}` |
 | **Feature PR** | Promotes the feature branch into `main`. The "ship it" PR. | `feature/{r}` → `main` |
-| **PR kind** | One of `task_pr`, `mg_pr`, `plan_pr`, `evidence_pr`, `feature_pr`. The unit on which review/merge policy is configured. | — |
+| **PR kind** | One of `impl_pr`, `mg_pr`, `plan_pr`, `evidence_pr`, `feature_pr`. The unit on which review/merge policy is configured. | — |
 
 ## Reviewers, status, and merge policy
 

@@ -6,7 +6,7 @@ public sealed partial class PrCommands
 {
     /// <summary>
     /// Resolution of the (head, base) -> PR lookup used by both
-    /// <c>merge-task-pr</c> and <c>merge-mg-pr</c>. Exactly one of
+    /// <c>merge-impl-pr</c> and <c>merge-mg-pr</c>. Exactly one of
     /// <see cref="OpenPr"/>, <see cref="AlreadyMergedPr"/>, or
     /// <see cref="Error"/> is populated. The "already merged" path makes
     /// the verbs idempotent — a workflow that loses the response of a

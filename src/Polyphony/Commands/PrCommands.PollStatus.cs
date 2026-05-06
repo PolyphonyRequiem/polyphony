@@ -24,7 +24,7 @@ public sealed partial class PrCommands
     /// <c>state</c> + <c>policy.merge_allowed</c>.</para>
     /// </summary>
     /// <param name="prUrl">Full PR URL, e.g. <c>https://github.com/owner/repo/pull/123</c>.</param>
-    /// <param name="includeMetadata">When true, parse <c>requests_parent_change</c> and <c>ancestor_plan_generations</c> from the PR body's YAML front-matter. Default false so the verb works on task/MG PRs.</param>
+    /// <param name="includeMetadata">When true, parse <c>requests_parent_change</c> and <c>ancestor_plan_generations</c> from the PR body's YAML front-matter. Default false so the verb works on impl/MG PRs.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("poll-status")]
     public async Task<int> PollStatus(

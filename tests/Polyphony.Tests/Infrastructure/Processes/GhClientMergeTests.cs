@@ -28,7 +28,7 @@ public sealed class GhClientMergeTests
         initialBackoff: TimeSpan.Zero);
 
     private const string ViewedJson =
-        """{"number":42,"state":"MERGED","mergeCommit":{"oid":"deadbeef"},"headRefName":"task/1-2","headRefOid":"abc"}""";
+        """{"number":42,"state":"MERGED","mergeCommit":{"oid":"deadbeef"},"headRefName":"impl/1-2","headRefOid":"abc"}""";
 
     private static void StubPrViewMerged(FakeProcessRunner fake)
         => fake.WhenStartsWith("gh", ["pr", "view"], new ProcessResult(0, ViewedJson, ""));
@@ -223,7 +223,7 @@ public sealed class GhClientMergeTests
         fake.WhenStartsWith("gh", ["pr", "merge"],
             new ProcessResult(1, "", "the pull request is already merged"));
         fake.WhenStartsWith("gh", ["pr", "view"],
-            new ProcessResult(0, """{"number":42,"state":"OPEN","mergeCommit":null,"headRefName":"task/1-2","headRefOid":"abc"}""", ""));
+            new ProcessResult(0, """{"number":42,"state":"OPEN","mergeCommit":null,"headRefName":"impl/1-2","headRefOid":"abc"}""", ""));
         var client = new GhClient(fake, FastNoRetry);
 
         await Should.ThrowAsync<ExternalToolException>(() =>
@@ -299,7 +299,7 @@ public sealed class GhClientMergeTests
         state.Number.ShouldBe(42);
         state.State.ShouldBe("MERGED");
         state.MergeCommitSha.ShouldBe("deadbeef");
-        state.HeadRefName.ShouldBe("task/1-2");
+        state.HeadRefName.ShouldBe("impl/1-2");
         state.HeadRefOid.ShouldBe("abc");
     }
 

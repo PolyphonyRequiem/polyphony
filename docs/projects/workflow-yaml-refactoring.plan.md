@@ -16,7 +16,7 @@ This plan designs and implements the `twig-sdlc-v2-full` conductor workflow YAML
 
 ### Current State
 
-The existing `twig-sdlc-full@twig` workflow (registered from `PolyphonyRequiem/twig-conductor-workflows`) orchestrates an Epic → Issue → Task SDLC pipeline through ~9 YAML workflow files with type-specific routing branches. The Polyphony CLI (`polyphony route`, `polyphony validate`, `polyphony hierarchy`) and the generic scripts (`detect-state.ps1`, `pg-router.ps1`, `task-router.ps1`, `scope-closer.ps1`, `load-work-tree.ps1`) from Phases 1-2 are now complete and type-agnostic. The foundation is ready for the workflow YAML layer to become type-agnostic.
+The existing `twig-sdlc-full@twig` workflow (registered from `PolyphonyRequiem/twig-conductor-workflows`) orchestrates an Epic → Issue → Task SDLC pipeline through ~9 YAML workflow files with type-specific routing branches. The Polyphony CLI (`polyphony route`, `polyphony validate`, `polyphony hierarchy`) and the generic scripts (`detect-state.ps1`, `pg-router.ps1`, `impl-router.ps1`, `scope-closer.ps1`, `load-work-tree.ps1`) from Phases 1-2 are now complete and type-agnostic. The foundation is ready for the workflow YAML layer to become type-agnostic.
 
 **Completed prerequisite phases:**
 
@@ -24,7 +24,7 @@ The existing `twig-sdlc-full@twig` workflow (registered from `PolyphonyRequiem/t
 |-------|--------|-------------------|
 | Phase 0: Foundations | ✅ Done | `.conductor/` config, process-config.yaml, work-item-types, P12 principle |
 | Phase 1: Polyphony Core Engine | ✅ Done | `route`, `validate`, `hierarchy` commands with full routing engine |
-| Phase 2: Generic Workflow Scripts | ✅ Done | Type-agnostic `detect-state.ps1`, `pg-router.ps1`, `task-router.ps1`, `scope-closer.ps1`, `load-work-tree.ps1` |
+| Phase 2: Generic Workflow Scripts | ✅ Done | Type-agnostic `detect-state.ps1`, `pg-router.ps1`, `impl-router.ps1`, `scope-closer.ps1`, `load-work-tree.ps1` |
 
 ### Existing Workflow Architecture
 
@@ -47,7 +47,7 @@ The current `twig-sdlc-full` workflow has this structure:
 |--------|---------|----------------------|
 | `detect-state.ps1` | Root state detection: phase, plan, seeds, intent | `polyphony route` + `polyphony validate` |
 | `pg-router.ps1` | Route to next PG action | `polyphony hierarchy` + `Group-ByPG` |
-| `task-router.ps1` | Route to next implementable task within a PG | `polyphony hierarchy` + facet filter |
+| `impl-router.ps1` | Route to next implementable task within a PG | `polyphony hierarchy` + facet filter |
 | `scope-closer.ps1` | Close items in a PG after PR merge | `polyphony validate` per item |
 | `load-work-tree.ps1` | Load full hierarchy with PG completion status | `polyphony hierarchy` + PR status |
 
@@ -374,7 +374,7 @@ pg_router (script: pg-router.ps1)
   → action=all_complete → $end
 
 task_loop:
-  task_router (script: task-router.ps1)
+  task_router (script: impl-router.ps1)
     → action=implement_task →
         coder (agent: Opus 1M) → reducer_code (agent) → task_reviewer (agent)
           → approved → task_completer (script: twig state Done)
@@ -386,7 +386,7 @@ task_loop:
           → not blocked →
             reducer_issue (agent) → issue_reviewer (agent)
               → approved → user_acceptance (conditional human gate)
-                → accepted → next task/issue
+                → accepted → next impl/issue
                 → changes → task_loop
               → changes_requested → task_loop
 
@@ -468,7 +468,7 @@ detect-state.ps1 ──→ polyphony route ──→ { phase, action, workspace_
   ├── ready_for_implementation ──→ implement-pg.yaml (×N parallel)
   │     │
   │     ├── pg-router.ps1 ──→ { current_pg, branch_name, task_ids }
-  │     ├── task-router.ps1 ──→ { task_id, task_title, branch_name }
+  │     ├── impl-router.ps1 ──→ { task_id, task_title, branch_name }
   │     ├── coder agent ──→ code changes committed
   │     ├── reviewer agents ──→ approval/changes
   │     ├── github-pr.yaml ──→ PR created, reviewed, merged
@@ -509,7 +509,7 @@ detect-state.ps1 ──→ polyphony route ──→ { phase, action, workspace_
 ### Internal Dependencies
 
 - **Phase 1: Polyphony Core Engine** — ✅ Complete (provides `route`, `validate`, `hierarchy`)
-- **Phase 2: Generic Workflow Scripts** — ✅ Complete (provides `detect-state.ps1`, `pg-router.ps1`, `task-router.ps1`, `scope-closer.ps1`, `load-work-tree.ps1`)
+- **Phase 2: Generic Workflow Scripts** — ✅ Complete (provides `detect-state.ps1`, `pg-router.ps1`, `impl-router.ps1`, `scope-closer.ps1`, `load-work-tree.ps1`)
 - **`.conductor/` config** — ✅ Complete (provides `process-config.yaml`, `work-item-types/`, `templates/`)
 - **`twig-conductor-workflows` repo** — Existing repo where v2 YAMLs will be added
 

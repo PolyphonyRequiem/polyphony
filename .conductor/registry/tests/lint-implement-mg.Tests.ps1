@@ -19,8 +19,8 @@ Describe 'lint-implement-mg.ps1' {
         BeforeAll {
             # Helper: minimal valid YAML with all required structure for
             # implement-mg. Must include every Rev 4 grammar verb the lint
-            # checks for (ensure-mg, ensure-task, open-mg-pr, open-task-pr,
-            # merge-mg-pr, merge-task-pr) plus all required agents and
+            # checks for (ensure-mg, ensure-impl, open-mg-pr, open-impl-pr,
+            # merge-mg-pr, merge-impl-pr) plus all required agents and
             # output schemas. max_iterations is set to 300 to satisfy the
             # task-loop-budget check.
             $script:ValidYaml = @'
@@ -67,14 +67,14 @@ agents:
     command: pwsh
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
-      - to: task_branch_ensure
+      - to: impl_branch_ensure
         when: "{{ primary_router.output.action == 'implement_item' }}"
       - to: dependency_check
         when: "{{ primary_router.output.action == 'all_items_done' }}"
-  - name: task_branch_ensure
+  - name: impl_branch_ensure
     type: script
     command: polyphony
-    args: ["branch", "ensure-task", "--root-id", "1", "--item-id", "2", "--mg-path", "data-layer"]
+    args: ["branch", "ensure-impl", "--root-id", "1", "--item-id", "2", "--mg-path", "data-layer"]
     routes:
       - to: coder
   - name: coder
@@ -99,20 +99,20 @@ agents:
           type: string
     prompt: "Review the implementation"
     routes:
-      - to: task_pr_open
+      - to: impl_pr_open
         when: "{{ primary_reviewer.output.verdict == 'approved' }}"
       - to: coder
         when: "{{ primary_reviewer.output.verdict == 'changes_requested' }}"
-  - name: task_pr_open
+  - name: impl_pr_open
     type: script
     command: polyphony
-    args: ["pr", "open-task-pr", "--root-id", "1", "--item-id", "2", "--mg-path", "data-layer"]
+    args: ["pr", "open-impl-pr", "--root-id", "1", "--item-id", "2", "--mg-path", "data-layer"]
     routes:
-      - to: task_pr_merge
-  - name: task_pr_merge
+      - to: impl_pr_merge
+  - name: impl_pr_merge
     type: script
     command: polyphony
-    args: ["pr", "merge-task-pr", "--root-id", "1", "--item-id", "2", "--mg-path", "data-layer"]
+    args: ["pr", "merge-impl-pr", "--root-id", "1", "--item-id", "2", "--mg-path", "data-layer"]
     routes:
       - to: primary_completer
   - name: primary_completer
@@ -265,16 +265,16 @@ agents:
             ($output | Out-String) | Should -Match 'missing-primary-loop-agent'
         }
 
-        It 'Fails when task_branch_ensure agent is missing' {
-            $yaml = ($script:ValidYaml) -replace 'name: task_branch_ensure', 'name: task_branch_make'
+        It 'Fails when impl_branch_ensure agent is missing' {
+            $yaml = ($script:ValidYaml) -replace 'name: impl_branch_ensure', 'name: task_branch_make'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-primary-loop-agent'
         }
 
-        It 'Fails when task_pr_open agent is missing' {
-            $yaml = ($script:ValidYaml) -replace 'name: task_pr_open', 'name: task_pr_create'
+        It 'Fails when impl_pr_open agent is missing' {
+            $yaml = ($script:ValidYaml) -replace 'name: impl_pr_open', 'name: task_pr_create'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
@@ -344,8 +344,8 @@ agents:
             ($output | Out-String) | Should -Match 'missing-rev4-grammar-verb'
         }
 
-        It 'Fails when merge-task-pr verb is not invoked' {
-            $yaml = ($script:ValidYaml) -replace '"merge-task-pr"', '"finalize-task"'
+        It 'Fails when merge-impl-pr verb is not invoked' {
+            $yaml = ($script:ValidYaml) -replace '"merge-impl-pr"', '"finalize-task"'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1

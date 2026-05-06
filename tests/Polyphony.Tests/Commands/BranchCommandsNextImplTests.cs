@@ -12,7 +12,7 @@ using Xunit;
 
 namespace Polyphony.Tests.Commands;
 
-public sealed class BranchCommandsNextTaskTests : CommandTestBase
+public sealed class BranchCommandsNextImplTests : CommandTestBase
 {
     private (BranchCommands Command, FakeProcessRunner Runner) CreateCommand(ProcessConfig? cfg = null)
     {
@@ -50,11 +50,11 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task NextTask_NoPgIdentifier_EmitsError()
+    public async Task NextImpl_NoPgIdentifier_EmitsError()
     {
         var (cmd, _) = CreateCommand();
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextTask(workItem: 100));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextImpl(workItem: 100));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Deserialize(output);
@@ -64,7 +64,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task NextTask_HappyPath_TransitionsFirstNonDoneTask()
+    public async Task NextImpl_HappyPath_TransitionsFirstNonDoneTask()
     {
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
@@ -82,7 +82,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         await SeedAsync(epic.Build(), issue.Build(), t1.Build(), t2.Build());
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+            () => cmd.NextImpl(workItem: 100, pgName: "PG-1"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Deserialize(output);
@@ -100,7 +100,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task NextTask_AllDone_EmitsAllTasksDone()
+    public async Task NextImpl_AllDone_EmitsAllTasksDone()
     {
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
@@ -114,7 +114,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         await SeedAsync(epic.Build(), issue.Build(), done.Build());
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+            () => cmd.NextImpl(workItem: 100, pgName: "PG-1"));
         var result = Deserialize(output);
 
         result.Action.ShouldBe("all_items_done", $"Output was: {output}");
@@ -124,7 +124,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task NextTask_PgNumberDerivesPgName()
+    public async Task NextImpl_PgNumberDerivesPgName()
     {
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
@@ -140,7 +140,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         await SeedAsync(epic.Build(), issue.Build(), task.Build());
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.NextTask(workItem: 100, pgNumber: 3));
+            () => cmd.NextImpl(workItem: 100, pgNumber: 3));
         var result = Deserialize(output);
 
         result.CurrentMergeGroup.ShouldBe("PG-3");
@@ -148,7 +148,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task NextTask_ContainerTaggedNotTask_PicksImplementableUnderContainer()
+    public async Task NextImpl_ContainerTaggedNotTask_PicksImplementableUnderContainer()
     {
         // Use an Issue config that is plannable-only (container) so the
         // primary tag-filter doesn't pick it as a task. This forces the
@@ -177,7 +177,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         await SeedAsync(epic.Build(), issue.Build(), task.Build());
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+            () => cmd.NextImpl(workItem: 100, pgName: "PG-1"));
         var result = Deserialize(output);
 
         result.Action.ShouldBe("implement_item", $"Output was: {output}");
@@ -186,7 +186,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
     }
 
     [Fact]
-    public async Task NextTask_BranchHintFromConfig_UsedWhenAvailable()
+    public async Task NextImpl_BranchHintFromConfig_UsedWhenAvailable()
     {
         // Set a branch strategy that produces feature/{id}-pg-{n}
         var cfg = new ProcessConfigBuilder()
@@ -209,14 +209,14 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         await SeedAsync(epic.Build(), task.Build());
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.NextTask(workItem: 100, pgName: "PG-2"));
+            () => cmd.NextImpl(workItem: 100, pgName: "PG-2"));
         var result = Deserialize(output);
 
         result.BranchName.ShouldBe("feature/100-pg-2");
     }
 
     [Fact]
-    public async Task NextTask_AlreadyOnExpectedBranch_KeepsCurrent()
+    public async Task NextImpl_AlreadyOnExpectedBranch_KeepsCurrent()
     {
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
@@ -230,14 +230,14 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         await SeedAsync(epic.Build(), task.Build());
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+            () => cmd.NextImpl(workItem: 100, pgName: "PG-1"));
         var result = Deserialize(output);
 
         result.BranchName.ShouldBe("feature/100-mg-1");
     }
 
     [Fact]
-    public async Task NextTask_OutputIsSnakeCaseJson()
+    public async Task NextImpl_OutputIsSnakeCaseJson()
     {
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
@@ -245,7 +245,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithState("Doing").Build());
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.NextTask(workItem: 100, pgName: "PG-1"));
+            () => cmd.NextImpl(workItem: 100, pgName: "PG-1"));
 
         output.ShouldContain("\"primary_id\"");
         output.ShouldContain("\"primary_title\"");
@@ -261,7 +261,7 @@ public sealed class BranchCommandsNextTaskTests : CommandTestBase
         output.ShouldNotContain("\"BranchName\"");
     }
 
-    private static BranchNextTaskResult Deserialize(string output)
-        => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchNextTaskResult)
-            ?? throw new InvalidOperationException("Failed to deserialize next-task output");
+    private static BranchNextImplResult Deserialize(string output)
+        => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchNextImplResult)
+            ?? throw new InvalidOperationException("Failed to deserialize next-impl output");
 }

@@ -84,7 +84,7 @@ public interface IGhClient
     /// <param name="method">
     /// Merge method. Use <see cref="GhMergeMethod.Merge"/> for merge-group
     /// PRs (required by ADR docs/decisions/branch-model.md). Squash and
-    /// rebase are valid for task PRs.
+    /// rebase are valid for impl PRs.
     /// </param>
     /// <param name="admin">Pass <c>--admin</c> to bypass branch-protection requirements.</param>
     /// <param name="deleteBranch">Pass <c>--delete-branch</c> to delete the head branch after merging.</param>

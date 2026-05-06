@@ -8,9 +8,9 @@ namespace Polyphony.Commands;
 public sealed partial class BranchCommands
 {
     /// <summary>
-    /// Idempotently ensure a task branch exists locally and on the remote.
+    /// Idempotently ensure a impl branch exists locally and on the remote.
     /// The branch name is built from the Rev 4 grammar via
-    /// <see cref="BranchNameBuilder.Task(RootId, WorkItemId)"/>; the base
+    /// <see cref="BranchNameBuilder.Impl(RootId, WorkItemId)"/>; the base
     /// branch is the enclosing merge-group branch
     /// (<c>mg/{root_id}_{mg_path}</c>). Materializes the base from the
     /// remote first if it exists only there.
@@ -20,8 +20,8 @@ public sealed partial class BranchCommands
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path of the enclosing MG.</param>
     /// <param name="remote">Git remote name.</param>
     /// <param name="ct">Cancellation token.</param>
-    [Command("ensure-task")]
-    public async Task<int> EnsureTask(
+    [Command("ensure-impl")]
+    public async Task<int> EnsureImpl(
         int rootId,
         int itemId,
         string mgPath,
@@ -30,19 +30,19 @@ public sealed partial class BranchCommands
     {
         if (!RootId.TryParse(rootId, out var root))
         {
-            EmitTaskError(rootId, itemId, mgPath, $"rootId must be positive (got {rootId})");
+            EmitImplError(rootId, itemId, mgPath, $"rootId must be positive (got {rootId})");
             return ExitCodes.ConfigError;
         }
 
         if (!WorkItemId.TryParse(itemId, out var item))
         {
-            EmitTaskError(rootId, itemId, mgPath, $"itemId must be positive (got {itemId})");
+            EmitImplError(rootId, itemId, mgPath, $"itemId must be positive (got {itemId})");
             return ExitCodes.ConfigError;
         }
 
         if (!MergeGroupPath.TryParse(mgPath, out var path) || path is null)
         {
-            EmitTaskError(
+            EmitImplError(
                 rootId,
                 itemId,
                 mgPath,
@@ -52,7 +52,7 @@ public sealed partial class BranchCommands
 
         if (path.ExceedsDefaultHardStopDepth)
         {
-            EmitTaskError(
+            EmitImplError(
                 rootId,
                 itemId,
                 mgPath,
@@ -60,7 +60,7 @@ public sealed partial class BranchCommands
             return ExitCodes.ConfigError;
         }
 
-        var branch = BranchNameBuilder.Task(root, item).Value;
+        var branch = BranchNameBuilder.Impl(root, item).Value;
         var baseBranch = BranchNameBuilder.MergeGroup(root, path).Value;
 
         try
@@ -102,7 +102,7 @@ public sealed partial class BranchCommands
                 baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, ct).ConfigureAwait(false);
                 if (!baseRemoteExisted)
                 {
-                    EmitTaskError(
+                    EmitImplError(
                         rootId,
                         itemId,
                         mgPath,
@@ -128,7 +128,7 @@ public sealed partial class BranchCommands
                 createdFrom = baseBranch;
             }
 
-            var result = new BranchEnsureTaskResult
+            var result = new BranchEnsureImplResult
             {
                 Branch = branch,
                 BaseBranch = baseBranch,
@@ -142,22 +142,22 @@ public sealed partial class BranchCommands
                 ItemId = itemId,
                 MgPath = path.Canonical,
             };
-            EmitTask(result);
+            EmitImpl(result);
             return ExitCodes.Success;
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitTaskError(rootId, itemId, mgPath, ex.Message, branch: branch, baseBranch: baseBranch);
+            EmitImplError(rootId, itemId, mgPath, ex.Message, branch: branch, baseBranch: baseBranch);
             return ExitCodes.CacheError;
         }
     }
 
-    private static void EmitTask(BranchEnsureTaskResult result)
+    private static void EmitImpl(BranchEnsureImplResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
-            result, PolyphonyJsonContext.Default.BranchEnsureTaskResult));
+            result, PolyphonyJsonContext.Default.BranchEnsureImplResult));
 
-    private static void EmitTaskError(
+    private static void EmitImplError(
         int rootId,
         int itemId,
         string mgPath,
@@ -165,7 +165,7 @@ public sealed partial class BranchCommands
         string branch = "",
         string baseBranch = "")
     {
-        var result = new BranchEnsureTaskResult
+        var result = new BranchEnsureImplResult
         {
             Branch = branch,
             BaseBranch = baseBranch,
@@ -179,6 +179,6 @@ public sealed partial class BranchCommands
             MgPath = mgPath,
             Error = message,
         };
-        EmitTask(result);
+        EmitImpl(result);
     }
 }

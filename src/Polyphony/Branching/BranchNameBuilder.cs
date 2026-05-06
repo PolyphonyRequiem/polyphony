@@ -18,8 +18,8 @@ internal static class BranchNameBuilder
     /// <summary>Ref-class prefix for merge-group branches.</summary>
     public const string MergeGroupPrefix = "mg/";
 
-    /// <summary>Ref-class prefix for task branches.</summary>
-    public const string TaskPrefix = "task/";
+    /// <summary>Ref-class prefix for impl branches.</summary>
+    public const string ImplPrefix = "impl/";
 
     /// <summary>Ref-class prefix for evidence branches.</summary>
     public const string EvidencePrefix = "evidence/";
@@ -49,10 +49,10 @@ internal static class BranchNameBuilder
     }
 
     /// <summary>
-    /// Builds <c>task/{root_id}-{item_id}</c> — a task branch (flat).
+    /// Builds <c>impl/{root_id}-{item_id}</c> — an impl branch (flat).
     /// </summary>
-    public static BranchName Task(RootId rootId, WorkItemId itemId) =>
-        BranchName.CreateUnsafe($"{TaskPrefix}{rootId.Value}-{itemId.Value}");
+    public static BranchName Impl(RootId rootId, WorkItemId itemId) =>
+        BranchName.CreateUnsafe($"{ImplPrefix}{rootId.Value}-{itemId.Value}");
 
     /// <summary>
     /// Builds <c>evidence/{root_id}-{item_id}</c> — an evidence branch.

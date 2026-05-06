@@ -34,7 +34,7 @@
 #   * The legacy PG-N tag bridge is preserved: `pg_dispatcher` synthesizes
 #     `mg_path = pg-{number}` from each PG and threads it into
 #     implement-mg.yaml. Items in the PG must still carry `PG-N` legacy
-#     tags for `branch next-task` / `branch close-scope` to find them.
+#     tags for `branch next-impl` / `branch close-scope` to find them.
 
 workflow:
   name: polyphony-implement

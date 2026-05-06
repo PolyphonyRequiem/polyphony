@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 /// <summary>
 /// Output of <c>polyphony plan seed-children</c>: idempotent reconciliation
-/// of architect-emitted tasks against existing work-item children. Mirrors
+/// of architect-emitted children against existing work-item children. Mirrors
 /// <c>.conductor/registry/scripts/seeder.ps1</c>'s JSON contract exactly so
 /// downstream YAML routes can keep referencing fields like
 /// <c>seeder.output.error_count</c> and <c>seeder.output.planned_tag_set</c>.
@@ -12,7 +12,7 @@ using System.Text.Json.Serialization;
 public sealed record PlanSeedChildrenResult
 {
     public required int WorkItemId { get; init; }
-    public required int TaskCount { get; init; }
+    public required int ChildCount { get; init; }
     public required int SeededCount { get; init; }
     public required int ReusedCount { get; init; }
     public required int ErrorCount { get; init; }

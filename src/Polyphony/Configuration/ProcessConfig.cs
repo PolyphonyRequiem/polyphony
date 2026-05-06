@@ -102,7 +102,7 @@ public sealed class BranchStrategy
     /// New code (the Phase 4b verbs in <see cref="Branching.BranchNameBuilder"/>)
     /// builds branch names structurally from the Rev 4 grammar and does not
     /// consult this template. The template is read by the legacy
-    /// <c>branch route</c> / <c>branch next-task</c> code paths via
+    /// <c>branch route</c> / <c>branch next-impl</c> code paths via
     /// <see cref="Routing.BranchNameResolver"/>.
     /// </remarks>
     public string MgBranch { get; set; } = "";

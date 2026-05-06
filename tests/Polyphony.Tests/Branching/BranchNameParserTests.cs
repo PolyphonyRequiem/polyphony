@@ -81,9 +81,9 @@ public sealed class BranchNameParserTests
     [Fact]
     public void ParseOrUnrecognized_Task_ReturnsTaskCase()
     {
-        var parsed = BranchNameParser.ParseOrUnrecognized("task/1234-5678");
+        var parsed = BranchNameParser.ParseOrUnrecognized("impl/1234-5678");
 
-        var task = parsed.ShouldBeOfType<ParsedBranch.Task>();
+        var task = parsed.ShouldBeOfType<ParsedBranch.Impl>();
         task.RootId.Value.ShouldBe(1234);
         task.ItemId.Value.ShouldBe(5678);
     }
@@ -121,12 +121,12 @@ public sealed class BranchNameParserTests
     [InlineData("mg/1234_auth_")]                     // trailing _
     [InlineData("mg/1234__auth")]                     // empty segment
     [InlineData("mg/0_auth")]                         // zero root
-    [InlineData("task/1234")]                         // missing item
-    [InlineData("task/1234-5678-9012")]               // extra segment (Rev 3 form would be plausible here)
+    [InlineData("impl/1234")]                         // missing item
+    [InlineData("impl/1234-5678-9012")]               // extra segment (Rev 3 form would be plausible here)
     [InlineData("evidence/1234")]                     // missing item
     [InlineData("MG/1234_auth")]                      // uppercase prefix
-    [InlineData(" task/1234-5678")]                   // leading whitespace
-    [InlineData("task/1234-5678 ")]                   // trailing whitespace
+    [InlineData(" impl/1234-5678")]                   // leading whitespace
+    [InlineData("impl/1234-5678 ")]                   // trailing whitespace
     public void ParseOrUnrecognized_NonGrammar_ReturnsUnrecognized(string raw)
     {
         var parsed = BranchNameParser.ParseOrUnrecognized(raw);
@@ -141,7 +141,7 @@ public sealed class BranchNameParserTests
     [InlineData("plan/1234-5678")]
     [InlineData("mg/1234_auth")]
     [InlineData("mg/1234_data-layer_migrations_schema")]
-    [InlineData("task/1234-5678")]
+    [InlineData("impl/1234-5678")]
     [InlineData("evidence/1234-9999")]
     public void TryParse_Recognized_ReturnsTrue(string raw)
     {

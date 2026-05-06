@@ -106,7 +106,7 @@ args:
     @{ child_id = $taskId; completed = $true } | ConvertTo-Json
 ```
 
-`scripts/task-router.ps1:106` — hardcoded `Doing` in a helper script:
+`scripts/impl-router.ps1:106` — hardcoded `Doing` in a helper script:
 
 ```powershell
 # ── Transition to Doing ───────────────────────────────────────────────────
@@ -132,7 +132,7 @@ for its idiom; copy from it rather than re-inventing.
 | Script                            | What it is the canonical reference for                                              |
 |-----------------------------------|--------------------------------------------------------------------------------------|
 | `scripts/scope-closer.ps1`        | Validate-then-transition: `polyphony validate` → `twig state $target_state`. The reference for state-name handling. |
-| `scripts/task-router.ps1`         | Within-PG task selection via facet filtering and `polyphony hierarchy`. Note: contains a remaining `twig state Doing` literal at line 106 to be replaced. |
+| `scripts/impl-router.ps1`         | Within-PG task selection via facet filtering and `polyphony hierarchy`. Note: contains a remaining `twig state Doing` literal at line 106 to be replaced. |
 | `scripts/detect-state.ps1`        | Top-level phase detection: combines `polyphony route` + `polyphony validate` + `twig tree` into the root `state_detector` JSON shape consumed by `twig-sdlc-v2-full.yaml`. |
 | `scripts/pg-router.ps1`           | PR group lifecycle: groups items by PG tag, checks remote branches and gh PR state, returns the next PG action. |
 | `scripts/child-router.ps1`        | Plannable-child discovery for recursive planning (`plan-level.yaml`). The reference for facet-based filtering ("`_.facets -contains 'plannable'`"). |
@@ -146,7 +146,7 @@ for its idiom; copy from it rather than re-inventing.
 ### File naming and location
 
 - Place under `scripts/<verb>.ps1`. Verbs are kebab-case, action-first
-  (`scope-closer`, `task-router`, `pg-router`, `feature-pr-creator`).
+  (`scope-closer`, `impl-router`, `pg-router`, `feature-pr-creator`).
 - A companion `scripts/<verb>.Tests.ps1` is required (Pester). See e.g.
   `scripts/scope-closer.Tests.ps1`.
 - Shared helpers live in `scripts/lib/` (`pg-helpers.ps1`, `ado-helpers.ps1`,

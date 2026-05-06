@@ -211,7 +211,7 @@ agents:
         when: "{{ route_check.output.phase == 'needs_planning' }}"
       # needs_seeding is treated as needs_planning: if Polyphony route says we
       # need to seed but the architect hasn't run in this invocation, we have
-      # no tasks input for the seeder. Re-run the architect; the marker-aware
+      # no children input for the seeder. Re-run the architect; the marker-aware
       # seeder will reconcile against existing children (idempotent), so this
       # is safe and produces the right end state.
       - to: architect
@@ -247,17 +247,17 @@ agents:
     output:
       # Schema mirrors the JSON contract in prompts/architect-plan-level.md.
       # Required by M2: routes and downstream prompts read
-      # `architect.output.plan`, `architect.output.tasks`, and
+      # `architect.output.plan`, `architect.output.children`, and
       # `architect.output.open_questions` — without this schema the entire
       # response lands in `output.result` and every named-field reference
       # TemplateErrors.
       plan:
         type: string
         description: The full plan document in Markdown format
-      tasks:
+      children:
         type: array
         description: >-
-          Structured list of child work items to seed. Each task has a stable
+          Structured list of child work items to seed. Each child has a stable
           child_id (task-1, task-2, ...) the seeder uses for idempotent
           reconciliation across re-plans. Empty array means atomic — no
           children to seed.
@@ -768,15 +768,15 @@ agents:
 
   # ── Seeder script (P8 + P14) ─────────────────────────────────────────────
   #
-  # Deterministic seeder. Consumes architect.output.tasks (structured array)
+  # Deterministic seeder. Consumes architect.output.children (structured array)
   # and reconciles against existing children of the parent work item via
   # marker-aware idempotent matching, then sets the polyphony:planned tag on
   # the parent. Replaces the prior LLM seeder agent (which re-parsed plan
   # markdown and produced duplicates on re-runs).
   #
-  # Match precedence per task:
+  # Match precedence per child entry:
   #   1. Existing child whose description contains
-  #      <!-- polyphony:plan-task-id=task-N --> matching the architect's id
+  #      <!-- polyphony:plan-child-id={id} --> matching the architect's id
   #      → reused, no create.
   #   2. Existing child with matching (title, type) under the parent → reused
   #      with a warning (marker damaged or missing).
@@ -788,7 +788,7 @@ agents:
   # planned state without touching process-config.
   #
   # Invariants:
-  #   Pre:  architect.output.tasks is a (possibly empty) array; type_loader
+  #   Pre:  architect.output.children is a (possibly empty) array; type_loader
   #         outputs available.
   #   Post: Child work items exist in ADO with markers stamped; parent is
   #         tagged polyphony:planned (only if no errors); output.seeded_count
@@ -802,8 +802,8 @@ agents:
       - "seed-children"
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "--tasks-json"
-      - "{{ architect.output.tasks | tojson }}"
+      - "--children-json"
+      - "{{ architect.output.children | tojson }}"
     routes:
       - to: child_router
 

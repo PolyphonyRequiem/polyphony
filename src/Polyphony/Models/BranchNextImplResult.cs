@@ -3,13 +3,13 @@ using System.Text.Json.Serialization;
 namespace Polyphony;
 
 /// <summary>
-/// Result of <c>polyphony branch next-task</c>. Mirrors the JSON shape of
-/// the legacy <c>scripts/task-router.ps1</c>. JSON wire key
+/// Result of <c>polyphony branch next-impl</c>. Mirrors the JSON shape of
+/// the legacy <c>scripts/impl-router.ps1</c>. JSON wire key
 /// <c>current_pg</c> is preserved via
 /// <see cref="JsonPropertyNameAttribute"/> until the workflow rewire PR
 /// ships.
 /// </summary>
-public sealed record BranchNextTaskResult
+public sealed record BranchNextImplResult
 {
     public required string Action { get; init; }
     public required int PrimaryId { get; init; }

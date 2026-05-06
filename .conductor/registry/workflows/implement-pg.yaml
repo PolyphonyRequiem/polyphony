@@ -161,7 +161,7 @@ agents:
 
   # ── Child work item router ── # type is runtime-injected; do not hardcode type names
   #
-  # Determines the next task to implement within this PG via task-router.ps1.
+  # Determines the next task to implement within this PG via impl-router.ps1.
   # Routes to coder for implementation or to dependency_check when all tasks
   # in the PG are complete.
   #
@@ -174,7 +174,7 @@ agents:
     command: polyphony
     args:
       - "branch"
-      - "next-task"
+      - "next-impl"
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
       - "--pg-number"
@@ -184,7 +184,7 @@ agents:
         when: "{{ primary_router.output.action == 'implement_item' }}"
       - to: dependency_check
         when: "{{ primary_router.output.action == 'all_items_done' }}"
-      # Catch-all per M4: unknown action from task-router.ps1 should fail
+      # Catch-all per M4: unknown action from impl-router.ps1 should fail
       # safely to dependency_check (the natural "we're done with tasks"
       # path) rather than raise `No matching route found`.
       - to: dependency_check

@@ -575,7 +575,7 @@ These are promoted into Polyphony in later phases once routing is proven.
 - Polyphony handles type-specific tree loading logic internally
 - Script becomes a thin wrapper
 
-#### 2.3 — Replace pg-router.ps1 and task-router.ps1
+#### 2.3 — Replace pg-router.ps1 and impl-router.ps1
 - Call `polyphony route` with PG context
 - Routing decisions are Polyphony's responsibility
 - Scripts handle conductor-specific concerns (exit codes, output format)

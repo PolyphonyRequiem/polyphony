@@ -8,13 +8,13 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// <c>polyphony plan seed-children</c> — idempotent reconciliation of an
-/// architect-emitted task list against the existing children of a parent
+/// architect-emitted child list against the existing children of a parent
 /// work item. Replaces <c>.conductor/registry/scripts/seeder.ps1</c>.
 ///
-/// Match precedence per task:
+/// Match precedence per child entry:
 /// <list type="number">
 ///   <item>Marker match: existing child whose description contains
-///         <c>&lt;!-- polyphony:plan-task-id={id} --&gt;</c> matching the
+///         <c>&lt;!-- polyphony:plan-child-id={id} --&gt;</c> matching the
 ///         architect's id → reused (no create).</item>
 ///   <item>Title+type match: existing child with the same (title, type) under
 ///         the parent → reused with a warning (marker damaged or missing).</item>
@@ -32,35 +32,35 @@ public sealed partial class PlanCommands
         new(@"<!--\s*polyphony:plan-child-id=(task-\d+)\s*-->", RegexOptions.Compiled);
 
     /// <summary>
-    /// Idempotently seed the architect's task list as children of
+    /// Idempotently seed the architect's decomposition entries as children of
     /// <paramref name="workItem"/>.
     /// </summary>
     /// <param name="workItem">Parent work item ID.</param>
-    /// <param name="tasksJson">JSON array of task objects from <c>architect.output.tasks</c>.
-    /// Each task requires <c>child_id</c>, <c>title</c>, <c>type</c>, <c>description</c>.</param>
+    /// <param name="childrenJson">JSON array of child objects from <c>architect.output.children</c>.
+    /// Each child entry requires <c>child_id</c>, <c>title</c>, <c>type</c>, <c>description</c>.</param>
     /// <param name="plannedTag">Tag value to apply to the parent on success
     /// (defaults to <c>polyphony:planned</c>).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("seed-children")]
     public async Task<int> SeedChildren(
         int workItem,
-        string tasksJson,
+        string childrenJson,
         string plannedTag = "polyphony:planned",
         CancellationToken ct = default)
     {
-        // Parse tasks (tolerate empty / null payloads — atomic items have no children to seed).
-        JsonNode? tasksNode;
+        // Parse children (tolerate empty / null payloads — atomic items have no children to seed).
+        JsonNode? childrenNode;
         try
         {
-            tasksNode = string.IsNullOrWhiteSpace(tasksJson) ? null : JsonNode.Parse(tasksJson);
+            childrenNode = string.IsNullOrWhiteSpace(childrenJson) ? null : JsonNode.Parse(childrenJson);
         }
         catch (JsonException ex)
         {
-            EmitError($"tasks_json is not valid JSON: {ex.Message}");
+            EmitError($"children_json is not valid JSON: {ex.Message}");
             return ExitCodes.ConfigError;
         }
 
-        var tasks = tasksNode is JsonArray arr ? arr : new JsonArray();
+        var children = childrenNode is JsonArray arr ? arr : new JsonArray();
 
         // Snapshot existing children once — we'll match against this.
         JsonNode? tree;
@@ -81,59 +81,59 @@ public sealed partial class PlanCommands
         var errors = new List<SeedError>();
         var warnings = new List<string>();
 
-        foreach (var taskNode in tasks)
+        foreach (var childNode in children)
         {
-            if (taskNode is not JsonObject task)
+            if (childNode is not JsonObject child)
             {
-                errors.Add(new SeedError { Error = "task entry was not a JSON object" });
+                errors.Add(new SeedError { Error = "child entry was not a JSON object" });
                 continue;
             }
 
-            var taskId = task["child_id"]?.GetValue<string>();
-            var title = task["title"]?.GetValue<string>();
-            var type = task["type"]?.GetValue<string>();
+            var childId = child["child_id"]?.GetValue<string>();
+            var title = child["title"]?.GetValue<string>();
+            var type = child["type"]?.GetValue<string>();
 
-            if (string.IsNullOrWhiteSpace(taskId))
+            if (string.IsNullOrWhiteSpace(childId))
             {
-                errors.Add(new SeedError { Title = title, Error = "task missing required child_id" });
+                errors.Add(new SeedError { Title = title, Error = "child entry missing required child_id" });
                 continue;
             }
             if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(type))
             {
-                errors.Add(new SeedError { ChildId = taskId, Title = title, Error = "task missing required title or type" });
+                errors.Add(new SeedError { ChildId = childId, Title = title, Error = "child entry missing required title or type" });
                 continue;
             }
 
             try
             {
-                if (markerIndex.TryGetValue(taskId, out var hit))
+                if (markerIndex.TryGetValue(childId, out var hit))
                 {
-                    reused.Add(new SeedReconciliation { ChildId = taskId, WorkItemId = hit.Id, MatchedBy = "marker" });
+                    reused.Add(new SeedReconciliation { ChildId = childId, WorkItemId = hit.Id, MatchedBy = "marker" });
                     continue;
                 }
 
                 var key = $"{type}|{title}";
                 if (titleTypeIndex.TryGetValue(key, out var fallbackHit))
                 {
-                    warnings.Add($"task {taskId} matched #{fallbackHit.Id} by title fallback (marker damaged or missing)");
-                    reused.Add(new SeedReconciliation { ChildId = taskId, WorkItemId = fallbackHit.Id, MatchedBy = "title" });
+                    warnings.Add($"child {childId} matched #{fallbackHit.Id} by title fallback (marker damaged or missing)");
+                    reused.Add(new SeedReconciliation { ChildId = childId, WorkItemId = fallbackHit.Id, MatchedBy = "title" });
                     continue;
                 }
 
-                var description = BuildDescription(task, taskId);
+                var description = BuildDescription(child, childId);
                 var created = await twig.CreateChildAsync(workItem, type, title, description, ct).ConfigureAwait(false);
                 var newId = created["id"]?.GetValue<int>() ?? 0;
                 if (newId == 0)
                 {
-                    errors.Add(new SeedError { ChildId = taskId, Title = title, Error = "twig new returned no id" });
+                    errors.Add(new SeedError { ChildId = childId, Title = title, Error = "twig new returned no id" });
                     continue;
                 }
-                seeded.Add(new SeedReconciliation { ChildId = taskId, WorkItemId = newId, MatchedBy = "created" });
+                seeded.Add(new SeedReconciliation { ChildId = childId, WorkItemId = newId, MatchedBy = "created" });
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                errors.Add(new SeedError { ChildId = taskId, Title = title, Error = ex.Message });
+                errors.Add(new SeedError { ChildId = childId, Title = title, Error = ex.Message });
             }
         }
 
@@ -170,7 +170,7 @@ public sealed partial class PlanCommands
         var result = new PlanSeedChildrenResult
         {
             WorkItemId = workItem,
-            TaskCount = tasks.Count,
+            ChildCount = children.Count,
             SeededCount = seeded.Count,
             ReusedCount = reused.Count,
             ErrorCount = errors.Count,
@@ -219,12 +219,12 @@ public sealed partial class PlanCommands
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    private static string BuildDescription(JsonObject task, string taskId)
+    private static string BuildDescription(JsonObject child, string childId)
     {
-        var body = task["description"]?.GetValue<string>()?.TrimEnd() ?? "";
+        var body = child["description"]?.GetValue<string>()?.TrimEnd() ?? "";
         var sb = new System.Text.StringBuilder(body);
 
-        if (task["acceptance_criteria"] is JsonArray ac && ac.Count > 0)
+        if (child["acceptance_criteria"] is JsonArray ac && ac.Count > 0)
         {
             sb.Append("\n\n## Acceptance Criteria\n");
             foreach (var criterion in ac)
@@ -235,7 +235,7 @@ public sealed partial class PlanCommands
             if (sb.Length > 0 && sb[^1] == '\n') sb.Length--;
         }
 
-        sb.Append("\n\n<!-- polyphony:plan-child-id=").Append(taskId).Append(" -->");
+        sb.Append("\n\n<!-- polyphony:plan-child-id=").Append(childId).Append(" -->");
         return sb.ToString();
     }
 
@@ -257,7 +257,7 @@ public sealed partial class PlanCommands
         var result = new PlanSeedChildrenResult
         {
             WorkItemId = 0,
-            TaskCount = 0,
+            ChildCount = 0,
             SeededCount = 0,
             ReusedCount = 0,
             ErrorCount = 1,

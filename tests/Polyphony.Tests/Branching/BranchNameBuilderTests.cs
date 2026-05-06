@@ -66,12 +66,12 @@ public sealed class BranchNameBuilderTests
     [Fact]
     public void Task_FlatNaming_EmitsRootDashItem()
     {
-        var branch = BranchNameBuilder.Task(
+        var branch = BranchNameBuilder.Impl(
             RootId.Parse(1234),
             WorkItemId.Parse(5678));
 
-        // Per Rev 4: task branches are flat — PR base records the enclosing MG.
-        branch.Value.ShouldBe("task/1234-5678");
+        // Per Rev 4: impl branches are flat — PR base records the enclosing MG.
+        branch.Value.ShouldBe("impl/1234-5678");
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public sealed class BranchNameBuilderTests
         BranchNameBuilder.FeaturePrefix.ShouldBe("feature/");
         BranchNameBuilder.PlanPrefix.ShouldBe("plan/");
         BranchNameBuilder.MergeGroupPrefix.ShouldBe("mg/");
-        BranchNameBuilder.TaskPrefix.ShouldBe("task/");
+        BranchNameBuilder.ImplPrefix.ShouldBe("impl/");
         BranchNameBuilder.EvidencePrefix.ShouldBe("evidence/");
     }
 }

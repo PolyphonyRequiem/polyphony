@@ -9,10 +9,10 @@ using Xunit;
 namespace Polyphony.Tests.Commands;
 
 /// <summary>
-/// Tests for <c>polyphony pr open-task-pr</c>. Opens (or reuses) the PR
-/// promoting a task branch into its enclosing merge-group branch.
+/// Tests for <c>polyphony pr open-impl-pr</c>. Opens (or reuses) the PR
+/// promoting a impl branch into its enclosing merge-group branch.
 /// </summary>
-public sealed class PrCommandsOpenTaskPrTests : CommandTestBase
+public sealed class PrCommandsOpenImplPrTests : CommandTestBase
 {
     private (PrCommands Command, FakeProcessRunner Runner) CreateCommand()
     {
@@ -42,65 +42,65 @@ public sealed class PrCommandsOpenTaskPrTests : CommandTestBase
 
     private static void StubPrListExisting(FakeProcessRunner runner, int number, string url)
         => runner.WhenStartsWith("gh", ["pr", "list"],
-            new ProcessResult(0, $$"""[{"number":{{number}},"url":"{{url}}","headRefName":"task/100-200"}]""", ""));
+            new ProcessResult(0, $$"""[{"number":{{number}},"url":"{{url}}","headRefName":"impl/100-200"}]""", ""));
 
     private static void StubPrCreate(FakeProcessRunner runner, string url)
         => runner.WhenStartsWith("gh", ["pr", "create"], new ProcessResult(0, url + "\n", ""));
 
     [Fact]
-    public async Task OpenTaskPr_InvalidRootId_ReturnsConfigError()
+    public async Task OpenImplPr_InvalidRootId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenTaskPr(rootId: 0, itemId: 200, mgPath: "core"));
+            () => cmd.OpenImplPr(rootId: 0, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenImplResult)!;
         result.Error!.ShouldContain("rootId");
     }
 
     [Fact]
-    public async Task OpenTaskPr_InvalidItemId_ReturnsConfigError()
+    public async Task OpenImplPr_InvalidItemId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenTaskPr(rootId: 100, itemId: 0, mgPath: "core"));
+            () => cmd.OpenImplPr(rootId: 100, itemId: 0, mgPath: "core"));
         exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenImplResult)!;
         result.Error!.ShouldContain("itemId");
     }
 
     [Fact]
-    public async Task OpenTaskPr_HeadMissingOnRemote_ReturnsRoutingFailure()
+    public async Task OpenImplPr_HeadMissingOnRemote_ReturnsRoutingFailure()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemoteHas(runner, "refs/heads/task/100-200", exists: false);
+        StubLsRemoteHas(runner, "refs/heads/impl/100-200", exists: false);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenTaskPr(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.OpenImplPr(rootId: 100, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenImplResult)!;
         result.Error!.ShouldContain("head branch");
     }
 
     [Fact]
-    public async Task OpenTaskPr_BaseMgMissingOnRemote_ReturnsRoutingFailure()
+    public async Task OpenImplPr_BaseMgMissingOnRemote_ReturnsRoutingFailure()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemoteHas(runner, "refs/heads/task/100-200", exists: true);
+        StubLsRemoteHas(runner, "refs/heads/impl/100-200", exists: true);
         StubLsRemoteHas(runner, "refs/heads/mg/100_core", exists: false);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenTaskPr(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.OpenImplPr(rootId: 100, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenImplResult)!;
         result.Error!.ShouldContain("base branch");
     }
 
     [Fact]
-    public async Task OpenTaskPr_HappyPath_CreatesPrWithMgBaseAndTwigTitle()
+    public async Task OpenImplPr_HappyPath_CreatesPrWithMgBaseAndTwigTitle()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemoteHas(runner, "refs/heads/task/100-200", exists: true);
+        StubLsRemoteHas(runner, "refs/heads/impl/100-200", exists: true);
         StubLsRemoteHas(runner, "refs/heads/mg/100_core", exists: true);
         StubGitRemoteOrigin(runner, "https://github.com/PolyphonyRequiem/polyphony.git");
         StubTwigShowTree(runner, 200, "Add login form");
@@ -108,12 +108,12 @@ public sealed class PrCommandsOpenTaskPrTests : CommandTestBase
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/200");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenTaskPr(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.OpenImplPr(rootId: 100, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenImplResult)!;
         result.Created.ShouldBeTrue();
         result.PrNumber.ShouldBe(200);
-        result.HeadBranch.ShouldBe("task/100-200");
+        result.HeadBranch.ShouldBe("impl/100-200");
         result.BaseBranch.ShouldBe("mg/100_core");
         result.Title.ShouldBe("Add login form AB#200");
         result.RootId.ShouldBe(100);
@@ -122,10 +122,10 @@ public sealed class PrCommandsOpenTaskPrTests : CommandTestBase
     }
 
     [Fact]
-    public async Task OpenTaskPr_TwigShowTreeFails_FallsBackToGenericTitle()
+    public async Task OpenImplPr_TwigShowTreeFails_FallsBackToGenericTitle()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemoteHas(runner, "refs/heads/task/100-200", exists: true);
+        StubLsRemoteHas(runner, "refs/heads/impl/100-200", exists: true);
         StubLsRemoteHas(runner, "refs/heads/mg/100_core", exists: true);
         StubGitRemoteOrigin(runner, "https://github.com/PolyphonyRequiem/polyphony.git");
         StubTwigShowTree(runner, 200, title: null);
@@ -133,26 +133,26 @@ public sealed class PrCommandsOpenTaskPrTests : CommandTestBase
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/200");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenTaskPr(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.OpenImplPr(rootId: 100, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenTaskResult)!;
-        result.Title.ShouldBe("task #200");
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenImplResult)!;
+        result.Title.ShouldBe("impl #200");
     }
 
     [Fact]
-    public async Task OpenTaskPr_ExistingOpenPr_ReusesIt()
+    public async Task OpenImplPr_ExistingOpenPr_ReusesIt()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemoteHas(runner, "refs/heads/task/100-200", exists: true);
+        StubLsRemoteHas(runner, "refs/heads/impl/100-200", exists: true);
         StubLsRemoteHas(runner, "refs/heads/mg/100_core", exists: true);
         StubGitRemoteOrigin(runner, "https://github.com/PolyphonyRequiem/polyphony.git");
         StubTwigShowTree(runner, 200, "Add login form");
         StubPrListExisting(runner, 33, "https://github.com/PolyphonyRequiem/polyphony/pull/33");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenTaskPr(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.OpenImplPr(rootId: 100, itemId: 200, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenImplResult)!;
         result.Created.ShouldBeFalse();
         result.PrNumber.ShouldBe(33);
 
@@ -163,10 +163,10 @@ public sealed class PrCommandsOpenTaskPrTests : CommandTestBase
     }
 
     [Fact]
-    public async Task OpenTaskPr_NestedMgPath_BuildsCorrectBaseBranch()
+    public async Task OpenImplPr_NestedMgPath_BuildsCorrectBaseBranch()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemoteHas(runner, "refs/heads/task/100-200", exists: true);
+        StubLsRemoteHas(runner, "refs/heads/impl/100-200", exists: true);
         StubLsRemoteHas(runner, "refs/heads/mg/100_core_api", exists: true);
         StubGitRemoteOrigin(runner, "https://github.com/PolyphonyRequiem/polyphony.git");
         StubTwigShowTree(runner, 200, "Add endpoint");
@@ -174,18 +174,18 @@ public sealed class PrCommandsOpenTaskPrTests : CommandTestBase
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/201");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenTaskPr(rootId: 100, itemId: 200, mgPath: "core_api"));
+            () => cmd.OpenImplPr(rootId: 100, itemId: 200, mgPath: "core_api"));
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenTaskResult)!;
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenImplResult)!;
         result.BaseBranch.ShouldBe("mg/100_core_api");
         result.MgPath.ShouldBe("core_api");
     }
 
     [Fact]
-    public async Task OpenTaskPr_JsonContract_PreservesSnakeCaseKeys()
+    public async Task OpenImplPr_JsonContract_PreservesSnakeCaseKeys()
     {
         var (cmd, runner) = CreateCommand();
-        StubLsRemoteHas(runner, "refs/heads/task/100-200", exists: true);
+        StubLsRemoteHas(runner, "refs/heads/impl/100-200", exists: true);
         StubLsRemoteHas(runner, "refs/heads/mg/100_core", exists: true);
         StubGitRemoteOrigin(runner, "https://github.com/PolyphonyRequiem/polyphony.git");
         StubTwigShowTree(runner, 200, "Add login");
@@ -193,7 +193,7 @@ public sealed class PrCommandsOpenTaskPrTests : CommandTestBase
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/200");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenTaskPr(rootId: 100, itemId: 200, mgPath: "core"));
+            () => cmd.OpenImplPr(rootId: 100, itemId: 200, mgPath: "core"));
 
         output.ShouldContain("\"pr_number\"");
         output.ShouldContain("\"pr_url\"");

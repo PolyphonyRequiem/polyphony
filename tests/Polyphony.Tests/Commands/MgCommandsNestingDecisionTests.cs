@@ -96,7 +96,7 @@ public sealed class MgCommandsNestingDecisionTests : CommandTestBase
         result.Decision.ShouldBe("nest");
         result.NestedMgId.ShouldBe("item-4567");
         result.NestedMgPath.ShouldBe("core_item-4567");
-        result.TaskBranch.ShouldBeNull();
+        result.ImplBranch.ShouldBeNull();
         result.OverrideApplied.ShouldBe("default");
         result.Reason.ShouldContain("default-nest");
     }
@@ -112,7 +112,7 @@ public sealed class MgCommandsNestingDecisionTests : CommandTestBase
         result.Decision.ShouldBe("flat");
         result.NestedMgId.ShouldBeNull();
         result.NestedMgPath.ShouldBeNull();
-        result.TaskBranch.ShouldBe("task/100-4567");
+        result.ImplBranch.ShouldBe("impl/100-4567");
         result.OverrideApplied.ShouldBe("default");
         result.Reason.ShouldContain("not decomposable");
     }
@@ -128,7 +128,7 @@ public sealed class MgCommandsNestingDecisionTests : CommandTestBase
                 hasImplementable: false, decomposable: true));
 
         result.Decision.ShouldBe("flat");
-        result.TaskBranch.ShouldBe("task/100-4567");
+        result.ImplBranch.ShouldBe("impl/100-4567");
         result.Reason.ShouldContain("not implementable");
     }
 
@@ -141,7 +141,7 @@ public sealed class MgCommandsNestingDecisionTests : CommandTestBase
                 hasImplementable: false, decomposable: false));
 
         result.Decision.ShouldBe("flat");
-        result.TaskBranch.ShouldBe("task/100-4567");
+        result.ImplBranch.ShouldBe("impl/100-4567");
     }
 
     // ─── Overrides ───────────────────────────────────────────────────────
@@ -157,7 +157,7 @@ public sealed class MgCommandsNestingDecisionTests : CommandTestBase
 
         result.Decision.ShouldBe("flat");
         result.NestedMgId.ShouldBeNull();
-        result.TaskBranch.ShouldBe("task/100-4567");
+        result.ImplBranch.ShouldBe("impl/100-4567");
         result.OverrideApplied.ShouldBe("flat");
         result.Reason.ShouldContain("planner override");
     }
@@ -249,7 +249,7 @@ public sealed class MgCommandsNestingDecisionTests : CommandTestBase
         // Nullable fields are omitted from JSON output (JsonIgnoreCondition.WhenWritingNull).
         output.ShouldNotContain("nested_mg_id");
         output.ShouldNotContain("nested_mg_path");
-        output.ShouldContain("task_branch");
+        output.ShouldContain("impl_branch");
     }
 
     // ─── Console capture (avoids hard dependency on CommandTestBase wiring) ─

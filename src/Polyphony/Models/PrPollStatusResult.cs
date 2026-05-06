@@ -51,7 +51,7 @@ public sealed record PrPollPolicy
 /// Always populated when <c>--include-metadata</c> is set; missing keys
 /// default to <c>requests_parent_change: false</c> and an empty
 /// <c>ancestor_plan_generations</c> map. Omitted entirely when the flag
-/// is not set, so the verb can safely poll task/MG PRs that don't carry
+/// is not set, so the verb can safely poll impl/MG PRs that don't carry
 /// front-matter.
 /// </summary>
 public sealed record PrPollMetadata
