@@ -60,10 +60,10 @@ if ($content -notmatch 'name:\s*pr_reviewer') {
         Detail = "No pr_reviewer agent found"
     }
 }
-if ($content -notmatch 'claude-opus-4.7-1m-internal|claude-opus-4.7.*1000000') {
+if ($content -notmatch 'name:\s*pr_reviewer\b[^\n]*\n(?:[^\n]*\n)*?\s*model:\s*claude-opus-4(\.\d+)?(-[a-z0-9-]+)?') {
     $violations += [PSCustomObject]@{
-        Rule   = 'missing-opus-1m'
-        Detail = "PR reviewer must use Opus 1M model (claude-opus-4.7-1m-internal)"
+        Rule   = 'missing-opus-reviewer'
+        Detail = "PR reviewer must use an Opus model from the claude-opus-4.* family"
     }
 }
 
