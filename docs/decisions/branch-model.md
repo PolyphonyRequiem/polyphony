@@ -593,11 +593,30 @@ retired_merge_group_ids:
   - id: legacy-pipeline
     retired_at: 2026-05-06T16:00:00Z
     reason: "split into two new MGs by replan"
+
+# Idempotency ledger for plan-PR merges. Each entry records which PR's
+# merge caused which plan_generations bump so retries are safe and
+# multi-bump bugs cannot silently happen. Operational/audit only — NOT
+# part of the topology hash.
+merged_plan_prs:
+  - pr_number: 42
+    item_key: "100"          # "root" or numeric id-as-string (matches plan_generations key shape)
+    merge_commit: 7c4e2a1
+    previous_generation: 1
+    current_generation: 2
+    recorded_at: 2026-05-06T19:30:00Z
 ```
 
-The shape above is **normative** for `schema: 1`. Fields not listed here
-are not part of the manifest contract; adding new fields requires bumping
-`schema:`.
+The shape above is **normative** for `schema: 1`.
+
+**Field-addition policy.** Hashed fields (those participating in
+`topology_hash` per § Topology hash inputs) are frozen for `schema: 1`;
+adding or modifying a hashed field requires bumping `schema:`. Adding a
+new **operational/audit** field (e.g. `merged_plan_prs`, future ledgers)
+at the same schema is permitted iff: (a) the field is not part of the
+topology hash, (b) readers tolerate its absence (default to empty), and
+(c) the addition is documented here. This keeps schema bumps reserved
+for genuine wire-incompatible changes.
 
 #### Topology hash inputs
 
@@ -625,11 +644,48 @@ duplicated in the hash input. Because `_` is excluded from the MG id grammar,
 `mg_path` admits one and only one segmentation, so the canonical text is
 unambiguous.
 
-`plan_generations`, `rebases`, `human_approvals`, and
-`retired_merge_group_ids` are **not** part of the topology hash — they are
-historical/operational state, not topology. Topology changes are about
-which MGs exist, what items they own, how they nest, and how they are
-isolated.
+`plan_generations`, `rebases`, `human_approvals`,
+`retired_merge_group_ids`, and `merged_plan_prs` are **not** part of
+the topology hash — they are historical/operational state, not topology.
+Topology changes are about which MGs exist, what items they own, how
+they nest, and how they are isolated.
+
+#### Plan-merge idempotency ledger
+
+`merged_plan_prs` is the **idempotency ledger** for plan-PR merges. Each
+entry records:
+
+- `pr_number` — the platform PR number that was merged.
+- `item_key` — the plan key whose generation was bumped (`"root"` or
+  numeric id as string).
+- `merge_commit` — the platform-reported merge commit SHA.
+- `previous_generation`, `current_generation` — the values written.
+- `recorded_at` — UTC timestamp.
+
+The `polyphony manifest record-plan-merge` verb consults the ledger
+**before** mutating `plan_generations`:
+
+1. If a ledger entry already exists for `pr_number` with the same
+   `item_key` and (when both sides have it) matching `merge_commit`,
+   the verb returns idempotent success without bumping. This is the
+   safe re-entry path.
+2. If a ledger entry exists for `pr_number` with conflicting `item_key`
+   or `merge_commit`, the verb fails loudly — the same PR cannot be
+   recorded against two different items.
+3. If no ledger entry exists, the verb bumps `plan_generations` by 1
+   and appends a new entry.
+
+Without this ledger, `plan_generations[item_key] += 1` arithmetic alone
+cannot distinguish "this PR was already recorded" from "another plan PR
+for the same item correctly bumped the generation," and partial-failure
+retries can silently over-bump the counter — which would corrupt the
+ancestor-staleness math (§ Plan-PR ancestor-cascade staleness).
+
+Legacy callers that omit `pr_number` skip the ledger and bump
+unconditionally; this preserves the original behavior for callers that
+have not yet adopted the ledger and is intended for transitional use
+only. Production callers (the `polyphony pr merge-plan-pr` verb) MUST
+pass `pr_number` and `merge_commit`.
 
 #### Resume rules
 
@@ -981,6 +1037,13 @@ not *which branches exist*.
   canonicalization uses the same string. Three new entries added to
   § Alternatives considered (hyphen-joined `mg_path`, path-encoded
   task/plan, fully flat MG names with global uniqueness).
+- **Rev 4.1** (Phase 3 P5a, additive): added the `merged_plan_prs`
+  idempotency ledger (operational/audit field, NOT in topology hash).
+  Required to make `polyphony pr merge-plan-pr` re-runnable without
+  silently double-bumping `plan_generations` when partial failures
+  interleave. Field-addition policy clarified: hashed fields are frozen
+  for `schema: 1`; additive operational fields with backward-compat
+  readers are permitted at the same schema.
 
 ## References
 

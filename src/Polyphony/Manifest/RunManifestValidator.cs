@@ -64,6 +64,7 @@ public static class RunManifestValidator
         ValidateRebases(manifest.Rebases, issues);
         ValidateApprovals(manifest.HumanApprovals, issues);
         ValidateRetired(manifest.RetiredMergeGroupIds, issues);
+        ValidateMergedPlanPrs(manifest.MergedPlanPrs, issues);
 
         return issues;
     }
@@ -259,6 +260,55 @@ public static class RunManifestValidator
                 issues.Add($"{prefix}.id '{r.Id}' violates the MG-id grammar.");
             }
             if (r.RetiredAt == default) issues.Add($"{prefix}.retired_at must be a real timestamp.");
+        }
+    }
+
+    private static void ValidateMergedPlanPrs(List<MergedPlanPrEntry> merged, List<string> issues)
+    {
+        var seenPrNumbers = new HashSet<int>();
+
+        for (var i = 0; i < merged.Count; i++)
+        {
+            var entry = merged[i];
+            var prefix = $"merged_plan_prs[{i}]";
+
+            if (entry.PrNumber <= 0)
+            {
+                issues.Add($"{prefix}.pr_number must be positive (got {entry.PrNumber}).");
+            }
+            else if (!seenPrNumbers.Add(entry.PrNumber))
+            {
+                issues.Add($"{prefix}.pr_number {entry.PrNumber} is a duplicate (each PR may appear at most once).");
+            }
+
+            if (string.IsNullOrWhiteSpace(entry.ItemKey))
+            {
+                issues.Add($"{prefix}.item_key must be non-empty.");
+            }
+            else if (entry.ItemKey != "root" && !int.TryParse(entry.ItemKey, System.Globalization.CultureInfo.InvariantCulture, out _))
+            {
+                issues.Add($"{prefix}.item_key '{entry.ItemKey}' must be 'root' or a numeric work-item id.");
+            }
+
+            if (string.IsNullOrWhiteSpace(entry.MergeCommit))
+            {
+                issues.Add($"{prefix}.merge_commit must be non-empty.");
+            }
+
+            if (entry.PreviousGeneration < 0)
+            {
+                issues.Add($"{prefix}.previous_generation must be >= 0 (got {entry.PreviousGeneration}).");
+            }
+
+            if (entry.CurrentGeneration <= entry.PreviousGeneration)
+            {
+                issues.Add($"{prefix}.current_generation must be > previous_generation (previous={entry.PreviousGeneration}, current={entry.CurrentGeneration}).");
+            }
+
+            if (entry.RecordedAt == default)
+            {
+                issues.Add($"{prefix}.recorded_at must be a real timestamp.");
+            }
         }
     }
 }

@@ -317,6 +317,24 @@ public sealed partial class ManifestCommands
     /// id (descendant plan), matching the convention used elsewhere in
     /// the manifest.
     ///
+    /// <para>Idempotency: when both <paramref name="prNumber"/> and
+    /// <paramref name="mergeCommit"/> are supplied, the verb consults
+    /// the <see cref="RunManifest.MergedPlanPrs"/> ledger before
+    /// mutating. Three outcomes:</para>
+    /// <list type="number">
+    ///   <item><description>No prior entry for the PR — bump generation,
+    ///   append a new ledger entry, return <c>recorded=true</c>.</description></item>
+    ///   <item><description>Existing entry matches (same item key + same
+    ///   merge commit) — return <c>recorded=false</c>; no mutation.</description></item>
+    ///   <item><description>Existing entry conflicts (different item key
+    ///   or different merge commit) — error with <see cref="ExitCodes.ConfigError"/>.</description></item>
+    /// </list>
+    /// <para>Legacy callers may omit <paramref name="prNumber"/> entirely
+    /// (default <c>0</c>); the verb then bumps unconditionally and writes
+    /// no ledger entry. This path is preserved for transitional use only;
+    /// the production <c>polyphony pr merge-plan-pr</c> verb MUST pass
+    /// the PR identity.</para>
+    ///
     /// <para>Concurrency: the verb performs a best-effort atomic
     /// load-mutate-save against the manifest file via
     /// <see cref="RunManifestStore"/>. The caller is responsible for
@@ -326,27 +344,99 @@ public sealed partial class ManifestCommands
     /// </summary>
     /// <param name="item">Plan key: <c>root</c> or a positive numeric item id.</param>
     /// <param name="path">Path to the manifest file.</param>
+    /// <param name="prNumber">PR number whose merge is being recorded. Required when <paramref name="mergeCommit"/> is supplied; when both are omitted, the legacy unconditional-bump path is taken.</param>
+    /// <param name="mergeCommit">Platform-reported merge commit SHA. Required when <paramref name="prNumber"/> is supplied.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("record-plan-merge")]
     public Task<int> RecordPlanMerge(
         string item,
         string path = RunManifestStore.DefaultRelativePath,
+        int prNumber = 0,
+        string mergeCommit = "",
         CancellationToken ct = default)
     {
         _ = ct;
 
         if (!TryNormalizePlanKey(item, out var itemKey, out var keyError))
         {
-            EmitRecordPlanMergeError(path, item, keyError);
+            EmitRecordPlanMergeError(path, item, prNumber, mergeCommit, keyError);
             return Task.FromResult(ExitCodes.ConfigError);
+        }
+
+        var hasPrIdentity = prNumber > 0 || !string.IsNullOrEmpty(mergeCommit);
+        if (hasPrIdentity)
+        {
+            if (prNumber <= 0)
+            {
+                EmitRecordPlanMergeError(path, item, prNumber, mergeCommit,
+                    "--pr-number must be positive when --merge-commit is supplied.");
+                return Task.FromResult(ExitCodes.ConfigError);
+            }
+
+            if (string.IsNullOrWhiteSpace(mergeCommit))
+            {
+                EmitRecordPlanMergeError(path, item, prNumber, mergeCommit,
+                    "--merge-commit must be non-empty when --pr-number is supplied.");
+                return Task.FromResult(ExitCodes.ConfigError);
+            }
         }
 
         try
         {
             var manifest = RunManifestStore.LoadOrThrow(path);
-            var previous = manifest.PlanGenerations.TryGetValue(itemKey, out var existing) ? existing : 0;
+
+            // Idempotency check: when the call carries PR identity, look for an existing ledger entry first.
+            if (prNumber > 0)
+            {
+                var existing = manifest.MergedPlanPrs.FirstOrDefault(e => e.PrNumber == prNumber);
+                if (existing is not null)
+                {
+                    if (existing.ItemKey != itemKey)
+                    {
+                        EmitRecordPlanMergeError(path, item, prNumber, mergeCommit,
+                            $"PR #{prNumber} was previously recorded for item '{existing.ItemKey}'; cannot re-record for item '{itemKey}'.");
+                        return Task.FromResult(ExitCodes.ConfigError);
+                    }
+
+                    if (!string.Equals(existing.MergeCommit, mergeCommit, StringComparison.Ordinal))
+                    {
+                        EmitRecordPlanMergeError(path, item, prNumber, mergeCommit,
+                            $"PR #{prNumber} was previously recorded with merge commit '{existing.MergeCommit}'; cannot re-record with '{mergeCommit}'.");
+                        return Task.FromResult(ExitCodes.ConfigError);
+                    }
+
+                    // Idempotent re-entry: ledger entry matches; no mutation.
+                    Emit(new ManifestRecordPlanMergeResult
+                    {
+                        Path = path,
+                        ItemKey = itemKey,
+                        PreviousGeneration = existing.PreviousGeneration,
+                        CurrentGeneration = existing.CurrentGeneration,
+                        Recorded = false,
+                        PrNumber = prNumber,
+                        MergeCommit = mergeCommit,
+                    });
+                    return Task.FromResult(ExitCodes.Success);
+                }
+            }
+
+            var previous = manifest.PlanGenerations.TryGetValue(itemKey, out var existingGen) ? existingGen : 0;
             var current = previous + 1;
             manifest.PlanGenerations[itemKey] = current;
+
+            if (prNumber > 0)
+            {
+                manifest.MergedPlanPrs.Add(new MergedPlanPrEntry
+                {
+                    PrNumber = prNumber,
+                    ItemKey = itemKey,
+                    MergeCommit = mergeCommit,
+                    PreviousGeneration = previous,
+                    CurrentGeneration = current,
+                    RecordedAt = DateTime.UtcNow,
+                });
+            }
+
             RunManifestStore.Save(path, manifest);
 
             Emit(new ManifestRecordPlanMergeResult
@@ -355,17 +445,20 @@ public sealed partial class ManifestCommands
                 ItemKey = itemKey,
                 PreviousGeneration = previous,
                 CurrentGeneration = current,
+                Recorded = true,
+                PrNumber = prNumber,
+                MergeCommit = mergeCommit,
             });
             return Task.FromResult(ExitCodes.Success);
         }
         catch (FileNotFoundException ex)
         {
-            EmitRecordPlanMergeError(path, item, ex.Message);
+            EmitRecordPlanMergeError(path, item, prNumber, mergeCommit, ex.Message);
             return Task.FromResult(ExitCodes.CacheError);
         }
         catch (InvalidOperationException ex)
         {
-            EmitRecordPlanMergeError(path, item, ex.Message);
+            EmitRecordPlanMergeError(path, item, prNumber, mergeCommit, ex.Message);
             return Task.FromResult(ExitCodes.ConfigError);
         }
     }
@@ -587,13 +680,16 @@ public sealed partial class ManifestCommands
         return true;
     }
 
-    private static void EmitRecordPlanMergeError(string path, string item, string error)
+    private static void EmitRecordPlanMergeError(string path, string item, int prNumber, string mergeCommit, string error)
         => Emit(new ManifestRecordPlanMergeResult
         {
             Path = path,
             ItemKey = item,
             PreviousGeneration = 0,
             CurrentGeneration = 0,
+            Recorded = false,
+            PrNumber = prNumber,
+            MergeCommit = mergeCommit,
             Error = error,
         });
 
