@@ -73,6 +73,21 @@ public interface IGitClient
     Task PushAsync(string branch, string remote = "origin", CancellationToken ct = default);
 
     /// <summary>
+    /// <c>git push {remote} --delete {branch}</c>. Deletes a branch from the
+    /// remote. Returns the raw <see cref="ProcessResult"/> so callers can
+    /// distinguish "branch did not exist" (best-effort 1 with stderr) from
+    /// "delete failed" (any other non-zero) without losing diagnostic detail.
+    /// Does not throw on non-zero exit; only throws if the runner itself
+    /// fails (e.g. git binary missing).
+    /// <para>Used by the P9 cascade-remedy <c>recreate</c> path to clean up
+    /// the head branch of the closed PR before opening a fresh PR. Branch
+    /// deletion failure on that path is logged as a warning, not a terminal
+    /// error, so the verb consumes <see cref="ProcessResult.Succeeded"/>
+    /// directly rather than relying on an exception.</para>
+    /// </summary>
+    Task<ProcessResult> DeleteRemoteBranchAsync(string remote, string branch, CancellationToken ct = default);
+
+    /// <summary>
     /// <c>git fetch {remote} {refspec}</c>. Fetches a specific branch/ref from
     /// the remote. Throws <see cref="ExternalToolException"/> on failure.
     /// </summary>
