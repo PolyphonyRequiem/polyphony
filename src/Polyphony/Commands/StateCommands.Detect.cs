@@ -4,6 +4,7 @@ using ConsoleAppFramework;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
+using Polyphony.Sdlc;
 using Twig.Domain.Interfaces;
 
 namespace Polyphony.Commands;
@@ -191,6 +192,46 @@ public sealed partial class StateCommands
             new ChildrenStateCounts(childCount, doneCount, doingCount, todoCount),
             PolyphonyJsonContext.Default.ChildrenStateCounts);
 
+        // Phase 2b additive: derive the requirement set + dispositions for this
+        // item using the new model. Failure here is non-fatal — surfaces via
+        // requirements_error and leaves requirements null. All existing fields
+        // remain untouched.
+        IReadOnlyList<Requirement>? requirements = null;
+        ResolvedRequirementInputs? resolvedInputs = null;
+        bool? requirementsAnyInferred = null;
+        string? requirementsError = null;
+        if (!string.IsNullOrEmpty(workItemType)
+            && processConfig.Types.TryGetValue(workItemType, out var typeConfigForReq))
+        {
+            try
+            {
+                var resolved = RequirementInputResolver.Resolve(typeConfigForReq, childCount);
+                var derivation = RequirementSetDeriver.Derive(
+                    typeConfigForReq.Facets,
+                    resolved.Decomposable,
+                    resolved.FacetOrder,
+                    resolved.ActionableExecutor);
+                if (derivation.IsValid)
+                {
+                    var observed = BuildObservedFromDetectSignals(
+                        planStatus, seedStatus, implementationStatus);
+                    var reduced = RequirementSetReducer.Apply(derivation.Set!, observed);
+                    requirements = reduced.Items;
+                    resolvedInputs = resolved;
+                    requirementsAnyInferred = resolved.AnyInferred;
+                }
+                else
+                {
+                    requirementsError = "Requirement derivation failed: "
+                        + string.Join("; ", derivation.Errors);
+                }
+            }
+            catch (Exception reqEx)
+            {
+                requirementsError = $"Requirement derivation threw: {reqEx.Message}";
+            }
+        }
+
         var result = new StateDetectResult
         {
             WorkItemId = workItem,
@@ -216,10 +257,50 @@ public sealed partial class StateCommands
             NeedsCleanup = needsCleanup,
             FeatureBranchExists = featureBranchExists,
             Error = errorMsg,
+            Requirements = requirements,
+            ResolvedRequirementInputs = resolvedInputs,
+            RequirementsAnyInputInferred = requirementsAnyInferred,
+            RequirementsError = requirementsError,
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.StateDetectResult));
         return ExitCodes.Success;
+    }
+
+    /// <summary>Map the legacy detect signals (plan_status / seed_status /
+    /// implementation_status) to an <see cref="ObservedRequirementState"/> for
+    /// the new requirement-set reducer. Authoritative for Phase 2b: state
+    /// detect already does the heavier PR/branch inspection that the simpler
+    /// next-ready helper approximates.</summary>
+    private static ObservedRequirementState BuildObservedFromDetectSignals(
+        string planStatus,
+        string seedStatus,
+        string implementationStatus)
+    {
+        var observed = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (planStatus == "complete")
+        {
+            observed[RequirementKind.PlanAuthored] = Disposition.Satisfied;
+        }
+        switch (seedStatus)
+        {
+            case "seeded":
+                observed[RequirementKind.ChildrenSeeded] = Disposition.Satisfied;
+                break;
+            case "partial":
+                observed[RequirementKind.ChildrenSeeded] = Disposition.Fulfilling;
+                break;
+        }
+        switch (implementationStatus)
+        {
+            case "done":
+                observed[RequirementKind.ImplementationMerged] = Disposition.Satisfied;
+                break;
+            case "in_progress":
+                observed[RequirementKind.ImplementationMerged] = Disposition.Fulfilling;
+                break;
+        }
+        return new ObservedRequirementState { Observed = observed };
     }
 
     private async Task<string?> SafeConfigReadAsync(string key, CancellationToken ct)

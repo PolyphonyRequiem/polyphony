@@ -39,6 +39,37 @@ public sealed class TypeConfig
     public bool SelfReferential { get; set; }
     public string[] AllowedChildTypes { get; set; } = [];
     public string? Parent { get; set; }
+
+    /// <summary>
+    /// Optional. When supplied, the planner has explicitly declared that items of
+    /// this type WILL have children (i.e. the deriver should emit
+    /// <c>children_seeded</c>). When <c>null</c>, the consumer falls back to a
+    /// best-effort inference from observable signals (existing children,
+    /// <see cref="DecompositionGuidance"/>, <see cref="AllowedChildTypes"/>).
+    /// </summary>
+    /// <remarks>
+    /// Per the glossary, "decomposable" historically meant <i>permission</i> to
+    /// have children. Here, the field is the planner's <i>directive</i> — the
+    /// downstream Phase 7 worklist work will eventually let planners declare this
+    /// per-instance rather than per-type.
+    /// </remarks>
+    [YamlMember(Alias = "decomposable")]
+    public bool? Decomposable { get; set; }
+
+    /// <summary>
+    /// Optional. Required by the deriver only when both <c>actionable</c> and
+    /// <c>implementable</c> facets are present on this type (no current type
+    /// has actionable, so this is forward-looking).
+    /// </summary>
+    [YamlMember(Alias = "facet_order")]
+    public string[]? FacetOrder { get; set; }
+
+    /// <summary>
+    /// Optional. Required by the deriver only when <c>actionable</c> is in
+    /// <see cref="Facets"/>. Allowed values: <c>polyphony</c>, <c>human</c>.
+    /// </summary>
+    [YamlMember(Alias = "actionable_executor")]
+    public string? ActionableExecutor { get; set; }
 }
 
 public sealed class ReviewPolicies
