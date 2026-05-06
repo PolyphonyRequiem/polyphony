@@ -166,6 +166,28 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
         throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, stderr);
     }
 
+    public Task<ProcessResult> WorktreeAddAsync(string branch, string path, string? gitRef, CancellationToken ct = default)
+    {
+        // git worktree add -b {branch} {path} [{ref}]
+        // Reference defaults to HEAD when omitted — pass it through verbatim
+        // when supplied so callers can pin to any revspec git understands.
+        string[] args = string.IsNullOrEmpty(gitRef)
+            ? ["worktree", "add", "-b", branch, path]
+            : ["worktree", "add", "-b", branch, path, gitRef];
+        return runner.RunAsync(Exe, args, ct);
+    }
+
+    public Task<ProcessResult> WorktreeRemoveAsync(string path, bool force, CancellationToken ct = default)
+    {
+        string[] args = force
+            ? ["worktree", "remove", "--force", path]
+            : ["worktree", "remove", path];
+        return runner.RunAsync(Exe, args, ct);
+    }
+
+    public Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default)
+        => runner.RunAsync(Exe, ["worktree", "list", "--porcelain"], ct);
+
     private static string? TrimOrNull(string raw)
     {
         var trimmed = raw.Trim();

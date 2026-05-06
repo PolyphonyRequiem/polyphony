@@ -114,4 +114,33 @@ public interface IGitClient
     /// (bad ref, repo error, etc.).
     /// </summary>
     Task<string?> ShowFileAtRefAsync(string refspec, string path, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git worktree add -b {branch} {path} [{gitRef}]</c>. Creates a
+    /// new linked worktree at <paramref name="path"/> with a freshly
+    /// created branch <paramref name="branch"/> pointed at
+    /// <paramref name="gitRef"/> (defaults to <c>HEAD</c> when null).
+    ///
+    /// <para>Returns the raw <see cref="ProcessResult"/> so callers can
+    /// branch on success/failure without losing stderr — used by routing
+    /// verbs that surface git's diagnostics inline rather than throwing.</para>
+    /// </summary>
+    Task<ProcessResult> WorktreeAddAsync(string branch, string path, string? gitRef, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git worktree remove [--force] {path}</c>. Removes the linked
+    /// worktree at <paramref name="path"/>. Pass <paramref name="force"/>
+    /// to allow removal of dirty worktrees.
+    ///
+    /// <para>Returns the raw <see cref="ProcessResult"/> so callers can
+    /// branch on success/failure without losing stderr.</para>
+    /// </summary>
+    Task<ProcessResult> WorktreeRemoveAsync(string path, bool force, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git worktree list --porcelain</c>. Returns the raw porcelain
+    /// output for callers to parse. Returned as a <see cref="ProcessResult"/>
+    /// so the command verb can route on git's exit code rather than throw.
+    /// </summary>
+    Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default);
 }
