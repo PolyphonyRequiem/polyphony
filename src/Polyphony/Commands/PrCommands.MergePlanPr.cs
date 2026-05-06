@@ -56,6 +56,7 @@ public sealed partial class PrCommands
     /// <param name="itemId">Plan-owning work-item id; equal to <paramref name="rootId"/> for the root plan.</param>
     /// <param name="prNumber">PR number to merge (positive).</param>
     /// <param name="parentItemId">Immediate plan-tree parent's id; required for descendants of descendants. Omit for root plan and direct children of root plan.</param>
+    /// <param name="ancestorIds">Comma-separated ancestor ids ABOVE the immediate parent, ending in the literal token <c>root</c>. Empty when item is root or a direct child of root. Required for the P8b diff-validation guard to detect ancestor-plan touches; when omitted the guard runs in degraded mode (no ancestor check). Format matches the <c>ancestor_ids</c> field emitted by <c>plan derive-ancestor-chain</c> minus the leading parent id.</param>
     /// <param name="manifestPath">Path to the run manifest. Defaults to <c>.polyphony/run.yaml</c>.</param>
     /// <param name="admin">Pass <c>--admin</c> to bypass branch-protection on the platform-side merge.</param>
     /// <param name="lockTtlHours">Run-lock TTL (default 24).</param>
@@ -67,6 +68,7 @@ public sealed partial class PrCommands
         int itemId,
         int prNumber,
         int parentItemId = 0,
+        string ancestorIds = "",
         string manifestPath = RunManifestStore.DefaultRelativePath,
         bool admin = false,
         int lockTtlHours = 24,
@@ -194,7 +196,7 @@ public sealed partial class PrCommands
             return await MergePlanPrUnderLockAsync(
                 rootId, itemId, resolvedParent, prNumber, isRootPlan, itemKey,
                 headBranch, baseBranch, manifestBranch, manifestPath, slug,
-                lockToken, admin, ct).ConfigureAwait(false);
+                lockToken, admin, ancestorIds, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -232,6 +234,7 @@ public sealed partial class PrCommands
         string slug,
         string lockToken,
         bool admin,
+        string ancestorIds,
         CancellationToken ct)
     {
         // ── 4. Verify clean worktree. ──────────────────────────────────────
@@ -365,6 +368,63 @@ public sealed partial class PrCommands
                         prState: poll.State, staleAncestors: staleEntries);
                 }
             }
+        }
+
+        // ── 6c. P8b diff-validation guard. Only meaningful for OPEN PRs
+        // (a MERGED PR's diff is locked). Classifies the PR's changed
+        // files against the plan-tree taxonomy and refuses on Blocking
+        // severity. Shares the PlanDiffValidator helper with the
+        // standalone advisory verb `polyphony pr validate-plan-diff` so
+        // the merge-time verdict cannot drift from what reviewers saw.
+        if (string.Equals(poll.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            IReadOnlyList<GhPullRequestChangedFile>? changedFiles;
+            try
+            {
+                changedFiles = await gh.GetPullRequestFilesAsync(slug, prNumber, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
+                    $"Could not fetch PR #{prNumber} changed files for diff validation: {ex.Message}",
+                    isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
+                    prState: poll.State);
+            }
+
+            if (changedFiles is null)
+                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "pr_not_found",
+                    $"PR #{prNumber} files endpoint returned no payload during diff validation.",
+                    isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
+                    prState: poll.State);
+
+            var strictFm = PlanPrFrontMatter.ParseStrict(poll.Body);
+            var changedPaths = changedFiles.Select(f => f.Path).ToList();
+            var selfPlanFile = PlanFilePath(itemId);
+            string? parentPlanFile = (isRootPlan || parentItemId == 0) ? null : PlanFilePath(parentItemId);
+            var ancestorPlanFiles = ParseAncestorIds(ancestorIds, rootId, parentItemId)
+                .Select(PlanFilePath)
+                .ToList();
+
+            var classification = PlanDiffValidator.Check(
+                changedPaths,
+                selfPlanFile,
+                parentPlanFile,
+                ancestorPlanFiles,
+                strictFm.RequestsParentChange,
+                strictFm.Status);
+
+            if (classification.Severity == ValidationSeverity.Blocking)
+            {
+                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "validation_blocked",
+                    $"PR #{prNumber} fails plan-diff validation ({classification.Code}): {classification.Message}",
+                    isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
+                    prState: poll.State);
+            }
+            // Warning + None pass through to the merge step. The advisory
+            // verb (validate-plan-diff) is responsible for surfacing
+            // warnings to reviewers; the merge-time guard only enforces
+            // blocking severities.
         }
 
         // ── 7. Branch on PR state. ─────────────────────────────────────────
