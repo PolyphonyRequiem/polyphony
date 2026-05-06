@@ -110,4 +110,18 @@ public interface IGhClient
         string repoSlug,
         int prNumber,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>gh pr view {prNumber} --repo {repoSlug} --json number,state,reviewDecision,reviews,headRefOid,baseRefName,headRefName,mergeable,mergedAt,mergeCommit,body</c>.
+    /// Returns the rich snapshot consumed by <c>polyphony pr poll-status</c>:
+    /// PR state, review decision, individual reviews, mergeability, head/base
+    /// refs, and the body (so the caller can parse plan-PR front-matter).
+    /// Returns null when the PR cannot be found (non-zero exit). Throws
+    /// <see cref="ExternalToolTimeoutException"/> when every attempt timed
+    /// out — callers that want to treat a hang as "unknown" must catch.
+    /// </summary>
+    Task<GhPullRequestPollData?> GetPullRequestPollDataAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default);
 }
