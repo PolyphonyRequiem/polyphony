@@ -98,6 +98,80 @@ is your last revision before the cap fires.**{% endif %}
 
 ---
 
+{% elif last == "extract_parent_patch"
+        and extract_parent_patch is defined
+        and extract_parent_patch.output is defined %}
+## 🔁 You Are Being Re-Invoked With a Child-Requested Parent-Plan Patch
+
+A direct-child plan PR was approved with `requests_parent_change: true`.
+The polyphony `extract-parent-patch` verb pulled the bounded markdown diff
+that the child PR proposes for **your** plan file
+(`plans/plan-{{ workflow.input.work_item_id }}.md`). Your job this
+iteration is to **integrate or reject** that proposal — surgically — and
+re-emit the plan.
+
+### Decision rules
+
+1. **Do not regenerate.** Treat the prior plan as locked except where the
+   patch (or your reasoned rejection of it) requires changes.
+2. **Integrate when the proposal is sound** — incorporate the proposed
+   sections into the prior plan, keeping headings and ordering intact.
+3. **Reject by reasoning when the proposal is wrong** — keep the prior
+   plan unchanged and document in `summary` why the child's request was
+   declined (the child architect will see this when their plan re-runs
+   against the unchanged parent generation).
+4. **Emit `open_questions: []`.** This re-entry must not loop back to
+   the user — the upstream loop has already gated on human approval.
+5. **Acknowledge in `summary`** which child PR drove this iteration and
+   what you did with it.
+
+### Child PR metadata
+
+- **Child work item:** {{ extract_parent_patch.output.child_item_id if extract_parent_patch.output.child_item_id is defined else "(unknown)" }}
+- **Child plan PR:** {{ extract_parent_patch.output.pr_url }} ({{ extract_parent_patch.output.repo_slug if extract_parent_patch.output.repo_slug is defined else "" }}#{{ extract_parent_patch.output.pr_number if extract_parent_patch.output.pr_number is defined else "?" }})
+- **Head SHA:** `{{ extract_parent_patch.output.head_sha if extract_parent_patch.output.head_sha is defined else "(unknown)" }}`
+- **Expected parent generation in child snapshot:** {{ extract_parent_patch.output.expected_parent_generation if extract_parent_patch.output.expected_parent_generation is defined else "(missing)" }}
+- **Files touched matching parent plan pattern:**
+{% if extract_parent_patch.output.files_touched is defined and extract_parent_patch.output.files_touched|length > 0 %}
+{% for f in extract_parent_patch.output.files_touched %}
+  - `{{ f }}`
+{% endfor %}
+{% else %}
+  - _(none — see warnings below)_
+{% endif %}
+
+{% if extract_parent_patch.output.error is defined and extract_parent_patch.output.error %}
+### ⚠️ Extraction failed — default to "reject by reasoning"
+
+The verb returned an error: **{{ extract_parent_patch.output.error_code if extract_parent_patch.output.error_code is defined else "unknown" }}** — {{ extract_parent_patch.output.error }}
+
+You do not have a usable patch this iteration. **Keep the prior plan
+unchanged** and document this in `summary` so the human review trail
+explains why the child's parent-change request was not integrated.
+{% else %}
+{% if extract_parent_patch.output.warnings is defined and extract_parent_patch.output.warnings|length > 0 %}
+### Warnings (non-blocking)
+{% for w in extract_parent_patch.output.warnings %}
+- {{ w }}
+{% endfor %}
+{% endif %}
+
+### Proposed parent-plan diff{% if extract_parent_patch.output.truncated %} (truncated to {{ extract_parent_patch.output.diff_size_bytes }} bytes — see PR for full diff){% endif %}
+
+```diff
+{{ extract_parent_patch.output.parent_plan_diff }}
+```
+{% endif %}
+
+{% if architect is defined and architect.output is defined and architect.output.plan is defined %}
+### Prior plan (refine surgically; do not discard)
+```markdown
+{{ architect.output.plan }}
+```
+{% endif %}
+
+---
+
 {% elif last == "open_questions_gate"
         and open_questions_gate is defined
         and open_questions_gate.output is defined
