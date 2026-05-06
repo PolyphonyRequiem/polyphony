@@ -68,6 +68,16 @@ public sealed record StalePlanPrDescendant
     /// <summary>The descendant work item id.</summary>
     public required int ItemId { get; init; }
 
+    /// <summary>
+    /// The immediate parent work item id of <see cref="ItemId"/> in the
+    /// descendant tree walk. May equal the root id when the descendant is
+    /// a direct child of the root. Required by P9 remedy verbs
+    /// (rebase-stale-descendant / recreate-stale-descendant) to derive
+    /// the parent plan branch (<c>plan/{root}</c> vs
+    /// <c>plan/{root}-{parent}</c>).
+    /// </summary>
+    public required int ParentItemId { get; init; }
+
     /// <summary>PR number for the descendant's open plan PR.</summary>
     public required int PrNumber { get; init; }
 

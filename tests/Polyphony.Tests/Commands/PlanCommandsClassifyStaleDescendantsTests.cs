@@ -314,6 +314,7 @@ public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase
         result.TotalStale.ShouldBe(1);
         var stale = result.StaleDescendants[0];
         stale.ItemId.ShouldBe(ChildA);
+        stale.ParentItemId.ShouldBe(RootId);
         stale.PrNumber.ShouldBe(501);
         stale.HeadRef.ShouldBe("plan/100-200");
         stale.HeadSha.ShouldBe("abc501");
@@ -357,6 +358,8 @@ public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase
         result.TotalStale.ShouldBe(1);
         var stale = result.StaleDescendants[0];
         stale.ItemId.ShouldBe(250);
+        // Grandchild's immediate parent is ChildA (200), NOT the root.
+        stale.ParentItemId.ShouldBe(ChildA);
         stale.StaleAncestors.Count.ShouldBe(2);
         // Sorted by key (Ordinal): "200" then "root".
         stale.StaleAncestors[0].AncestorKey.ShouldBe("200");
@@ -393,6 +396,38 @@ public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase
         result.TotalDescendantsWithOpenPrs.ShouldBe(2);
         result.TotalStale.ShouldBe(1);
         result.StaleDescendants[0].ItemId.ShouldBe(ChildB);
+        result.StaleDescendants[0].ParentItemId.ShouldBe(RootId);
+    }
+
+    [Fact]
+    public async Task ClassifyStaleDescendants_DeepGrandchildAndDirectChild_ParentItemIdsCorrect()
+    {
+        // Tree: root → 200 (direct child) → 250 (grandchild). Both PRs stale.
+        // Verifies BFS parent tracking populates ParentItemId correctly for
+        // each level — direct child's parent is root, grandchild's parent
+        // is the intermediate ChildA.
+        await SeedAsync(
+            new WorkItemBuilder().WithId(RootId).WithType("Epic").Build(),
+            new WorkItemBuilder().WithId(ChildA).WithType("Issue").WithParentId(RootId).Build(),
+            new WorkItemBuilder().WithId(250).WithType("Task").WithParentId(ChildA).Build());
+        var (cmd, runner) = CreateCommand();
+        StubRemoteUrl(runner);
+        StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { ["root"] = 5 }));
+        StubPrListForBranch(runner, "plan/100-200", (601, "plan/100-200", "https://gh/pr/601"));
+        StubPrPoll(runner, 601, "plan/100-200",
+            MakePrBodyWithSnapshot(new Dictionary<string, int> { ["root"] = 1 }));
+        StubPrListForBranch(runner, "plan/100-250", (602, "plan/100-250", "https://gh/pr/602"));
+        StubPrPoll(runner, 602, "plan/100-250",
+            MakePrBodyWithSnapshot(new Dictionary<string, int> { ["root"] = 1 }));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.ClassifyStaleDescendants(RootId));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.TotalStale.ShouldBe(2);
+        var byId = result.StaleDescendants.ToDictionary(s => s.ItemId, s => s.ParentItemId);
+        byId[ChildA].ShouldBe(RootId);
+        byId[250].ShouldBe(ChildA);
     }
 
     [Fact]

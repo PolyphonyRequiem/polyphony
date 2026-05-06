@@ -96,7 +96,7 @@ public sealed partial class PlanCommands
         }
 
         // ── 4. Walk descendants (BFS, dedup, ordered by id ascending). ───
-        var descendantIds = await WalkDescendantIdsAsync(rootId, ct).ConfigureAwait(false);
+        var (descendantIds, parentOf) = await WalkDescendantIdsAsync(rootId, ct).ConfigureAwait(false);
 
         // ── 5. Per descendant: list open plan PRs, parse snapshot,
         // compare to manifest. Best-effort per item — failures degrade
@@ -154,6 +154,7 @@ public sealed partial class PlanCommands
             stale.Add(new StalePlanPrDescendant
             {
                 ItemId = descendantId,
+                ParentItemId = parentOf.TryGetValue(descendantId, out var parentId) ? parentId : rootId,
                 PrNumber = pr.Number,
                 PrUrl = pr.Url ?? string.Empty,
                 HeadRef = poll.HeadRefName ?? planBranch,
@@ -179,12 +180,15 @@ public sealed partial class PlanCommands
     /// <summary>
     /// BFS-walk descendants of <paramref name="rootId"/> via the work-item
     /// repository. Excludes the root itself. Dedups defensively. Returns
-    /// ids in BFS order (depth-major, ids ascending within a wave).
+    /// ids in BFS order (depth-major, ids ascending within a wave) plus a
+    /// parent-of map (descendant id → immediate parent id, including the
+    /// root for direct children).
     /// </summary>
-    private async Task<IReadOnlyList<int>> WalkDescendantIdsAsync(int rootId, CancellationToken ct)
+    private async Task<(IReadOnlyList<int> Ordered, IReadOnlyDictionary<int, int> ParentOf)> WalkDescendantIdsAsync(int rootId, CancellationToken ct)
     {
         var seen = new HashSet<int> { rootId };
         var ordered = new List<int>();
+        var parentOf = new Dictionary<int, int>();
         var frontier = new List<int> { rootId };
 
         while (frontier.Count > 0)
@@ -209,13 +213,14 @@ public sealed partial class PlanCommands
                 {
                     if (!seen.Add(child.Id)) continue;
                     ordered.Add(child.Id);
+                    parentOf[child.Id] = parentId;
                     nextFrontier.Add(child.Id);
                 }
             }
             frontier = nextFrontier;
         }
 
-        return ordered;
+        return (ordered, parentOf);
     }
 
     /// <summary>

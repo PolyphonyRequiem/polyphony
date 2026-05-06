@@ -1,0 +1,180 @@
+# cascade-remedy — Phase 3 P9 step 4: orchestrate per-PR cascade remedy.
+#
+# Invoked after a parent plan PR merges and bumps a plan_generation in the
+# run manifest. Walks the descendant tree under {root}, finds open plan
+# PRs whose ancestor_plan_generations snapshot is now behind, and applies
+# the per-PR remedy via remedy-stale-descendant.yaml in a sequential
+# for_each.
+#
+# Sequential (max_concurrent: 1) because every per-PR remedy verb takes
+# the same-root run lock at .polyphony/locks/run-{rootId}.lock — parallel
+# invocations would just serialize on the lock anyway, and serializing at
+# the for_each layer makes failure_mode and per-iteration logging cleaner.
+#
+# Invariants:
+#   Pre:  feature/{root_id} exists; .polyphony/run.yaml exists and is
+#         readable from origin/feature/{root_id}; the manifest has been
+#         updated by the just-merged parent plan PR's merge-plan-pr verb.
+#   Post: Every stale descendant PR has been auto-rebased, recreated, or
+#         routed to a per-PR human gate. Cascade summary gate fires only
+#         when at least one remedy iteration produced an error.
+
+workflow:
+  name: cascade-remedy
+  description: >-
+    Walk descendants of {root_id}, classify open plan PRs by
+    ancestor-snapshot staleness, and apply auto-rebase / recreate /
+    human-gate remedy per stale entry. Sequential for_each so the
+    same-root run lock is never contended.
+  version: "1.0.0"
+  entry_point: classify
+  metadata:
+    min_polyphony_version: "1.0.1"
+
+  limits:
+    # classify (1) → for_each over N entries (each 1 iteration of the
+    # outer workflow regardless of how many sub-workflow iterations it
+    # spawns) → optional summary gate (1). 100 leaves headroom for very
+    # wide trees.
+    max_iterations: 100
+
+  input:
+    root_id:
+      type: number
+      required: true
+      description: Run-root work item id whose descendant tree to scan.
+    manifest_path:
+      type: string
+      required: false
+      default: ".polyphony/run.yaml"
+      description: Manifest path inside origin/feature/{root_id}.
+
+# Workflow-scope output: bare Jinja template strings (M7). Auto-coerced
+# by _maybe_parse_json — numeric strings become ints, lowercase
+# 'true'/'false' become booleans. `remedy_group` only runs on the
+# stale-found path; guard with `is defined` per the cascade-remedy
+# design (validator warns on unguarded references).
+output:
+  total_stale: "{{ classify.output.total_stale | default(0) }}"
+  total_descendants_scanned: "{{ classify.output.total_descendants_scanned | default(0) }}"
+  remedy_errors: "{% if remedy_group is defined %}{{ remedy_group.errors | length }}{% else %}0{% endif %}"
+
+agents:
+  # ── 1. Classify ───────────────────────────────────────────────────────
+  #
+  # Walks the descendant tree, polls each open plan PR, and returns the
+  # subset whose snapshot is stale. Routing-style verb — always exits 0.
+  - name: classify
+    type: script
+    description: Classify open descendant plan PRs by snapshot staleness.
+    command: polyphony
+    args:
+      - "plan"
+      - "classify-stale-descendants"
+      - "{{ workflow.input.root_id }}"
+      - "--manifest-path"
+      - "{{ workflow.input.manifest_path }}"
+    routes:
+      # Verb-level error (manifest read/parse, repo slug, etc.) — surface
+      # to the cascade-error gate so the operator can decide.
+      - to: classify_error_gate
+        when: "{{ classify.output.error_code is defined and classify.output.error_code != null and classify.output.error_code != '' }}"
+      # Nothing stale — done.
+      - to: $end
+        when: "{{ (classify.output.total_stale | default(0)) == 0 }}"
+      # At least one stale entry — fan out remedies.
+      - to: remedy_group
+
+  # ── Classify error gate ───────────────────────────────────────────────
+  - name: classify_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Cascade Classify Failed
+
+      `polyphony plan classify-stale-descendants` could not enumerate
+      stale descendants for root **{{ workflow.input.root_id }}**.
+
+      - **Error code:** `{{ classify.output.error_code }}`
+      - **Error:** {{ classify.output.error | default('(none)') }}
+
+      Common causes: manifest missing or malformed at
+      `origin/feature/{{ workflow.input.root_id }}:{{ workflow.input.manifest_path }}`,
+      repo slug not resolvable from `origin`, twig cache stale.
+
+      ---
+
+      Choose an action:
+      - **Retry** — re-run the classifier (after fixing the cause).
+      - **Skip cascade** — exit without remediating descendant PRs.
+    options:
+      - label: "🔄 Retry classify"
+        value: retry
+        route: classify
+      - label: "⏭️ Skip cascade"
+        value: skip
+        route: $end
+
+  # ── Cascade summary gate ──────────────────────────────────────────────
+  #
+  # Fires only when remedy_group.errors is non-empty (i.e. at least one
+  # sub-workflow raised an error that wasn't caught by an internal gate).
+  # Per-PR human gates fire INSIDE the sub-workflow and don't surface here.
+  - name: cascade_summary_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Cascade Remedy Completed With Errors
+
+      Remediated descendants of root **{{ workflow.input.root_id }}** but
+      **{{ remedy_group.errors | length }}** of
+      **{{ classify.output.total_stale }}** sub-workflows raised an error.
+
+      The remaining stale PRs may still need manual reconciliation.
+
+      ---
+
+      Choose an action:
+      - **Acknowledge** — continue the parent workflow.
+      - **Abort** — stop the parent workflow.
+    options:
+      - label: "✅ Acknowledge"
+        value: acknowledge
+        route: $end
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+# ── Remedy fan-out (for_each) ──────────────────────────────────────────
+#
+# Sub-workflow per stale entry. Sequential because every remedy verb
+# acquires .polyphony/locks/run-{rootId}.lock — parallelizing would just
+# serialize on the lock and complicate per-iteration error attribution.
+#
+# `failure_mode: continue_on_error` so a single failed iteration doesn't
+# short-circuit the whole cascade — the cascade_summary_gate handles
+# aggregate failure, the per-PR human gate handles per-entry failure.
+#
+# Conductor schema: for_each lives at workflow root, not nested under
+# agents (M8). `source:` is a bare dotted path (NOT a Jinja expression),
+# `as:` must avoid reserved names (workflow, output, _index, _key).
+for_each:
+  - name: remedy_group
+    type: for_each
+    description: Sequential per-PR remedy via remedy-stale-descendant.yaml.
+    source: classify.output.stale_descendants
+    as: stale
+    max_concurrent: 1
+    failure_mode: continue_on_error
+    agent:
+      name: remedy_one
+      type: workflow
+      workflow: ./remedy-stale-descendant.yaml
+      input_mapping:
+        root_id: "{{ workflow.input.root_id }}"
+        item_id: "{{ stale.item_id }}"
+        parent_item_id: "{{ stale.parent_item_id }}"
+        pr_number: "{{ stale.pr_number }}"
+        pr_url: "{{ stale.pr_url }}"
+    routes:
+      - to: cascade_summary_gate
+        when: "{{ (remedy_group.errors | length) > 0 }}"
+      - to: $end

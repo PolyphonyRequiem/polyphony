@@ -1,0 +1,224 @@
+# remedy-stale-descendant — Per-PR remedy for one stale descendant plan PR.
+#
+# Phase 3 P9 step 4 (per-entry sub-workflow). Invoked once per stale entry
+# from cascade-remedy.yaml's for_each block. Tries the cheap remedy
+# (auto-rebase) first; falls back to recreate when rebase reports a
+# conflict or a parent-stale precondition; surfaces a per-PR human gate
+# only on terminal failure modes.
+#
+# Decision table:
+#
+#   rebase outcome        →  next step
+#   ───────────────────────────────────────────
+#   rebased | noop        →  $end (success)
+#   conflict              →  recreate verb
+#   parent_stale          →  $end (cascade-remedy reorders)
+#   pr_head_changed       →  $end (operator re-runs cascade)
+#   worktree_dirty        →  $end (operator cleans workspace)
+#   lock_held             →  $end (concurrent run will retry)
+#   <other error_code>    →  per-PR human gate
+#
+#   recreate outcome      →  next step
+#   ───────────────────────────────────────────
+#   recreated             →  $end (success)
+#   <error_code>          →  per-PR human gate
+#
+# All terminal nodes must be reachable from each branch — conductor
+# requires explicit routes per M4.
+#
+# Invariants:
+#   Pre:  PR exists; root_id, item_id, parent_item_id, pr_number provided
+#         from classify-stale-descendants output.
+#   Post: PR is rebased OR recreated OR surfaced to human; no partial
+#         state left in flight that the next cascade run can't observe.
+
+workflow:
+  name: remedy-stale-descendant
+  description: >-
+    Apply auto-rebase → (on conflict) recreate → (on terminal failure)
+    human gate to a single stale plan PR. Composed by cascade-remedy.yaml's
+    for_each. Returns outcome via run-level output for the parent loop's
+    error/success aggregation.
+  version: "1.0.0"
+  entry_point: rebase_attempt
+  metadata:
+    min_polyphony_version: "1.0.1"
+
+  limits:
+    # Each invocation runs at most: rebase → (recreate) → (human gate).
+    # 25 leaves headroom for retry routes from the human gate.
+    max_iterations: 25
+
+  input:
+    root_id:
+      type: number
+      required: true
+      description: Run-root work item id (defines feature/{root}).
+    item_id:
+      type: number
+      required: true
+      description: Stale descendant work item id (the PR's owning item).
+    parent_item_id:
+      type: number
+      required: true
+      description: Immediate parent of item_id (defines parent plan branch).
+    pr_number:
+      type: number
+      required: true
+      description: GitHub PR number of the stale plan PR.
+    pr_url:
+      type: string
+      required: false
+      default: ""
+      description: PR URL (informational, used in human-gate prompts).
+
+# Workflow-scope output: bare Jinja template strings (M7). The outcome
+# string is consumed by cascade-remedy.yaml's for_each error/success
+# aggregation via remedy_group.outputs[*].outcome.
+output:
+  outcome: "{{ rebase_attempt.output.outcome | default('unknown') }}"
+  item_id: "{{ workflow.input.item_id }}"
+  pr_number: "{{ workflow.input.pr_number }}"
+
+agents:
+  # ── 1. Rebase attempt ─────────────────────────────────────────────────
+  #
+  # Invokes the auto-rebase verb. Routing-style verb — always exits 0,
+  # outcome on the result envelope.
+  - name: rebase_attempt
+    type: script
+    description: Attempt auto-rebase of the stale plan PR onto the new ancestor tip.
+    command: polyphony
+    args:
+      - "plan"
+      - "rebase-stale-descendant"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--item-id"
+      - "{{ workflow.input.item_id }}"
+      - "--parent-item-id"
+      - "{{ workflow.input.parent_item_id }}"
+      - "--pr-number"
+      - "{{ workflow.input.pr_number }}"
+    routes:
+      # Success — clean rebase or three-fact noop.
+      - to: $end
+        when: "{{ rebase_attempt.output.outcome == 'rebased' or rebase_attempt.output.outcome == 'noop' }}"
+      # Recoverable via recreate.
+      - to: recreate_attempt
+        when: "{{ rebase_attempt.output.outcome == 'conflict' }}"
+      # Cascade re-orders these — let the parent loop re-classify on next run.
+      - to: $end
+        when: "{{ rebase_attempt.output.outcome == 'parent_stale' }}"
+      # Operator-actionable, no retry inside this workflow.
+      - to: $end
+        when: "{{ rebase_attempt.output.outcome == 'pr_head_changed' }}"
+      - to: $end
+        when: "{{ rebase_attempt.output.outcome == 'worktree_dirty' }}"
+      - to: $end
+        when: "{{ rebase_attempt.output.outcome == 'lock_held' }}"
+      # Anything else (malformed_front_matter, manifest_*, gh_failed, …)
+      # surfaces to the per-PR gate. Catch-all per M4.
+      - to: rebase_failure_gate
+
+  # ── 2. Recreate attempt ───────────────────────────────────────────────
+  #
+  # Invoked when rebase reports a conflict. Closes the stale PR and
+  # opens a fresh one from the new ancestor tip. Routing-style verb.
+  - name: recreate_attempt
+    type: script
+    description: Recreate the stale plan PR from the new ancestor tip after a rebase conflict.
+    command: polyphony
+    args:
+      - "plan"
+      - "recreate-stale-descendant"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--item-id"
+      - "{{ workflow.input.item_id }}"
+      - "--parent-item-id"
+      - "{{ workflow.input.parent_item_id }}"
+      - "--pr-number"
+      - "{{ workflow.input.pr_number }}"
+    routes:
+      - to: $end
+        when: "{{ recreate_attempt.output.outcome == 'recreated' }}"
+      - to: $end
+        when: "{{ recreate_attempt.output.outcome == 'noop' }}"
+      # Operator-actionable preconditions — same handling as on rebase.
+      - to: $end
+        when: "{{ recreate_attempt.output.outcome == 'pr_head_changed' }}"
+      - to: $end
+        when: "{{ recreate_attempt.output.outcome == 'worktree_dirty' }}"
+      - to: $end
+        when: "{{ recreate_attempt.output.outcome == 'lock_held' }}"
+      - to: $end
+        when: "{{ recreate_attempt.output.outcome == 'parent_stale' }}"
+      # Anything else escalates to the per-PR gate.
+      - to: recreate_failure_gate
+
+  # ── 3a. Rebase failure gate ───────────────────────────────────────────
+  #
+  # Surfaces a non-recoverable rebase outcome (anything not handled above).
+  # Operator chooses to acknowledge (let cascade move on) or abort the
+  # whole cascade.
+  - name: rebase_failure_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Plan PR Rebase Failed (Non-Recoverable)
+
+      The auto-rebase remedy for plan PR **#{{ workflow.input.pr_number }}**
+      (work item **{{ workflow.input.item_id }}**) returned a non-recoverable
+      outcome.
+
+      - **PR:** {{ workflow.input.pr_url }}
+      - **Outcome:** `{{ rebase_attempt.output.outcome }}`
+      - **Error code:** `{{ rebase_attempt.output.error_code | default('') }}`
+      - **Error:** {{ rebase_attempt.output.error | default('(none)') }}
+
+      The cascade can continue with the remaining stale PRs once you
+      acknowledge. Aborting cancels the cascade for the entire root.
+
+      ---
+
+      Choose an action:
+      - **Acknowledge** — leave this PR for manual reconciliation; continue cascade.
+      - **Abort** — stop the cascade.
+    options:
+      - label: "✅ Acknowledge"
+        value: acknowledge
+        route: $end
+      - label: "🛑 Abort cascade"
+        value: abort
+        route: $end
+
+  # ── 3b. Recreate failure gate ─────────────────────────────────────────
+  - name: recreate_failure_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Plan PR Recreate Failed
+
+      Auto-rebase reported a conflict, then the recreate fallback also
+      failed for plan PR **#{{ workflow.input.pr_number }}** (work item
+      **{{ workflow.input.item_id }}**).
+
+      - **PR:** {{ workflow.input.pr_url }}
+      - **Recreate outcome:** `{{ recreate_attempt.output.outcome }}`
+      - **Error code:** `{{ recreate_attempt.output.error_code | default('') }}`
+      - **Error:** {{ recreate_attempt.output.error | default('(none)') }}
+
+      Manual reconciliation required. The cascade can continue with the
+      remaining stale PRs once you acknowledge.
+
+      ---
+
+      Choose an action:
+      - **Acknowledge** — leave this PR for manual reconciliation; continue cascade.
+      - **Abort** — stop the cascade.
+    options:
+      - label: "✅ Acknowledge"
+        value: acknowledge
+        route: $end
+      - label: "🛑 Abort cascade"
+        value: abort
+        route: $end

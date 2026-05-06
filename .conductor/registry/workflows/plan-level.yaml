@@ -1151,37 +1151,83 @@ agents:
         when: "{{ merge_plan_pr.output.error_code is defined and merge_plan_pr.output.error_code == 'stale_generation' }}"
       - to: merge_error_gate
         when: "{{ merge_plan_pr.output.error_code is defined and merge_plan_pr.output.error_code != '' and merge_plan_pr.output.error_code != 'stale_generation' }}"
+      - to: cascade_remedy
+
+  # ── Cascade remedy ────────────────────────────────────────────────────
+  #
+  # Phase 3 P9 step 4. After merge_plan_pr bumps a plan_generation, any
+  # OPEN descendant plan PRs whose snapshot referenced the prior generation
+  # are now stale. Invoke the cascade-remedy sub-workflow to classify and
+  # remediate them (auto-rebase / recreate / per-PR human gate).
+  #
+  # The sub-workflow is a no-op when there are no stale descendants.
+  # Errors inside the sub-workflow are surfaced via its own gates and do
+  # not block continuation here.
+  #
+  # Invariants:
+  #   Pre:  merge_plan_pr succeeded; manifest has the new generation.
+  #   Post: All open descendant PRs of the resolved root have been
+  #         remediated or surfaced for manual handling.
+  - name: cascade_remedy
+    type: workflow
+    description: Cascade-remedy open descendant plan PRs whose snapshot is now stale.
+    workflow: ./cascade-remedy.yaml
+    input_mapping:
+      root_id: "{{ root_resolver.output.resolved_root_id }}"
+    routes:
       - to: seeder
 
   # ── Stale generation gate ─────────────────────────────────────────────
   #
-  # Plan PR snapshot is stale relative to current ancestor generations.
-  # Phase 3 P9 (ancestor cascade) will handle this automatically; until
-  # then, surface to a human.
+  # Fires when merge_plan_pr itself reports stale_generation — i.e. THIS
+  # plan PR's own ancestor snapshot is behind the manifest at merge time.
+  # This is a different cascade trigger than the descendant cascade
+  # (cascade_remedy above): the parent's bump must be reconciled here
+  # BEFORE we can merge this plan, so we route to the cascade-remedy
+  # sub-workflow scoped to this PR's own root, then the operator can
+  # re-attempt merge.
   - name: stale_generation_gate
     type: human_gate
     prompt: |
-      ## 🚧 Plan PR Snapshot Is Stale (P9 — ancestor cascade not yet implemented)
+      ## ⚠️ This Plan PR's Snapshot Is Stale At Merge
 
-      The plan PR for work item **{{ workflow.input.work_item_id }}** was
-      approved, but an ancestor's plan_generation has bumped since this
-      PR was opened.
+      Plan PR for work item **{{ workflow.input.work_item_id }}** was
+      approved but its `ancestor_plan_generations` snapshot is behind the
+      current manifest:
 
       - **Ancestor:** `{{ merge_plan_pr.output.ancestor_key }}`
       - **PR snapshot generation:** {{ merge_plan_pr.output.snapshot_generation }}
       - **Current manifest generation:** {{ merge_plan_pr.output.current_generation }}
 
-      The full ancestor-cascade rebase/recreate logic (Phase 3 P9) is not
-      yet implemented. Manually rebase or recreate the PR, then re-run.
+      Run the cascade-remedy sub-workflow (which will auto-rebase or
+      recreate this PR), then retry the merge.
 
       ---
 
       Choose an action:
-      - **Acknowledge** — stop planning this branch (escalate to human)
+      - **Run cascade-remedy** — invoke the cascade and re-attempt merge.
+      - **Acknowledge** — stop planning this branch (escalate to human).
     options:
+      - label: "🔄 Run cascade-remedy + retry merge"
+        value: cascade
+        route: cascade_remedy_for_self
       - label: "✅ Acknowledge"
         value: acknowledge
         route: $end
+
+  # ── Cascade remedy (self-trigger from stale_generation_gate) ──────────
+  #
+  # Same sub-workflow as the post-merge cascade, but invoked here when
+  # this PR itself is the stale one. After the cascade rebases/recreates
+  # this PR, we route back to merge_plan_pr to re-attempt.
+  - name: cascade_remedy_for_self
+    type: workflow
+    description: Cascade-remedy invoked because THIS plan PR is the stale one at merge time.
+    workflow: ./cascade-remedy.yaml
+    input_mapping:
+      root_id: "{{ root_resolver.output.resolved_root_id }}"
+    routes:
+      - to: merge_plan_pr
 
   # ── Merge error gate ──────────────────────────────────────────────────
   - name: merge_error_gate
