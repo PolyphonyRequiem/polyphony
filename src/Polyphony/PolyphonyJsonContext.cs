@@ -59,6 +59,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(SeedReconciliation))]
 [JsonSerializable(typeof(SeedError))]
 [JsonSerializable(typeof(PrCreateFeatureResult))]
+[JsonSerializable(typeof(PrCreateFeatureAdoResult))]
 [JsonSerializable(typeof(PrOpenPlanPrResult))]
 [JsonSerializable(typeof(PrOpenPlanAdoResult))]
 [JsonSerializable(typeof(PrPollStatusResult))]
