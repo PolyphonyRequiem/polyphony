@@ -1,7 +1,30 @@
 using System.Text.RegularExpressions;
+using Polyphony.Manifest;
 using YamlDotNet.RepresentationModel;
 
 namespace Polyphony.Commands;
+
+/// <summary>
+/// Strict-parse outcome for plan-PR front-matter. Distinguishes Absent
+/// (no fence) from Malformed (bad YAML) from Present (well-formed),
+/// where the lenient <see cref="PlanPrFrontMatter.Parse"/> collapses
+/// all three into "safe defaults".
+///
+/// <para>Used by the P8b diff-validation guard: when a child plan PR
+/// touches the parent plan file, the merge-time guard refuses unless
+/// the front-matter is Present AND <see cref="RequestsParentChange"/>
+/// is true. Malformed/Absent front-matter on a parent-touching PR is
+/// itself a blocking outcome.</para>
+/// </summary>
+/// <param name="Status">Whether the front-matter parsed cleanly.</param>
+/// <param name="RequestsParentChange">Value of the <c>requests_parent_change</c> flag (false when not Present).</param>
+/// <param name="AncestorPlanGenerations">Snapshot map (empty when not Present).</param>
+/// <param name="ErrorDetail">Reason for malformed status; null otherwise.</param>
+public sealed record PlanPrFrontMatterStrictResult(
+    FrontMatterStatus Status,
+    bool RequestsParentChange,
+    IReadOnlyDictionary<string, int> AncestorPlanGenerations,
+    string? ErrorDetail);
 
 /// <summary>
 /// Minimal front-matter parser for plan-PR bodies. Plan PRs (opened by
@@ -73,6 +96,22 @@ internal static class PlanPrFrontMatter
             // not prevent the workflow from polling status.
             return defaults;
         }
+    }
+
+    /// <summary>
+    /// SKELETON — implementation lives in the P8b validator-impl PR
+    /// (<c>sdlc/p8b-validator-impl</c>). This default returns Absent for
+    /// any input so the surrounding code compiles before that PR lands.
+    /// Tests that exercise the strict path will fail until then; that's
+    /// expected and tracked.
+    /// </summary>
+    public static PlanPrFrontMatterStrictResult ParseStrict(string body)
+    {
+        return new PlanPrFrontMatterStrictResult(
+            FrontMatterStatus.Absent,
+            RequestsParentChange: false,
+            AncestorPlanGenerations: new Dictionary<string, int>(StringComparer.Ordinal),
+            ErrorDetail: null);
     }
 
     private static bool ReadBool(YamlMappingNode root, string key)
