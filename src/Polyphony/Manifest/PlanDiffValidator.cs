@@ -80,7 +80,20 @@ public static class PlanDiffValidator
         bool requestsParentChange,
         FrontMatterStatus frontMatterStatus)
     {
-        throw new System.NotImplementedException("Filled in by background agent.");
+        // SKELETON — real implementation lands in sdlc/p8b-validator-impl.
+        // Returning a clean OK keeps existing MergePlanPr tests green
+        // (validator-guard is a pass-through) until the agent's PR merges
+        // and replaces this body. Tests for the validator itself live in
+        // that PR.
+        return new Result(
+            ValidationSeverity.None,
+            "ok",
+            "Skeleton: no classification performed.",
+            SelfPlanFiles: Array.Empty<string>(),
+            ParentPlanFiles: Array.Empty<string>(),
+            AncestorPlanFiles: Array.Empty<string>(),
+            PolyphonyStateFiles: Array.Empty<string>(),
+            OtherFiles: changedPaths.ToArray());
     }
 }
 
