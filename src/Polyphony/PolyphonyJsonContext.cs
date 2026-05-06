@@ -97,6 +97,10 @@ namespace Polyphony;
 [JsonSerializable(typeof(ReleaseLockResult))]
 [JsonSerializable(typeof(ForceReleaseLockResult))]
 [JsonSerializable(typeof(LockStatusResult))]
+[JsonSerializable(typeof(WorktreeAddResult))]
+[JsonSerializable(typeof(WorktreeRemoveResult))]
+[JsonSerializable(typeof(WorktreeListResult))]
+[JsonSerializable(typeof(WorktreeEntry))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

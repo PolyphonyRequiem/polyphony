@@ -36,4 +36,5 @@ app.Add<RequirementsCommands>("requirements");
 app.Add<MgCommands>("mg");
 app.Add<ManifestCommands>("manifest");
 app.Add<LockCommands>("lock");
+app.Add<WorktreeCommands>("worktree");
 app.Run(args);
