@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.AzureDevOps;
 
 namespace Polyphony.Commands;
 
@@ -12,15 +13,21 @@ namespace Polyphony.Commands;
 public sealed class HealthCommand
 {
     private readonly Func<string, HealthCheckResult> _checkTool;
+    private readonly IAdoClient? _adoClient;
 
     // Single ctor (ConsoleAppFramework CAF011 — Add<T> rejects multiple ctors).
-    // The optional `toolChecker` is a test seam: production calls pass nothing
-    // (DI does not register `Func<string, HealthCheckResult>`, so the default
-    // null falls through to `DefaultCheckTool`), and unit tests can inject a
-    // healthy stub so they don't depend on `twig` / `git` being on PATH in CI.
-    public HealthCommand(Func<string, HealthCheckResult>? toolChecker = null)
+    // Both injected dependencies are optional with sensible defaults so:
+    //   - production runs get the DI-resolved IAdoClient (registered in
+    //     PolyphonyServiceRegistration) and the default tool-checker.
+    //   - unit tests can pass null for adoClient (skipping the network probe)
+    //     and a stub toolChecker so they don't depend on `twig` / `git` /
+    //     dev.azure.com being reachable in CI.
+    public HealthCommand(
+        Func<string, HealthCheckResult>? toolChecker = null,
+        IAdoClient? adoClient = null)
     {
         _checkTool = toolChecker ?? DefaultCheckTool;
+        _adoClient = adoClient;
     }
 
     [Command("health")]
@@ -134,6 +141,37 @@ public sealed class HealthCommand
                 Success = false,
                 Message = $"YamlDotNet error: {ex.Message}"
             });
+        }
+
+        // Azure DevOps auth probe (best-effort — network call, not on the
+        // critical-checks list). Skipped entirely when no IAdoClient is
+        // injected (e.g. in unit tests).
+        if (_adoClient is not null)
+        {
+            try
+            {
+                // GetAuthStatusAsync never throws; it always returns a status.
+                // Bound the call so a wedged dev.azure.com cannot stall a
+                // health check. The client also enforces its own timeout, but
+                // belt-and-braces here is cheap.
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                var status = _adoClient.GetAuthStatusAsync(cts.Token).GetAwaiter().GetResult();
+                checks.Add(new HealthCheckResult
+                {
+                    Name = "ado",
+                    Success = status.IsAuthenticated,
+                    Message = status.Detail,
+                });
+            }
+            catch (Exception ex)
+            {
+                checks.Add(new HealthCheckResult
+                {
+                    Name = "ado",
+                    Success = false,
+                    Message = $"ADO probe threw: {ex.Message}",
+                });
+            }
         }
 
         // OS/arch/dotnet/polyphony version

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 using Twig.Infrastructure;
@@ -50,6 +51,14 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<IGitClient, GitClient>();
         services.AddSingleton<IGhClient, GhClient>();
         services.AddSingleton<GhTokenResolver>();
+
+        // Azure DevOps REST infrastructure (Phase 5 scaffolding — auth probe only).
+        // HttpClient is registered as a singleton to avoid socket exhaustion under
+        // repeated CLI invocations and to share the underlying handler pool. The
+        // AdoTokenResolver reads PAT env vars and is also stateless / singleton-safe.
+        services.AddSingleton<HttpClient>(_ => new HttpClient());
+        services.AddSingleton<AdoTokenResolver>();
+        services.AddSingleton<IAdoClient, AdoClient>();
 
         // Run lock infrastructure (Phase 4b PR D1b).
         services.AddSingleton<Polyphony.Locking.RunLockStore>();
