@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Polyphony.Configuration;
 using Polyphony.Policy;
+using Polyphony.Sdlc;
 
 namespace Polyphony;
 
@@ -51,6 +52,11 @@ namespace Polyphony;
 [JsonSerializable(typeof(ScopeListItem))]
 [JsonSerializable(typeof(ScopeMutationResult))]
 [JsonSerializable(typeof(RootResolveResult))]
+[JsonSerializable(typeof(Requirement))]
+[JsonSerializable(typeof(RequirementEdge))]
+[JsonSerializable(typeof(RequirementSet))]
+[JsonSerializable(typeof(RequirementsDeriveResult))]
+[JsonSerializable(typeof(RequirementsInputProvenance))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
