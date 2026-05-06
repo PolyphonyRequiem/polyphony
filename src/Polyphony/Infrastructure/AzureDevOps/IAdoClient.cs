@@ -164,4 +164,40 @@ public interface IAdoClient
         string repositoryId,
         int pullRequestId,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Submit (or update) a reviewer's vote on an ADO pull request.
+    ///
+    /// <para>
+    /// Hits <c>PATCH /_apis/git/repositories/{repo}/pullRequests/{pr}/reviewers/{reviewerId}</c>
+    /// with body <c>{ "vote": &lt;int&gt; }</c>. The reviewer must already be on
+    /// the PR (use <c>PUT</c> on the same endpoint to add). Returns
+    /// <c>true</c> on success (HTTP 200) and <c>false</c> when the PR or
+    /// reviewer does not exist (HTTP 404). Throws on other failures — see
+    /// <see cref="ListPullRequestsAsync"/> for the failure shape.
+    /// </para>
+    ///
+    /// <para>
+    /// Vote values per the ADO REST contract:
+    /// <list type="bullet">
+    ///   <item><c>10</c> — approved.</item>
+    ///   <item><c>5</c> — approved with suggestions.</item>
+    ///   <item><c>0</c> — no vote (reset).</item>
+    ///   <item><c>-5</c> — waiting for author.</item>
+    ///   <item><c>-10</c> — rejected.</item>
+    /// </list>
+    /// Other values are passed through unchanged; ADO will reject them with
+    /// a 400 (which surfaces as <see cref="HttpRequestException"/>).
+    /// </para>
+    /// </summary>
+    /// <param name="reviewerId">Reviewer's identity GUID.</param>
+    /// <param name="vote">ADO vote enum value (see method summary).</param>
+    Task<bool> SetPullRequestVoteAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string reviewerId,
+        int vote,
+        CancellationToken ct = default);
 }

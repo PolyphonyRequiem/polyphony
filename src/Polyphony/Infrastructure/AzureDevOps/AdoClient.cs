@@ -445,6 +445,53 @@ public sealed class AdoClient : IAdoClient
         return ComposePollData(detail, reviewersRaw);
     }
 
+    /// <inheritdoc />
+    public async Task<bool> SetPullRequestVoteAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string reviewerId,
+        int vote,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(organization);
+        ArgumentException.ThrowIfNullOrEmpty(project);
+        ArgumentException.ThrowIfNullOrEmpty(repository);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
+        ArgumentException.ThrowIfNullOrEmpty(reviewerId);
+
+        var pat = ResolvePatOrThrow();
+        var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                  $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                  $"/reviewers/{Uri.EscapeDataString(reviewerId)}?api-version=7.1";
+
+        // Serialize the body once; HttpContent is single-use, so a fresh
+        // StringContent is built per attempt by the request factory below.
+        var body = new AdoSetReviewerVoteRequest { Vote = vote };
+        var bodyJson = JsonSerializer.Serialize(
+            body, PolyphonyJsonContext.Default.AdoSetReviewerVoteRequest);
+
+        using var response = await SendWithRetryAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Patch, url)
+            {
+                Content = new StringContent(bodyJson, Encoding.UTF8, "application/json"),
+            };
+            AddAuthHeaders(req, pat);
+            return req;
+        }, ct).ConfigureAwait(false);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            // PR or reviewer does not exist — treat as a structured "not found"
+            // signal so the verb can emit pr_not_found rather than ado_failed.
+            return false;
+        }
+        await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+        return true;
+    }
+
     /// <summary>
     /// Map the wire-level PR detail + reviewer envelope into the
     /// platform-neutral <see cref="AdoPullRequestPollData"/> projection.

@@ -404,5 +404,11 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
             if (ThrowOnPoll is not null) throw ThrowOnPoll;
             return Task.FromResult(PollResult);
         }
+
+        public Task<bool> SetPullRequestVoteAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string reviewerId, int vote,
+            CancellationToken ct = default)
+            => throw new NotImplementedException();
     }
 }
