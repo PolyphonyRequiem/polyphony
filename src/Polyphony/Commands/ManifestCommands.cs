@@ -385,57 +385,44 @@ public sealed partial class ManifestCommands
         {
             var manifest = RunManifestStore.LoadOrThrow(path);
 
-            // Idempotency check: when the call carries PR identity, look for an existing ledger entry first.
             if (prNumber > 0)
             {
-                var existing = manifest.MergedPlanPrs.FirstOrDefault(e => e.PrNumber == prNumber);
-                if (existing is not null)
+                // Ledger mode: delegate the idempotency / conflict /
+                // record decision to the shared ManifestPlanLedger so this
+                // verb and `polyphony pr merge-plan-pr` enforce identical
+                // semantics.
+                var outcome = ManifestPlanLedger.Apply(manifest, itemKey, prNumber, mergeCommit, DateTime.UtcNow);
+
+                if (outcome.ConflictReason is not null)
                 {
-                    if (existing.ItemKey != itemKey)
-                    {
-                        EmitRecordPlanMergeError(path, item, prNumber, mergeCommit,
-                            $"PR #{prNumber} was previously recorded for item '{existing.ItemKey}'; cannot re-record for item '{itemKey}'.");
-                        return Task.FromResult(ExitCodes.ConfigError);
-                    }
-
-                    if (!string.Equals(existing.MergeCommit, mergeCommit, StringComparison.Ordinal))
-                    {
-                        EmitRecordPlanMergeError(path, item, prNumber, mergeCommit,
-                            $"PR #{prNumber} was previously recorded with merge commit '{existing.MergeCommit}'; cannot re-record with '{mergeCommit}'.");
-                        return Task.FromResult(ExitCodes.ConfigError);
-                    }
-
-                    // Idempotent re-entry: ledger entry matches; no mutation.
-                    Emit(new ManifestRecordPlanMergeResult
-                    {
-                        Path = path,
-                        ItemKey = itemKey,
-                        PreviousGeneration = existing.PreviousGeneration,
-                        CurrentGeneration = existing.CurrentGeneration,
-                        Recorded = false,
-                        PrNumber = prNumber,
-                        MergeCommit = mergeCommit,
-                    });
-                    return Task.FromResult(ExitCodes.Success);
+                    EmitRecordPlanMergeError(path, item, prNumber, mergeCommit, outcome.ConflictReason);
+                    return Task.FromResult(ExitCodes.ConfigError);
                 }
+
+                if (outcome.Recorded)
+                {
+                    RunManifestStore.Save(path, manifest);
+                }
+
+                Emit(new ManifestRecordPlanMergeResult
+                {
+                    Path = path,
+                    ItemKey = itemKey,
+                    PreviousGeneration = outcome.PreviousGeneration,
+                    CurrentGeneration = outcome.CurrentGeneration,
+                    Recorded = outcome.Recorded,
+                    PrNumber = prNumber,
+                    MergeCommit = mergeCommit,
+                });
+                return Task.FromResult(ExitCodes.Success);
             }
 
+            // Legacy mode (no PR identity supplied): unconditional bump,
+            // no ledger entry. Preserved so existing callers keep working
+            // until they switch to ledger mode.
             var previous = manifest.PlanGenerations.TryGetValue(itemKey, out var existingGen) ? existingGen : 0;
             var current = previous + 1;
             manifest.PlanGenerations[itemKey] = current;
-
-            if (prNumber > 0)
-            {
-                manifest.MergedPlanPrs.Add(new MergedPlanPrEntry
-                {
-                    PrNumber = prNumber,
-                    ItemKey = itemKey,
-                    MergeCommit = mergeCommit,
-                    PreviousGeneration = previous,
-                    CurrentGeneration = current,
-                    RecordedAt = DateTime.UtcNow,
-                });
-            }
 
             RunManifestStore.Save(path, manifest);
 

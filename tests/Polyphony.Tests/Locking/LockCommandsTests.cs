@@ -313,5 +313,9 @@ public sealed class LockCommandsTests : IDisposable
         public Task CheckoutTrackingAsync(string branch, string remote = "origin", CancellationToken ct = default) => Task.CompletedTask;
         public Task PushAsync(string branch, string remote = "origin", CancellationToken ct = default) => Task.CompletedTask;
         public Task FetchAsync(string remote, string refspec, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<string>> GetStatusAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
+        public Task StageAsync(string pathspec, CancellationToken ct = default) => Task.CompletedTask;
+        public Task CommitAsync(string message, CancellationToken ct = default) => Task.CompletedTask;
+        public Task ResetHardAsync(string refspec, CancellationToken ct = default) => Task.CompletedTask;
     }
 }
