@@ -162,17 +162,23 @@ and seeds children. Self-recurses for nested plannable levels via `for_each`.
 
 ### 4. `polyphony-implement.yaml` — Implementation Orchestration
 
-**Responsibility:** Implementation entry point. Loads the work tree hierarchy, discovers
-PG structure, and dispatches pending PGs in parallel via `for_each` to `implement-pg.yaml`.
+**Responsibility:** Implementation entry point. Acquires the same-root run lock, loads the
+work tree hierarchy, discovers PG/MG structure, and dispatches pending MGs sequentially via
+`for_each` to `implement-mg.yaml`. Releases the lock on every exit path.
 
 | Agent | Type | Description |
 |-------|------|-------------|
 | `preflight_lite` | script | Quick 3-check validation |
 | `preflight_lite_gate` | human_gate | Retry / abort on failure |
-| `load_work_tree` | script | Load work item hierarchy and PG structure via `load-work-tree.ps1` |
-| `pg_dispatcher` | script | Prepare pending PGs array for `for_each` dispatch |
-| `pg_execution_group` | for_each (workflow) | Parallel PG execution — spawns one `implement-pg.yaml` per pending PG (max 3 concurrent) |
-| `pg_summary_gate` | human_gate | Surface partial PG failures; retry or abort |
+| `lock_acquire` | script | Acquire same-root run lock via `polyphony lock acquire` |
+| `lock_busy_gate` | human_gate | Retry / force-release / abort when an existing lock blocks acquisition |
+| `lock_force_release` | script | Operator-confirmed `polyphony lock force-release` then loop to acquire |
+| `load_work_tree` | script | Load work item hierarchy and PG structure via `polyphony branch load-tree` |
+| `pg_dispatcher` | script | Prepare pending PGs array for `for_each` dispatch (synthesizes Rev 4 `mg_path = pg-{number}`) |
+| `mg_execution_group` | for_each (workflow) | Sequential MG execution — spawns one `implement-mg.yaml` per pending MG (max_concurrent: 1 until Phase 7 worktrees) |
+| `pg_summary_gate` | human_gate | Surface partial MG failures; retry or abort (abort routes through lock release) |
+| `lock_release` | script | Best-effort token-based lock release on the success / no-op exit path |
+| `lock_release_pre_abort` | script | Best-effort token-based lock release on the abort exit path |
 
 ---
 
