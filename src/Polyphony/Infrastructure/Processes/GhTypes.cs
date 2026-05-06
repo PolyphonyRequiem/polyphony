@@ -36,3 +36,58 @@ public sealed record PrListFilters(
     string? Base = null,
     string? State = null,
     int? Limit = null);
+
+/// <summary>
+/// Merge method passed to <see cref="IGhClient.MergePullRequestAsync"/>.
+/// Maps to the corresponding <c>gh pr merge</c> flag.
+/// </summary>
+public enum GhMergeMethod
+{
+    /// <summary>Merge commit. Required for merge-group PRs (see ADR
+    /// docs/decisions/branch-model.md) because nested merge groups depend on
+    /// git ancestry to know what is already integrated.</summary>
+    Merge,
+
+    /// <summary>Squash merge. Default for task PRs whose micro-history we do
+    /// not want to pollute the merge-group branch.</summary>
+    Squash,
+
+    /// <summary>Rebase merge. Rarely used; included for completeness.</summary>
+    Rebase,
+}
+
+/// <summary>
+/// Result of <see cref="IGhClient.MergePullRequestAsync"/>. The merge SHA
+/// is populated from a follow-up <c>gh pr view</c> call (gh's merge stdout
+/// is human-oriented and not reliable). When <see cref="AlreadyMerged"/> is
+/// true, the merge succeeded server-side on a prior attempt and the verb
+/// reconciled rather than re-issued the merge.
+/// </summary>
+/// <param name="Succeeded">True when the merge completed (newly or already).</param>
+/// <param name="PrNumber">PR number.</param>
+/// <param name="MergeSha">Commit SHA of the merge, when known.</param>
+/// <param name="AlreadyMerged">True when the PR was already merged before the call.</param>
+/// <param name="Detail">Diagnostic detail from gh stdout/stderr.</param>
+public sealed record GhMergeResult(
+    bool Succeeded,
+    int PrNumber,
+    string? MergeSha,
+    bool AlreadyMerged,
+    string Detail);
+
+/// <summary>
+/// Subset of fields read by <see cref="IGhClient.GetPullRequestStateAsync"/>
+/// from <c>gh pr view --json</c>. The state string mirrors GitHub's enum:
+/// <c>OPEN</c>, <c>CLOSED</c>, <c>MERGED</c> (case as returned by gh).
+/// </summary>
+/// <param name="Number">PR number.</param>
+/// <param name="State">PR state (OPEN, CLOSED, MERGED).</param>
+/// <param name="MergeCommitSha">Merge commit SHA when merged, otherwise null.</param>
+/// <param name="HeadRefName">Source branch name.</param>
+/// <param name="HeadRefOid">Current head SHA on the branch.</param>
+public sealed record GhPullRequestState(
+    int Number,
+    string State,
+    string? MergeCommitSha,
+    string? HeadRefName,
+    string? HeadRefOid);

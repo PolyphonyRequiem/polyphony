@@ -148,6 +148,103 @@ public sealed class GhClient : IGhClient
         throw new InvalidOperationException("CreatePullRequestAsync exited the retry loop without returning.");
     }
 
+    public async Task<GhMergeResult> MergePullRequestAsync(
+        string repoSlug,
+        int prNumber,
+        GhMergeMethod method,
+        bool admin = false,
+        bool deleteBranch = false,
+        string? matchHeadCommit = null,
+        CancellationToken ct = default)
+    {
+        var args = BuildPrMergeArgs(repoSlug, prNumber, method, admin, deleteBranch, matchHeadCommit);
+
+        for (int attempt = 1; attempt <= _policy.MaxAttempts; attempt++)
+        {
+            try
+            {
+                var result = await RunSingleAttemptAsync(args, ct).ConfigureAwait(false);
+
+                if (result.Succeeded)
+                {
+                    // gh pr merge stdout is human-oriented and unreliable —
+                    // fetch the canonical state to populate the merge SHA.
+                    var state = await TryGetStateForReconcileAsync(repoSlug, prNumber, ct).ConfigureAwait(false);
+                    return new GhMergeResult(
+                        Succeeded: true,
+                        PrNumber: prNumber,
+                        MergeSha: state?.MergeCommitSha,
+                        AlreadyMerged: false,
+                        Detail: string.IsNullOrWhiteSpace(result.Stdout) ? result.Stderr.Trim() : result.Stdout.Trim());
+                }
+
+                // Non-zero exit: reconcile against current PR state. If the
+                // server already records the PR as merged, treat as success
+                // (idempotent retry). Otherwise propagate as a real error.
+                if (LooksLikeAlreadyMerged(result.Stderr))
+                {
+                    var reconciled = await TryGetStateForReconcileAsync(repoSlug, prNumber, ct).ConfigureAwait(false);
+                    if (reconciled is { State: "MERGED" })
+                    {
+                        return new GhMergeResult(
+                            Succeeded: true,
+                            PrNumber: prNumber,
+                            MergeSha: reconciled.MergeCommitSha,
+                            AlreadyMerged: true,
+                            Detail: result.Stderr.Trim());
+                    }
+                }
+
+                throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                // Per-attempt timeout fired. Before backing off, check whether
+                // the merge actually succeeded server-side.
+                var reconciled = await TryGetStateForReconcileAsync(repoSlug, prNumber, ct).ConfigureAwait(false);
+                if (reconciled is { State: "MERGED" })
+                {
+                    return new GhMergeResult(
+                        Succeeded: true,
+                        PrNumber: prNumber,
+                        MergeSha: reconciled.MergeCommitSha,
+                        AlreadyMerged: true,
+                        Detail: $"reconciled after timeout — PR was already merged ({reconciled.MergeCommitSha})");
+                }
+
+                if (attempt >= _policy.MaxAttempts)
+                {
+                    throw new ExternalToolTimeoutException(
+                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout);
+                }
+
+                await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
+            }
+        }
+
+        // Unreachable: the loop always either returns or throws above.
+        throw new InvalidOperationException("MergePullRequestAsync exited the retry loop without returning.");
+    }
+
+    public async Task<GhPullRequestState?> GetPullRequestStateAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default)
+    {
+        string[] args =
+        [
+            "pr", "view", prNumber.ToString(),
+            "--repo", repoSlug,
+            "--json", "number,state,mergeCommit,headRefName,headRefOid",
+        ];
+        var result = await RunWithRetryAsync(args, ct).ConfigureAwait(false);
+        return result.Succeeded ? ParsePrState(result.Stdout) : null;
+    }
+
     /// <summary>
     /// Run an external command with the configured retry-on-timeout policy.
     /// Returns whatever <see cref="ProcessResult"/> the runner produced; the
@@ -230,6 +327,61 @@ public sealed class GhClient : IGhClient
         return stderr.Contains("already exists", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool LooksLikeAlreadyMerged(string stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr)) return false;
+        // gh emits messages like:
+        //   "Pull request #N is in clean status"  (no — different case)
+        //   "the pull request is not mergeable: pull request is already merged"
+        //   "this pull request is already merged"
+        return stderr.Contains("already merged", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<GhPullRequestState?> TryGetStateForReconcileAsync(
+        string repoSlug, int prNumber, CancellationToken ct)
+    {
+        try
+        {
+            return await GetPullRequestStateAsync(repoSlug, prNumber, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Reconciliation is best-effort — if view also fails, fall through
+            // to the original timeout/error path and let the caller see it.
+            return null;
+        }
+    }
+
+    private static string[] BuildPrMergeArgs(
+        string repoSlug,
+        int prNumber,
+        GhMergeMethod method,
+        bool admin,
+        bool deleteBranch,
+        string? matchHeadCommit)
+    {
+        var args = new List<string>
+        {
+            "pr", "merge", prNumber.ToString(),
+            "--repo", repoSlug,
+            method switch
+            {
+                GhMergeMethod.Merge => "--merge",
+                GhMergeMethod.Squash => "--squash",
+                GhMergeMethod.Rebase => "--rebase",
+                _ => throw new ArgumentOutOfRangeException(nameof(method), method, "Unknown merge method"),
+            },
+        };
+        if (admin) args.Add("--admin");
+        if (deleteBranch) args.Add("--delete-branch");
+        if (!string.IsNullOrEmpty(matchHeadCommit))
+        {
+            args.Add("--match-head-commit");
+            args.Add(matchHeadCommit);
+        }
+        return [.. args];
+    }
+
     private static List<string> BuildPrListArgs(string repoSlug, PrListFilters filters)
     {
         var args = new List<string> { "pr", "list", "--repo", repoSlug };
@@ -292,5 +444,27 @@ public sealed class GhClient : IGhClient
             summaries.Add(new PullRequestSummary(number, head, url, mergedAt));
         }
         return summaries;
+    }
+
+    private static GhPullRequestState? ParsePrState(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        JsonNode? node;
+        try { node = JsonNode.Parse(raw); }
+        catch (JsonException) { return null; }
+        if (node is not JsonObject obj) return null;
+
+        var number = obj["number"]?.GetValue<int>() ?? 0;
+        var state = obj["state"]?.GetValue<string>() ?? string.Empty;
+        // mergeCommit is an object {oid: "..."} when present, null otherwise.
+        var mergeCommitNode = obj["mergeCommit"];
+        string? mergeSha = null;
+        if (mergeCommitNode is JsonObject mergeObj)
+        {
+            mergeSha = mergeObj["oid"]?.GetValue<string>();
+        }
+        var headRefName = obj["headRefName"]?.GetValue<string>();
+        var headRefOid = obj["headRefOid"]?.GetValue<string>();
+        return new GhPullRequestState(number, state, mergeSha, headRefName, headRefOid);
     }
 }

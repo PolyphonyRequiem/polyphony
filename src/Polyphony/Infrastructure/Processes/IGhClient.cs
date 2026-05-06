@@ -67,4 +67,47 @@ public interface IGhClient
         string title,
         string body,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>gh pr merge {prNumber} --repo {repoSlug} --{method} [--admin] [--delete-branch] [--match-head-commit {sha}]</c>.
+    /// On success, the merge SHA is populated via a follow-up
+    /// <see cref="GetPullRequestStateAsync"/> call (gh's merge stdout is
+    /// human-oriented and unreliable). On timeout, reconciles against the
+    /// PR state — if the server already records the PR as merged, returns
+    /// success with <see cref="GhMergeResult.AlreadyMerged"/> set true.
+    /// Throws <see cref="ExternalToolException"/> for real errors and
+    /// <see cref="ExternalToolTimeoutException"/> when every attempt timed
+    /// out without reconciliation confirming a merged state.
+    /// </summary>
+    /// <param name="repoSlug">Owner/repo slug, e.g. <c>polyphonyrequiem/polyphony</c>.</param>
+    /// <param name="prNumber">PR number to merge.</param>
+    /// <param name="method">
+    /// Merge method. Use <see cref="GhMergeMethod.Merge"/> for merge-group
+    /// PRs (required by ADR docs/decisions/branch-model.md). Squash and
+    /// rebase are valid for task PRs.
+    /// </param>
+    /// <param name="admin">Pass <c>--admin</c> to bypass branch-protection requirements.</param>
+    /// <param name="deleteBranch">Pass <c>--delete-branch</c> to delete the head branch after merging.</param>
+    /// <param name="matchHeadCommit">When set, pass <c>--match-head-commit {sha}</c> so gh refuses to merge if the head moved.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<GhMergeResult> MergePullRequestAsync(
+        string repoSlug,
+        int prNumber,
+        GhMergeMethod method,
+        bool admin = false,
+        bool deleteBranch = false,
+        string? matchHeadCommit = null,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>gh pr view {prNumber} --repo {repoSlug} --json number,state,mergeCommit,headRefName,headRefOid</c>.
+    /// Returns null when the PR cannot be found (non-zero exit). Throws
+    /// <see cref="ExternalToolTimeoutException"/> when every attempt timed
+    /// out — used both for diagnostic introspection and for merge-call
+    /// reconciliation (see <see cref="MergePullRequestAsync"/>).
+    /// </summary>
+    Task<GhPullRequestState?> GetPullRequestStateAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default);
 }
