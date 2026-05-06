@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Polyphony.Manifest;
 
@@ -80,20 +82,129 @@ public static class PlanDiffValidator
         bool requestsParentChange,
         FrontMatterStatus frontMatterStatus)
     {
-        // SKELETON — real implementation lands in sdlc/p8b-validator-impl.
-        // Returning a clean OK keeps existing MergePlanPr tests green
-        // (validator-guard is a pass-through) until the agent's PR merges
-        // and replaces this body. Tests for the validator itself live in
-        // that PR.
+        // Bucket every path exactly once, in priority order:
+        //   polyphony state > ancestor plan > parent plan > self plan > other.
+        // Dedupe the input — gh shouldn't emit duplicates, but be defensive
+        // so a repeated path doesn't get counted as multiple violations.
+        var ancestorSet = new HashSet<string>(ancestorPlanFiles, StringComparer.Ordinal);
+
+        var selfBucket = new List<string>();
+        var parentBucket = new List<string>();
+        var ancestorBucket = new List<string>();
+        var polyphonyBucket = new List<string>();
+        var otherBucket = new List<string>();
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in changedPaths)
+        {
+            if (raw is null) continue;
+            if (!seen.Add(raw)) continue;
+
+            if (raw.StartsWith(".polyphony/", StringComparison.Ordinal) || raw == ".polyphony")
+            {
+                polyphonyBucket.Add(raw);
+                continue;
+            }
+
+            if (ancestorSet.Contains(raw))
+            {
+                ancestorBucket.Add(raw);
+                continue;
+            }
+
+            if (parentPlanFile is not null && string.Equals(raw, parentPlanFile, StringComparison.Ordinal))
+            {
+                parentBucket.Add(raw);
+                continue;
+            }
+
+            if (string.Equals(raw, selfPlanFile, StringComparison.Ordinal))
+            {
+                selfBucket.Add(raw);
+                continue;
+            }
+
+            otherBucket.Add(raw);
+        }
+
+        IReadOnlyList<string> selfFiles = selfBucket.Count == 0 ? Array.Empty<string>() : selfBucket;
+        IReadOnlyList<string> parentFiles = parentBucket.Count == 0 ? Array.Empty<string>() : parentBucket;
+        IReadOnlyList<string> ancestorFiles = ancestorBucket.Count == 0 ? Array.Empty<string>() : ancestorBucket;
+        IReadOnlyList<string> polyphonyFiles = polyphonyBucket.Count == 0 ? Array.Empty<string>() : polyphonyBucket;
+        IReadOnlyList<string> otherFiles = otherBucket.Count == 0 ? Array.Empty<string>() : otherBucket;
+
+        // Severity rules — first match wins. Order matches the class XML doc.
+        if (polyphonyFiles.Count > 0)
+        {
+            var list = string.Join(", ", polyphonyFiles.Select(p => $"'{p}'"));
+            return new Result(
+                ValidationSeverity.Blocking,
+                "child_touched_polyphony_state",
+                $"Plan PR touches polyphony state files which must never be modified by a plan PR: {list}.",
+                selfFiles, parentFiles, ancestorFiles, polyphonyFiles, otherFiles);
+        }
+
+        if (ancestorFiles.Count > 0)
+        {
+            var list = string.Join(", ", ancestorFiles.Select(p => $"'{p}'"));
+            return new Result(
+                ValidationSeverity.Blocking,
+                "child_touched_ancestor_plan",
+                $"Plan PR touches ancestor plan file(s) above its parent: {list}. A plan PR may only modify its own plan and (with 'requests_parent_change: true') its immediate parent's plan.",
+                selfFiles, parentFiles, ancestorFiles, polyphonyFiles, otherFiles);
+        }
+
+        if (parentFiles.Count > 0)
+        {
+            // parentPlanFile is non-null here (otherwise nothing could have
+            // landed in parentFiles), but use the bucket as the source of
+            // truth for the message.
+            var path = parentFiles[0];
+
+            if (!requestsParentChange)
+            {
+                return new Result(
+                    ValidationSeverity.Blocking,
+                    "child_touched_parent_plan",
+                    $"Plan PR touches parent plan file '{path}' but does not request a parent change (set 'requests_parent_change: true' in the PR body's front-matter).",
+                    selfFiles, parentFiles, ancestorFiles, polyphonyFiles, otherFiles);
+            }
+
+            if (frontMatterStatus == FrontMatterStatus.Malformed)
+            {
+                return new Result(
+                    ValidationSeverity.Blocking,
+                    "malformed_front_matter",
+                    $"Plan PR touches parent plan file '{path}' and the PR body's front-matter is malformed; cannot confirm 'requests_parent_change' intent.",
+                    selfFiles, parentFiles, ancestorFiles, polyphonyFiles, otherFiles);
+            }
+
+            if (frontMatterStatus == FrontMatterStatus.Absent)
+            {
+                return new Result(
+                    ValidationSeverity.Blocking,
+                    "missing_front_matter",
+                    $"Plan PR touches parent plan file '{path}' but the PR body has no front-matter block; add a '---'-fenced block declaring 'requests_parent_change: true'.",
+                    selfFiles, parentFiles, ancestorFiles, polyphonyFiles, otherFiles);
+            }
+
+            // requestsParentChange == true AND front-matter is Present → ok.
+        }
+
+        if (requestsParentChange && parentFiles.Count == 0)
+        {
+            return new Result(
+                ValidationSeverity.Warning,
+                "flag_set_no_parent_changes",
+                "Plan PR sets 'requests_parent_change: true' but does not modify the parent plan file; the flag has no effect. Consider clearing it or amending the parent plan.",
+                selfFiles, parentFiles, ancestorFiles, polyphonyFiles, otherFiles);
+        }
+
         return new Result(
             ValidationSeverity.None,
             "ok",
-            "Skeleton: no classification performed.",
-            SelfPlanFiles: Array.Empty<string>(),
-            ParentPlanFiles: Array.Empty<string>(),
-            AncestorPlanFiles: Array.Empty<string>(),
-            PolyphonyStateFiles: Array.Empty<string>(),
-            OtherFiles: changedPaths.ToArray());
+            "Plan PR diff is within the allowed scope.",
+            selfFiles, parentFiles, ancestorFiles, polyphonyFiles, otherFiles);
     }
 }
 
