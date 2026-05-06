@@ -757,5 +757,107 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
         // StaleAncestors must be null — proves the staleness check did NOT fire.
         result.StaleAncestors.ShouldBeNull();
     }
+
+    // ─── P8b validator-guard wiring ─────────────────────────────────────
+
+    /// <summary>
+    /// Stub for <see cref="IGhClient.GetPullRequestFilesAsync"/>. Registered
+    /// BEFORE <see cref="StubPrPoll"/> so the more-specific matcher (for
+    /// <c>--json files</c>) wins over the generic poll matcher.
+    /// </summary>
+    private static void StubPrFiles(FakeProcessRunner runner, int prNumber, params string[] paths)
+    {
+        var json = "{\"files\":[" + string.Join(",", paths.Select(p =>
+            $"{{\"path\":\"{p}\",\"additions\":1,\"deletions\":0}}")) + "]}";
+        runner.When(
+            (exe, args) => exe == "gh"
+                && args.Count >= 4
+                && args[0] == "pr" && args[1] == "view" && args[2] == prNumber.ToString()
+                && args.Contains("files"),
+            new ProcessResult(0, json, ""));
+    }
+
+    [Fact]
+    public async Task ValidationGuard_BlockingDiff_EmitsValidationBlocked()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubEnvironmentDefaults(runner);
+        StubStatusClean(runner);
+        StubFetch(runner, "feature/100");
+
+        // Files-specific matcher MUST be registered before the generic
+        // poll-status matcher in StubPrPoll, since first-match wins.
+        // Touching .polyphony/ → Blocking, child_touched_polyphony_state.
+        StubPrFiles(runner, 42, ".polyphony/run.yaml");
+
+        var snapshot = new Dictionary<string, int> { ["root"] = 2 };
+        StubPrPoll(runner, 42, "OPEN",
+            headRefName: "plan/100-1100", baseRefName: "plan/100",
+            body: MakeBodyWithSnapshot(snapshot));
+
+        var manifestYaml = """
+            schema: 1
+            root_id: 100
+            platform_project: github.com/owner/repo
+            created_at: 2026-05-06T00:00:00Z
+            created_by: test
+            branch_model_version: 1
+            plan_generations:
+              root: 2
+            merged_plan_prs: []
+            """;
+        StubGitShowManifest(runner, "feature/100", manifestYaml);
+        SeedManifest(100);
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergePlanPr(rootId: 100, itemId: 1100, prNumber: 42, manifestPath: _manifestPath));
+
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("validation_blocked");
+        result.Error.ShouldNotBeNull();
+        // The merge MUST NOT have been attempted; verify no `gh pr merge` in the recorded invocations.
+        runner.Invocations.ShouldNotContain(i =>
+            i.Executable == "gh" && i.Arguments.Count >= 2 && i.Arguments[0] == "pr" && i.Arguments[1] == "merge");
+    }
+
+    [Fact]
+    public async Task ValidationGuard_OnlyOwnPlan_PassesThrough()
+    {
+        // Touching only the PR's own plan file is the OK case — clean diff.
+        var (cmd, runner) = CreateCommand();
+        StubEnvironmentDefaults(runner);
+        StubStatusClean(runner);
+        StubFetch(runner, "feature/100");
+
+        StubPrFiles(runner, 42, "plans/plan-1100.md");
+
+        var snapshot = new Dictionary<string, int> { ["root"] = 2 };
+        StubPrPoll(runner, 42, "OPEN",
+            headRefName: "plan/100-1100", baseRefName: "plan/100",
+            body: MakeBodyWithSnapshot(snapshot));
+
+        var manifestYaml = """
+            schema: 1
+            root_id: 100
+            platform_project: github.com/owner/repo
+            created_at: 2026-05-06T00:00:00Z
+            created_by: test
+            branch_model_version: 1
+            plan_generations:
+              root: 2
+            merged_plan_prs: []
+            """;
+        StubGitShowManifest(runner, "feature/100", manifestYaml);
+        SeedManifest(100);
+
+        // Don't stub `gh pr merge`; we want the verb to fail at the merge
+        // step, NOT at the validator guard. That proves the guard let it through.
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergePlanPr(rootId: 100, itemId: 1100, prNumber: 42, manifestPath: _manifestPath));
+
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("merge_failed");
+        result.ErrorCode.ShouldNotBe("validation_blocked");
+    }
 }
 
