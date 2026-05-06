@@ -366,6 +366,197 @@ public sealed class AdoClient : IAdoClient
         return raw is null ? null : MapPullRequest(raw);
     }
 
+    /// <inheritdoc />
+    public async Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
+        string organization,
+        string project,
+        string repositoryId,
+        int pullRequestId,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(organization);
+        ArgumentException.ThrowIfNullOrEmpty(project);
+        ArgumentException.ThrowIfNullOrEmpty(repositoryId);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
+
+        var pat = ResolvePatOrThrow();
+
+        // 1) Basic PR detail.
+        var detailUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                        $"/_apis/git/repositories/{Uri.EscapeDataString(repositoryId)}/pullrequests/{pullRequestId}" +
+                        $"?api-version=7.1";
+
+        AdoPullRequestDetailRaw? detail;
+        using (var detailResponse = await SendWithRetryAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, detailUrl);
+            AddAuthHeaders(req, pat);
+            return req;
+        }, ct).ConfigureAwait(false))
+        {
+            if (detailResponse.StatusCode == HttpStatusCode.NotFound)
+            {
+                // PR (or repo/project) does not exist — skip the reviewers call.
+                return null;
+            }
+            await EnsureSuccessAsync(detailResponse, ct).ConfigureAwait(false);
+
+            await using var detailStream = await detailResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            detail = await JsonSerializer.DeserializeAsync(
+                detailStream, PolyphonyJsonContext.Default.AdoPullRequestDetailRaw, ct).ConfigureAwait(false);
+        }
+
+        if (detail is null)
+        {
+            // Unlikely — successful 200 with empty body. Treat as not found rather
+            // than synthesise a half-populated record that would mislead callers.
+            return null;
+        }
+
+        // 2) Reviewers list. A 404 here is unusual (the PR exists per step 1) but
+        //    treat it the same as an empty reviewer set rather than failing the verb.
+        var reviewersUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                           $"/_apis/git/repositories/{Uri.EscapeDataString(repositoryId)}/pullrequests/{pullRequestId}/reviewers" +
+                           $"?api-version=7.1";
+
+        AdoReviewerRaw[] reviewersRaw;
+        using (var reviewersResponse = await SendWithRetryAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, reviewersUrl);
+            AddAuthHeaders(req, pat);
+            return req;
+        }, ct).ConfigureAwait(false))
+        {
+            if (reviewersResponse.StatusCode == HttpStatusCode.NotFound)
+            {
+                reviewersRaw = Array.Empty<AdoReviewerRaw>();
+            }
+            else
+            {
+                await EnsureSuccessAsync(reviewersResponse, ct).ConfigureAwait(false);
+                await using var reviewersStream =
+                    await reviewersResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                var envelope = await JsonSerializer.DeserializeAsync(
+                    reviewersStream, PolyphonyJsonContext.Default.AdoReviewerListResponse, ct).ConfigureAwait(false);
+                reviewersRaw = envelope?.Value ?? Array.Empty<AdoReviewerRaw>();
+            }
+        }
+
+        return ComposePollData(detail, reviewersRaw);
+    }
+
+    /// <summary>
+    /// Map the wire-level PR detail + reviewer envelope into the
+    /// platform-neutral <see cref="AdoPullRequestPollData"/> projection.
+    /// State, mergeability, and the aggregated review decision are all
+    /// normalised here so the verb has nothing left to interpret.
+    /// </summary>
+    private static AdoPullRequestPollData ComposePollData(
+        AdoPullRequestDetailRaw detail,
+        IReadOnlyList<AdoReviewerRaw> reviewersRaw)
+    {
+        var reviews = new AdoPullRequestReview[reviewersRaw.Count];
+        for (int i = 0; i < reviewersRaw.Count; i++)
+        {
+            var r = reviewersRaw[i];
+            reviews[i] = new AdoPullRequestReview
+            {
+                Identity = !string.IsNullOrEmpty(r.DisplayName)
+                    ? r.DisplayName
+                    : (r.UniqueName ?? string.Empty),
+                Vote = MapVote(r.Vote),
+                SubmittedAt = null, // ADO does not surface a per-reviewer timestamp.
+            };
+        }
+
+        var state = MapState(detail.Status);
+        var isMerged = string.Equals(state, "MERGED", StringComparison.Ordinal);
+
+        return new AdoPullRequestPollData
+        {
+            Number = detail.PullRequestId,
+            State = state,
+            ReviewDecision = AggregateReviewDecision(reviewersRaw),
+            Mergeable = AdoMergeStatus.Map(detail.MergeStatus),
+            HeadRefName = StripRefsHeads(detail.SourceRefName) ?? string.Empty,
+            HeadRefOid = detail.LastMergeSourceCommit?.CommitId ?? string.Empty,
+            BaseRefName = StripRefsHeads(detail.TargetRefName) ?? string.Empty,
+            MergedAt = isMerged ? detail.ClosedDate : null,
+            MergeCommit = isMerged ? detail.LastMergeCommit?.CommitId : null,
+            Body = detail.Description ?? string.Empty,
+            Reviews = reviews,
+        };
+    }
+
+    /// <summary>
+    /// Map ADO's vote enum to the platform-neutral string vocabulary.
+    /// Unknown ints fall through as <c>"no_vote"</c> rather than throwing —
+    /// the verb's job is to report status, not validate the ADO API.
+    /// </summary>
+    internal static string MapVote(int vote) => vote switch
+    {
+        10 => "approved",
+        5 => "approved_with_suggestions",
+        -5 => "waiting_for_author",
+        -10 => "rejected",
+        _ => "no_vote",
+    };
+
+    /// <summary>
+    /// Map ADO PR <c>status</c> to the platform-neutral state vocabulary
+    /// (<c>OPEN | MERGED | CLOSED</c>). Unknown values fall through as
+    /// <c>OPEN</c> so the verb still has a usable signal.
+    /// </summary>
+    internal static string MapState(string? status) => status switch
+    {
+        "active" => "OPEN",
+        "completed" => "MERGED",
+        "abandoned" => "CLOSED",
+        _ => "OPEN",
+    };
+
+    /// <summary>
+    /// Aggregate individual reviewer votes into a single decision string.
+    /// Any rejection (-10) shortcircuits to <c>REJECTED</c>; otherwise the
+    /// decision is <c>APPROVED</c> when there is at least one required
+    /// reviewer and every required reviewer voted approved (10) or approved
+    /// with suggestions (5). All other shapes (no required reviewers, mixed
+    /// votes, waiting-for-author) are <c>REVIEW_REQUIRED</c>.
+    /// </summary>
+    internal static string AggregateReviewDecision(IReadOnlyList<AdoReviewerRaw> reviewers)
+    {
+        var anyRejection = false;
+        var requiredCount = 0;
+        var requiredApproved = 0;
+        for (int i = 0; i < reviewers.Count; i++)
+        {
+            var r = reviewers[i];
+            if (r.Vote == -10) anyRejection = true;
+            if (r.IsRequired)
+            {
+                requiredCount++;
+                if (r.Vote >= 5) requiredApproved++;
+            }
+        }
+        if (anyRejection) return "REJECTED";
+        if (requiredCount > 0 && requiredApproved == requiredCount) return "APPROVED";
+        return "REVIEW_REQUIRED";
+    }
+
+    /// <summary>
+    /// Strip the <c>refs/heads/</c> prefix when present so the JSON envelope
+    /// matches the GitHub side (gh returns short branch names from
+    /// <c>--json headRefName</c>).
+    /// </summary>
+    private static string? StripRefsHeads(string? refName)
+    {
+        if (string.IsNullOrEmpty(refName)) return refName;
+        const string prefix = "refs/heads/";
+        return refName.StartsWith(prefix, StringComparison.Ordinal)
+            ? refName.Substring(prefix.Length)
+            : refName;
+    }
+
     private static string StatusToQueryValue(AdoPullRequestStatus status) => status switch
     {
         AdoPullRequestStatus.Active => "active",

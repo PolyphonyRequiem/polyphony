@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using ConsoleAppFramework;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 using Twig.Domain.Interfaces;
@@ -19,6 +20,10 @@ namespace Polyphony.Commands;
 /// have been collapsed into the internal <see cref="GhClient"/> helper —
 /// they are NOT exposed as verbs.)
 /// </summary>
+// Single ctor (ConsoleAppFramework CAF011 — Add<T> rejects multiple ctors).
+// IAdoClient is injected as an optional dependency: production runs get the
+// DI-resolved instance (registered in PolyphonyServiceRegistration); GitHub-only
+// tests pass null and never exercise the ADO leg.
 public sealed partial class PrCommands(
     IGitClient git,
     IGhClient gh,
@@ -26,7 +31,8 @@ public sealed partial class PrCommands(
     IWorkItemRepository repository,
     ProcessConfig processConfig,
     Polyphony.Locking.RunLockStore lockStore,
-    Polyphony.Locking.RunLockPathResolver lockPathResolver)
+    Polyphony.Locking.RunLockPathResolver lockPathResolver,
+    IAdoClient? ado = null)
 {
     private static readonly Regex PullUrlRegex =
         new(@"/pull/(\d+)", RegexOptions.Compiled);
