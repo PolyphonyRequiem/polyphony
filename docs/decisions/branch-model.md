@@ -1,10 +1,13 @@
 # Polyphony Branch Model — Feature Trunk + Plan / Merge-Group / Task Tree
 
-> **Status:** Proposed, **Rev 3** (2026-05). Awaiting sign-off as part of
+> **Status:** Proposed, **Rev 4** (2026-05). Awaiting sign-off as part of
 > Phase 4 of the PR/branch lifecycle overhaul. Rev 2 incorporated a hostile
-> design pass that found 8 blocking ambiguities in Rev 1; Rev 3 incorporates
-> a second hostile pass that found 2 blockers and 3 worth-addressing items
-> against Rev 2. See [§ Revision history](#revision-history).
+> design pass that found 8 blocking ambiguities in Rev 1; Rev 3 incorporated
+> a second pass that found 2 blockers and 3 worth-addressing items against
+> Rev 2. Rev 4 incorporates a third pass focused on branch-name grammar that
+> uncovered a real collision bug in the Rev 3 hyphen-joined `mg_path` and
+> moves MG branches to a `_`-delimited path encoding while flattening
+> task/plan/evidence branches to leaf-id only. See [§ Revision history](#revision-history).
 > **Driver:** Phase 4 of the lifecycle redesign locks in the branch tree the
 > driver and PR machinery operate on. Branch names are one-way doors — once a
 > run is in flight the names cannot be cheaply renamed without confusing
@@ -62,19 +65,23 @@ main
       │   plus committed run manifest at .polyphony/run.yaml (see §Run manifest)
       │
       ├── plan/{root_id}                        ← root-level plan branch
-      │    └── plan/{root_id}-{child_id}        ← child plan branch (recursive)
-      │         └── plan/{root_id}-…-{leaf_id}  ← deeper plan branches
+      │    └── plan/{root_id}-{item_id}         ← descendant plan branch (recursive;
+      │                                            base branch = parent's plan branch
+      │                                            captures the hierarchy)
       │
-      ├── mg/{root_id}-{mg_id}                       ← top-level merge group
-      │    ├── task/{root_id}-{mg_id}-{item_id}      ← task branch for an item
+      ├── mg/{root_id}_{mg_id}                       ← top-level merge group
+      │    │                                            (mg_path = mg_id for top-level)
+      │    ├── task/{root_id}-{item_id}              ← task branch for an item
       │    │                                            inside this MG (always exists
       │    │                                            for every implementable item,
-      │    │                                            leaf or non-leaf)
-      │    └── mg/{root_id}-{mg_id}-{nested_mg_id}   ← nested merge group; nested_mg_id
+      │    │                                            leaf or non-leaf; base branch =
+      │    │                                            enclosing MG)
+      │    └── mg/{root_id}_{mg_id}_{nested_mg_id}   ← nested merge group; nested_mg_id
       │         │                                       is planner-declared, or defaults
-      │         │                                       to item-{child_id}
-      │         ├── task/…-{owner_item_id}           ← non-leaf owner's own task PR
-      │         └── task/…-{descendant_id}           ← descendant tasks
+      │         │                                       to item-{child_id}; mg_path
+      │         │                                       segments joined by `_`
+      │         ├── task/{root_id}-{owner_item_id}   ← non-leaf owner's own task branch
+      │         └── task/{root_id}-{descendant_id}   ← descendant tasks
       │
       └── evidence/{root_id}-{item_id}          ← evidence branches (Phase 6)
 ```
@@ -85,23 +92,42 @@ main
 |---|---|---|
 | Feature | `feature/{root_id}` | One per `polyphony-full` run. Base for everything else. Requires a same-root run lock — see § Concurrent-run lock. |
 | Plan (root) | `plan/{root_id}` | Branches from `feature/{root_id}`. |
-| Plan (descendant) | `plan/{root_id}-{path}` | `path` is the hyphenated chain of work-item IDs from root to current. Branches from the parent's plan branch. |
-| Merge group (top) | `mg/{root_id}-{mg_id}` | `mg_id` is a **stable planner-declared id** (see § MG identity). Branches from `feature/{root_id}`. |
-| Merge group (nested) | `mg/{root_id}-{mg_path}-{nested_mg_id}` | Recursive. `mg_path` is the hyphenated chain of parent `mg_id` segments. `nested_mg_id` is **planner-declared in the parent's plan**, or defaults to `item-{child_id}` when the planner is silent. Both forms must match the same `^[a-z][a-z0-9-]{0,30}$` regex MG ids obey. Branches from the parent MG. See § Nested MG id. |
-| Task | `task/{root_id}-{mg_path}-{item_id}` | `mg_path` = hyphenated chain of `mg_id` segments. **Always exists** for every implementable item (leaf or non-leaf). Branches from the closest enclosing MG. |
+| Plan (descendant) | `plan/{root_id}-{item_id}` | `item_id` is the **leaf** work-item id only (the item this plan covers). The hierarchy is captured by the base branch — a descendant plan branches from its parent's plan branch. Work-item IDs are project-unique so leaf-only naming is collision-free. |
+| Merge group (top) | `mg/{root_id}_{mg_id}` | `mg_id` is a **stable planner-declared id** (see § MG identity). Branches from `feature/{root_id}`. |
+| Merge group (nested) | `mg/{root_id}_{mg_path}` | Recursive. `mg_path` is the **`_`-joined chain of `mg_id` segments** from root to current (top-level: `mg_path = mg_id`; nested: `mg_path = parent_mg_id_…_nested_mg_id`). The terminal segment is **planner-declared in the parent's plan**, or defaults to `item-{child_id}` when the planner is silent. Each segment must match `^[a-z][a-z0-9-]{0,30}$`; the `_` delimiter is unambiguous because that regex excludes `_`. Branches from the parent MG. See § Nested MG id. |
+| Task | `task/{root_id}-{item_id}` | **Flat** — `item_id` alone (project-unique). **Always exists** for every implementable item (leaf or non-leaf). Branches from the closest enclosing MG; the base branch records the topology. |
 | Evidence | `evidence/{root_id}-{item_id}` | Branches from `feature/{root_id}`. Phase 6. |
 
-Separator is **always `-`** between segments (never `/` for ID hierarchies — git
-treats `/` as ref namespace and a ref `mg/X` precludes `mg/X/Y`).
+#### Delimiter rules
+
+Three delimiters, each with a single role:
+
+- **`/`** — separates the ref-class prefix from the payload. Reserved.
+  Never used as an ID hierarchy delimiter (git treats `/` as ref namespace
+  and a ref `mg/X` precludes `mg/X/Y`).
+- **`-`** — separates the numeric `{root_id}` from a single payload segment.
+  Used in `task/`, `plan/`, `evidence/`, and as the segment-internal
+  character of MG ids themselves (e.g. `data-layer`).
+- **`_`** — the **MG hierarchy delimiter**. Appears only inside `mg/` branch
+  payloads. Unambiguous because the MG id grammar `^[a-z][a-z0-9-]{0,30}$`
+  excludes `_`. Splitting an `mg/` branch payload on `_` yields exactly
+  `[root_id, mg_id_1, mg_id_2, …]`.
+
+A single MG branch can therefore carry an unambiguous path of any depth:
+`mg/1234_data-layer_migrations_schema` parses uniquely as
+root=`1234`, path=`data-layer / migrations / schema`. The Rev 3 grammar
+that joined `mg_path` with `-` was demonstrably ambiguous (a top-level MG
+named `data-layer-migrations` collided with a nested `migrations` under
+`data-layer`); see § Alternatives considered.
 
 ### Promote chain
 
 | Layer | Head | Base | Merge mode policy key | Merge method |
 |---|---|---|---|---|
-| Task PR | `task/{r}-{mg_path}-{t}` | enclosing `mg/…` | `(scope, task_pr)` | squash OR merge — operator choice |
-| Nested MG PR | `mg/{r}-{mg_path}-{nested_id}` | `mg/{r}-{mg_path}` | `(scope, mg_pr)` | **merge commit** (mandatory) |
-| Top MG PR | `mg/{r}-{mg_id}` | `feature/{r}` | `(scope, mg_pr)` | **merge commit** (mandatory) |
-| Plan PR (descendant) | `plan/{r}-…-{c}` | `plan/{r}-…` | `(scope, plan_pr)` | **merge commit** (mandatory) |
+| Task PR | `task/{r}-{item_id}` | enclosing `mg/{r}_{mg_path}` | `(scope, task_pr)` | squash OR merge — operator choice |
+| Nested MG PR | `mg/{r}_{mg_path}` (terminal segment is the nested id) | `mg/{r}_{parent_mg_path}` | `(scope, mg_pr)` | **merge commit** (mandatory) |
+| Top MG PR | `mg/{r}_{mg_id}` | `feature/{r}` | `(scope, mg_pr)` | **merge commit** (mandatory) |
+| Plan PR (descendant) | `plan/{r}-{item_id}` | parent's plan branch | `(scope, plan_pr)` | **merge commit** (mandatory) |
 | Plan PR (root) | `plan/{r}` | `feature/{r}` | `(scope, plan_pr)` | **merge commit** (mandatory) |
 | Evidence PR | `evidence/{r}-{i}` | `feature/{r}` | `(scope, evidence_pr)` | squash OR merge — operator choice |
 | Feature PR | `feature/{r}` | `main` | `(scope, feature_pr)` | operator choice |
@@ -158,7 +184,9 @@ merge_groups:
 ```
 
 - `id`: lowercase-kebab string, must match `^[a-z][a-z0-9-]{0,30}$`. Becomes
-  the `{mg_id}` segment in the branch name (`mg/{r}-data-layer`).
+  the terminal `{mg_id}` segment of the branch name (`mg/{r}_data-layer`).
+  The `_` between root and id is the MG hierarchy delimiter — see
+  § Delimiter rules.
 - `order`: integer; controls dispatch order. Changing it is **not** a
   topology change — branches don't move.
 - `items` and `intent`: descriptive; can change with planner-PR review.
@@ -277,12 +305,12 @@ MG) **also gets its own task branch** under that nested MG. Its own
 implementation merges via that task PR alongside its descendants' task PRs.
 
 ```
-mg/{r}-{parent_mg_path}-{nested_mg_id}    ← child's nested MG branch
-                                             nested_mg_id is planner-declared
-                                             or item-{child_id}
- ├── task/{r}-{parent_mg_path}-{nested_mg_id}-{child_id}    ← child's OWN
- ├── task/{r}-{parent_mg_path}-{nested_mg_id}-{descendant_a_id}
- └── task/{r}-{parent_mg_path}-{nested_mg_id}-{descendant_b_id}
+mg/{r}_{parent_mg_path}_{nested_mg_id}   ← child's nested MG branch
+                                            nested_mg_id is planner-declared
+                                            or item-{child_id}
+ ├── task/{r}-{child_id}                   ← child's OWN task branch
+ ├── task/{r}-{descendant_a_id}            ← descendant tasks (flat names;
+ └── task/{r}-{descendant_b_id}              base = enclosing MG branch)
 ```
 
 This satisfies the requirement model: `RequirementKind.ImplementationMerged`
@@ -294,7 +322,7 @@ attribution.
 ### Sibling-MG creation
 
 A parent can have **multiple top-level MGs** when the planner declares them.
-Each entry in the `merge_groups:` list becomes one `mg/{r}-{id}` (see
+Each entry in the `merge_groups:` list becomes one `mg/{r}_{id}` (see
 § MG identity).
 
 #### Default when planner is silent
@@ -311,11 +339,13 @@ Reviewers see this default in the plan PR and can request the planner to split.
 
 ### Branch-name length cap & nesting depth — operational smell gates
 
-Calculated worst-case branch names easily fit ADO/git limits even at depth 5
-(`task/99999999-data-layer-ui-surface-feature-x-area-9-bugfix-99-99999999`
-is well under 200 chars). The cap is **not** about names; it's about
-reviewer cognitive load, edge-graph complexity, and PR-chain rebase
-propagation.
+Calculated worst-case branch names easily fit ADO/git limits. Under the
+Rev 4 grammar, task/plan/evidence names are bounded — one root id plus
+one item id (`task/99999999-99999999`, ~25 chars). MG names grow with
+depth (`mg/99999999_data-layer_ui-surface_feature-x_area-9_bugfix-99` at
+depth 5, well under 200 chars). The cap is **not** about names; it's
+about reviewer cognitive load, edge-graph complexity, and PR-chain
+rebase propagation.
 
 Rules:
 
@@ -372,7 +402,7 @@ underpin open task PRs and reviewer comments.
 
 Rule: the driver only auto-rebases when
 
-- the downstream `mg/{r}-{downstream_mg_path}` branch does not yet exist, **or**
+- the downstream `mg/{r}_{downstream_mg_path}` branch does not yet exist, **or**
 - it exists but has no descendant task or nested-MG branches.
 
 When downstream branches **are** materialized:
@@ -396,8 +426,10 @@ where possible; otherwise it falls back to `human_gate`.
 
 ### Renegotiation flow (child plan changing parent plan)
 
-`plan/{r}-…-{c}` branches **from** `plan/{r}-…`, so the child plan branch
-can include modifications to parent plan files in its diff naturally.
+`plan/{r}-{c}` branches **from** the parent's plan branch (root or
+ancestor descendant), so the child plan branch can include modifications
+to parent plan files in its diff naturally. Branch-name flatness does
+not affect this property — the parentage is encoded in the PR base.
 
 Child plan document declares:
 
@@ -467,8 +499,9 @@ If a parent plan PR has already merged and a child later requests parent
 changes, the driver:
 
 1. Bumps `parent_plan_generation`.
-2. Opens a new parent plan PR from the same `plan/{r}-…` branch (with the
-   child-proposed parent edits cherry-picked or merged in).
+2. Opens a new parent plan PR from the same `plan/{r}` or
+   `plan/{r}-{parent_item_id}` branch (with the child-proposed parent
+   edits cherry-picked or merged in).
 3. Marks any in-flight sibling child plan PRs as stale per the rule above.
 
 ### Isolation-scope ↔ branch contract
@@ -514,7 +547,7 @@ topology_hash: sha256:abc123…
 
 merge_groups:
   - id: data-layer
-    mg_path: data-layer            # full hyphenated path from root
+    mg_path: data-layer            # `_`-joined chain from root; top-level => single segment
     parent_mg_path: null           # null => top-level under feature/
     items: [101, 102]
     nesting: top
@@ -528,7 +561,7 @@ merge_groups:
     isolation: per-merge-group
     nesting_override: null
   - id: item-4567                  # default-derived nested MG id
-    mg_path: data-layer-item-4567
+    mg_path: data-layer_item-4567  # `_`-joined: data-layer / item-4567
     parent_mg_path: data-layer
     items: [4567, 4571, 4572]
     nesting: nested
@@ -537,12 +570,12 @@ merge_groups:
 
 # Recorded rebase events for auditability (cross-MG code-dep, child-plan, etc.)
 rebases:
-  - branch: mg/1234-data-layer
+  - branch: mg/1234_data-layer
     onto: feature/1234
     reason: cross_mg_code_dep
     commit: 0b1f3e9
     recorded_at: 2026-05-06T18:00:00Z
-  - branch: plan/1234-100-101
+  - branch: plan/1234-101
     onto: plan/1234-100
     reason: child_plan_drift
     commit: 7c4e2a1
@@ -553,7 +586,7 @@ human_approvals:
   - gate: deep_nesting_depth_4
     approved_by: dangreen
     approved_at: 2026-05-06T17:00:00Z
-    detail: "mg/1234-data-layer-item-4567-migrations approved at depth 4"
+    detail: "mg/1234_data-layer_item-4567_migrations approved at depth 4"
 
 # Retired MG ids (cannot be reused under this root)
 retired_merge_group_ids:
@@ -577,16 +610,20 @@ records below — not the YAML text. Canonicalization rules:
 3. Within each record, `items` are sorted ascending.
 4. Each record is serialized as a tab-separated UTF-8 line:
    `mg_path\titems_csv\tisolation\tnesting_override\n`
-   where `items_csv` is comma-joined sorted item ids, and
-   `nesting_override` is the literal string `null` when absent or the
-   override value otherwise.
+   where `mg_path` is the canonical `_`-joined segment chain (the
+   manifest's `mg_path` field verbatim), `items_csv` is comma-joined
+   sorted item ids, and `nesting_override` is the literal string `null`
+   when absent or the override value otherwise.
 5. The full canonical text is the concatenation of all lines.
 6. The hash is `sha256(canonical_text)` and stored as `sha256:{hex}`.
 
 Including `mg_path` (not just `id`) is what closes the rubber-duck blocker:
-two MGs with the same `id` segment under different parents produce
+two MGs with the same terminal `id` segment under different parents produce
 different `mg_path` values, so the hash distinguishes them. `parent_mg_path`
-is implicit in `mg_path` and is therefore not duplicated in the hash input.
+is implicit in `mg_path` (drop the trailing segment) and is therefore not
+duplicated in the hash input. Because `_` is excluded from the MG id grammar,
+`mg_path` admits one and only one segmentation, so the canonical text is
+unambiguous.
 
 `plan_generations`, `rebases`, `human_approvals`, and
 `retired_merge_group_ids` are **not** part of the topology hash — they are
@@ -689,6 +726,67 @@ Skip MGs; each item has its own branch and PR; merges go straight to feature.
 
 Rejected as too flat.
 
+### Hyphen-joined `mg_path` (Rev 3 form, superseded)
+
+Use `-` as both the in-id character and the MG hierarchy delimiter, so an
+MG branch is `mg/{r}-{mg_path}` with `mg_path` joined by `-`.
+
+- ✗ **Real collision bug**, not just human ambiguity. Because MG ids
+  themselves contain `-` (e.g. `data-layer`), the branch
+  `mg/1234-data-layer-migrations` admits two distinct topology
+  interpretations:
+  - top-level MG with id `data-layer-migrations`, OR
+  - nested MG `migrations` under `data-layer`.
+  Two distinct topologies can produce the same branch ref. Topology hash
+  inherits the ambiguity.
+- ✗ Equally bad at depth 3+ even when ids are parent-local: two parents
+  in different subtrees can share a parent id (`payments/api/migrations`
+  and `identity/api/migrations` both flatten to
+  `mg/1234-api-migrations`).
+
+Rejected in Rev 4. Keep `-` for in-id and root-payload separation; use
+`_` (excluded from the MG id alphabet) as the MG hierarchy delimiter.
+See § Delimiter rules.
+
+### Path-encoded task and plan branches
+
+Mirror the MG path structure on task and plan branches:
+`task/{r}_{mg_path}_{item_id}` and `plan/{r}_{plan_path}`.
+
+- ✓ Topology readable from branch listing.
+- ✗ Branch names grow long (`task/1234_data-layer_migrations_schema_5678`)
+  for a property already captured by the **base branch** of the PR
+  (`task/{r}-{i}` based on `mg/{r}_{mg_path}` is unambiguous about which
+  MG owns the item).
+- ✗ Work item IDs are project-unique already, so adding the path is
+  redundant for identity.
+
+Rejected at the task and plan layers in Rev 4. Kept at the MG layer
+because integration boundaries are where reviewers most need topology
+visible without consulting the manifest. The hybrid is documented in
+§ Naming rules.
+
+### Fully flat MG names (`mg/{r}-{mg_id}` with global uniqueness)
+
+Drop topology from MG branches too; require `mg_id` to be globally
+unique under the root.
+
+- ✓ Shortest names; cleanest prefix workflows.
+- ✗ Forces planners to invent globally unique names for nested MGs that
+  would otherwise be locally meaningful (`migrations` under `auth`
+  vs. `migrations` under `data-layer`). Generic names become
+  unavailable for nested scopes.
+- ✗ Topology becomes legible only via the manifest, which raises the
+  human cost of debugging mid-run failures (which MG owns this branch?
+  what's its parent?).
+- ✗ Retirement and ancestor-cascade reasoning shifts from
+  prefix-based to manifest-graph-based, requiring tooling that doesn't
+  yet exist.
+
+Rejected in Rev 4. The MG branch is the surface where humans most
+benefit from path encoding; flatness pays off most where ID alone is
+unambiguous (task, plan, evidence).
+
 ### Branch-name hierarchy with `/` separators (e.g. `mg/123/data/migrations`)
 
 Use `/` instead of `-` between hierarchy levels.
@@ -697,8 +795,9 @@ Use `/` instead of `-` between hierarchy levels.
   `mg/123/data/migrations` cannot coexist (ref directory vs ref file
   conflict). Common pitfall.
 
-Rejected. We use `-` as the hierarchy separator and reserve `/` for the
-single ref-class prefix (`mg/`, `plan/`, `task/`, `feature/`, `evidence/`).
+Rejected. We use `_` as the MG hierarchy delimiter and `-` as the
+root-payload separator everywhere else; `/` is reserved for the single
+ref-class prefix (`mg/`, `plan/`, `task/`, `feature/`, `evidence/`).
 
 ### Position-based MG numbering (Rev 1)
 
@@ -855,11 +954,12 @@ not *which branches exist*.
   parent-plan-generation concurrency control for renegotiation, per-evidence
   retention default, cross-sibling code-dep rebase rule, implementable
   non-leaves get own task PR.
-- **Rev 3** (this document): second design-pass critique addressed. Nested
-  MG id source pinned (planner-declared via `children_overrides[].nested_mg_id`,
-  default `item-{child_id}`); topology hash inputs canonicalized over
-  `(mg_path, items, isolation, nesting_override)` with `mg_path` distinguishing
-  same-id MGs under different parents; manifest schema additions
+- **Rev 3** (drafted 2026-05-06, superseded): second design-pass critique
+  addressed. Nested MG id source pinned (planner-declared via
+  `children_overrides[].nested_mg_id`, default `item-{child_id}`); topology
+  hash inputs canonicalized over `(mg_path, items, isolation,
+  nesting_override)` with `mg_path` distinguishing same-id MGs under
+  different parents; manifest schema additions
   (`mg_path`/`parent_mg_path`/`isolation`/`nesting_override` per MG,
   `rebases[]`, `human_approvals[]`, `retired_merge_group_ids[]`);
   promote-and-rebase materialization gate (auto only before downstream
@@ -867,6 +967,20 @@ not *which branches exist*.
   staleness for grandparent renegotiation (`ancestor_plan_generations`
   recorded per child plan branch); operator UX language for run lock
   distinguishes attach vs start.
+- **Rev 4** (this document): third design-pass critique addressed branch-name
+  grammar. Hyphen-joined `mg_path` was found to admit real branch-ref
+  collisions (a top-level MG `data-layer-migrations` collides with a nested
+  `migrations` under `data-layer`), since MG ids themselves contain `-`. The
+  hybrid resolution adopted: MG branches use `_` as the hierarchy delimiter
+  (`mg/{root}_{mg_path}`, where `_` is excluded from the MG id grammar and
+  is therefore an unambiguous separator); task, plan, and evidence branches
+  flatten to a single leaf id (`task/{root}-{item_id}`,
+  `plan/{root}-{item_id}`, `evidence/{root}-{item_id}`) since work-item IDs
+  are already project-unique and the PR base branch records the topology.
+  Manifest `mg_path` field is now formally `_`-joined; topology hash
+  canonicalization uses the same string. Three new entries added to
+  § Alternatives considered (hyphen-joined `mg_path`, path-encoded
+  task/plan, fully flat MG names with global uniqueness).
 
 ## References
 
