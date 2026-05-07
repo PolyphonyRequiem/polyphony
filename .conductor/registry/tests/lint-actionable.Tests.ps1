@@ -92,9 +92,19 @@ agents:
     routes:
       - to: workflow_error_gate
         when: "{{ ensure_evidence_branch.output.error is defined and ensure_evidence_branch.output.error != '' }}"
+      - to: compose_addendum
+
+  # Phase 6 PR #5 — composes the addendum (skills + MCPs + per-item
+  # guidance) the actionable_agent prompt template injects.
+  - name: compose_addendum
+    type: script
+    command: polyphony
+    args: ["agent", "compose-addendum", "1"]
+    routes:
+      - to: workflow_error_gate
+        when: "{{ compose_addendum.output.error is defined and compose_addendum.output.error != '' }}"
       - to: actionable_agent
 
-  # TODO(p6-pr5): wire ComposeProfile() output into agent.prompt_addendum.
   - name: actionable_agent
     type: agent
     model: claude-opus-4.6
@@ -102,7 +112,9 @@ agents:
     output:
       summary:
         type: string
-    prompt: "Do the work"
+    prompt: |
+      Do the work for #{{ workflow.input.work_item_id }}.
+      {% if compose_addendum is defined %}{{ compose_addendum.output.skills | default([]) | join(', ') }}{% endif %}
     routes:
       - to: open_evidence_pr
 
@@ -370,7 +382,8 @@ agents:
         }
 
         It 'Fails when a deferred-wiring TODO marker is dropped' {
-            $yaml = ($script:ValidYaml) -replace 'TODO\(p6-pr5\)', 'TODO(generic)'
+            # Replace TODO(p6-pr8) with a generic marker — that should fail.
+            $yaml = ($script:ValidYaml) -replace 'TODO\(p6-pr8\)', 'TODO(generic)'
             Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
@@ -410,6 +423,40 @@ agents:
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-evidence-verb'
+        }
+
+        It 'Fails when the compose_addendum step is missing' {
+            $yaml = ($script:ValidYaml) -replace 'name: compose_addendum', 'name: compose_skipped'
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-node.*compose_addendum'
+        }
+
+        It 'Fails when the agent compose-addendum verb is not invoked' {
+            $yaml = ($script:ValidYaml) -replace '"compose-addendum"', '"compose-context"'
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-evidence-verb'
+        }
+
+        It 'Fails when actionable_agent does not consume compose_addendum.output' {
+            # Strip the {% if compose_addendum %} block from the agent prompt.
+            $yaml = ($script:ValidYaml) -replace "(?ms)\s+\{% if compose_addendum is defined %\}.*?\{% endif %\}", ''
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'compose-addendum-envelope-not-consumed'
+        }
+
+        It 'Fails when the stale TODO(p6-pr5) marker reappears' {
+            # PR #5 removed it; reappearance is a partial-revert smell.
+            $yaml = ($script:ValidYaml) -replace 'name: compose_addendum', "name: compose_addendum`n  # TODO(p6-pr5): forgotten marker"
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'shipped-todo-still-present'
         }
     }
 }

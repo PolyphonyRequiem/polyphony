@@ -130,6 +130,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(EdgesCheckResult))]
 [JsonSerializable(typeof(EdgesCheckConflict))]
 [JsonSerializable(typeof(CrossItemEdge))]
+[JsonSerializable(typeof(AgentComposeAddendumResult))]
 [JsonSerializable(typeof(AdoAuthStatus))]
 [JsonSerializable(typeof(AdoCommitRef))]
 [JsonSerializable(typeof(AdoCompletePullRequestRequest))]

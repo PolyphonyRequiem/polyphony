@@ -9,13 +9,13 @@
     3. Required outputs: satisfied, executor, pr_url, pr_number,
        evidence_branch
     4. Required nodes (both legs): executor_router, ensure_evidence_branch,
-       actionable_agent, open_evidence_pr, evidence_floor_check,
-       floor_failed_gate, evidence_reviewer, revise_loop_gate,
-       merge_evidence_pr, human_satisfaction_gate, workflow_error_gate,
-       workflow_completed, workflow_abandoned
+       compose_addendum, actionable_agent, open_evidence_pr,
+       evidence_floor_check, floor_failed_gate, evidence_reviewer,
+       revise_loop_gate, merge_evidence_pr, human_satisfaction_gate,
+       workflow_error_gate, workflow_completed, workflow_abandoned
     5. Phase 6 evidence verbs are wired:
        branch ensure-evidence-branch, pr open-evidence-pr,
-       pr check-evidence-floor
+       agent compose-addendum, pr check-evidence-floor
     6. actionable_agent + evidence_reviewer use opus models
     7. Routed agents declare an output: schema (M2)
     8. All route targets reference valid agent names or $end (M4)
@@ -25,6 +25,10 @@
         cannot be silently dropped before the follow-up PRs land
     11. Phase 6 PR #7 ships the floor — TODO(p6-pr7) marker MUST be
         absent (its presence indicates the wiring was reverted)
+    11b. Phase 6 PR #5 ships the addendum — TODO(p6-pr5) marker MUST
+         be absent (its presence indicates the wiring was reverted)
+    11c. The actionable_agent prompt template injects the
+         compose_addendum envelope (skills / mcps / guidance) — Phase 6 PR #5
     Exits 0 if clean, 1 if violations found.
 #>
 [CmdletBinding()]
@@ -103,6 +107,7 @@ foreach ($output in $requiredOutputs) {
 $requiredNodes = @(
     'executor_router',
     'ensure_evidence_branch',
+    'compose_addendum',
     'actionable_agent',
     'open_evidence_pr',
     'evidence_floor_check',
@@ -128,6 +133,7 @@ foreach ($node in $requiredNodes) {
 $evidenceVerbs = @(
     @{ Verb = 'branch ensure-evidence-branch'; Pattern = '"ensure-evidence-branch"' },
     @{ Verb = 'pr open-evidence-pr';           Pattern = '"open-evidence-pr"' },
+    @{ Verb = 'agent compose-addendum';        Pattern = '"compose-addendum"' },
     @{ Verb = 'pr check-evidence-floor';       Pattern = '"check-evidence-floor"' }
 )
 foreach ($entry in $evidenceVerbs) {
@@ -222,8 +228,9 @@ foreach ($type in $forbiddenTypes) {
 }
 
 # ── Check 11: Phase 6 deferred-wiring TODO markers present ───────────────
+# PR #5 (compose_addendum) and PR #7 (evidence floor check) have shipped
+# and removed their respective markers. The remaining marker gates PR #8.
 $todoMarkers = @(
-    @{ Marker = 'TODO(p6-pr5)'; Detail = 'facet-profile composition + per-item guidance (PR #5)' },
     @{ Marker = 'TODO(p6-pr8)'; Detail = 'full evidence_reviewer rubric (PR #8)' }
 )
 foreach ($entry in $todoMarkers) {
@@ -242,6 +249,7 @@ foreach ($entry in $todoMarkers) {
 # enforces the positive side (the new node is present); this check
 # enforces the negative side (the placeholder marker is gone).
 $shippedTodos = @(
+    @{ Marker = 'TODO(p6-pr5)'; ShippedIn = 'PR #5 (compose_addendum + prompt injection)' },
     @{ Marker = 'TODO(p6-pr7)'; ShippedIn = 'PR #7 (evidence floor check)' }
 )
 foreach ($entry in $shippedTodos) {
@@ -250,6 +258,18 @@ foreach ($entry in $shippedTodos) {
             Rule   = 'shipped-todo-still-present'
             Detail = "Marker '$($entry.Marker)' is still present but its wiring shipped in $($entry.ShippedIn). Remove the marker so the lint can stay accurate."
         }
+    }
+}
+
+# ── Check 11c: compose_addendum envelope is consumed by actionable_agent ─
+# The compose_addendum step's output must be referenced from the
+# actionable_agent prompt template. Without this, the wiring is structural
+# theater — the verb runs but the agent never sees its envelope.
+$actionableAgentBlock = Get-AgentBlock -AgentName 'actionable_agent' -Lines $lines
+if ($actionableAgentBlock -and $actionableAgentBlock -notmatch 'compose_addendum\.output\.') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'compose-addendum-envelope-not-consumed'
+        Detail = "actionable_agent prompt template does not reference compose_addendum.output.* — the Phase 6 PR #5 wiring is incomplete (the verb runs but the agent never sees its envelope)."
     }
 }
 

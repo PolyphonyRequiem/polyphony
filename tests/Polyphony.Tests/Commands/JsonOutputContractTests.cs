@@ -527,6 +527,98 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
+    // Agent compose-addendum command — JSON contract (Phase 6 PR #5)
+    // =========================================================================
+
+    [Fact]
+    public async Task AgentComposeAddendum_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(14_001).WithType(EpicType).WithTitle("Compose addendum").WithState(InProgressState).Build());
+
+        var (cmd, policyPath, dispose) = CreateAgentCommands();
+        try
+        {
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ComposeAddendum(14_001, policyPath));
+
+            exitCode.ShouldBe(ExitCodes.Success);
+            output.ShouldContain("\"work_item_id\"");
+            output.ShouldContain("\"facets\"");
+            output.ShouldContain("\"skills\"");
+            output.ShouldContain("\"mcps\"");
+            output.ShouldContain("\"guidance_present\"");
+
+            AssertNoPascalCase(output, "WorkItemId");
+            AssertNoPascalCase(output, "Facets");
+            AssertNoPascalCase(output, "Skills");
+            AssertNoPascalCase(output, "Mcps");
+            AssertNoPascalCase(output, "GuidancePresent");
+            AssertNoPascalCase(output, "ErrorCode");
+        }
+        finally { dispose(); }
+    }
+
+    [Fact]
+    public async Task AgentComposeAddendum_NullFieldsOmitted_WhenWritingNull()
+    {
+        // Happy path → guidance / error / error_code are null → keys must be absent.
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(14_002).WithType(EpicType).WithTitle("Null fields").WithState(InProgressState).Build());
+
+        var (cmd, policyPath, dispose) = CreateAgentCommands();
+        try
+        {
+            var (_, output) = await CaptureConsoleAsync(() => cmd.ComposeAddendum(14_002, policyPath));
+
+            output.ShouldNotContain("\"guidance\":null");
+            output.ShouldNotContain("\"error\"");
+            output.ShouldNotContain("\"error_code\"");
+        }
+        finally { dispose(); }
+    }
+
+    [Fact]
+    public async Task AgentComposeAddendum_DeserializationRoundTrip_FieldsMapped()
+    {
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(14_003).WithType(EpicType).WithTitle("Roundtrip").WithState(InProgressState).Build());
+
+        var (cmd, policyPath, dispose) = CreateAgentCommands();
+        try
+        {
+            var (_, output) = await CaptureConsoleAsync(() => cmd.ComposeAddendum(14_003, policyPath));
+
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.AgentComposeAddendumResult);
+            result.ShouldNotBeNull();
+            result!.WorkItemId.ShouldBe(14_003);
+            result.Facets.ShouldNotBeNull();
+            result.Skills.ShouldNotBeNull();
+            result.Mcps.ShouldNotBeNull();
+            result.GuidancePresent.ShouldBeFalse();
+        }
+        finally { dispose(); }
+    }
+
+    [Fact]
+    public async Task AgentComposeAddendum_NotFound_ReturnsErrorEnvelope_WithSuccessExitCode()
+    {
+        // Routing-style verb: always exit 0, route via envelope's error_code.
+        var (cmd, policyPath, dispose) = CreateAgentCommands();
+        try
+        {
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ComposeAddendum(99_994, policyPath));
+
+            exitCode.ShouldBe(ExitCodes.Success);
+            var doc = JsonDocument.Parse(output);
+            doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+            doc.RootElement.GetProperty("error_code").GetString().ShouldBe("work_item_not_found");
+            doc.RootElement.GetProperty("work_item_id").GetInt32().ShouldBe(99_994);
+        }
+        finally { dispose(); }
+    }
+
+
+    // =========================================================================
     // Worklist build command — JSON contract (Phase 7 PR #7 retrofit)
     // =========================================================================
 
@@ -1150,6 +1242,18 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         var config = CreateConfigBuilder().Build();
         return new EdgesCommands(Repository, config);
+    }
+
+    private (AgentCommands Cmd, string PolicyPath, Action Dispose) CreateAgentCommands()
+    {
+        var config = CreateConfigBuilder().Build();
+        var dir = Path.Combine(Path.GetTempPath(), $"polyphony-agent-contract-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var policyPath = Path.Combine(dir, "policy.yaml");
+        return (
+            new AgentCommands(Repository, config),
+            policyPath,
+            () => { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } });
     }
 
     private WorklistCommands CreateWorklistCommands()

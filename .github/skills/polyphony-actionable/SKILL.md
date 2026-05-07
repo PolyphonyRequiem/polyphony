@@ -39,6 +39,8 @@ If you are deciding whether to ship one workflow or two, read the ADR.
                                                │ │
         ensure_evidence_branch ◄───────────────┘ │
               │                                  │
+        compose_addendum (script — agent compose-addendum verb)
+              │                                  │
         actionable_agent (LLM, opus-4.6)         │
               │                                  │
         open_evidence_pr                         │
@@ -96,20 +98,20 @@ doesn't crash StrictUndefined evaluation.
 
 ## Phase 6 deferred wiring
 
-Two `TODO(p6-prN)` markers are intentional placeholders that
-`lint-actionable.ps1` enforces — removing them before the follow-up
-PR lands is a CI failure:
+After PR #5 + PR #7 shipped, only one `TODO(p6-prN)` marker remains —
+`lint-actionable.ps1` enforces both that it stays present until its
+follow-up PR lands, and that the already-shipped markers stay
+absent (their reappearance signals a botched revert):
 
 | Marker          | Lands in | What it gates                                        |
 |-----------------|----------|------------------------------------------------------|
-| `TODO(p6-pr5)`  | PR #5    | Facet-profile composition + per-item guidance addendum on `actionable_agent`. |
 | `TODO(p6-pr8)`  | PR #8    | Full evidence-judgment rubric for `evidence_reviewer` (currently a stub). |
 
 When you remove a marker as part of its follow-up PR, also remove the
 corresponding entry from `lint-actionable.ps1` — or the lint will
 flag the now-stale check. The lint also enforces the inverse: shipped
-TODO markers (e.g. `TODO(p6-pr7)` after PR #7 landed) MUST be absent
-from the YAML; their reappearance signals a botched revert.
+TODO markers (e.g. `TODO(p6-pr5)`, `TODO(p6-pr7)`) MUST be absent from
+the YAML; their reappearance signals a botched revert.
 
 ## Evidence floor check (Phase 6 PR #7)
 
@@ -139,10 +141,53 @@ Per Phase 6 design sketch pick #6, the floor is mechanical only. **Do
 not extend `check-evidence-floor` with content-quality checks** —
 that judgment belongs to the LLM reviewer alone.
 
+PR #5 (this PR) wired `compose_addendum` + the prompt-text injection
+that replaced the `TODO(p6-pr5)` placeholder. The lint now ASSERTS
+the marker is gone (a "stale-deferred-wiring-todo" check fails the
+build if it reappears) and that `actionable_agent`'s prompt template
+references `compose_addendum.output.*`.
+
+## How the addendum gets composed
+
+The `compose_addendum` step shells out to
+`polyphony agent compose-addendum {{ workflow.input.work_item_id }}`
+(see `src/Polyphony/Commands/AgentCommands.ComposeAddendum.cs`). The
+verb:
+
+1. Looks up the work item in the local twig cache.
+2. Reads the type's facet set from `process-config.yaml`.
+3. Loads `policy.yaml` and resolves the `guidance` rule for the item's
+   type (per PR #6's policy resolver).
+4. Extracts the per-item guidance via `polyphony.Guidance.GuidanceExtractor`.
+5. Calls `FacetProfileComposer.Compose(facets, profiles, perItemGuidance)`.
+6. Emits a routing-style JSON envelope: `{ work_item_id, facets,
+   skills, mcps, guidance, guidance_present, error?, error_code? }`.
+
+The verb ALWAYS exits 0; failures surface via `error_code` (one of
+`invalid_argument`, `work_item_not_found`, `type_unknown`,
+`invalid_facet_profile_config`, `guidance_misconfigured`,
+`cache_error`). The workflow's `compose_addendum` step routes on
+`output.error` to `workflow_error_gate`.
+
+`actionable_agent` consumes the envelope via Jinja2 prompt-text
+injection — `{% if compose_addendum is defined %}…{% endif %}` blocks
+for skills, MCPs, and guidance. Conductor's agent-step schema does
+NOT expose structured `skills:` / `mcps:` / `prompt_addendum:`
+fields, so prompt-text injection is the supported mechanism for the
+addendum to reach the agent. The static `tools:` list on
+`actionable_agent` controls which conductor MCP servers are
+connected; the dynamic skills/MCPs the composer surfaces are
+advisory context the agent reads from its prompt.
+
 ## Verbs the workflow shells out to
 
 - `polyphony branch ensure-evidence-branch <workItemId> [--apex-id N] [--from-ref ref] [--remote origin]`
   — emits `{ branch, base_branch, action, apex_id, item_id, orphan, from_ref, error? }`.
+- `polyphony agent compose-addendum <workItem> [--policy path]`
+  — emits `{ work_item_id, facets, skills, mcps, guidance, guidance_present, error?, error_code? }`.
+  Routing-style: always exits 0; errors surface via `error_code`. Composes
+  the facet-profile-derived skills + MCPs the actionable_agent prompt
+  injects, plus the per-item guidance extracted via the resolved policy.
 - `polyphony pr open-evidence-pr <workItem> [--apex-id N] [--head X] [--base-branch Y] [--title T] [--body B]`
   — emits `{ pr_number, pr_url, title, head_branch, base_branch, work_item_id, apex_id, created, error? }`.
   GH-only today; ADO sibling deferred per Phase 6 wave-0 pattern.
