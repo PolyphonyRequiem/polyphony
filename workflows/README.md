@@ -15,7 +15,7 @@ invoke the entry workflows by name:
 
 ```powershell
 conductor run plan-level@polyphony           --input work_item_id=<ID> --web
-conductor run polyphony-implement@polyphony  --input work_item_id=<ID> --web
+conductor run implement-pg@polyphony         --input work_item_id=<ID> --web
 ```
 
 ## Why a separate repo?

@@ -35,7 +35,7 @@ in and what to do next.
 
 YAML workflow files driving `conductor` (the multi-agent orchestrator) through
 sub-phases of the SDLC — planning (`plan-level`), implementation
-(`polyphony-implement`, `implement-pg`, `implement-mg`), PR lifecycle
+(`implement-pg`, `implement-mg`), PR lifecycle
 (`feature-pr`, `github-pr`, `ado-pr`), and close-out. The workflows shell out
 to the polyphony CLI for every routing decision and every configuration query,
 so the YAML itself contains zero type-name conditionals.
@@ -43,7 +43,7 @@ so the YAML itself contains zero type-name conditionals.
 > **Status:** the type-agnostic root entry point that orchestrates these
 > sub-workflows end-to-end is being rebuilt around the EdgeGraph + `state
 > next-ready` model. Until the new apex driver lands, sub-workflows are
-> launched directly (e.g. `plan-level@polyphony`, `polyphony-implement@polyphony`).
+> launched directly (e.g. `plan-level@polyphony`, `implement-pg@polyphony`).
 
 The two share a name (and ship from the same repo so they version together),
 but they are independent artifacts. You install the CLI as a binary; you
@@ -315,7 +315,6 @@ The YAMLs in `.conductor/registry/workflows/`:
 | File                               | Role                                                                |
 |------------------------------------|---------------------------------------------------------------------|
 | `plan-level.yaml`                  | Recursive planning core. Self-recurses for nested plannable levels. |
-| `polyphony-implement.yaml`         | Implementation entry. Loads work tree, dispatches PGs in parallel.  |
 | `implement-pg.yaml`                | Single PG lifecycle: tasks → review → PR → merge → scope close.     |
 | `implement-mg.yaml`                | Single merge-group lifecycle.                                       |
 | `github-pr.yaml`                   | GitHub PR lifecycle (review + fix loop, max 10 iterations).         |

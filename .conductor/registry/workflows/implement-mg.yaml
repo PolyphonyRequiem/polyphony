@@ -1013,7 +1013,7 @@ agents:
       `polyphony pr open-mg-ado` and `pr merge-mg-ado` require all three
       of `--organization`, `--project`, and `--repository`. Re-invoke the
       workflow chain with those inputs supplied (typically threaded from
-      `polyphony-implement.yaml`'s inputs).
+      the apex driver's inputs).
 
       MG branch:
       `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`

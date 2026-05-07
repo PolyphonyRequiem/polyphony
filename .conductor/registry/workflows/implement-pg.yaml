@@ -5,7 +5,7 @@
 # or ado-pr). After the PR merges, scope-closer.ps1 transitions completed
 # items to Done in ADO.
 #
-# Invoked by polyphony-implement.yaml via for_each for each pending PG.
+# Invoked by the apex driver (or directly) once per pending PG.
 #
 # Invariants:
 #   Pre:  PG work items exist in ADO; feature branch exists.
