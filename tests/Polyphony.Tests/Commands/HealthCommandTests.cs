@@ -43,6 +43,29 @@ public sealed class HealthCommandTests
         result.Architecture.ShouldNotBeNullOrEmpty();
         result.DotnetVersion.ShouldNotBeNullOrEmpty();
         result.PolyphonyVersion.ShouldNotBeNullOrEmpty();
+        result.CanonicalWorkflow.ShouldBe("apex-driver@polyphony");
+    }
+
+    [Fact]
+    public void HealthCommand_StderrBreadcrumb_NamesApexDriverAsCanonicalEntry()
+    {
+        // First-time users running `polyphony health` should see a one-line
+        // pointer at the canonical SDLC entry point on STDERR. The breadcrumb
+        // lives on STDERR (not STDOUT) so the JSON contract on STDOUT stays
+        // machine-parseable. See HealthCommand.cs for rationale.
+        var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-health-breadcrumb-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var configPath = Path.Combine(tempDir, "process-config.yaml");
+        File.WriteAllText(configPath, "process_template: Basic\ntypes: { Epic: { facets: [plannable] } }\ntransitions: { Epic: { begin_planning: Doing } }\n");
+        var cmd = new HealthCommand(tool => new HealthCheckResult { Name = tool, Success = true, Message = "mocked" });
+
+        var (_, stdout, stderr) = CaptureConsoleStreams(() => cmd.Health(configPath));
+
+        // Breadcrumb on STDERR
+        stderr.ShouldContain("Canonical SDLC entry point:");
+        stderr.ShouldContain("conductor run apex-driver@polyphony --input apex_id=<ID>");
+        // STDOUT remains JSON only — no breadcrumb leakage that would break parsers
+        stdout.ShouldNotContain("Canonical SDLC entry point");
     }
 
     [Fact]
@@ -207,7 +230,8 @@ public sealed class HealthCommandTests
             Os = "TestOS",
             Architecture = "x64",
             DotnetVersion = "7.0.0",
-            PolyphonyVersion = "1.2.3"
+            PolyphonyVersion = "1.2.3",
+            CanonicalWorkflow = "apex-driver@polyphony"
         };
         var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.HealthResult);
         var roundTrip = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.HealthResult);
@@ -217,6 +241,7 @@ public sealed class HealthCommandTests
         roundTrip.Architecture.ShouldBe("x64");
         roundTrip.DotnetVersion.ShouldBe("7.0.0");
         roundTrip.PolyphonyVersion.ShouldBe("1.2.3");
+        roundTrip.CanonicalWorkflow.ShouldBe("apex-driver@polyphony");
     }
 
     private static (int ExitCode, string Output) CaptureConsole(Func<int> action)
@@ -226,7 +251,12 @@ public sealed class HealthCommandTests
         {
             using var writer = new StringWriter();
             var original = Console.Out;
+            var originalErr = Console.Error;
+            // Redirect STDERR to a sink so the breadcrumb HealthCommand writes there
+            // doesn't show up in the test runner output. STDOUT is what callers parse.
+            using var errSink = new StringWriter();
             Console.SetOut(writer);
+            Console.SetError(errSink);
             try
             {
                 var exitCode = action();
@@ -235,6 +265,35 @@ public sealed class HealthCommandTests
             finally
             {
                 Console.SetOut(original);
+                Console.SetError(originalErr);
+            }
+        }
+        finally
+        {
+            ConsoleTestLock.AsyncLock.Release();
+        }
+    }
+
+    private static (int ExitCode, string Stdout, string Stderr) CaptureConsoleStreams(Func<int> action)
+    {
+        ConsoleTestLock.AsyncLock.Wait();
+        try
+        {
+            using var outWriter = new StringWriter();
+            using var errWriter = new StringWriter();
+            var originalOut = Console.Out;
+            var originalErr = Console.Error;
+            Console.SetOut(outWriter);
+            Console.SetError(errWriter);
+            try
+            {
+                var exitCode = action();
+                return (exitCode, outWriter.ToString().Trim(), errWriter.ToString().Trim());
+            }
+            finally
+            {
+                Console.SetOut(originalOut);
+                Console.SetError(originalErr);
             }
         }
         finally

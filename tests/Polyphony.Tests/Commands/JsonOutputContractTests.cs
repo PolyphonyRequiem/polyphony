@@ -71,12 +71,17 @@ public sealed class JsonOutputContractTests : CommandTestBase
         output.ShouldContain("\"architecture\"");
         output.ShouldContain("\"dotnet_version\"");
         output.ShouldContain("\"polyphony_version\"");
+        // Canonical SDLC entry-point breadcrumb (added so first-time users see
+        // the apex-driver entry without grepping the conductor registry).
+        output.ShouldContain("\"canonical_workflow\"");
+        output.ShouldContain("\"apex-driver@polyphony\"");
         // No PascalCase leakage
         AssertNoPascalCase(output, "Checks");
         AssertNoPascalCase(output, "Os");
         AssertNoPascalCase(output, "Architecture");
         AssertNoPascalCase(output, "DotnetVersion");
         AssertNoPascalCase(output, "PolyphonyVersion");
+        AssertNoPascalCase(output, "CanonicalWorkflow");
         // Null fields omitted
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.HealthResult);
         result.ShouldNotBeNull();
@@ -85,10 +90,12 @@ public sealed class JsonOutputContractTests : CommandTestBase
         result.Architecture.ShouldNotBeNullOrEmpty();
         result.DotnetVersion.ShouldNotBeNullOrEmpty();
         result.PolyphonyVersion.ShouldNotBeNullOrEmpty();
+        result.CanonicalWorkflow.ShouldBe("apex-driver@polyphony");
         // Round-trip
         var roundTrip = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.HealthResult);
         roundTrip.ShouldContain("\"checks\"");
         roundTrip.ShouldContain("\"os\"");
+        roundTrip.ShouldContain("\"canonical_workflow\"");
     }
 
 
