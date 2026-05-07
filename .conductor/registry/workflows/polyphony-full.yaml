@@ -13,7 +13,7 @@ workflow:
   description: >-
     Type-agnostic SDLC root workflow. Validates prerequisites, detects lifecycle
     phase, and routes to planning, implementation, close-out, or end.
-  version: "1.0.1"
+  version: "1.1.0"
   entry_point: policy_loader
   metadata:
     min_polyphony_version: "1.0.1"
@@ -43,6 +43,34 @@ workflow:
       required: false
       default: .conductor/policy.yaml
       description: Path to .conductor/policy.yaml (override via -i policy=<path>)
+    # ── ADO platform inputs (Phase 5) ─────────────────────────────────────
+    # When `platform` is omitted (or set to 'github'), all sub-workflows
+    # run their GitHub legs exactly as before — these inputs are pure
+    # additive plumbing. When `platform: ado` is supplied along with
+    # `organization`, `project`, and `repository`, the ADO legs of
+    # plan-level / implement-mg / feature-pr take over (each downstream
+    # workflow has its own pr_inputs_missing_gate to catch the
+    # ado-but-missing-creds case before any verb is invoked).
+    platform:
+      type: string
+      required: false
+      default: ado
+      description: "PR platform: 'ado' (default — matches the work item source) or 'github' (for repos hosted on GitHub)"
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: ADO organization name. Required when platform=ado; ignored on github.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: ADO project name. Required when platform=ado; ignored on github.
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: ADO repository identifier (GUID or name). Required when platform=ado; ignored on github.
 
 agents:
   # ── Policy load (root resolution) ──────────────────────────────────────
@@ -245,6 +273,10 @@ agents:
       intent: "{{ workflow.input.intent }}"
       user_plan_path: "{{ workflow.input.user_plan_path }}"
       feature_branch: "{{ ensure_feature_branch.output.branch }}"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
     routes:
       - to: state_detector
         # Re-discover phase after planning + seeding. State_detector will see
@@ -269,6 +301,10 @@ agents:
       work_item_id: "{{ workflow.input.work_item_id }}"
       intent: "{{ workflow.input.intent }}"
       feature_branch: "{{ ensure_feature_branch.output.branch }}"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
     routes:
       - to: state_detector
         # Re-discover phase after implementation. State_detector will see all
@@ -298,7 +334,10 @@ agents:
         {%- else -%}
         {%- endif %}
       target_branch: "main"
-      platform: "github"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
     routes:
       - to: close_out
         when: "{{ feature_pr.output.merged == true }}"

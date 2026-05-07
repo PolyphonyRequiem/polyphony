@@ -15,7 +15,7 @@ workflow:
     Planning orchestration entry point. Validates prerequisites with a
     lightweight preflight, invokes plan-level.yaml for recursive planning,
     re-checks state, and seeds the work tree if needed.
-  version: "1.0.1"
+  version: "1.1.0"
   entry_point: preflight_lite
   metadata:
     min_polyphony_version: "1.0.1"
@@ -40,6 +40,30 @@ workflow:
       required: false
       default: ""
       description: Path to user-authored plan document
+    # ── ADO platform inputs (Phase 5) ─────────────────────────────────────
+    # Pure-additive plumbing inherited from polyphony-full and threaded
+    # into plan-level.yaml. When platform=github (default), the github
+    # leg of plan-level runs and these inputs are ignored.
+    platform:
+      type: string
+      required: false
+      default: ado
+      description: "PR platform: 'ado' (default — matches the work item source) or 'github' (for repos hosted on GitHub)"
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: ADO organization name. Required when platform=ado; ignored on github.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: ADO project name. Required when platform=ado; ignored on github.
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: ADO repository identifier (GUID or name). Required when platform=ado; ignored on github.
 
 tools:
   - twig
@@ -130,6 +154,10 @@ agents:
       user_plan_path: "{{ workflow.input.user_plan_path }}"
       depth: "0"
       max_depth: "6"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
     routes:
       - to: seed_check
 

@@ -125,14 +125,13 @@ workflow:
     platform:
       type: string
       required: false
-      default: github
+      default: ado
       description: >-
-        PR platform — `github` (full lifecycle: open + merge MG PR via gh)
-        or `ado` (full lifecycle via ADO REST when organization, project,
-        and repository are also supplied; falls back to a clear failure
-        gate when those connection inputs are blank). Mirrors the
-        implement-pg.yaml contract. Default github preserves
-        pre-platform-router behavior.
+        PR platform — `ado` (default — full lifecycle via ADO REST when
+        organization, project, and repository are also supplied; falls
+        back to a clear failure gate when those connection inputs are
+        blank) or `github` (full lifecycle: open + merge MG PR via gh).
+        Default 'ado' matches the work item source.
     organization:
       type: string
       required: false
