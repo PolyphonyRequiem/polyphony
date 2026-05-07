@@ -1205,6 +1205,97 @@ public sealed class JsonOutputContractTests : CommandTestBase
         json.ShouldContain("\"passes_floor\":false");
     }
 
+    [Fact]
+    public void PlanStatus_SnakeCase_AndSpecialEnumKey()
+    {
+        // Build a synthetic envelope and serialize through the source-generated
+        // context to lock the snake_case naming + the special-case "plan_n_a"
+        // serialization for the plan_status="n/a" counter.
+        var result = new PlanStatusResult
+        {
+            Success = true,
+            RootId = 13_010,
+            Items = new[]
+            {
+                new PlanStatusItem
+                {
+                    ItemId = 13_010,
+                    Title = "Apex epic",
+                    PlanStatus = "open",
+                    PlanPrNumber = 42,
+                    PlanPrUrl = "https://github.com/owner/repo/pull/42",
+                    PlanGeneration = 1,
+                    PendingRevisions = true,
+                },
+            },
+            Summary = new PlanStatusSummary
+            {
+                TotalItems = 2,
+                PlanNeeded = 0,
+                PlanOpen = 1,
+                PlanMerged = 0,
+                PlanAbandoned = 0,
+                PlanNa = 1,
+                PendingRevisions = 1,
+            },
+        };
+
+        var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PlanStatusResult);
+
+        // Top-level envelope.
+        json.ShouldContain("\"success\":true");
+        json.ShouldContain("\"root_id\":13010");
+        json.ShouldContain("\"items\":[");
+        json.ShouldContain("\"summary\":{");
+
+        // Item shape.
+        json.ShouldContain("\"item_id\":13010");
+        json.ShouldContain("\"plan_status\":\"open\"");
+        json.ShouldContain("\"plan_pr_number\":42");
+        json.ShouldContain("\"plan_pr_url\":\"https://github.com/owner/repo/pull/42\"");
+        json.ShouldContain("\"plan_generation\":1");
+        json.ShouldContain("\"pending_revisions\":true");
+
+        // Summary shape — and the special-case key for n/a.
+        json.ShouldContain("\"total_items\":2");
+        json.ShouldContain("\"plan_needed\":0");
+        json.ShouldContain("\"plan_open\":1");
+        json.ShouldContain("\"plan_merged\":0");
+        json.ShouldContain("\"plan_abandoned\":0");
+        json.ShouldContain("\"plan_n_a\":1"); // not "plan_na" — the policy splits the underscore.
+
+        // Negative checks: no PascalCase leakage.
+        AssertNoPascalCase(json, "RootId");
+        AssertNoPascalCase(json, "PlanStatus");
+        AssertNoPascalCase(json, "TotalItems");
+        AssertNoPascalCase(json, "PendingRevisions");
+    }
+
+    [Fact]
+    public void PlanStatus_DeserializationRoundTrip_FieldsMapped()
+    {
+        var original = new PlanStatusResult
+        {
+            Success = false,
+            RootId = 13_011,
+            Items = Array.Empty<PlanStatusItem>(),
+            Summary = PlanStatusSummary.Empty,
+            ErrorCode = "root_not_found",
+            ErrorMessage = "Run root 13011 not found",
+        };
+
+        var json = JsonSerializer.Serialize(original, PolyphonyJsonContext.Default.PlanStatusResult);
+        var roundTripped = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.PlanStatusResult);
+
+        roundTripped.ShouldNotBeNull();
+        roundTripped!.Success.ShouldBeFalse();
+        roundTripped.RootId.ShouldBe(13_011);
+        roundTripped.ErrorCode.ShouldBe("root_not_found");
+        roundTripped.ErrorMessage.ShouldBe("Run root 13011 not found");
+        roundTripped.Items.ShouldBeEmpty();
+        roundTripped.Summary.TotalItems.ShouldBe(0);
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================

@@ -157,6 +157,14 @@ Edges enter the dependency graph through three distinct sources. Each source has
 | **Executor (`polyphony` / `human`)** | The actor that performs an actionable item's work, declared per item on the actionable facet. `polyphony` means the agent does the work and emits evidence; `human` means the action is outside polyphony's authority and only the human's confirmation of satisfaction is recorded. The executor is the input to the actionable workflow's `executor_router` step and the value carried through to the workflow's `executor` output. |
 | **Human satisfaction gate** | The `human_gate` node on the actionable workflow's human leg. Asks the human whether the action has been performed; on `satisfied`, routes to `workflow_completed`; on `not_yet`, loops back to itself; on `abandoned`, routes to `workflow_abandoned`. The only step on the human leg — no evidence branch, agent, or PR is opened. |
 
+## Plan-PR observability
+
+| Term | Definition |
+|---|---|
+| **Plan status verb** | `polyphony plan status --root <id>` — operator-facing, read-only verb that walks the in-scope subtree from `<id>` (the same BFS the worklist build verb uses), classifies each item's plannable facet from the loaded process config, and queries `gh` per plan branch (`plan/{root}` or `plan/{root}-{item}`) to derive the **plan status enum** value. Optionally enriches each row with the current `plan_generation` from the run manifest. Routing-style: always exits 0; consumers branch on `error_code`. Pure inspection — no manifest mutation, no platform writes. |
+| **Plan status enum** | The five values `plan_status` may take in the plan status verb's per-item rows: `needed` (item has the plannable facet but no plan PR exists yet), `open` (plan PR exists and is OPEN on the platform), `merged` (plan PR has been merged), `abandoned` (plan PR was closed without merging), `n/a` (item has no plannable facet — hidden from the items array unless `--include-na` is passed; always counted in `summary.plan_n_a` so the operator can see full tree scope). |
+| **Pending revisions** | A boolean signal on a `plan_status="open"` row: `true` when the open plan PR carries an unresolved `CHANGES_REQUESTED` review decision (the reviewer asked for changes that the next plan-PR push has not yet addressed). Surfaced both per-item (`pending_revisions`) and as a summary counter so an operator can answer "how many open plan PRs need attention right now?" in a single read. Only meaningful when `plan_status == "open"` — null otherwise so consumers can distinguish "no signal" from "open, no pending revisions" from "open, changes requested". |
+
 ## Open glossary questions
 
 _All initial questions resolved. New questions surfacing during plan drafting will land here._
