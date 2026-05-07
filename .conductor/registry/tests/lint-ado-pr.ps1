@@ -5,9 +5,18 @@
     Parses workflows/ado-pr.yaml and verifies:
     1. Interface contract matches github-pr.yaml (inputs: pr_number, branch_name,
        target_branch, review_policy; outputs: merged, pr_url)
-    2. Structured error node exists with error code
-    3. Human gate node exists with at least merged and abort options
-    4. Entry point references a valid agent name
+    2. Human gate node exists with at least an 'abort' option (operator must
+       always have an exit path per P6)
+    3. Entry point references a valid agent name
+    4. Workflow name is 'ado-pr'
+
+    NOTE: Earlier stub revisions of ado-pr.yaml emitted an
+    'ADO_PR_NOT_IMPLEMENTED' sentinel and required a 'merged' gate option;
+    both checks were removed when the real lifecycle landed (poll-status →
+    human gates per state → merge-feature-ado). Operator choices are now
+    semantic (repoll, verified_merge, retry, abort) instead of literal
+    'merged'/'aborted' values.
+
     Exits 0 if clean, 1 if violations found.
 #>
 [CmdletBinding()]
@@ -52,15 +61,7 @@ foreach ($output in $requiredOutputs) {
     }
 }
 
-# ── Check 3: Structured error node exists ─────────────────────────────────
-if ($content -notmatch 'ADO_PR_NOT_IMPLEMENTED') {
-    $violations += [PSCustomObject]@{
-        Rule   = 'missing-error-code'
-        Detail = "No structured error code 'ADO_PR_NOT_IMPLEMENTED' found"
-    }
-}
-
-# ── Check 4: Human gate exists with options ───────────────────────────────
+# ── Check 3: Human gate exists ───────────────────────────────────────────
 if ($content -notmatch 'type:\s*human_gate') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-human-gate'
@@ -68,8 +69,11 @@ if ($content -notmatch 'type:\s*human_gate') {
     }
 }
 
-# ── Check 5: Human gate has merged and abort options ──────────────────────
-$requiredOptions = @('merged', 'abort')
+# ── Check 4: Human gate has at least an abort option ─────────────────────
+# Per P6, every gate must give the operator an exit path. The real
+# lifecycle uses semantic option values (repoll, verified_merge, retry,
+# abort, trigger_remediation); only 'abort' is universally required.
+$requiredOptions = @('abort')
 foreach ($opt in $requiredOptions) {
     if ($content -notmatch "value:\s*$opt") {
         $violations += [PSCustomObject]@{
@@ -79,7 +83,7 @@ foreach ($opt in $requiredOptions) {
     }
 }
 
-# ── Check 6: Entry point references a valid agent ────────────────────────
+# ── Check 5: Entry point references a valid agent ────────────────────────
 if ($content -match 'entry_point:\s*(\S+)') {
     $entryPoint = $Matches[1]
     if ($content -notmatch "name:\s*$entryPoint") {
@@ -90,7 +94,7 @@ if ($content -match 'entry_point:\s*(\S+)') {
     }
 }
 
-# ── Check 7: Workflow name is 'ado-pr' ────────────────────────────────────
+# ── Check 6: Workflow name is 'ado-pr' ────────────────────────────────────
 if ($content -notmatch 'name:\s*ado-pr') {
     $violations += [PSCustomObject]@{
         Rule   = 'wrong-workflow-name'
@@ -108,5 +112,5 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: ado-pr.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, human gate with $($requiredOptions.Count) options)" -ForegroundColor Green
+Write-Host "PASS: ado-pr.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, human gate with $($requiredOptions.Count) required option(s))" -ForegroundColor Green
 exit 0

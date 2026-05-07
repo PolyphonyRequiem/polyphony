@@ -151,56 +151,11 @@ agents:
             ($output | Out-String) | Should -Match 'missing-human-gate'
         }
 
-        It 'Fails when error code is missing' {
-            $yaml = @'
-workflow:
-  name: ado-pr
-  entry_point: ado_pr_error
-  input:
-    pr_number:
-      type: number
-    branch_name:
-      type: string
-    target_branch:
-      type: string
-    review_policy:
-      type: string
-
-output:
-  merged: "{{ ado_pr_manual_gate.output.choice == 'merged' }}"
-  pr_url: ""
-
-agents:
-  - name: ado_pr_error
-    type: script
-    command: pwsh
-    args:
-      - "-Command"
-      - "Write-Output 'some error'"
-    routes:
-      - to: ado_pr_manual_gate
-  - name: ado_pr_manual_gate
-    type: human_gate
-    prompt: "Manual gate"
-    options:
-      - label: "Merged"
-        value: merged
-        route: $end
-      - label: "Abort"
-        value: abort
-        route: $end
-'@
-            Set-Content (Join-Path $script:WorkflowsDir 'ado-pr.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-ado-pr.ps1') 2>&1
-            $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-error-code'
-        }
-
         It 'Fails when abort option is missing from human gate' {
             $yaml = @'
 workflow:
   name: ado-pr
-  entry_point: ado_pr_error
+  entry_point: ado_pr_manual_gate
   input:
     pr_number:
       type: number
@@ -212,24 +167,16 @@ workflow:
       type: string
 
 output:
-  merged: "{{ ado_pr_manual_gate.output.choice == 'merged' }}"
+  merged: "false"
   pr_url: ""
 
 agents:
-  - name: ado_pr_error
-    type: script
-    command: pwsh
-    args:
-      - "-Command"
-      - "Write-Output 'ADO_PR_NOT_IMPLEMENTED'"
-    routes:
-      - to: ado_pr_manual_gate
   - name: ado_pr_manual_gate
     type: human_gate
     prompt: "Manual gate"
     options:
-      - label: "Merged"
-        value: merged
+      - label: "Re-poll"
+        value: repoll
         route: $end
 '@
             Set-Content (Join-Path $script:WorkflowsDir 'ado-pr.yaml') $yaml
