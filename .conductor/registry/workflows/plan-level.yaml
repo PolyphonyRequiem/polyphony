@@ -102,11 +102,65 @@ workflow:
       required: false
       default: ""
       description: ADO repository identifier (GUID or name). Required when platform=ado; ignored on github.
+    # ── Phase 3 P8c — scope renegotiation handler input ─────────────────
+    # Comma-separated glob list the child planner is authorized to touch
+    # (e.g. "plans/1100/1101.md, plans/1100/notes/**"). Consumed by the
+    # validate_scope step (`polyphony plan validate-scope --child-scope`)
+    # to classify the plan-PR diff against authorized paths.
+    #
+    # When empty (the default — current callers do not yet supply it),
+    # the validate_scope + scope_violation_gate steps are skipped and
+    # poll_status routes straight to merge_plan_pr. The
+    # extract_renegotiation_flag step still runs post-merge so the
+    # workflow's `renegotiation_pending` output is always populated for
+    # future callers (apex-driver) regardless of whether scope was
+    # supplied.
+    #
+    # See docs/decisions/scope-renegotiation.md (handler design — workflow
+    # output bubble-up).
+    child_scope_globs:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        Comma-separated globs the child planner is authorized to touch.
+        When set, validate_scope classifies the plan-PR diff and fires
+        scope_violation_gate on `block`. When empty, the scope check is
+        skipped (back-compat for current callers).
 
 tools:
   - twig
   - gh
   - filesystem
+
+# ── Workflow output (Phase 3 P8c — scope renegotiation handler) ──────────
+#
+# Bubble-up outputs consumed by the (forthcoming) apex-driver workflow.
+# Per M7, sub-workflow outputs are the only surface a parent workflow can
+# read; we explicitly export the renegotiation + scope-validation result
+# so apex-driver can decide whether to re-enter parent planning. Per M3
+# (StrictUndefined) every reference is guarded with `is defined` because
+# only ONE of the validate_scope / merge legs runs in any execution. Per
+# M7 booleans are piped through `| string | lower` so the parent receives
+# a real bool rather than capital "True"/"False".
+#
+# Design rationale — option (C) in docs/decisions/scope-renegotiation.md
+# (handler design — workflow output bubble-up). Today plan-level has no
+# caller, so these outputs go nowhere; that is intentional. apex-driver
+# (a downstream PR) consumes them.
+output:
+  renegotiation_pending: >-
+    {% if extract_renegotiation_flag is defined %}{{ (extract_renegotiation_flag.output.flag_present | default(false)) | string | lower }}
+    {%- else %}false{% endif %}
+  renegotiation_request: >-
+    {% if extract_renegotiation_flag is defined %}{{ extract_renegotiation_flag.output.renegotiation_request | default('') }}
+    {%- else %}{% endif %}
+  validate_scope_verdict: >-
+    {% if validate_scope is defined %}{{ validate_scope.output.verdict | default('') }}
+    {%- else %}{% endif %}
+  scope_violation_files: >-
+    {% if validate_scope is defined %}{{ validate_scope.output.files_out_of_scope | default([]) | tojson }}
+    {%- else %}[]{% endif %}
 
 agents:
   # ── Depth guard ──────────────────────────────────────────────────────────
@@ -1028,6 +1082,8 @@ agents:
         when: "{{ poll_status.output.error is defined and poll_status.output.error }}"
       - to: extract_parent_patch
         when: "{{ poll_status.output.state == 'approved' and poll_status.output.metadata is defined and poll_status.output.metadata is not none and poll_status.output.metadata.requests_parent_change == true }}"
+      - to: validate_scope
+        when: "{{ poll_status.output.state == 'approved' and workflow.input.child_scope_globs != '' }}"
       - to: merge_plan_pr
         when: "{{ poll_status.output.state == 'approved' }}"
       - to: revise_counter
@@ -1208,6 +1264,102 @@ agents:
         value: abort
         route: $end
 
+  # ── Validate scope (Phase 3 P8c — scope renegotiation handler) ────────
+  #
+  # GitHub-leg only. Reached from poll_status when the plan PR is
+  # approved AND `workflow.input.child_scope_globs` is non-empty.
+  # Classifies the PR's changed-file list against the supplied globs and
+  # the renegotiation flag in the PR body via the four-cell matrix
+  # documented in docs/decisions/scope-renegotiation.md.
+  #
+  # The verb is github-only (consumes `gh pr view`); the ADO leg
+  # currently merges directly via merge_plan_pr_ado without this gate.
+  # ADO sibling parity is a deferred follow-up — see the ADR.
+  #
+  # Routing:
+  #   verdict == 'block'                     → scope_violation_gate
+  #   verdict == 'allow' (with/without warn) → merge_plan_pr
+  #
+  # Output schema (per polyphony.exe plan validate-scope —
+  # Models/PlanValidateScopeResult.cs): pr_number, verdict ('allow' |
+  # 'block'), files_touched[], files_in_scope[], files_out_of_scope[],
+  # flag_present, warnings[], error_code, error_message.
+  - name: validate_scope
+    type: script
+    description: Classify plan PR diff against authorized child-scope globs (post-review, pre-merge).
+    command: polyphony
+    args:
+      - "plan"
+      - "validate-scope"
+      - "{{ poll_status.output.pr_number if poll_status.output.pr_number is defined else open_plan_pr.output.pr_number }}"
+      - "--child-scope"
+      - "{{ workflow.input.child_scope_globs }}"
+    routes:
+      - to: scope_violation_gate
+        when: "{{ validate_scope.output.verdict == 'block' }}"
+      - to: merge_plan_pr
+
+  # ── Scope violation gate ──────────────────────────────────────────────
+  #
+  # Fires when validate_scope returns `verdict: block` — the plan PR
+  # touched files outside the workflow-supplied child scope and did NOT
+  # declare a renegotiation request via the
+  # <!-- polyphony:requests-parent-change --> fence. The operator picks:
+  #
+  #   override → proceed to merge anyway (agent's diff was right; the
+  #              renegotiation declaration was simply missing).
+  #   abort    → terminate the workflow; the agent must re-do the plan
+  #              within scope or declare a renegotiation in a follow-up.
+  - name: scope_violation_gate
+    type: human_gate
+    description: Plan PR exceeded authorized child scope without a renegotiation flag — operator decides override or abort.
+    prompt: |
+      ## ⚠️ Plan PR #{{ validate_scope.output.pr_number }} touches files outside the child's authorized scope
+
+      The validate-scope verb classified the diff against
+      `workflow.input.child_scope_globs` and found out-of-scope paths.
+      The PR body does NOT carry a `<!-- polyphony:requests-parent-change -->`
+      fence, so this is treated as an unauthorized scope expansion
+      rather than a renegotiation request.
+
+      ### Authorized scope
+
+      `{{ workflow.input.child_scope_globs }}`
+
+      ### Files out of scope
+
+      {% for f in validate_scope.output.files_out_of_scope -%}
+      - `{{ f }}`
+      {% endfor %}
+
+      ### Files in scope ({{ validate_scope.output.files_in_scope | length }})
+
+      {% if validate_scope.output.files_in_scope | length == 0 -%}
+      _(none)_
+      {%- else -%}
+      {% for f in validate_scope.output.files_in_scope -%}
+      - `{{ f }}`
+      {% endfor %}
+      {%- endif %}
+
+      ---
+
+      Choose an action:
+
+      - **Override** — accept the out-of-scope changes and proceed to
+        merge. Use this when you're confident the agent's diff was
+        correct and only the renegotiation declaration was missing.
+      - **Abort** — terminate the workflow without merging. The agent
+        must re-do the plan within the authorized scope or open a new
+        PR with the renegotiation fence in its body.
+    options:
+      - label: "✅ Override (merge anyway)"
+        value: override
+        route: merge_plan_pr
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
   # ── Merge plan PR ─────────────────────────────────────────────────────
   #
   # Atomic merge + manifest update. On success, plan_generations[item_key]
@@ -1235,6 +1387,43 @@ agents:
         when: "{{ merge_plan_pr.output.error_code is defined and merge_plan_pr.output.error_code == 'stale_generation' }}"
       - to: merge_error_gate
         when: "{{ merge_plan_pr.output.error_code is defined and merge_plan_pr.output.error_code != '' and merge_plan_pr.output.error_code != 'stale_generation' }}"
+      - to: extract_renegotiation_flag
+
+  # ── Extract renegotiation flag (Phase 3 P8c — handler) ────────────────
+  #
+  # GitHub-leg only. Runs post-merge to harvest the plan PR's
+  # `<!-- polyphony:requests-parent-change -->` fenced block (if any)
+  # for the workflow's bubble-up output. The signal goes to the parent
+  # workflow (apex-driver, downstream PR) which decides whether to
+  # re-enter parent planning. Today the workflow has no caller — the
+  # output goes nowhere — but extracting it now ensures the contract is
+  # in place when apex-driver lands.
+  #
+  # Always runs regardless of whether validate_scope ran — a child can
+  # legitimately declare a renegotiation request whose diff stays inside
+  # its authorized scope (e.g., the plan document itself notes "the
+  # parent plan's assumption about feature/X was wrong" without
+  # touching parent files).
+  #
+  # Output schema (per polyphony.exe plan extract-renegotiation-flag —
+  # Models/PlanExtractRenegotiationFlagResult.cs): pr_number,
+  # flag_present, renegotiation_request, fenced_block_well_formed,
+  # error_code, error_message.
+  #
+  # Always exits 0 (routing-style). On verb error (gh_failed,
+  # pr_not_found, malformed_renegotiation_block) flag_present is false
+  # and the workflow proceeds to cascade_remedy as if no flag were
+  # present. The error surface is left to the future apex-driver
+  # consumer to inspect via the bubbled output.
+  - name: extract_renegotiation_flag
+    type: script
+    description: Extract renegotiation flag from merged plan PR body for workflow bubble-up output.
+    command: polyphony
+    args:
+      - "plan"
+      - "extract-renegotiation-flag"
+      - "{{ poll_status.output.pr_number if poll_status.output.pr_number is defined else open_plan_pr.output.pr_number }}"
+    routes:
       - to: cascade_remedy
 
   # ── Cascade remedy ────────────────────────────────────────────────────
