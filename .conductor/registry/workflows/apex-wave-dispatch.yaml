@@ -22,28 +22,36 @@
 #         lifecycle sub-workflow or recorded as failed in
 #         dispatch_items.errors. wave-integrator has been invoked.
 #
+# Per-item lifecycle dispatch is now wired (see apex-item-dispatch.yaml's
+# branch-on-router into plan-level / actionable / implement-pg /
+# feature-pr / fast-path). After the wave dispatch settles, this
+# workflow:
+#   * Aggregates renegotiation_pending across the wave's items so
+#     apex-driver can read a single bool/array per wave instead of
+#     iterating dispatch_items.outputs in Jinja.
+#   * Invokes wave-integrator.ps1 to merge completed branches back
+#     into the apex feature branch in topological order.
+#
 # DEFERRED (DO NOT add in this PR):
-#   * Per-item lifecycle sub-workflow invocation. The MVP runs the
-#     deterministic lifecycle classifier per item but does NOT yet
-#     dispatch into plan-level / actionable / implement-pg / feature-pr.
-#     A follow-up PR wires the per-item dispatch once the lifecycle
-#     workflows accept the apex-driver's per-item input contract
-#     (work_item_id + apex_id + worktree_path).
 #   * Per-MG worktree serialization (currently per-item only).
+#   * E2E execution tests (separate PR p7-apex-driver-e2e).
 #
 # Conductor mechanics gotchas honored:
 #   M3  StrictUndefined `is defined` guards on all cross-leg outputs.
 #   M4  Catch-all `to:` last on every routing block.
 #   M7  Booleans piped through `| string | lower` in workflow output.
-#   M8  for_each `source:` is a BARE dotted path; errors via .errors.
+#   M8  for_each `source:` is a BARE dotted path; errors via .errors;
+#       per-item results land under `dispatch_items.outputs.<key>`.
 
 workflow:
   name: apex-wave-dispatch
   description: >-
     One wave of the apex-driver dispatch loop. Per-item worktree fanout
-    + lifecycle classification (per-item dispatch deferred) + wave
-    integration via wave-integrator.ps1.
-  version: "1.0.0"
+    + lifecycle classification + branch-on-router lifecycle dispatch
+    (plan-level / actionable / implement-pg / feature-pr / fast-path) +
+    wave integration via wave-integrator.ps1. Aggregates renegotiation
+    bubble-up across the wave's items.
+  version: "1.1.0"
   entry_point: dispatch_items
   metadata:
     min_polyphony_version: "1.0.1"
@@ -77,16 +85,46 @@ workflow:
       type: string
       required: false
       default: ado
+    organization:
+      type: string
+      required: false
+      default: ""
+    project:
+      type: string
+      required: false
+      default: ""
+    repository:
+      type: string
+      required: false
+      default: ""
 
 tools:
   - twig
 
+# ── Workflow output ──────────────────────────────────────────────────
+#
+# Per M3, every cross-leg verb output is `is defined`-guarded — both
+# `aggregate_renegotiation` and `integrate_wave` may be unreached on
+# certain failure paths. Per M7 booleans are piped through
+# `| string | lower` so apex-driver receives a real bool rather than
+# capital "True"/"False".
+#
+# `renegotiation_pending` aggregates across the wave's items: true
+# when ANY item's apex-item-dispatch.output.renegotiation_pending was
+# true. apex-driver consults this to decide whether to fire its
+# renegotiation gate after each wave settles.
 output:
   wave_index: "{{ workflow.input.wave_index }}"
   apex_id: "{{ workflow.input.apex_id }}"
   integrated: >-
-    {%- if integrate_wave is defined -%}{{ integrate_wave.output.success | string | lower }}
+    {%- if integrate_wave is defined -%}{{ (integrate_wave.output.success | default(false)) | string | lower }}
     {%- else -%}false{%- endif -%}
+  renegotiation_pending: >-
+    {%- if aggregate_renegotiation is defined -%}{{ (aggregate_renegotiation.output.renegotiation_pending | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  renegotiation_items: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.renegotiation_items | default('[]') }}
+    {%- else -%}[]{%- endif -%}
 
 agents:
   # ── Dispatch items ────────────────────────────────────────────────────────
@@ -120,6 +158,72 @@ agents:
         apex_id: "{{ workflow.input.apex_id }}"
         work_item_id: "{{ item.item_id }}"
         platform: "{{ workflow.input.platform }}"
+        organization: "{{ workflow.input.organization }}"
+        project: "{{ workflow.input.project }}"
+        repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: aggregate_renegotiation
+
+  # ── Aggregate renegotiation bubble-up ────────────────────────────────────
+  #
+  # Plan-level invocations may emit `renegotiation_pending=true` along
+  # with a `renegotiation_request` body (PR #144). Each per-item
+  # apex-item-dispatch surfaces those verbatim. Here we collapse the
+  # wave's per-item outputs into a single bool + a list of (item_id,
+  # request) pairs so apex-driver can read a flat shape on its
+  # post-wave check.
+  #
+  # Reads `dispatch_items.outputs` — the for_each result dict keyed by
+  # iteration index. Per M8 there is no `output:` on the group; results
+  # live under `.outputs` (success) and `.errors` (failure).
+  - name: aggregate_renegotiation
+    type: script
+    description: Aggregate per-item renegotiation_pending across the wave
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $raw = @'
+        {{ dispatch_items.outputs | tojson }}
+        '@;
+        $items = @();
+        $any = $false;
+        try {
+          $parsed = $raw | ConvertFrom-Json;
+          # for_each .outputs is a dict keyed by iteration index;
+          # iterate the values to inspect each item's surfaced output.
+          $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
+                    else { $parsed.PSObject.Properties.Value };
+          foreach ($v in $values) {
+            if ($null -eq $v) { continue }
+            $pending = $false;
+            if ($v.PSObject.Properties.Name -contains 'renegotiation_pending') {
+              $val = "$($v.renegotiation_pending)".ToLowerInvariant();
+              $pending = ($val -eq 'true');
+            }
+            if ($pending) {
+              $any = $true;
+              $items += [ordered]@{
+                work_item_id = $v.work_item_id;
+                lifecycle_workflow = $v.lifecycle_workflow;
+                renegotiation_request = $v.renegotiation_request;
+                validate_scope_verdict = $v.validate_scope_verdict;
+                scope_violation_files = $v.scope_violation_files;
+              };
+            }
+          }
+        } catch {
+          # Bubble parse failures as no-renegotiation rather than
+          # halting the wave; the integrate step still needs to run.
+          $any = $false;
+          $items = @();
+        }
+        [ordered]@{
+          renegotiation_pending = $any;
+          renegotiation_items = ($items | ConvertTo-Json -Compress -Depth 6);
+          item_count = $items.Count;
+        } | ConvertTo-Json -Compress -Depth 6
     routes:
       - to: integrate_wave
 

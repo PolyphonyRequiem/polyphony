@@ -222,6 +222,50 @@ that emits a `{route, ...}` envelope and let the YAML be a thin
 switch on `output.route`. Don't try to express the classification as
 Jinja conditions in route blocks — those don't unit-test.
 
+**Branch-on-router into sub-workflow.** When the divergent
+downstream paths are themselves *sub-workflows* (not just agents or
+scripts), conductor does NOT support a templated `workflow:` path
+like `workflow: "./{{ classify.output.route }}.yaml"`. The canonical
+pattern instead:
+
+1. Classifier script emits a `route` field (e.g.
+   `lifecycle-router.ps1` → `route: plan-level | actionable | ...`).
+2. The router-emitting node has one `routes:` entry per route value,
+   each with a `when:` clause:
+   ```yaml
+   routes:
+     - to: plan_level_dispatch
+       when: "{{ classify_lifecycle.output.route == 'plan-level' }}"
+     - to: actionable_dispatch
+       when: "{{ classify_lifecycle.output.route == 'actionable' }}"
+     # ...
+   ```
+3. Each branch target is a separately-named `type: workflow` node
+   with explicit `input_mapping`, all converging on a common
+   downstream node (e.g. `teardown_worktree`).
+4. The output map of the router-host workflow guards every
+   per-branch reference with `{% if branch_x is defined %}` — only
+   one branch runs per invocation, so M3 (StrictUndefined) bites
+   anything else.
+
+Canonical examples in this repo:
+- `apex-item-dispatch.yaml` — `classify_lifecycle` →
+  {`plan_level_dispatch`, `actionable_dispatch`,
+  `implement_pg_dispatch`, `feature_pr_dispatch`}.
+- `feature-pr.yaml` — `pr_platform_router` →
+  {`pr_lifecycle_github`, `pr_lifecycle_ado`}.
+
+**Bubble-up signals through nested for_each.** When a sub-workflow
+deep inside a fan-out emits a flag (e.g.
+`renegotiation_pending: true`), aggregate it at each layer with a
+`script` step that scans the for_each `outputs` map. The apex
+driver does this twice: `apex-wave-dispatch.yaml`'s
+`aggregate_renegotiation` aggregates per-item flags into a wave
+flag; `apex-driver.yaml`'s `renegotiation_summary` rolls wave flags
+up into an apex flag and feeds a `human_gate`. Don't try to express
+the aggregation as Jinja over `outputs.values()` — pass the JSON to
+a pwsh script and parse it there.
+
 **Re-entry.** The dispatch loop variable is the worklist itself,
 recomputed via `polyphony worklist build` every iteration — never
 persist a "last completed item" pointer. After a gate or a restart,
