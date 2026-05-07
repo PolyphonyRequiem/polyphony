@@ -38,14 +38,26 @@
 #   revisited).
 #
 # Deferred wiring (forward references — DO NOT add in this PR):
-#   - PR #5: facet-profile composition into actionable_agent.prompt_addendum
-#   - PR #5: per-item guidance injection (consumes PR #6's
-#            `polyphony guidance extract` data — verb already shipped
-#            in commit 32a3c2e)
 #   - PR #8: full evidence_reviewer rubric (currently a placeholder
 #            that approves unless the agent emits an explicit `block`)
 #   - Out of scope: wiring this workflow as a subworkflow of
 #                   polyphony-full.yaml. A later PR owns that.
+#
+# Wiring landed in this PR (Phase 6 PR #5):
+#   - `compose_addendum` script step inserted between
+#     `ensure_evidence_branch` and `actionable_agent`. Shells out to
+#     `polyphony agent compose-addendum {work_item_id}` (Phase 6 PR #5
+#     verb, see src/Polyphony/Commands/AgentCommands.ComposeAddendum.cs).
+#   - The agent's prompt template now injects skills, MCPs, and
+#     per-item guidance from the composer's envelope (Jinja2
+#     `{% if %}` blocks, guarded with `is defined` per M3).
+#   - Conductor-schema note: agent steps in conductor have a `tools:`
+#     list field but NO `skills:` / `mcps:` / `prompt_addendum:` fields.
+#     The addendum is therefore injected as PROMPT TEXT (the original
+#     `prompt_addendum` framing — see TODO removed below). The static
+#     `tools:` list on `actionable_agent` stays as-is; the dynamic
+#     skills/MCPs the composer surfaces are advisory context the agent
+#     reads from its prompt.
 
 workflow:
   name: actionable
@@ -53,9 +65,10 @@ workflow:
     Single-item lifecycle for an item carrying the `actionable` facet.
     Routes on the `executor` input — polyphony performs the action and
     promotes evidence via an evidence PR; human acts outside polyphony
-    and only a satisfaction gate is recorded. Phase 6 PR #4 scaffold —
-    facet-profile composition, per-item guidance, the evidence floor
-    check, and the full review rubric land in PRs #5-#8.
+    and only a satisfaction gate is recorded. Phase 6 PR #5 wires
+    facet-profile composition + per-item guidance into the
+    actionable_agent prompt; the full review rubric (PR #8) is still
+    deferred.
   version: "1.0.0"
   entry_point: executor_router
   metadata:
@@ -230,29 +243,64 @@ agents:
     routes:
       - to: workflow_error_gate
         when: "{{ ensure_evidence_branch.output.action == 'error' or (ensure_evidence_branch.output.error is defined and ensure_evidence_branch.output.error != '') }}"
+      - to: compose_addendum
+
+  # ── Compose agent addendum (polyphony leg) ──────────────────────────────
+  #
+  # Produces the facet-profile-derived skills + MCPs and the per-item
+  # guidance the actionable_agent's prompt template injects. The verb is
+  # routing-style: it ALWAYS exits 0 and surfaces failures via
+  # `output.error_code`. Workflow YAML routes on that field rather than
+  # the process exit code (mirrors `edges check`).
+  #
+  # Conductor-schema note: conductor agent steps support `tools: list[str]`
+  # but NO `skills:` / `mcps:` / `prompt_addendum:` fields (verified
+  # against conductor's pydantic schema for v1.0.x). The addendum is
+  # therefore injected as PROMPT TEXT in the actionable_agent template
+  # below — that matches the design's "addendum the driver injects into
+  # an agent invocation" framing and the original `prompt_addendum` TODO
+  # comment that this step replaces.
+  #
+  # Invariants:
+  #   Pre:  Evidence branch is checked out (post of ensure_evidence_branch).
+  #   Post: output.facets / output.skills / output.mcps / output.guidance
+  #         / output.guidance_present are populated. On failure
+  #         output.error and output.error_code are populated and the
+  #         workflow routes to workflow_error_gate; the agent never sees
+  #         a partial envelope.
+  - name: compose_addendum
+    type: script
+    description: Compose facet-profile skills + MCPs + per-item guidance for the agent prompt
+    command: polyphony
+    args:
+      - "agent"
+      - "compose-addendum"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: workflow_error_gate
+        when: "{{ compose_addendum.output.error is defined and compose_addendum.output.error != '' }}"
       - to: actionable_agent
 
   # ── Actionable agent (polyphony leg) ────────────────────────────────────
   #
   # Performs the actionable work and commits any artifacts to the
-  # evidence branch. The prompt is a STUB in this PR — see deferred
-  # wiring at the top of the file:
+  # evidence branch. The prompt template injects facet-profile-derived
+  # skills + MCPs + per-item guidance from the upstream
+  # `compose_addendum` step (Phase 6 PR #5). The injection is plain
+  # prompt text — conductor's agent-step schema does not expose
+  # structured `skills:` / `mcps:` / `prompt_addendum:` fields, so the
+  # composer's envelope is consumed via Jinja2 `{% if %}` blocks here.
   #
-  #   - PR #5 will compose facet-profile-derived skill/MCP addenda from
-  #     `process-config.yaml` into `prompt_addendum`.
-  #   - PR #5 will also inject per-item guidance extracted by
-  #     `polyphony guidance extract` (verb shipped in commit 32a3c2e
-  #     under PR #6).
-  #
-  # Until those land, the agent runs without facet-profile-derived
-  # skill/MCP addenda and without per-item guidance context. That is
-  # intentional — this PR ships the workflow shape only.
-  #
-  # TODO(p6-pr5): wire ComposeProfile() output into agent.prompt_addendum
-  #               and per-item guidance context.
+  # The `tools:` list below is the static set of conductor MCP servers
+  # the step is wired to use. The dynamic skills/MCPs the composer
+  # surfaces are advisory context the agent reads from its prompt
+  # (which skill files to consult, which MCP servers to lean on for
+  # this item's facets) — they do not change which servers conductor
+  # has connected.
   #
   # Invariants:
-  #   Pre:  Evidence branch is checked out.
+  #   Pre:  Evidence branch is checked out; compose_addendum.output
+  #         is populated (route precondition).
   #   Post: Any artifacts are committed to the evidence branch;
   #         output.summary is a one-paragraph human-readable summary
   #         the PR description can quote verbatim.
@@ -288,6 +336,44 @@ agents:
       - **Apex (run-root) id:** {{ workflow.input.apex_id }} (0 means orphan — work item is its own apex)
       - **Evidence branch:** `{{ ensure_evidence_branch.output.branch }}`
       - **Base branch:** `{{ ensure_evidence_branch.output.base_branch }}`
+      {% if compose_addendum is defined and compose_addendum.output.facets is defined and compose_addendum.output.facets | length > 0 %}
+      - **Item facets:** {{ compose_addendum.output.facets | join(', ') }}
+      {%- endif %}
+
+      {% if compose_addendum is defined and compose_addendum.output.skills is defined and compose_addendum.output.skills | length > 0 %}
+      ## Skills available for this item
+
+      The skills below are bound to the item's facet set in
+      `process-config.yaml`. Consult their `SKILL.md` files in
+      `.github/skills/` before acting:
+
+      {% for skill in compose_addendum.output.skills %}- {{ skill }}
+      {% endfor %}
+      {%- endif %}
+
+      {% if compose_addendum is defined and compose_addendum.output.mcps is defined and compose_addendum.output.mcps | length > 0 %}
+      ## MCP servers recommended for this item
+
+      The MCP servers below are bound to the item's facet set. Use them
+      where applicable; the conductor runtime may have additional
+      servers connected, but these are the ones the operator declared
+      as relevant to this work:
+
+      {% for mcp in compose_addendum.output.mcps %}- {{ mcp }}
+      {% endfor %}
+      {%- endif %}
+
+      {% if compose_addendum is defined and compose_addendum.output.guidance_present is defined and compose_addendum.output.guidance_present %}
+      ## Per-item guidance (operator-authored)
+
+      The block below was extracted by `polyphony guidance extract`
+      from the work item's source-of-record (description block or
+      configured ADO field). Treat it as append-only context —
+      additional instructions, constraints, or acceptance criteria
+      the operator pinned to this specific item:
+
+      {{ compose_addendum.output.guidance }}
+      {%- endif %}
 
       ## Instructions
 
@@ -315,9 +401,10 @@ agents:
 
       - Do NOT modify files outside the scope of this work item.
       - Do NOT push to any branch other than the evidence branch.
-      - The agent has no facet-profile addendum in this PR — see the
-        deferred-wiring TODO above. If a tool you need is unavailable,
-        say so in the summary; do not paper over a missing capability.
+      - The skills/MCPs/guidance above are advisory. If the addendum is
+        empty (no facet bound any skill, no per-item guidance present),
+        proceed using your judgment and call out missing context in the
+        summary; do not paper over a missing capability.
 
       {% if revise_loop_gate is defined %}
       ## Revise loop — previous reviewer feedback
@@ -728,6 +815,9 @@ agents:
       {%- elif ensure_evidence_branch is defined and ensure_evidence_branch.output.error is defined and ensure_evidence_branch.output.error != '' -%}
       **Stage:** ensure_evidence_branch
       **Detail:** {{ ensure_evidence_branch.output.error }}
+      {%- elif compose_addendum is defined and compose_addendum.output.error is defined and compose_addendum.output.error != '' -%}
+      **Stage:** compose_addendum
+      **Detail:** {{ compose_addendum.output.error }}{% if compose_addendum.output.error_code is defined %} ({{ compose_addendum.output.error_code }}){% endif %}
       {%- elif open_evidence_pr is defined and open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' -%}
       **Stage:** open_evidence_pr
       **Detail:** {{ open_evidence_pr.output.error }}
