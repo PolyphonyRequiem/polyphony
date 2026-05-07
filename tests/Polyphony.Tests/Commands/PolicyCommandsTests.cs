@@ -442,6 +442,7 @@ public sealed class PolicyCommandsTests : CommandTestBase
         result.Scope.ShouldBe("default");
         result.Mode.ShouldBe("warning");
         result.MinSeverity.ShouldBe("moderate");
+        result.SeveritiesAtOrAbove.ShouldBe(new[] { "moderate", "major", "critical" });
         result.MaxQuestionLoops.ShouldBe(3);
     }
 
@@ -463,6 +464,8 @@ public sealed class PolicyCommandsTests : CommandTestBase
         result.ShouldNotBeNull();
         result.Mode.ShouldBe("manual");
         result.MinSeverity.ShouldBe("critical");
+        // SeveritiesAtOrAbove tracks the resolved MinSeverity, not the defaults.
+        result.SeveritiesAtOrAbove.ShouldBe(new[] { "critical" });
         // Inherits from defaults
         result.MaxQuestionLoops.ShouldBe(3);
     }
@@ -509,7 +512,36 @@ public sealed class PolicyCommandsTests : CommandTestBase
         result.ShouldNotBeNull();
         result.Mode.ShouldBe("warning");
         result.MinSeverity.ShouldBe("low");
+        // Lowest threshold → all severities included, in ascending order.
+        result.SeveritiesAtOrAbove.ShouldBe(new[] { "low", "moderate", "major", "critical" });
         result.MaxQuestionLoops.ShouldBe(2);
+    }
+
+    [Fact]
+    public void Resolve_OpenQuestions_SeveritiesAtOrAbove_IsAscending()
+    {
+        // Bug #7 (2026-05-08): plan-level.yaml referenced a Jinja function
+        // `severities_at_or_above(...)` that conductor never honored; surfaced
+        // live in the #3043 dogfood. Fix is a precomputed array on the policy
+        // resolve output, consumed directly by route/template Jinja. Ordering
+        // is fixed at ascending so workflow comparisons are deterministic.
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            open_questions:
+              defaults: { mode: warning, min_severity: major, max_question_loops: 1 }
+            """);
+
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Resolve("default", "open_questions", fx.PolicyPath));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResolvedRule);
+        result.ShouldNotBeNull();
+        result.MinSeverity.ShouldBe("major");
+        result.SeveritiesAtOrAbove.ShouldBe(new[] { "major", "critical" });
+
+        // Field name on the wire matches the workflow Jinja reference.
+        output.ShouldContain("\"severities_at_or_above\":[\"major\",\"critical\"]");
     }
 
     [Fact]
@@ -564,10 +596,12 @@ public sealed class PolicyCommandsTests : CommandTestBase
         result.ShouldNotBeNull();
         result.Domain.ShouldBe("approvals");
         result.MinSeverity.ShouldBeNull();
+        result.SeveritiesAtOrAbove.ShouldBeNull();
         result.MaxQuestionLoops.ShouldBeNull();
 
         // Raw JSON should not contain these fields (null fields are omitted).
         output.ShouldNotContain("\"min_severity\"");
+        output.ShouldNotContain("\"severities_at_or_above\"");
         output.ShouldNotContain("\"max_question_loops\"");
     }
 
@@ -582,9 +616,11 @@ public sealed class PolicyCommandsTests : CommandTestBase
         result.ShouldNotBeNull();
         result.Domain.ShouldBe("pr");
         result.MinSeverity.ShouldBeNull();
+        result.SeveritiesAtOrAbove.ShouldBeNull();
         result.MaxQuestionLoops.ShouldBeNull();
 
         output.ShouldNotContain("\"min_severity\"");
+        output.ShouldNotContain("\"severities_at_or_above\"");
         output.ShouldNotContain("\"max_question_loops\"");
     }
 

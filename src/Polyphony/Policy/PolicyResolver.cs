@@ -1,5 +1,6 @@
 namespace Polyphony.Policy;
 
+using System.Text.Json.Serialization;
 using Polyphony.Sdlc;
 
 /// <summary>
@@ -70,10 +71,29 @@ public static class PolicyResolver
             MaxFixLoops = specific?.MaxFixLoops ?? defaults.MaxFixLoops,
             MaxRemediationCycles = specific?.MaxRemediationCycles ?? defaults.MaxRemediationCycles,
             MinSeverity = (specific?.MinSeverity ?? defaults.MinSeverity)?.ToString().ToLowerInvariant(),
+            SeveritiesAtOrAbove = ComputeSeveritiesAtOrAbove(specific?.MinSeverity ?? defaults.MinSeverity),
             MaxQuestionLoops = specific?.MaxQuestionLoops ?? defaults.MaxQuestionLoops,
             QualityAvgScoreAtLeast = quality?.AvgScoreAtLeast,
             QualityBlockingCountAtMost = quality?.BlockingCountAtMost,
         };
+    }
+
+    /// <summary>
+    /// Returns the lowercase string names of every <see cref="Severity"/> at
+    /// or above <paramref name="minSeverity"/>, ordered by enum declaration
+    /// (Low → Critical). Used by workflow routes to filter open-question
+    /// lists by severity threshold without needing a custom Jinja function.
+    /// Returns <c>null</c> when <paramref name="minSeverity"/> is null —
+    /// non-OpenQuestions domains have no severity threshold concept.
+    /// </summary>
+    private static List<string>? ComputeSeveritiesAtOrAbove(Severity? minSeverity)
+    {
+        if (minSeverity is null) return null;
+        var threshold = minSeverity.Value;
+        return Enum.GetValues<Severity>()
+            .Where(s => s >= threshold)
+            .Select(s => s.ToString().ToLowerInvariant())
+            .ToList();
     }
 
     private static QualityThreshold? MergeQuality(QualityThreshold? specific, QualityThreshold? defaults)
@@ -153,6 +173,18 @@ public sealed record ResolvedRule
     public int? MaxFixLoops { get; init; }
     public int? MaxRemediationCycles { get; init; }
     public string? MinSeverity { get; init; }
+
+    /// <summary>
+    /// Lowercase severity names at or above <see cref="MinSeverity"/>, in
+    /// ascending order (e.g. <c>["moderate","major","critical"]</c> for
+    /// <c>MinSeverity == "moderate"</c>). Null when MinSeverity is null
+    /// (non-OpenQuestions domains). Used by workflow routes to filter
+    /// architect-emitted open-question lists by severity without a
+    /// custom Jinja function.
+    /// </summary>
+    [JsonPropertyName("severities_at_or_above")]
+    public List<string>? SeveritiesAtOrAbove { get; init; }
+
     public int? MaxQuestionLoops { get; init; }
     public int? QualityAvgScoreAtLeast { get; init; }
     public int? QualityBlockingCountAtMost { get; init; }
