@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Policy;
+using Polyphony.Sdlc;
 
 namespace Polyphony.Commands;
 
@@ -51,6 +52,7 @@ public sealed class PolicyCommands
                 MaxConcurrentChildren = config.Concurrency!.MaxConcurrentChildren!.Value,
                 MaxConcurrentPgs = config.Concurrency.MaxConcurrentPgs!.Value,
             },
+            Guidance = SnapshotGuidance(config.Guidance!),
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PolicyLoadResult));
@@ -179,6 +181,19 @@ public sealed class PolicyCommands
         };
     }
 
+    private static PolicyGuidanceSnapshot SnapshotGuidance(GuidancePolicy guidance)
+    {
+        var effectiveSource = guidance.Source ?? GuidanceSource.DescriptionBlock;
+        return new PolicyGuidanceSnapshot
+        {
+            Source = effectiveSource,
+            AdoFieldName = guidance.AdoFieldName,
+            ByTypeSource = guidance.ByType?.ToDictionary(
+                kv => kv.Key,
+                kv => kv.Value.Source ?? effectiveSource),
+        };
+    }
+
     private static (List<string> Errors, List<string> Warnings) ValidateRules(PolicyConfig config)
     {
         var errors = new List<string>();
@@ -203,7 +218,38 @@ public sealed class PolicyCommands
         WarnIfNonPositive(config.Concurrency?.MaxConcurrentChildren, "concurrency.max_concurrent_children", errors);
         WarnIfNonPositive(config.Concurrency?.MaxConcurrentPgs, "concurrency.max_concurrent_pgs", errors);
 
+        // Guidance: source must be one of the canonical strings (when set);
+        // ado_field requires a non-empty ado_field_name.
+        ValidateGuidanceForReporting(config.Guidance, errors);
+
         return (errors, warnings);
+    }
+
+    private static void ValidateGuidanceForReporting(GuidancePolicy? guidance, List<string> errors)
+    {
+        if (guidance is null) return;
+        ValidateGuidanceRule("guidance", guidance.Source, guidance.AdoFieldName, errors);
+
+        if (guidance.ByType is null) return;
+        foreach (var (typeName, rule) in guidance.ByType)
+        {
+            var effectiveSource = rule.Source ?? guidance.Source;
+            var effectiveField = rule.AdoFieldName ?? guidance.AdoFieldName;
+            ValidateGuidanceRule($"guidance.by_type.{typeName}", effectiveSource, effectiveField, errors);
+        }
+    }
+
+    private static void ValidateGuidanceRule(string scope, string? source, string? adoFieldName, List<string> errors)
+    {
+        if (source is not null && !GuidanceSource.IsValid(source))
+            errors.Add(
+                $"{scope}.source '{source}' is not a known guidance source. " +
+                $"Expected '{GuidanceSource.DescriptionBlock}' or '{GuidanceSource.AdoField}'.");
+
+        if (source == GuidanceSource.AdoField && string.IsNullOrWhiteSpace(adoFieldName))
+            errors.Add(
+                $"{scope}.source is '{GuidanceSource.AdoField}' but {scope}.ado_field_name is not set. " +
+                "Set ado_field_name to the ADO custom field reference name (e.g. 'Custom.PolyphonyGuidance').");
     }
 
     private static void WarnIfNonPositive(int? value, string fieldPath, List<string> errors)

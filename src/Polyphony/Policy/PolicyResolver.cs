@@ -1,5 +1,7 @@
 namespace Polyphony.Policy;
 
+using Polyphony.Sdlc;
+
 /// <summary>
 /// Resolves an effective <see cref="ScopeRule"/> for a given scope + domain by layering
 /// rules most-specific-wins: <c>Root</c> &gt; <c>ByType[name]</c> &gt; <c>Defaults</c>.
@@ -83,6 +85,52 @@ public static class PolicyResolver
             AvgScoreAtLeast = specific.AvgScoreAtLeast ?? defaults.AvgScoreAtLeast,
             BlockingCountAtMost = specific.BlockingCountAtMost ?? defaults.BlockingCountAtMost,
         };
+    }
+
+    /// <summary>
+    /// Resolves the effective per-item guidance configuration for
+    /// <paramref name="scope"/>, layering <c>guidance.by_type[name]</c> over
+    /// the workspace defaults (top-level <c>guidance.source</c> +
+    /// <c>guidance.ado_field_name</c>).
+    /// </summary>
+    /// <param name="config">A <see cref="PolicyConfig"/> with built-in defaults
+    /// already applied.</param>
+    /// <param name="scope">A scope token: <c>default</c> or <c>type:Name</c>.
+    /// <c>root</c> is accepted and treated as <c>default</c> — guidance has no
+    /// notion of run-root scope.</param>
+    /// <returns>A fully-populated <see cref="GuidanceConfig"/>.</returns>
+    public static GuidanceConfig ResolveGuidance(PolicyConfig config, string scope)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var guidance = config.Guidance
+            ?? throw new InvalidOperationException(
+                "Policy config has no 'guidance' block after defaults applied — bug.");
+
+        var defaultSource = guidance.Source ?? GuidanceSource.DescriptionBlock;
+        var defaultField = guidance.AdoFieldName;
+
+        // Most-specific wins: type:Name overlays the workspace default; root + default
+        // both fall through to the top-level defaults (guidance has no Root concept).
+        if (scope.StartsWith("type:", StringComparison.Ordinal))
+        {
+            var typeName = scope["type:".Length..];
+            if (guidance.ByType is not null && guidance.ByType.TryGetValue(typeName, out var rule))
+            {
+                return new GuidanceConfig(
+                    Source: rule.Source ?? defaultSource,
+                    AdoFieldName: rule.AdoFieldName ?? defaultField);
+            }
+
+            return new GuidanceConfig(defaultSource, defaultField);
+        }
+
+        if (scope is "default" or "root")
+            return new GuidanceConfig(defaultSource, defaultField);
+
+        throw new ArgumentException(
+            $"Unknown scope '{scope}'. Expected 'default', 'root', or 'type:<TypeName>'.", nameof(scope));
     }
 
     private static string DomainToString(PolicyDomain domain) => domain switch
