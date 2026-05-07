@@ -575,6 +575,79 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
+    // Edges check command — JSON contract
+    // =========================================================================
+
+    [Fact]
+    public async Task EdgesCheck_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(12_001).WithType(EpicType).WithTitle("Edges check").WithState(InProgressState).Build());
+
+        var cmd = CreateEdgesCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Check(workItem: 12_001));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        output.ShouldContain("\"work_item_id\"");
+        output.ShouldContain("\"items_walked\"");
+        output.ShouldContain("\"edges_total\"");
+        output.ShouldContain("\"has_conflicts\"");
+        output.ShouldContain("\"conflicts\"");
+
+        AssertNoPascalCase(output, "WorkItemId");
+        AssertNoPascalCase(output, "ItemsWalked");
+        AssertNoPascalCase(output, "EdgesTotal");
+        AssertNoPascalCase(output, "HasConflicts");
+        AssertNoPascalCase(output, "Conflicts");
+    }
+
+    [Fact]
+    public async Task EdgesCheck_NullFieldsOmitted_WhenWritingNull()
+    {
+        // Happy path → Error / ErrorCode are null → those keys must be absent.
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(12_002).WithType(EpicType).WithTitle("Null fields").WithState(InProgressState).Build());
+
+        var cmd = CreateEdgesCommands();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Check(workItem: 12_002));
+
+        output.ShouldNotContain("\"error\"");
+        output.ShouldNotContain("\"error_code\"");
+    }
+
+    [Fact]
+    public async Task EdgesCheck_DeserializationRoundTrip_FieldsMapped()
+    {
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(12_003).WithType(EpicType).WithTitle("Roundtrip").WithState(InProgressState).Build());
+
+        var cmd = CreateEdgesCommands();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Check(workItem: 12_003));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.EdgesCheckResult);
+        result.ShouldNotBeNull();
+        result!.WorkItemId.ShouldBe(12_003);
+        result.ItemsWalked.ShouldBe(1);
+        result.HasConflicts.ShouldBeFalse();
+        result.Conflicts.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task EdgesCheck_NotFound_ReturnsErrorEnvelope_WithSuccessExitCode()
+    {
+        // Routing-style verb: always exit 0, route via envelope's error_code.
+        var cmd = CreateEdgesCommands();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Check(workItem: 99_995));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var doc = JsonDocument.Parse(output);
+        doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+        doc.RootElement.GetProperty("error_code").GetString().ShouldBe("work_item_not_found");
+        doc.RootElement.GetProperty("work_item_id").GetInt32().ShouldBe(99_995);
+    }
+
+    // =========================================================================
+
 
     [Fact]
     public async Task AllCommands_NotFound_ErrorJsonFormatConsistent()
@@ -1020,6 +1093,12 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var validator = new TransitionValidator(config);
         var walker = new HierarchyWalker(config, Repository);
         return new StateCommands(twig, git, gh, runner, ghTokenResolver, phaseDetector, validator, walker, Repository, config);
+    }
+
+    private EdgesCommands CreateEdgesCommands()
+    {
+        var config = CreateConfigBuilder().Build();
+        return new EdgesCommands(Repository, config);
     }
 
     private static ProcessConfigBuilder CreateConfigBuilder()

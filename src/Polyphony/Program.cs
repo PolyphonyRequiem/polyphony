@@ -38,4 +38,5 @@ app.Add<ManifestCommands>("manifest");
 app.Add<LockCommands>("lock");
 app.Add<WorktreeCommands>("worktree");
 app.Add<WorklistCommands>("worklist");
+app.Add<EdgesCommands>("edges");
 app.Run(args);
