@@ -11,6 +11,22 @@ public sealed class ProcessConfig
     public ReviewPolicies? ReviewPolicies { get; set; }
     public BranchStrategy? BranchStrategy { get; set; }
     public string Platform { get; set; } = "github";
+
+    /// <summary>
+    /// Top-level facet profile block. Each key is a canonical facet name
+    /// (see <see cref="Sdlc.Facet"/>) bound to the skills + MCPs that get
+    /// unioned into the agent addendum when an item carries that facet.
+    /// Optional — missing or empty means no facet-driven addendum
+    /// composition (existing behavior).
+    /// </summary>
+    /// <remarks>
+    /// Composition lives in <see cref="Sdlc.FacetProfileComposer"/>;
+    /// load-time validation lives in <see cref="FacetProfileValidator"/>.
+    /// PR #1 of Phase 6 ships only the schema + composition + validator;
+    /// driver wiring lands in PR #5.
+    /// </remarks>
+    [YamlMember(Alias = "facets")]
+    public Dictionary<string, FacetProfileConfig>? Facets { get; set; }
 }
 
 public sealed class TypeConfig
