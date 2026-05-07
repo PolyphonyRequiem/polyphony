@@ -303,15 +303,19 @@ Describe 'apex-driver e2e — outer loop reachability' {
         $catchAll.Target | Should -Be 'worklist_failure_gate'
     }
 
-    It 'check_conflicts dispatches to wave_dispatch_loop on no-conflicts and gates on conflicts' {
+    It 'check_conflicts dispatches to wave_dispatch_loop on no-conflicts, gates on conflicts, surfaces envelope errors via worklist_failure_gate' {
         $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'check_conflicts')
+        $err   = $routes | Where-Object { $_.When -match 'check_conflicts\.output\.error is defined' }
         $confl = $routes | Where-Object { $_.When -match "has_conflicts \| string \| lower == 'true'" }
         $clear = $routes | Where-Object { $_.When -match "has_conflicts \| string \| lower == 'false'" }
+        $err.Target   | Should -Be 'worklist_failure_gate'
         $confl.Target | Should -Be 'conflict_resolution_gate'
         $clear.Target | Should -Be 'wave_dispatch_loop'
-        # M4 catch-all
+        # M4 catch-all — undefined has_conflicts means the JSON envelope
+        # didn't shape correctly; treat as a worklist-layer failure
+        # rather than silently dispatching waves.
         $routes[-1].When   | Should -BeNullOrEmpty
-        $routes[-1].Target | Should -Be 'wave_dispatch_loop'
+        $routes[-1].Target | Should -Be 'worklist_failure_gate'
     }
 
     It 'conflict_resolution_gate exposes retry/abort with the documented routes' {
