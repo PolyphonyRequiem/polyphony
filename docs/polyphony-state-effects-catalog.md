@@ -158,6 +158,31 @@ introduce new dependencies.
   runtime. Pinned by lint check `open-questions-policy-bad-type-field`
   in `lint-plan-level.ps1` as of this PR.
 
+### `polyphony policy resolve --domain <d> --scope <s> [--path P]`
+- **Purpose**: resolve effective policy for a `(scope, domain)` pair by
+  layering most-specific-wins (`type:Name` > `root` > `defaults`).
+- **Pre**: `.conductor/policy.yaml` parseable (or absent — built-in
+  defaults applied).
+- **Post**: emits `ResolvedRule` JSON. Domain-shaped fields are present
+  only when populated:
+  - `approvals` / `pr` → `{domain, scope, mode, max_revision_cycles?,
+    max_fix_loops?, max_remediation_cycles?, quality_avg_score_at_least?,
+    quality_blocking_count_at_most?}`.
+  - `open_questions` → adds `{min_severity, severities_at_or_above,
+    max_question_loops}`. `severities_at_or_above` is the precomputed
+    ascending list of severities at or above `min_severity` —
+    workflows route on this directly (no Jinja function call).
+- **Side effects**: none.
+- **Idempotent**: yes (read-only).
+- **Severity-list gotcha**: workflows MUST reference
+  `open_questions_policy.output.severities_at_or_above` as a field, NOT
+  call `severities_at_or_above(...)` as a function. Bug #7 (dogfood
+  apex #3043, 2026-05-08) had two `severities_at_or_above(...)`
+  function-call references in `plan-level.yaml`; conductor 0.1.14 has
+  no such Jinja extension and crashed with `'severities_at_or_above'
+  is undefined`. Lint check `severities-at-or-above-as-function` in
+  `lint-plan-level.ps1` blocks the regression as of this PR.
+
 ---
 
 ## Helper scripts
@@ -229,6 +254,19 @@ introduce new dependencies.
   output schemas would catch this class statically — partially
   addressable under [#163](https://github.com/PolyphonyRequiem/polyphony/issues/163)
   (property-based testing) but really wants its own pass.
+- **Lint can enforce a Jinja contract conductor doesn't honor**: bug
+  #7 (dogfood apex #3043, 2026-05-08) had `lint-plan-level.ps1` Check 7
+  *requiring* `severities_at_or_above(open_questions_policy.output.min_severity)`
+  — a custom Jinja function the conductor runtime never registered.
+  Lint and workflow agreed; conductor crashed at runtime. Same
+  underlying gap as the bug-#6 entry above, but a different angle:
+  *lint contracts that aren't grounded in conductor's actual Jinja
+  environment* are equally vulnerable. Fix in this PR moved the
+  contract to a verb-output field (`severities_at_or_above`) emitted by
+  `polyphony policy resolve` so the lint, the workflow, and conductor
+  agree. A general remedy would be a registry of conductor-honored
+  Jinja functions/filters that lints can validate against — also
+  rolls into [#163](https://github.com/PolyphonyRequiem/polyphony/issues/163).
 - **Wave integration idempotency**: not yet exercised; document after
   first wave-integration smoke.
 - **`apex-wave-dispatch.yaml` and per-lifecycle sub-workflows**: not

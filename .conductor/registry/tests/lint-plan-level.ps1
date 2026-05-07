@@ -96,10 +96,24 @@ if ($content -notmatch "open_questions_policy\.output\.mode\s*==\s*'manual'") {
 }
 
 # ── Check 7: Policy-aware routes — mode==warning uses severities_at_or_above
-if ($content -notmatch 'severities_at_or_above\(open_questions_policy\.output\.min_severity\)') {
+# Rev 4 (2026-05-08): the workflow now references the precomputed
+# `open_questions_policy.output.severities_at_or_above` list emitted by
+# `polyphony policy resolve --domain open_questions`. The legacy form
+# `severities_at_or_above(open_questions_policy.output.min_severity)` was a
+# Jinja function call that conductor never honored — surfaced live in the
+# #3043 dogfood as `'severities_at_or_above' is undefined`. Lint now enforces
+# the field reference and rejects the legacy function form.
+if ($content -notmatch 'open_questions_policy\.output\.severities_at_or_above') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-warning-mode-route'
-        Detail = "No route condition using severities_at_or_above(open_questions_policy.output.min_severity)"
+        Detail = "No route condition referencing open_questions_policy.output.severities_at_or_above (precomputed severity list emitted by `polyphony policy resolve --domain open_questions`)."
+    }
+}
+
+if ($content -match 'severities_at_or_above\s*\(') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'severities-at-or-above-as-function'
+        Detail = "Found legacy `severities_at_or_above(...)` function-call form. Conductor has no such Jinja extension; reference the precomputed `open_questions_policy.output.severities_at_or_above` list field instead."
     }
 }
 
@@ -109,7 +123,7 @@ if ($content -notmatch 'severities_at_or_above\(open_questions_policy\.output\.m
 if ($content -match "architect\.output\.open_questions\s*\|\s*selectattr\('severity',\s*'in',\s*\['") {
     $violations += [PSCustomObject]@{
         Rule   = 'hardcoded-severity-filter'
-        Detail = "Hardcoded severity list found in architect routing — should use policy-driven severities_at_or_above()"
+        Detail = "Hardcoded severity list found in architect routing — should reference policy-driven open_questions_policy.output.severities_at_or_above"
     }
 }
 

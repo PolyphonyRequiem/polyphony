@@ -622,7 +622,7 @@ agents:
         when: "{{ open_questions_policy.output.mode == 'manual' and architect.output.open_questions | length > 0 }}"
       # Mode=warning: gate only when questions at or above min_severity exist.
       - to: open_questions_gate
-        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
+        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list | length > 0 }}"
       # Else: no gating questions — proceed to write_plan.
       - to: write_plan
 
@@ -638,7 +638,7 @@ agents:
       finalizing the plan.
 
       {% if open_questions_policy.output.mode == 'warning' %}
-      {% set blocking = architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list %}
+      {% set blocking = architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list %}
       {% else %}
       {% set blocking = architect.output.open_questions %}
       {% endif %}

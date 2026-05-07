@@ -98,7 +98,7 @@ agents:
       - to: open_questions_gate
         when: "{{ open_questions_policy.output.mode == 'manual' and architect.output.open_questions | length > 0 }}"
       - to: open_questions_gate
-        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
+        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list | length > 0 }}"
       - to: review_group
   - name: open_questions_gate
     type: human_gate
@@ -156,7 +156,7 @@ agents:
       - to: open_questions_gate
         when: "{{ open_questions_policy.output.mode == 'manual' and architect.output.open_questions | length > 0 }}"
       - to: open_questions_gate
-        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
+        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list | length > 0 }}"
       - to: review_group
   - name: open_questions_gate
     type: human_gate
@@ -231,7 +231,7 @@ agents:
       - to: open_questions_gate
         when: "{{ open_questions_policy.output.mode == 'manual' and architect.output.open_questions | length > 0 }}"
       - to: open_questions_gate
-        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
+        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list | length > 0 }}"
       - to: review_group
   - name: open_questions_gate
     type: human_gate
@@ -398,7 +398,7 @@ agents:
       - to: open_questions_gate
         when: "{{ open_questions_policy.output.mode == 'manual' and architect.output.open_questions | length > 0 }}"
       - to: open_questions_gate
-        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
+        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list | length > 0 }}"
   - name: open_questions_answer_counter
     type: script
     command: pwsh
@@ -471,7 +471,7 @@ agents:
       - to: open_questions_gate
         when: "{{ open_questions_policy.output.mode == 'manual' and architect.output.open_questions | length > 0 }}"
       - to: open_questions_gate
-        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
+        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list | length > 0 }}"
   - name: open_questions_answer_counter
     type: script
     command: pwsh
@@ -560,7 +560,7 @@ agents:
       - to: open_questions_gate
         when: "{{ open_questions_policy.output.mode == 'manual' and architect.output.open_questions | length > 0 }}"
       - to: open_questions_gate
-        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
+        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list | length > 0 }}"
   - name: open_questions_answer_counter
     type: script
     command: pwsh
@@ -646,7 +646,7 @@ agents:
       - to: open_questions_gate
         when: "{{ open_questions_policy.output.mode == 'manual' and architect.output.open_questions | length > 0 }}"
       - to: open_questions_gate
-        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', severities_at_or_above(open_questions_policy.output.min_severity)) | list | length > 0 }}"
+        when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list | length > 0 }}"
   - name: open_questions_answer_counter
     type: script
     command: pwsh
@@ -808,6 +808,52 @@ agents:
             $output = pwsh -NoProfile -File $lintScript 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output -join "`n") | Should -Match 'open-questions-policy-bad-type-field'
+        }
+    }
+
+    Context 'severities_at_or_above field reference (regression: dogfood apex #3043, 2026-05-08)' {
+
+        BeforeEach {
+            $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-plan-level-severities-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+            $script:WorkflowsDir = Join-Path $script:TempRoot 'workflows'
+            $script:TestsDir = Join-Path $script:TempRoot 'tests'
+            $script:RealYaml = Join-Path $PSScriptRoot '..' 'workflows' 'plan-level.yaml'
+            New-Item $script:WorkflowsDir -ItemType Directory -Force | Out-Null
+            New-Item $script:TestsDir -ItemType Directory -Force | Out-Null
+            Copy-Item $script:LintScript (Join-Path $script:TestsDir 'lint-plan-level.ps1')
+        }
+
+        AfterEach {
+            Remove-Item $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Real plan-level.yaml references the precomputed severities_at_or_above field' {
+            (Get-Content $script:RealYaml -Raw) | Should -Match 'open_questions_policy\.output\.severities_at_or_above'
+        }
+
+        It 'Real plan-level.yaml does NOT reference severities_at_or_above as a Jinja function call' {
+            (Get-Content $script:RealYaml -Raw) | Should -Not -Match 'severities_at_or_above\s*\('
+        }
+
+        It 'Lint fails when plan-level.yaml regresses to the legacy function-call form' {
+            $content = Get-Content $script:RealYaml -Raw
+            # Mutate every field reference back to the old function-call form
+            $mutated = $content -replace 'open_questions_policy\.output\.severities_at_or_above', 'severities_at_or_above(open_questions_policy.output.min_severity)'
+            Set-Content (Join-Path $script:WorkflowsDir 'plan-level.yaml') $mutated
+            $lintScript = Join-Path $script:TestsDir 'lint-plan-level.ps1'
+            $output = pwsh -NoProfile -File $lintScript 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'severities-at-or-above-as-function'
+        }
+
+        It 'Lint fails when the severities_at_or_above field reference is removed entirely' {
+            $content = Get-Content $script:RealYaml -Raw
+            $mutated = $content -replace 'open_questions_policy\.output\.severities_at_or_above', 'open_questions_policy.output.min_severity'
+            Set-Content (Join-Path $script:WorkflowsDir 'plan-level.yaml') $mutated
+            $lintScript = Join-Path $script:TestsDir 'lint-plan-level.ps1'
+            $output = pwsh -NoProfile -File $lintScript 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'missing-warning-mode-route'
         }
     }
 }
