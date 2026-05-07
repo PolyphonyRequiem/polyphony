@@ -77,10 +77,16 @@ BeforeAll {
     $script:WaveYaml = ConvertFrom-Yaml $script:WaveRaw
     $script:ItemYaml = ConvertFrom-Yaml $script:ItemRaw
 
-    # Build per-workflow agent indices for O(1) lookup.
+    # Build per-workflow agent indices for O(1) lookup. Per M8, top-level
+    # `for_each:` entries share the same name namespace as `agents:` entries
+    # (route targets and entry_point can refer to either), so we fold both
+    # into one index. Each for_each entry exposes `name`, `type: 'for_each'`,
+    # `routes:`, and `agent:` (a sub-step) — same fields the route/reachability
+    # helpers below need.
     function script:Index-Agents($yaml) {
         $idx = @{}
-        foreach ($a in $yaml.agents) { $idx[$a.name] = $a }
+        foreach ($a in $yaml.agents)   { $idx[$a.name] = $a }
+        foreach ($f in $yaml.for_each) { $idx[$f.name] = $f }
         return $idx
     }
     $script:ApexAgents = script:Index-Agents $script:ApexYaml
@@ -188,7 +194,10 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:WaveYaml.workflow.entry_point | Should -Be 'dispatch_items'
         $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '1.0.1'
         $script:WaveYaml.tools                | Should -Contain 'twig'
-        $script:WaveYaml.agents.Count         | Should -BeGreaterThan 2
+        # Per-M8 the workflow exposes 2 agents (aggregate_renegotiation,
+        # integrate_wave) and 1 top-level for_each entry (dispatch_items).
+        $script:WaveYaml.agents.Count   | Should -BeGreaterThan 1
+        $script:WaveYaml.for_each.Count | Should -BeGreaterThan 0
     }
 
     It 'apex-item-dispatch.yaml parses and exposes the expected top-level shape' {
