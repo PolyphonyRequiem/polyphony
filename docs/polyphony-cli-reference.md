@@ -824,7 +824,12 @@ A standalone diagnostic, not part of any workflow. Checks:
 | SQLite available + WAL mode | yes |
 | YamlDotNet basic parse OK | yes |
 
-Plus environment metadata: OS, architecture, dotnet version, polyphony version.
+Plus environment metadata: OS, architecture, dotnet version, polyphony version,
+and the canonical SDLC entry-point reference (`canonical_workflow`, currently
+`apex-driver@polyphony`). The same reference is also written to STDERR as a
+one-line breadcrumb (`Canonical SDLC entry point: conductor run
+apex-driver@polyphony --input apex_id=<ID>`) so first-time users see the entry
+without parsing the JSON.
 
 Exits `0` if all critical checks pass, `4` (`HealthCheckFailed`) otherwise.
 
