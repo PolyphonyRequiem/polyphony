@@ -54,6 +54,10 @@ A canonical, correct example: `scripts/scope-closer.ps1:53-72`.
 | Walk children: facets, states, tags                        | `polyphony hierarchy --work-item N --depth 3`     | `Commands/HierarchyCommand.cs`  |
 | Get suggested branch names for this work item                    | `polyphony route` → `output.workspace_hint`       | `Routing/BranchNameResolver.cs` |
 | Validate `.conductor/process-config.yaml` itself                 | `polyphony validate-config --config .conductor`   | `Commands/ValidateConfigCommand.cs` |
+| Build the cross-item edge graph; surface conflicts               | `polyphony edges check --work-item N`             | `Commands/EdgesCommands.Check.cs` |
+| Ensure an evidence branch exists (orphan or apex-scoped)         | `polyphony branch ensure-evidence-branch N`       | `Commands/BranchCommands.EnsureEvidenceBranch.cs` |
+| Open or reuse the evidence PR against `feature/<apex>`           | `polyphony pr open-evidence-pr N`                 | `Commands/PrCommands.OpenEvidencePr.cs` |
+| Extract per-item guidance per the resolved policy                | `polyphony guidance extract N`                    | `Commands/GuidanceCommands.cs` |
 | Set the active work item context                                 | `twig set <id> --output json`                     | twig CLI                        |
 | Change state                                                     | `twig state <name> --output json`                 | twig CLI                        |
 | Add a comment to a work item                                     | `twig note --text "…"`                            | twig CLI                        |
@@ -64,6 +68,146 @@ A canonical, correct example: `scripts/scope-closer.ps1:53-72`.
 Rule of thumb: if you find yourself wanting to invent a new polyphony verb, re-read
 `polyphony-cli-reference.md`. The four existing verbs cover every read concern. Writes
 all go through `twig`.
+
+> **The Phase 6 + 7 additions** (`edges check`, `branch ensure-evidence-branch`,
+> `pr open-evidence-pr`, `guidance extract`) are routing-style — same envelope
+> contract as the four reads, exit-code-0-on-routing-failure included. See
+> the **polyphony-sdlc** skill for what each verb does conceptually; the
+> envelope-routing rules below apply uniformly.
+
+---
+
+## Routing-style verb envelope convention
+
+Every Phase 5+ polyphony verb that participates in a workflow route — `route`,
+`validate`, `edges check`, `branch ensure-evidence-branch`,
+`pr open-evidence-pr`, `pr create-feature-ado`, `pr merge-feature-ado`,
+`worklist build`, etc. — follows the **same envelope contract**:
+
+1. **Always exits 0** (or `ExitCodes.Success`). Non-zero exit means the verb
+   itself crashed (e.g. cache I/O failure), not that the routing decision was
+   "no".
+2. **Surfaces success or failure in the JSON envelope** via fields like
+   `success`, `has_conflicts`, `error`, `error_code`. Workflows route on those
+   fields, not on the exit code.
+3. **Never throws to the workflow.** Programmer errors (empty inputs, unknown
+   types) are caught and re-emitted as `error_code` values like
+   `invalid_argument`, `work_item_not_found`, `type_unknown`,
+   `derivation_failed`, `cache_error`.
+
+Concrete example for `polyphony edges check`:
+
+```yaml
+- name: edges_check
+  type: script
+  args: [polyphony, edges, check, "--work-item", "{{ workflow.input.work_item_id }}"]
+  output_map:
+    has_conflicts: "$.has_conflicts"
+    conflicts: "$.conflicts"
+    error_code: "$.error_code"
+
+- name: conflict_gate
+  type: human_gate
+  when: "{{ edges_check.output.has_conflicts == true }}"
+  message: "Cross-item edge conflicts detected. Resolve before proceeding."
+  options: [retry, abort]
+
+# Downstream waves consume the graph only after the gate clears.
+```
+
+The same shape applies to evidence verbs (`success` + `branch` /
+`pr_url` + `error` / `error_code`) and to `worklist build`. Always
+gate on the envelope; never on the exit code.
+
+---
+
+## Worktree isolation for parallel agents
+
+When multiple agents may run against the same checkout — sibling SDLC
+runs, multiple coders inside an MG, retrofit work running alongside a
+live PR — **default to a dedicated git worktree per agent** to avoid
+stash/checkout collisions:
+
+```powershell
+git fetch origin
+git worktree add -b sdlc/<task-name> ../polyphony-<task> origin/main
+cd ../polyphony-<task>
+```
+
+This is the polyphony parallel-fleet convention now (5 of the 9 most
+recent fleet PRs needed this pattern). The `<repo>-<task>` directory
+sits as a sibling of the source-of-truth checkout; the source repo's
+`.git` is shared, so worktrees are cheap to create and cheap to remove.
+
+When the workflow exits cleanly:
+
+```powershell
+git worktree remove ../polyphony-<task>
+```
+
+The `git_repo` workflow metadata (the source-of-truth checkout) and
+`cwd` (the worktree) are tracked separately for exactly this reason —
+see the **polyphony-sdlc** skill's "Workflow Metadata" section.
+
+---
+
+## Composing facet profiles
+
+The driver injects skills + MCPs onto an agent invocation by composing
+the item's facet profiles together with the resolved execution mode and
+extracted per-item guidance. The canonical compose pattern is:
+
+```csharp
+// 1. Inject mode-driven within-item edges into the derived requirement set.
+var setWithMode = ExecutionModeInjector.Inject(
+    derived.Set,
+    resolved.ExecutionMode);
+
+// 2. Compose the agent addendum: union facet profiles, append guidance.
+var addendum = FacetProfileComposer.Compose(
+    facets:           item.Facets,
+    profiles:         processConfig.GetFacetProfiles(),
+    perItemGuidance:  guidanceExtract.Guidance);
+
+// 3. Hand `addendum.Skills`, `addendum.Mcps`, `addendum.GuidanceContext`
+//    to the agent invocation prep.
+```
+
+The composition is deterministic: skills + MCPs sorted ordinal
+ascending, identical-name collisions deduped silently, unknown facet
+names omitted. See the **polyphony-sdlc** skill's "Facet Profiles and
+Agent Addendum" section for the conceptual model and the
+config-load-time validator (V-20).
+
+> **Wiring status.** The composer + injector ship in PRs #128 / #129
+> as standalone primitives. The apex-driver / `worklist build` retrofit
+> that calls them at agent-invocation prep time is the in-flight
+> retrofit work — workflow YAMLs that reference facet profiles should
+> assume the composition layer is available, not hand-roll the union
+> themselves.
+
+---
+
+## Reviewing evidence PRs
+
+The actionable workflow's evidence PR (head = `evidence/<apex>-<item>`,
+base = `feature/<apex>`, opened via `polyphony pr open-evidence-pr`)
+follows the **same lifecycle shape** as the plan PR and feature PR —
+the rubric is the only thing that differs:
+
+| Stage | Plan PR | Evidence PR | Feature PR |
+|-------|---------|-------------|------------|
+| Reviewer rubric | "Is this design sound?" | "Does this evidence justify the action?" | "Is this code change correct + integrated?" |
+| Routing | `pr_platform_router` → GH or ADO | `pr_platform_router` → GH or ADO | `pr_platform_router` → GH or ADO |
+| Fix loop | architect revision | actionable agent re-runs against the same branch | remediation cycle → new PG |
+| Cap | `policy.approvals.max_revision_cycles` | shared with approvals cap | `policy.pr.max_remediation_cycles` |
+
+Reuse the existing platform routing (`gh` for GitHub via
+`github-pr.yaml`, `pr post-comment-ado` for ADO via `ado-pr.yaml`)
+unchanged. The reviewer agent's prompt is the only thing that swaps —
+either rubric-branch on the active item's facet inside the existing
+`plan_reviewer`, or ship a sibling `evidence_reviewer` with its own
+prompt. See `actionable.yaml` once it lands (Phase 6 PR #4 in flight).
 
 ---
 

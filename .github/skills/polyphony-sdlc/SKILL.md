@@ -506,3 +506,243 @@ architect and the `open_questions_gate` human gate.
   The default mode; balances user involvement with workflow throughput.
 - **`manual`** — Any question (even `low` severity) stops for user input.
   Use for root items or high-stakes planning where every ambiguity matters.
+
+## Engine Vocabulary (Phase 6 + 7)
+
+The sections below cover the requirement / edge / facet vocabulary the
+engine produces and consumes. Workflow YAMLs and helper scripts route on
+the JSON envelopes these primitives surface — see the
+**polyphony-workflow-author** skill for the routing patterns.
+
+### EdgeGraph and cross-item edges
+
+`Polyphony.Sdlc.EdgeGraph` is the merged dependency graph spanning every
+item in a run-root's worklist. `EdgeGraph.Build(items)` accepts a flat
+list of `EdgeGraphInput(itemId, parentItemId, requirementSet)` and
+returns an immutable graph carrying:
+
+- `ItemRequirements` — the per-item `RequirementSet` (within-item edges
+  live here).
+- `Edges` — flat list of `CrossItemEdge(prereqItem, prereqKind,
+  dependentItem, dependentKind, threshold, source)`.
+- `Conflicts` — `EdgeConflict` records (`Cycle`, `UnknownItem`,
+  reserved `ThresholdMismatch`); empty on a clean build.
+
+The **definitional** bucket is the only one wired today
+(`CrossItemEdgeDeriver.DeriveDefinitional`). It emits exactly two rules:
+
+1. **Children-unblock.** A parent's `children_seeded → child.<entry-req>`
+   for every entry requirement of every child. Pure containers (no
+   `children_seeded`) skip this — children start unblocked.
+2. **Terminal-rollup.** Every `child.item_satisfied → parent.item_satisfied`.
+   Gates parent completion, not start.
+
+Cycles are detected at `(itemId, requirementKind)` granularity, not bare
+item id. Definitional edges flow parent→child for unblock and
+child→parent for rollup, but target distinct kinds, so they never cycle
+on their own — cycles only arise from policy or planner-declared edges
+(later PRs).
+
+`ToWaves()` returns a topological grouping suitable for parallel
+dispatch. **Carve-out:** only edges targeting an item's *entry*
+requirements (within-item requirements with no incoming within-item
+edges, excluding `item_satisfied`) gate dispatch. Terminal-rollup edges
+gate completion, not start. `ToWaves()` throws when `Conflicts` is
+non-empty — the conflict gate is the only legitimate consumer of a
+conflicted graph.
+
+`polyphony edges check <work-item>` (Phase 7 PR #3) walks the subtree,
+builds the graph, and emits a routing-style envelope:
+
+```json
+{
+  "work_item_id": 1234,
+  "items_walked": 7,
+  "edges_total": 12,
+  "has_conflicts": false,
+  "conflicts": []
+}
+```
+
+Always exits 0; workflows route on `has_conflicts` + `conflicts[]`.
+`--render text` additionally writes a Markdown report to stderr.
+
+### `ItemSatisfied` synthetic terminal
+
+Every item carries a synthetic `item_satisfied` requirement — leaves
+AND pure containers — emitted by `RequirementSetDeriver`. It is the
+uniform terminal that the cross-item terminal-rollup rule targets.
+
+**Reducer semantics** (`RequirementSetReducer.Apply`): the reducer
+never *observes* `item_satisfied` — it is derived purely from
+prerequisite edges:
+
+- **Pure container** (no incoming within-item edges) → stays `Needed`
+  pending cross-item rollup from children.
+- **Decomposable + plannable + implementable item** (has incoming
+  within-item edges) → when all prerequisites meet their thresholds,
+  promotes **straight to `Satisfied`** (skipping `Ready` — there is
+  nothing to dispatch, the item is wholly done).
+
+`polyphony state next-ready`'s `ClassifyStatus` recognizes the pure
+container case (single `item_satisfied` requirement still `Needed`)
+and surfaces it as `status: "empty"` so workflows can treat it
+identically to zero-own-work types.
+
+### Execution mode
+
+Per-type knob in `process-config.yaml`:
+
+```yaml
+types:
+  Issue:
+    facets: [plannable, implementable]
+    execution_mode: plan_then_implement   # default: parallel
+```
+
+Allowed values: `parallel` (default) and `plan_then_implement`. Validated
+at config-load time by `ConfigValidator` rule **V-19**.
+
+`RequirementInputResolver.Resolve` returns
+`ResolvedRequirementInputs.ExecutionMode` together with
+`ExecutionModeProvenance` — `Default` when the config says nothing,
+`Explicit` when the type sets it.
+
+`ExecutionModeInjector.Inject(set, mode)` is the composition layer that
+turns the value into edges:
+
+- `Parallel` — no-op, returns the same `RequirementSet` instance.
+- `PlanThenImplement` — when the set carries BOTH `plan_promoted` AND
+  `implementation_merged`, appends a single
+  `plan_promoted → implementation_merged` edge at threshold `Satisfied`.
+  Idempotent: re-applying never duplicates the edge. If either kind is
+  absent, the mode is irrelevant and no edge is added.
+
+The injected edge carries `Source = Definitional` — the knob is a
+hard-wired transformation of a typed config value to a fixed edge
+shape, not a per-instance policy. The deriver itself stays
+mode-agnostic; callers compose `Inject(Derive(...),
+resolved.ExecutionMode)` when they want the mode applied.
+
+### Facet profiles and agent addendum
+
+`process-config.yaml > facets:` binds each canonical facet name to the
+skills + MCPs the driver layers onto an agent invocation when an item
+carries that facet:
+
+```yaml
+facets:
+  actionable:
+    skills: [actionable-evidence, security-review]
+    mcps:   [shell, web-fetch]
+  implementable:
+    skills: [polyphony-coding-style]
+    mcps:   [shell]
+```
+
+`FacetProfileComposer.Compose(facets, profiles, perItemGuidance)`
+returns an `AgentAddendum(Skills, Mcps, GuidanceContext)`:
+
+- **Union semantics with permissible identical collisions.** Two
+  facets binding the same skill name dedupe silently — that is the
+  whole point of union.
+- **Different-value collisions are not detectable** at compose time
+  (skills + MCPs are bound by name, not by value). The
+  `FacetProfileValidator` (rule **V-20**) rejects intra-facet
+  duplicates at config-load — those are almost certainly typos.
+  Cross-facet duplicates are fine.
+- **Output is deterministic:** Skills and MCPs sorted ordinal
+  ascending. Snapshot tests and reviewers depend on this.
+- Unknown facet names are silently omitted (validator catches typos).
+
+Per-item `guidance` is **append-only prompt context** — never composed,
+never merged, never order-sensitive. It rides on
+`AgentAddendum.GuidanceContext` separately from skills/mcps.
+
+### Per-item guidance
+
+`polyphony guidance extract <work-item>` reads the resolved guidance
+policy and returns the extracted text:
+
+```json
+{
+  "work_item_id": 1234,
+  "source": "description_block",
+  "guidance": "Use the Foo library, not Bar.",
+  "guidance_present": true
+}
+```
+
+Two sources, configured in `.conductor/policy.yaml`:
+
+```yaml
+guidance:
+  source: description_block        # default — works on every platform
+  # or:
+  # source: ado_field
+  # ado_field_name: Custom.PolyphonyGuidance
+
+  # Optional per-type overrides (most-specific-wins).
+  by_type:
+    Task:
+      source: ado_field
+      ado_field_name: Custom.TaskGuidance
+```
+
+- **`description_block`** (default) — the driver extracts a fenced HTML
+  comment block from the work item description:
+
+  ```html
+  <!-- polyphony:guidance -->
+  Use the Foo library, not Bar.
+  Reviewer: pay extra attention to error messages.
+  <!-- /polyphony:guidance -->
+  ```
+
+  Description text outside the block is **NOT** injected — it sits
+  outside the prompt-injection trust boundary. Works on every platform
+  with a description field (GitHub Issues, ADO, etc.).
+
+- **`ado_field`** (opt-in) — the driver reads from a dedicated ADO
+  custom field whose reference name is set via `ado_field_name`. Use
+  in workspaces that have stood up a dedicated guidance field.
+
+When the effective source is `ado_field` but `ado_field_name` is
+empty, `PolicyLoader` fails at load time.
+
+### Evidence branches and PRs
+
+The actionable workflow surface uses evidence branches/PRs to record
+work that is not implementation (interviews, evaluations, decisions).
+Both verbs are routing-style and idempotent on resume.
+
+**`polyphony branch ensure-evidence-branch <work-item>`** ensures the
+evidence branch exists locally and on remote:
+
+- Default name: `evidence/<apex>-<item>` (Rev 4 grammar, via
+  `BranchNameBuilder.Evidence`).
+- Collapses to orphan form `evidence/<item>` when `--apex-id` equals
+  `workItemId` (or is omitted — defaults to the work item itself).
+- Default base: `feature/<apex>`; override with `--from-ref`.
+
+**`polyphony pr open-evidence-pr <work-item>`** opens (or reuses) the
+GitHub PR promoting the evidence branch into its parent feature
+trunk:
+
+- Normal case: head = `evidence/<apex>-<item>`, base = `feature/<apex>`.
+- Orphan case: head = `evidence/<item>`, base = `main`.
+- Reuses an existing open PR for the same head/base pair instead of
+  creating a duplicate (mirrors `pr create-feature-pr`).
+
+### New CLI verbs (Phase 6 + 7)
+
+Quick index of the new verb surface added by PRs #125-#133. All emit a
+routing-style JSON envelope on stdout and exit 0; workflows gate on
+envelope fields, never on the exit code (cf. **polyphony-workflow-author**).
+
+| Verb | Purpose | Source |
+|------|---------|--------|
+| `polyphony edges check <id>` | Build the EdgeGraph for a subtree; surface conflicts as routable JSON | `Commands/EdgesCommands.Check.cs` |
+| `polyphony branch ensure-evidence-branch <id>` | Idempotently create the evidence branch (orphan or apex-scoped) | `Commands/BranchCommands.EnsureEvidenceBranch.cs` |
+| `polyphony pr open-evidence-pr <id>` | Open or reuse the evidence PR against `feature/<apex>` (or `main` for orphan) | `Commands/PrCommands.OpenEvidencePr.cs` |
+| `polyphony guidance extract <id>` | Read the per-item guidance per the resolved `guidance:` policy | `Commands/GuidanceCommands.cs` |
