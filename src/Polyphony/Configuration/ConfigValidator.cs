@@ -1,8 +1,10 @@
+using Polyphony.Sdlc;
+
 namespace Polyphony.Configuration;
 
 /// <summary>
-/// Validates a <see cref="ProcessConfig"/> against 18 rules (V-1 through V-18).
-/// Rules V-1–V-8, V-15, V-16 produce errors (block execution).
+/// Validates a <see cref="ProcessConfig"/> against 19 rules (V-1 through V-19).
+/// Rules V-1–V-8, V-15, V-16, V-19 produce errors (block execution).
 /// Rules V-9–V-14, V-17, V-18 produce warnings (informational, deprecation,
 /// file-existence checks).
 /// </summary>
@@ -96,6 +98,20 @@ public static class ConfigValidator
                     errors.Add(Error("V-8",
                         $"Type '{typeName}' references undefined allowed_child_type '{childType}'."));
                 }
+            }
+
+            // V-19: execution_mode, when specified, must be a known value.
+            // Empty/whitespace is treated as "unset" — the resolver falls
+            // back to the documented default (parallel) and no error is
+            // raised. Unknown non-empty strings are rejected here so the
+            // failure surfaces at config-load time, not at edge-graph build
+            // time in PR #5.
+            if (!string.IsNullOrWhiteSpace(typeConfig.ExecutionMode)
+                && !ExecutionMode.IsValid(typeConfig.ExecutionMode))
+            {
+                errors.Add(Error("V-19",
+                    $"Type '{typeName}' has invalid execution_mode '{typeConfig.ExecutionMode}'. " +
+                    $"Valid values: {ExecutionMode.Parallel}, {ExecutionMode.PlanThenImplement}."));
             }
         }
 

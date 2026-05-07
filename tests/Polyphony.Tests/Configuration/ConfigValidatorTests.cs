@@ -602,6 +602,70 @@ public sealed class ConfigValidatorTests
 
     #endregion
 
+    #region V-19: execution_mode must be a known value
+
+    [Fact]
+    public void V19_ExecutionModeUnset_NoError()
+    {
+        var config = ValidConfig();
+
+        var result = ConfigValidator.Validate(config);
+
+        result.Errors.ShouldNotContain(d => d.RuleId == "V-19");
+    }
+
+    [Fact]
+    public void V19_ExecutionModeParallel_NoError()
+    {
+        var config = ValidConfig();
+        config.Types["Epic"].ExecutionMode = Polyphony.Sdlc.ExecutionMode.Parallel;
+
+        var result = ConfigValidator.Validate(config);
+
+        result.Errors.ShouldNotContain(d => d.RuleId == "V-19");
+    }
+
+    [Fact]
+    public void V19_ExecutionModePlanThenImplement_NoError()
+    {
+        var config = ValidConfig();
+        config.Types["Epic"].ExecutionMode = Polyphony.Sdlc.ExecutionMode.PlanThenImplement;
+
+        var result = ConfigValidator.Validate(config);
+
+        result.Errors.ShouldNotContain(d => d.RuleId == "V-19");
+    }
+
+    [Fact]
+    public void V19_ExecutionModeUnknown_ProducesError()
+    {
+        var config = ValidConfig();
+        config.Types["Epic"].ExecutionMode = "serial";
+
+        var result = ConfigValidator.Validate(config);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(d =>
+            d.RuleId == "V-19"
+            && d.Message.Contains("Epic")
+            && d.Message.Contains("serial"));
+    }
+
+    [Fact]
+    public void V19_ExecutionModeWhitespace_TreatedAsUnsetNoError()
+    {
+        // Whitespace mirrors the resolver's "unset" treatment — falls back
+        // to the documented default; no validation error.
+        var config = ValidConfig();
+        config.Types["Epic"].ExecutionMode = "   ";
+
+        var result = ConfigValidator.Validate(config);
+
+        result.Errors.ShouldNotContain(d => d.RuleId == "V-19");
+    }
+
+    #endregion
+
     #region Helpers
 
     private static ProcessConfig ValidConfig()
