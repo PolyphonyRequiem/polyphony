@@ -107,3 +107,24 @@ open_questions:
   #   Epic:
   #     mode: manual     # Epics always gate regardless of severity
 
+root_fallback:
+  # ACTIVE DEFAULTS: Surface the human gate when a sub-workflow is invoked
+  # without a root work-item id. Consumed by the shared
+  # `.conductor/registry/workflows/root-fallback-gate.yaml` sub-workflow.
+  #
+  # Auto-decide policy (one of `prompt`, `use_active_item`, `abort`):
+  #   prompt           — surface the root-fallback human gate (default).
+  #                      Operator picks use_active_item or abort.
+  #   use_active_item  — auto-resolve: treat the calling sub-workflow's
+  #                      active work item as the root. The decision is
+  #                      logged with `auto_policy_applied: true` so an
+  #                      auditor can distinguish a policy bypass from a
+  #                      human pick. Use this in workspaces where every
+  #                      sub-workflow legitimately operates on its
+  #                      invocation-target as root.
+  #   abort            — auto-resolve: fail the workflow with a clear
+  #                      error. Use this in strict workspaces where a
+  #                      missing root is always a bug worth surfacing
+  #                      loudly.
+  auto_decide: prompt
+

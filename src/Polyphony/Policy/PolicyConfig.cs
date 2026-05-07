@@ -31,6 +31,53 @@ public sealed class PolicyConfig
     /// <c>guidance.source</c> + <c>guidance.ado_field_name</c>.
     /// </summary>
     public GuidancePolicy? Guidance { get; set; }
+
+    /// <summary>
+    /// Root-fallback policy (Phase 1 root-fallback-gate). Controls how the
+    /// shared <c>root-fallback-gate</c> sub-workflow behaves when invoked
+    /// without a <c>root_id</c>. Default is <see cref="RootFallbackAutoDecide.Prompt"/>
+    /// (surface a human gate); workspaces with a high-confidence policy can
+    /// bypass the gate by setting <c>auto_decide</c> to
+    /// <c>use_active_item</c> or <c>abort</c>.
+    /// </summary>
+    public RootFallbackPolicy? RootFallback { get; set; }
+}
+
+/// <summary>
+/// Root-fallback policy. Drives the behavior of the shared
+/// <c>root-fallback-gate.yaml</c> sub-workflow when a sub-workflow is
+/// invoked without a root work-item id in its input.
+/// </summary>
+public sealed class RootFallbackPolicy
+{
+    /// <summary>
+    /// Auto-decide policy. One of the <see cref="RootFallbackAutoDecide"/>
+    /// constants. Null falls back to <see cref="RootFallbackAutoDecide.Prompt"/>
+    /// via <see cref="PolicyLoader.ApplyBuiltInDefaults"/>.
+    /// </summary>
+    public string? AutoDecide { get; set; }
+}
+
+/// <summary>
+/// Canonical string constants for <see cref="RootFallbackPolicy.AutoDecide"/>.
+/// Mirrors <see cref="Polyphony.Sdlc.GuidanceSource"/>'s string-constant pattern
+/// so the YAML deserializer accepts the literal token verbatim (no enum
+/// naming-convention gymnastics).
+/// </summary>
+public static class RootFallbackAutoDecide
+{
+    /// <summary>Surface the root-fallback human gate (default).</summary>
+    public const string Prompt = "prompt";
+
+    /// <summary>Auto-resolve by treating the active work item as the root.</summary>
+    public const string UseActiveItem = "use_active_item";
+
+    /// <summary>Auto-resolve by aborting the workflow with an error.</summary>
+    public const string Abort = "abort";
+
+    /// <summary>True when <paramref name="value"/> is one of the canonical tokens.</summary>
+    public static bool IsValid(string value) =>
+        value is Prompt or UseActiveItem or Abort;
 }
 
 /// <summary>

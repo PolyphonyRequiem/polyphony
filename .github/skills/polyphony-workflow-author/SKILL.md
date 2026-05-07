@@ -150,6 +150,34 @@ see the **polyphony-sdlc** skill's "Workflow Metadata" section.
 
 ---
 
+## Root fallback gate
+
+When you author a sub-workflow that operates on a `root_id` but is **also**
+invokable on its own (i.e. the user can call it directly without first
+running tree-walker), call `root-fallback-gate` as the very first node and
+route on its envelope. The gate composes `polyphony policy load` with a
+`human_gate` that fires only when the resolved `root_fallback.auto_decide`
+is `prompt`. The other two policy values — `use_active_item` and `abort`
+— skip the prompt and emit the deterministic terminal directly. The
+output envelope is always:
+
+```
+{
+  "root_id": "<id-or-empty>",
+  "decision": "use_active_item" | "abort" | "auto_resolved",
+  "auto_policy_applied": true | false
+}
+```
+
+Consume the envelope from the parent workflow with `is defined` guards on
+each terminal — never assume the user-prompted branch ran. The gate is
+the single source-of-truth for fallback behavior; do **not** re-implement
+the policy lookup inline. The policy schema lives at
+`.conductor/policy.yaml` under the `root_fallback:` key, and is validated
+by `polyphony policy validate`.
+
+---
+
 ## Composing facet profiles
 
 The driver injects skills + MCPs onto an agent invocation by composing
