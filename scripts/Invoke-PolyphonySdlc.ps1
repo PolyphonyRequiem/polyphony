@@ -28,7 +28,21 @@
     Worktree directory to run conductor from. Default: current directory.
 
 .PARAMETER Platform
-    PR platform override. Default: read from `.twig/config` (always `ado` for now).
+    PR platform override (`ado` | `github`). Default: auto-detected from
+    `git remote get-url origin` of the worktree — `github.com` URLs route
+    to `github`, `dev.azure.com` / `*.visualstudio.com` URLs route to `ado`.
+    Falls back to `ado` when the remote is unrecognized or absent.
+
+    NOTE: this is the **PR** platform threaded through to lifecycle
+    sub-workflows (which is conflated with apex-driver's `platform` input
+    today). Work-item tracker is independently configured via `.twig/config`.
+
+.PARAMETER Repository
+    Repository identifier passed to the lifecycle sub-workflows. Default:
+    auto-derived from the git remote URL — `<owner>/<name>` for GitHub,
+    `<repo>` for ADO. Required (and validated downstream) only on the
+    ADO leg. Override when the auto-detection picks the wrong value or
+    the remote is non-standard.
 
 .PARAMETER GitRepo
     Source-of-truth git repo path (NOT the worktree). Default: parent of WorktreeRoot
@@ -60,7 +74,10 @@ param(
 
     [string]$WorktreeRoot = (Get-Location).Path,
 
+    [ValidateSet('ado', 'github')]
     [string]$Platform,
+
+    [string]$Repository,
 
     [string]$GitRepo,
 
@@ -107,13 +124,6 @@ if (-not $twigConfig.organization -or -not $twigConfig.project) {
 
 # ─── Resolve metadata ─────────────────────────────────────────────────────────
 
-if (-not $Platform) {
-    # Currently the only supported work-item provider is ADO; PR platform is a
-    # separate axis handled by pr_platform_router. apex-driver's `platform` input
-    # threads through to lifecycle workflows verbatim.
-    $Platform = 'ado'
-}
-
 $projectUrl = 'https://dev.azure.com/{0}/{1}' -f $twigConfig.organization, $twigConfig.project
 $worktreeName = Split-Path -Leaf $WorktreeRoot
 
@@ -129,6 +139,58 @@ if (-not $GitRepo) {
     $GitRepo = if (Test-Path (Join-Path $repoCandidate '.git')) { $repoCandidate } else { $WorktreeRoot }
 }
 
+# Auto-detect platform + repository from git remote URL of the worktree.
+# Detection lives here (not in apex-driver) because the lifecycle sub-workflows
+# treat `platform` + `repository` as opaque inputs — the wrapper is the only
+# layer that knows about the actual git remote.
+$detectedPlatform = $null
+$detectedRepository = $null
+$remoteUrl = $null
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    $remoteUrl = (& git -C $WorktreeRoot remote get-url origin 2>$null)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteUrl)) {
+        $remoteUrl = $null
+        $global:LASTEXITCODE = 0
+    }
+}
+
+if ($remoteUrl) {
+    switch -Regex ($remoteUrl) {
+        # GitHub https / ssh
+        '^(?:https?://github\.com/|git@github\.com:)(?<owner>[^/]+)/(?<name>[^/]+?)(?:\.git)?/?$' {
+            $detectedPlatform = 'github'
+            $detectedRepository = "$($Matches.owner)/$($Matches.name)"
+            break
+        }
+        # ADO modern: https://dev.azure.com/<org>/<project>/_git/<repo>
+        '^https?://(?:[^@/]+@)?dev\.azure\.com/(?<org>[^/]+)/(?<project>[^/]+)/_git/(?<repo>[^/?#]+?)(?:\.git)?/?$' {
+            $detectedPlatform = 'ado'
+            $detectedRepository = $Matches.repo
+            break
+        }
+        # ADO legacy: https://<org>.visualstudio.com/<project>/_git/<repo>
+        '^https?://(?:[^@/]+@)?(?<org>[^.]+)\.visualstudio\.com/(?<project>[^/]+)/_git/(?<repo>[^/?#]+?)(?:\.git)?/?$' {
+            $detectedPlatform = 'ado'
+            $detectedRepository = $Matches.repo
+            break
+        }
+        # ADO ssh: git@ssh.dev.azure.com:v3/<org>/<project>/<repo>
+        '^git@ssh\.dev\.azure\.com:v\d+/(?<org>[^/]+)/(?<project>[^/]+)/(?<repo>[^/?#]+?)(?:\.git)?/?$' {
+            $detectedPlatform = 'ado'
+            $detectedRepository = $Matches.repo
+            break
+        }
+    }
+}
+
+if (-not $Platform) {
+    $Platform = if ($detectedPlatform) { $detectedPlatform } else { 'ado' }
+}
+
+if (-not $PSBoundParameters.ContainsKey('Repository')) {
+    $Repository = if ($detectedRepository) { $detectedRepository } else { '' }
+}
+
 # ─── Build the command ───────────────────────────────────────────────────────
 
 $conductorArgs = @(
@@ -139,9 +201,10 @@ $conductorArgs = @(
     '--input', "platform=$Platform"
     '--input', "organization=$($twigConfig.organization)"
     '--input', "project=$($twigConfig.project)"
-    # apex-driver `repository` defaults to "" and is consumed only by ADO PR verbs;
-    # we pass the worktree name as the repo identifier (overridable).
-    '--input', "repository=$worktreeName"
+    # apex-driver `repository` defaults to "" and is consumed only by ADO PR verbs.
+    # Auto-derived from `git remote get-url origin` (GitHub: `<owner>/<name>`;
+    # ADO: `<repo>`); -Repository overrides; falls back to "" when undetectable.
+    '--input', "repository=$Repository"
     '-m', "tracker=ado"
     '-m', "project_url=$projectUrl"
     '-m', "git_repo=$GitRepo"
@@ -156,6 +219,8 @@ $resolved = [pscustomobject]@{
     apex_id        = $ApexId
     intent         = $Intent
     platform       = $Platform
+    repository     = $Repository
+    remote_url     = $remoteUrl
     worktree_root  = $WorktreeRoot
     git_repo       = $GitRepo
     project_url    = $projectUrl
