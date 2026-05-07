@@ -59,4 +59,14 @@ internal static class BranchNameBuilder
     /// </summary>
     public static BranchName Evidence(RootId rootId, WorkItemId itemId) =>
         BranchName.CreateUnsafe($"{EvidencePrefix}{rootId.Value}-{itemId.Value}");
+
+    /// <summary>
+    /// Builds <c>evidence/{item_id}</c> — the orphan evidence branch form
+    /// used when the work item is its own apex (no separate parent
+    /// feature) so the redundant <c>{root}-{item}</c> would just repeat the
+    /// id. The Phase 6 design sketch explicitly allows this collapse for
+    /// orphan evidence.
+    /// </summary>
+    public static BranchName EvidenceOrphan(WorkItemId itemId) =>
+        BranchName.CreateUnsafe($"{EvidencePrefix}{itemId.Value}");
 }

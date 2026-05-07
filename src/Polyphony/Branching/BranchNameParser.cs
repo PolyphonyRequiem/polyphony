@@ -37,6 +37,9 @@ internal static partial class BranchNameParser
     [GeneratedRegex($"^evidence/(?<root>{PositiveIntPattern})-(?<item>{PositiveIntPattern})$", RegexOptions.CultureInvariant)]
     private static partial Regex EvidenceRegex();
 
+    [GeneratedRegex($"^evidence/(?<item>{PositiveIntPattern})$", RegexOptions.CultureInvariant)]
+    private static partial Regex EvidenceOrphanRegex();
+
     [GeneratedRegex($"^mg/(?<root>{PositiveIntPattern})_(?<path>[a-z][a-z0-9-]*(?:_[a-z][a-z0-9-]*)*)$", RegexOptions.CultureInvariant)]
     private static partial Regex MergeGroupRegex();
 
@@ -126,6 +129,16 @@ internal static partial class BranchNameParser
             var rootId = ParsePositiveInt(evidenceMatch.Groups["root"].Value);
             var itemId = ParsePositiveItem(evidenceMatch.Groups["item"].Value);
             parsed = new ParsedBranch.Evidence(BranchName.CreateUnsafe(raw), rootId, itemId);
+            return true;
+        }
+
+        // Orphan evidence (`evidence/{item}`) is checked AFTER the combined
+        // form so the longer pattern wins on inputs like `evidence/1-2`.
+        var evidenceOrphanMatch = EvidenceOrphanRegex().Match(raw);
+        if (evidenceOrphanMatch.Success)
+        {
+            var itemId = ParsePositiveItem(evidenceOrphanMatch.Groups["item"].Value);
+            parsed = new ParsedBranch.EvidenceOrphan(BranchName.CreateUnsafe(raw), itemId);
             return true;
         }
 

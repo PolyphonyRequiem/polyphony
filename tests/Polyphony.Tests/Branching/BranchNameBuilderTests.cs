@@ -85,6 +85,19 @@ public sealed class BranchNameBuilderTests
     }
 
     [Fact]
+    public void EvidenceOrphan_CollapsesToBareItemId()
+    {
+        // Phase 6 design: when the work item is its own apex the redundant
+        // {root}-{item} would just repeat the id, so the builder collapses
+        // to evidence/{item}. The collapse decision lives in the verb;
+        // the builder just exposes the orphan form for callers that have
+        // already decided.
+        var branch = BranchNameBuilder.EvidenceOrphan(WorkItemId.Parse(9999));
+
+        branch.Value.ShouldBe("evidence/9999");
+    }
+
+    [Fact]
     public void Prefixes_MatchAdrSpecification()
     {
         // Defensive: the ADR's wire grammar pins these prefixes. If anyone
