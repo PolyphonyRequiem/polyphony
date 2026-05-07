@@ -299,9 +299,39 @@ agents:
       - "-Project"
       - "{{ workflow.input.project }}"
     routes:
-      - to: build_worklist
+      - to: declare_root
         when: "{{ init_manifest.output.success | string | lower == 'true' }}"
       - to: preflight_failure_gate
+      # M4 catch-all
+      - to: preflight_failure_gate
+
+  # ── Preflight: stamp the polyphony:root marker tag ───────────────────────
+  #
+  # Per docs/polyphony-tags.md §"Workflow integration":
+  # > Entry: tree-walker receives root_id as input. Calls
+  # > `polyphony root declare {root_id}` (idempotent) to stamp the root tag.
+  #
+  # Without this stamp, `polyphony root resolve` (used inside lifecycle
+  # sub-workflows for ancestor walks) returns `fallback_required: true` and
+  # the descent gate fires for every descendant. Idempotent — safe to run
+  # on resumes; emits `changed: false` when the tag already exists.
+  #
+  # Invariants:
+  #   Pre:  apex_id is a valid ADO work item.
+  #   Post: apex_id carries the `polyphony:root` system tag.
+  - name: declare_root
+    type: script
+    description: Stamp polyphony:root on the apex item (idempotent)
+    command: polyphony
+    args:
+      - "root"
+      - "declare"
+      - "--work-item"
+      - "{{ workflow.input.apex_id }}"
+    routes:
+      - to: preflight_failure_gate
+        when: "{{ declare_root.output.error is defined and declare_root.output.error != '' }}"
+      - to: build_worklist
       # M4 catch-all
       - to: preflight_failure_gate
 
@@ -696,6 +726,15 @@ agents:
       ```
       {%- if init_manifest.output.error is defined and init_manifest.output.error != '' -%}
       [{{ init_manifest.output.error_code | default('?') }}] {{ init_manifest.output.error }}
+      {%- else -%}
+      (no error — this step succeeded or did not run)
+      {%- endif -%}
+      ```
+
+      ### `declare_root` error
+      ```
+      {%- if declare_root.output.error is defined and declare_root.output.error != '' -%}
+      {{ declare_root.output.error }}
       {%- else -%}
       (no error — this step succeeded or did not run)
       {%- endif -%}
