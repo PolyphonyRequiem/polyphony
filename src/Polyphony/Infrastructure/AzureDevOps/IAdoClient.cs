@@ -258,4 +258,28 @@ public interface IAdoClient
         int pullRequestId,
         string lastMergeSourceCommitSha,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Post a single advisory comment thread to an Azure DevOps pull request
+    /// — the ADO equivalent of
+    /// <c>gh pr review {prNumber} --comment --body "&lt;body&gt;"</c>.
+    ///
+    /// <para>
+    /// Hits <c>POST /_apis/git/repositories/{repo}/pullRequests/{pr}/threads</c>
+    /// with body <c>{ comments: [ { parentCommentId: 0, content: &lt;body&gt;,
+    /// commentType: 1 } ], status: 4 }</c> — a top-level text comment in a
+    /// closed thread (no follow-up expected). Returns the created thread's
+    /// ID and the inner comment ID on success. Returns <c>null</c> when the
+    /// PR or repository does not exist (HTTP 404). Throws on other failures
+    /// — see <see cref="ListPullRequestsAsync"/> for the failure shape.
+    /// </para>
+    /// </summary>
+    /// <param name="commentBody">The Markdown comment body (must be non-empty).</param>
+    Task<AdoCreateThreadResult?> CreatePullRequestCommentThreadAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string commentBody,
+        CancellationToken ct = default);
 }

@@ -784,5 +784,11 @@ public sealed class PrCommandsMergeMgAdoTests : CommandTestBase
                 throw new InvalidOperationException("Test fake: CompleteResult not configured.");
             return Task.FromResult(CompleteResult);
         }
+
+        public Task<AdoCreateThreadResult?> CreatePullRequestCommentThreadAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string commentBody,
+            CancellationToken ct = default)
+            => throw new NotImplementedException();
     }
 }
