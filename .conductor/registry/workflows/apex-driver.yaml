@@ -328,7 +328,6 @@ agents:
     args:
       - "edges"
       - "check"
-      - "--work-item"
       - "{{ workflow.input.apex_id }}"
       - "--render"
       - "json"
