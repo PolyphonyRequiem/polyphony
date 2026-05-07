@@ -472,7 +472,7 @@ regenerated plan content.
 
 ### Run lifecycle
 
-1. `polyphony-full <root>` acquires a lock on `(repo, project, root_id)`.
+1. The apex driver against `<root>` acquires a lock on `(repo, project, root_id)`.
 2. If `feature/{root}` exists with a manifest:
    - **Same topology hash** → resume the existing run.
    - **Different hash, no branches materialized for the diff** → accept,
@@ -598,7 +598,7 @@ polyphony policy resolve --scope root --domain cross_mg_code_dep
 | Add a new branch prefix without an ADR | Amend the ADR | Five prefixes is the contract |
 | Auto-rebase a stale child plan branch silently | Block + comment + audit-record the rebase | Renegotiation must be auditable |
 | Treat absence of run manifest as "no run" | Treat as corruption — refuse and surface | Manifest is canonical truth |
-| Run two `polyphony-full` against the same root | One holds the lock; second resumes or refuses | Branch tree can't host two simultaneous runs |
+| Run two apex-driver runs against the same root | One holds the lock; second resumes or refuses | Branch tree can't host two simultaneous runs |
 | Use `mg_promoted` requirement | Use `implementation_merged` (canonical kind) | `mg_promoted` doesn't exist in code |
 
 ---

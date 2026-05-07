@@ -93,126 +93,6 @@ public sealed class JsonOutputContractTests : CommandTestBase
 
 
     // =========================================================================
-    // Route command — JSON contract
-    // =========================================================================
-
-    [Fact]
-    public async Task Route_SnakeCaseFieldNames_PresentInRawJson()
-    {
-        await SeedAsync(
-            new WorkItemBuilder()
-                .WithId(10_001).WithType(EpicType).WithTitle("Route Contract").WithState(ProposedState)
-                .Build());
-
-        var cmd = CreateRouteCommand();
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Route(10_001));
-
-        exitCode.ShouldBe(ExitCodes.Success);
-
-        // Required snake_case fields
-        output.ShouldContain("\"work_item_id\"");
-        output.ShouldContain("\"phase\"");
-        output.ShouldContain("\"action\"");
-
-        // WorkspaceHint fields (branch strategy configured)
-        output.ShouldContain("\"workspace_hint\"");
-        output.ShouldContain("\"feature_branch\"");
-
-        // No PascalCase leakage (use ordinal comparison for single-word properties)
-        AssertNoPascalCase(output, "WorkItemId");
-        AssertNoPascalCase(output, "Phase");
-        AssertNoPascalCase(output, "Action");
-        AssertNoPascalCase(output, "Message");
-        AssertNoPascalCase(output, "WorkspaceHint");
-        AssertNoPascalCase(output, "FeatureBranch");
-        // The C# property is now named MergeGroupBranch but the JSON wire
-        // key is still "pg_branch" — assert the new C# name doesn't leak.
-        AssertNoPascalCase(output, "MergeGroupBranch");
-        AssertNoPascalCase(output, "PgBranch");
-    }
-
-    [Fact]
-    public async Task Route_NullFieldsOmitted_WhenWritingNull()
-    {
-        // Task in Proposed has no pg_branch (only feature_branch is populated)
-        await SeedAsync(
-            new WorkItemBuilder()
-                .WithId(10_002).WithType(TaskType).WithTitle("Null Check Task").WithState(ProposedState)
-                .Build());
-
-        var cmd = CreateRouteCommand();
-        var (_, output) = await CaptureConsoleAsync(() => cmd.Route(10_002));
-
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.RouteResult);
-        result.ShouldNotBeNull();
-
-        // If MergeGroupBranch (legacy JSON key "pg_branch") is null, it
-        // should be absent from the raw JSON.
-        if (result.WorkspaceHint?.MergeGroupBranch is null)
-        {
-            output.ShouldNotContain("\"pg_branch\"");
-        }
-    }
-
-    [Fact]
-    public async Task Route_DeserializationRoundTrip_FieldsMapped()
-    {
-        await SeedAsync(
-            new WorkItemBuilder()
-                .WithId(10_003).WithType(EpicType).WithTitle("Roundtrip Epic").WithState(ProposedState)
-                .Build());
-
-        var cmd = CreateRouteCommand();
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Route(10_003));
-
-        exitCode.ShouldBe(ExitCodes.Success);
-
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.RouteResult);
-        result.ShouldNotBeNull();
-        result.WorkItemId.ShouldBe(10_003);
-        result.Phase.ShouldBe(SdlcPhase.NeedsPlanning);
-        result.Action.ShouldBe(SdlcAction.Plan);
-        result.Message.ShouldNotBeNullOrEmpty();
-        result.WorkspaceHint.ShouldNotBeNull();
-        result.WorkspaceHint!.FeatureBranch.ShouldNotBeNull();
-    }
-
-    [Fact]
-    public async Task Route_ExitCode_Success_ReturnsZero()
-    {
-        await SeedAsync(
-            new WorkItemBuilder()
-                .WithId(10_004).WithType(EpicType).WithTitle("Exit Code Epic").WithState(ProposedState)
-                .Build());
-
-        var cmd = CreateRouteCommand();
-        var (exitCode, _) = await CaptureConsoleAsync(() => cmd.Route(10_004));
-
-        exitCode.ShouldBe(0);
-        exitCode.ShouldBe(ExitCodes.Success);
-    }
-
-    [Fact]
-    public async Task Route_NotFound_ReturnsErrorJson_WithCacheErrorExitCode()
-    {
-        var cmd = CreateRouteCommand();
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Route(99_999));
-
-        exitCode.ShouldBe(ExitCodes.CacheError);
-        exitCode.ShouldBe(3);
-
-        // Error JSON contract: {"error":"...","work_item_id":N}
-        output.ShouldContain("\"error\"");
-        output.ShouldContain("\"work_item_id\"");
-        output.ShouldContain("99999");
-
-        // Verify it's valid JSON
-        var doc = JsonDocument.Parse(output);
-        doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
-        doc.RootElement.GetProperty("work_item_id").GetInt32().ShouldBe(99_999);
-    }
-
-    // =========================================================================
     // Validate command — JSON contract
     // =========================================================================
 
@@ -766,39 +646,36 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         const int missingId = 99_900;
 
-        var routeCmd = CreateRouteCommand();
         var validateCmd = CreateValidateCommand();
         var hierarchyCmd = CreateHierarchyCommand();
         var planCmd = CreatePlanCommands();
         var nextReadyCmd = CreateStateCommands();
         using var fx = new ConductorDirFixture();
 
-        var (routeExit, routeOutput) = await CaptureConsoleAsync(() => routeCmd.Route(missingId));
         var (validateExit, validateOutput) = await CaptureConsoleAsync(() => validateCmd.Validate(missingId, "begin_planning"));
         var (hierarchyExit, hierarchyOutput) = await CaptureConsoleAsync(() => hierarchyCmd.Hierarchy(missingId));
         var (loadTypeExit, loadTypeOutput) = await CaptureConsoleAsync(() => planCmd.LoadType(missingId, fx.ConfigDir));
         var (nextReadyExit, nextReadyOutput) = await CaptureConsoleAsync(() => nextReadyCmd.NextReady(missingId));
 
-        // All five operator-facing commands should return CacheError (3) on missing work item.
-        routeExit.ShouldBe(ExitCodes.CacheError);
+        // All four operator-facing commands should return CacheError (3) on missing work item.
         validateExit.ShouldBe(ExitCodes.CacheError);
         hierarchyExit.ShouldBe(ExitCodes.CacheError);
         loadTypeExit.ShouldBe(ExitCodes.CacheError);
         nextReadyExit.ShouldBe(ExitCodes.CacheError);
 
-        // All five should produce valid JSON with an "error" field.
-        // Route/Validate/Hierarchy/NextReady include "work_item_id"; LoadType emits its own shape
+        // All four should produce valid JSON with an "error" field.
+        // Validate/Hierarchy/NextReady include "work_item_id"; LoadType emits its own shape
         // (PlanLoadTypeResult with empty type/definition + error), so we only assert the
         // common "error" string contract here.
-        foreach (var output in new[] { routeOutput, validateOutput, hierarchyOutput, loadTypeOutput, nextReadyOutput })
+        foreach (var output in new[] { validateOutput, hierarchyOutput, loadTypeOutput, nextReadyOutput })
         {
             var doc = JsonDocument.Parse(output);
             doc.RootElement.TryGetProperty("error", out var errorProp).ShouldBeTrue();
             errorProp.GetString().ShouldNotBeNullOrEmpty();
         }
 
-        // Route/Validate/Hierarchy/NextReady additionally guarantee the work_item_id field.
-        foreach (var output in new[] { routeOutput, validateOutput, hierarchyOutput, nextReadyOutput })
+        // Validate/Hierarchy/NextReady additionally guarantee the work_item_id field.
+        foreach (var output in new[] { validateOutput, hierarchyOutput, nextReadyOutput })
         {
             var doc = JsonDocument.Parse(output);
             doc.RootElement.TryGetProperty("work_item_id", out var idProp).ShouldBeTrue();
@@ -1175,12 +1052,6 @@ public sealed class JsonOutputContractTests : CommandTestBase
         return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config, twig, new GitClient(new FakeProcessRunner()), new GhClient(new FakeProcessRunner()));
     }
 
-    private RouteCommand CreateRouteCommand()
-    {
-        var config = CreateConfigBuilder().Build();
-        return new RouteCommand(new PhaseDetector(config), Repository, config);
-    }
-
     private ValidateCommand CreateValidateCommand()
     {
         var config = CreateConfigBuilder().Build();
@@ -1200,11 +1071,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        var ghTokenResolver = new GhTokenResolver(NSubstitute.Substitute.For<IGitClient>());
-        var phaseDetector = new PhaseDetector(config);
-        var validator = new TransitionValidator(config);
-        var walker = new HierarchyWalker(config, Repository);
-        return new StateCommands(twig, git, gh, runner, ghTokenResolver, phaseDetector, validator, walker, Repository, config);
+        return new StateCommands(twig, git, gh, runner, Repository, config);
     }
 
     private EdgesCommands CreateEdgesCommands()

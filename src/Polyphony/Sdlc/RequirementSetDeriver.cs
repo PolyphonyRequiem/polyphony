@@ -6,11 +6,11 @@ namespace Polyphony.Sdlc;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the foundation of the post-<c>SdlcPhase</c> state model. It contains
-/// no I/O and no dependency on configuration objects — callers pass already-resolved
-/// inputs. That keeps the deriver trivially testable and lets the verb layer
-/// own the lookup of facets/decomposability/etc. from the work-item repository
-/// and process config.
+/// Foundation of the EdgeGraph-based state model. It contains no I/O and no
+/// dependency on configuration objects — callers pass already-resolved inputs.
+/// That keeps the deriver trivially testable and lets the verb layer own the
+/// lookup of facets/decomposability/etc. from the work-item repository and
+/// process config.
 /// </para>
 /// <para>
 /// All emitted requirements have <see cref="Disposition.Needed"/> initially.

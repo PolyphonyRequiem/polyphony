@@ -29,9 +29,9 @@ output:
 ```
 
 The JSON merge is the subtlety: if your script prints
-`{"phase": "needs_planning"}` to stdout, the resulting `output` dict is
-`{stdout: "{...}", stderr: "", exit_code: 0, phase: "needs_planning"}`. So
-in templates you write `state_detector.output.phase`.
+`{"ready": true}` to stdout, the resulting `output` dict is
+`{stdout: "{...}", stderr: "", exit_code: 0, ready: true}`. So
+in templates you write `preflight_check.output.ready`.
 
 **Don't try `output.stdout | from_json` — there is no `from_json` filter
 registered.** Only `json` (serialization) and a custom `default` filter exist
@@ -103,15 +103,15 @@ Source: `engine/workflow.py:1724-1730`, `gates/human.py:28-43`.
 
 ## Don'ts
 
-- ❌ `state_detector.exit_code` — missing `.output.`
+- ❌ `preflight_check.exit_code` — missing `.output.`
 - ❌ `architect.plan` — missing `.output.`
 - ❌ `script_agent.output.foo` when the script printed `{"foo": ...}` to
   stderr (only stdout JSON merges into `output`)
 
 ## Dos
 
-- ✅ `state_detector.output.exit_code`
-- ✅ `state_detector.output.phase` (when the script printed `{"phase": ...}`)
+- ✅ `preflight_check.output.exit_code`
+- ✅ `preflight_check.output.ready` (when the script printed `{"ready": ...}`)
 - ✅ `architect.output.plan` (when architect declares `output: { plan: { type: string } }`)
 - ✅ `open_questions_gate.output.selected`
 - ✅ `review_group.outputs.security_reviewer.score` (parallel group)

@@ -11,13 +11,13 @@ These describe an item's position in the work hierarchy of one run. They are REL
 
 | Term | Definition |
 |---|---|
-| **Root** | The work item the user passed to the entry-point workflow (`polyphony-full`). Defines the scope of *this run*. The term **`apex`** is forbidden — use `root` everywhere. |
-| **Tree-walker** | The orchestrator inside `polyphony-full` that walks the in-scope tree of the root, builds the worklist, and dispatches items as their requirements become `ready`. Replaces the previous single-item phase router. (Phase 7 deliverable.) |
+| **Root** | The work item the user passed to the entry-point workflow. Defines the scope of *this run*. The term **`apex`** is forbidden — use `root` everywhere. |
+| **Tree-walker** | The orchestrator that walks the in-scope tree of the root, builds the worklist, and dispatches items as their requirements become `ready`. Replaces the previous single-item phase router. (Phase 7 deliverable.) |
 | **Parent** | The immediate ancestor of the current work item in the work hierarchy. |
 | **Current** | The work item the active workflow step is operating on. |
 | **Child** | An immediate descendant of the current item. |
 | **Descendant / Ancestor** | Transitive parent / child relationships. |
-| **Root fallback gate** | Failsafe gate that fires when a sub-workflow is invoked without a `root` passed in (i.e., not via `polyphony-full`). Asks the user whether to treat the current item as root (isolated run) or abort. Configurable to auto-decide via override. |
+| **Root fallback gate** | Failsafe gate that fires when a sub-workflow is invoked without a `root` passed in. Asks the user whether to treat the current item as root (isolated run) or abort. Configurable to auto-decide via override. |
 
 ## Work item — structural terms
 

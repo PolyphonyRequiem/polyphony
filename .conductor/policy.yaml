@@ -2,8 +2,8 @@ schema_version: 1
 
 # .conductor/policy.yaml — polyphony's own SDLC policy.
 #
-# Loaded by `polyphony policy load` at the start of every workflow run
-# (root `polyphony-full.yaml`). Consumed at decision points via
+# Loaded by `polyphony policy load` at the start of every workflow run.
+# Consumed at decision points via
 # `polyphony policy resolve --scope <root|type:Name|default> --domain <approvals|pr>`.
 #
 # CURRENT CONFIGURATION:

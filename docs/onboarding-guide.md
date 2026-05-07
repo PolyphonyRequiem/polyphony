@@ -818,14 +818,13 @@ If the workflow doesn't behave as expected:
 **1. Check Polyphony routing directly:**
 
 ```bash
-polyphony route --work-item <id> --config .conductor/process-config.yaml
+polyphony state next-ready --work-item <id> --config .conductor/process-config.yaml
 ```
 
-This outputs a JSON routing decision showing the detected phase, next action,
-and hierarchy analysis. Look for:
+This outputs a JSON routing decision showing the dispatchable requirements,
+their dispositions, and hierarchy analysis. Look for:
 
-- `phase` — Is it what you expect?
-- `action` — Is the right action being taken?
+- `requirements` — Which kinds came back as `ready` vs `blocked`?
 - `type_facets` — Are your types correctly configured?
 
 **2. Verify state transitions:**

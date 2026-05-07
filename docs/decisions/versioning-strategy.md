@@ -30,7 +30,7 @@ Three failure modes today:
 
 - **Drift.** `index.yaml` says `0.1.0`; YAMLs say `1.0.0`/`1.1.0`; binary
   reports `0.0.0-alpha.0.66`. No single source of truth.
-- **Silent misroute.** A user pinning to `polyphony-full@polyphony@1.0.0`
+- **Silent misroute.** A user pinning to `<workflow>@polyphony@1.0.0`
   via `conductor` could in principle get a YAML that calls
   `polyphony branch route --some-new-flag`, against an older CLI that
   silently treats the flag as positional and produces wrong output.
@@ -80,7 +80,7 @@ onward, the release script appends new entries to each array.
 
 ```yaml
 workflow:
-  name: polyphony-full
+  name: plan-level
   version: "1.0.0"
   metadata:
     min_polyphony_version: "1.0.0"   # required field

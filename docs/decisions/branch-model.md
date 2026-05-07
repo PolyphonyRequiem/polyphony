@@ -45,7 +45,7 @@ The model has to satisfy:
    can attribute changes to a specific work item.
 4. **Cross-platform** — the same branch model on GitHub and ADO. Different PR
    APIs, identical branch tree.
-5. **Resume safety** — re-running `polyphony-full` against the same root must
+5. **Resume safety** — re-running the apex driver against the same root must
    re-derive identical branch names so existing PRs are continued, not
    duplicated.
 6. **Phase 7 cross-item edges** — the branch model must not block the
@@ -90,7 +90,7 @@ main
 
 | Branch kind | Format | Notes |
 |---|---|---|
-| Feature | `feature/{root_id}` | One per `polyphony-full` run. Base for everything else. Requires a same-root run lock — see § Concurrent-run lock. |
+| Feature | `feature/{root_id}` | One per apex-driver run. Base for everything else. Requires a same-root run lock — see § Concurrent-run lock. |
 | Plan (root) | `plan/{root_id}` | Branches from `feature/{root_id}`. |
 | Plan (descendant) | `plan/{root_id}-{item_id}` | `item_id` is the **leaf** work-item id only (the item this plan covers). The hierarchy is captured by the base branch — a descendant plan branches from its parent's plan branch. Work-item IDs are project-unique so leaf-only naming is collision-free. |
 | Merge group (top) | `mg/{root_id}_{mg_id}` | `mg_id` is a **stable planner-declared id** (see § MG identity). Branches from `feature/{root_id}`. |
@@ -354,7 +354,7 @@ Rules:
 - **Depth 5 (`mg-a-b-c-d-e`)**: hard stop. Driver refuses with a clear
   error pointing to this ADR.
 - Override beyond depth 5 requires an explicit `--allow-deep-nesting` flag
-  to `polyphony-full` and a recorded human approval in the run manifest.
+  to the apex driver and a recorded human approval in the run manifest.
 
 If a planner regularly hits depth 3+, the work hierarchy is the smell —
 restructure with sibling MGs at a shallower level instead.
@@ -690,7 +690,7 @@ pass `pr_number` and `merge_commit`.
 #### Resume rules
 
 The manifest is the **source of truth for resume**. On any
-`polyphony-full <root>` invocation:
+apex-driver invocation against `<root>`:
 
 1. Driver acquires a lock keyed on `(repo, platform_project, root_id)`.
 2. If `feature/{root_id}` exists and the run manifest is present:
