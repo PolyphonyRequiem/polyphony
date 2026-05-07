@@ -3,8 +3,8 @@ using Polyphony.Sdlc;
 namespace Polyphony.Configuration;
 
 /// <summary>
-/// Validates a <see cref="ProcessConfig"/> against 19 rules (V-1 through V-19).
-/// Rules V-1–V-8, V-15, V-16, V-19 produce errors (block execution).
+/// Validates a <see cref="ProcessConfig"/> against 20 rules (V-1 through V-20).
+/// Rules V-1–V-8, V-15, V-16, V-19, V-20 produce errors (block execution).
 /// Rules V-9–V-14, V-17, V-18 produce warnings (informational, deprecation,
 /// file-existence checks).
 /// </summary>
@@ -124,6 +124,12 @@ public static class ConfigValidator
                     $"Transitions reference undefined type '{transitionType}'."));
             }
         }
+
+        // V-20: top-level facets block — duplicate skill/MCP names within a
+        // single facet's list are almost certainly a typo. Cross-facet
+        // identical names are fine (the composer dedupes them silently);
+        // see FacetProfileValidator.
+        errors.AddRange(FacetProfileValidator.Validate(config));
 
         // V-17: deprecation warning for legacy `branch_strategy.pg_branch` key.
         // The loader has already copied PgBranch onto MgBranch for back-compat;

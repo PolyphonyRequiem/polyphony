@@ -13,6 +13,7 @@ public sealed class ProcessConfigBuilder
     private readonly Dictionary<string, Dictionary<string, string>> _transitions = new(StringComparer.OrdinalIgnoreCase);
     private BranchStrategy? _branchStrategy;
     private string _platform = "github";
+    private Dictionary<string, FacetProfileConfig>? _facetProfiles;
 
     public ProcessConfigBuilder WithProcessTemplate(string template) { _processTemplate = template; return this; }
     public ProcessConfigBuilder WithPlatform(string platform) { _platform = platform; return this; }
@@ -92,6 +93,28 @@ public sealed class ProcessConfigBuilder
         return this;
     }
 
+    /// <summary>
+    /// Adds a facet profile (top-level <c>facets:</c> block in YAML) that the
+    /// driver will union into the agent addendum when an item carries
+    /// <paramref name="facetName"/>. Calling this multiple times for the
+    /// same <paramref name="facetName"/> overwrites the prior entry — the
+    /// load-time validator (V-20) governs duplicate detection within a
+    /// single profile, not across builder calls.
+    /// </summary>
+    public ProcessConfigBuilder WithFacetProfile(
+        string facetName,
+        string[]? skills = null,
+        string[]? mcps = null)
+    {
+        _facetProfiles ??= new Dictionary<string, FacetProfileConfig>(StringComparer.Ordinal);
+        _facetProfiles[facetName] = new FacetProfileConfig
+        {
+            Skills = skills ?? System.Array.Empty<string>(),
+            Mcps = mcps ?? System.Array.Empty<string>(),
+        };
+        return this;
+    }
+
     public ProcessConfig Build()
     {
         return new ProcessConfig
@@ -101,6 +124,9 @@ public sealed class ProcessConfigBuilder
             Transitions = new Dictionary<string, Dictionary<string, string>>(_transitions, StringComparer.OrdinalIgnoreCase),
             BranchStrategy = _branchStrategy,
             Platform = _platform,
+            Facets = _facetProfiles is null
+                ? null
+                : new Dictionary<string, FacetProfileConfig>(_facetProfiles, StringComparer.Ordinal),
         };
     }
 }
