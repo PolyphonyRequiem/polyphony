@@ -115,6 +115,8 @@ public sealed partial class StateCommands
             FacetOrderProvenance = ResolutionProvenance.NotApplicable,
             ActionableExecutor = null,
             ActionableExecutorProvenance = ResolutionProvenance.NotApplicable,
+            ExecutionMode = ExecutionMode.Parallel,
+            ExecutionModeProvenance = ResolutionProvenance.Default,
         };
         var result = new StateNextReadyResult
         {

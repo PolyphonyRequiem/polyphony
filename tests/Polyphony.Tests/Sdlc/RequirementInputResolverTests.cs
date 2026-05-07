@@ -19,7 +19,8 @@ public sealed class RequirementInputResolverTests
         string? actionableExecutor = null,
         string[]? allowedChildTypes = null,
         string? decompositionGuidance = null,
-        string[]? facets = null) => new()
+        string[]? facets = null,
+        string? executionMode = null) => new()
     {
         Decomposable = decomposable,
         FacetOrder = facetOrder,
@@ -27,6 +28,7 @@ public sealed class RequirementInputResolverTests
         AllowedChildTypes = allowedChildTypes ?? [],
         DecompositionGuidance = decompositionGuidance,
         Facets = facets ?? [],
+        ExecutionMode = executionMode,
     };
 
     // ── decomposable: explicit wins ─────────────────────────────────────
@@ -189,5 +191,79 @@ public sealed class RequirementInputResolverTests
     {
         Should.Throw<ArgumentNullException>(() =>
             RequirementInputResolver.Resolve(null!, childCount: 0));
+    }
+
+    // ── execution_mode ──────────────────────────────────────────────────
+
+    [Fact]
+    public void Resolve_ExecutionModeUnset_DefaultsToParallel()
+    {
+        var resolved = RequirementInputResolver.Resolve(Type(), childCount: 0);
+
+        resolved.ExecutionMode.ShouldBe(ExecutionMode.Parallel);
+        resolved.ExecutionModeProvenance.ShouldBe(ResolutionProvenance.Default);
+    }
+
+    [Fact]
+    public void Resolve_ExecutionModeEmpty_DefaultsToParallel()
+    {
+        var resolved = RequirementInputResolver.Resolve(Type(executionMode: ""), childCount: 0);
+
+        resolved.ExecutionMode.ShouldBe(ExecutionMode.Parallel);
+        resolved.ExecutionModeProvenance.ShouldBe(ResolutionProvenance.Default);
+    }
+
+    [Fact]
+    public void Resolve_ExecutionModeWhitespace_DefaultsToParallel()
+    {
+        var resolved = RequirementInputResolver.Resolve(Type(executionMode: "   "), childCount: 0);
+
+        resolved.ExecutionMode.ShouldBe(ExecutionMode.Parallel);
+        resolved.ExecutionModeProvenance.ShouldBe(ResolutionProvenance.Default);
+    }
+
+    [Fact]
+    public void Resolve_ExecutionModeConfiguredParallel_PassesThroughExplicit()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(executionMode: ExecutionMode.Parallel), childCount: 0);
+
+        resolved.ExecutionMode.ShouldBe(ExecutionMode.Parallel);
+        resolved.ExecutionModeProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    [Fact]
+    public void Resolve_ExecutionModeConfiguredPlanThenImplement_PassesThroughExplicit()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(executionMode: ExecutionMode.PlanThenImplement), childCount: 0);
+
+        resolved.ExecutionMode.ShouldBe(ExecutionMode.PlanThenImplement);
+        resolved.ExecutionModeProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    [Fact]
+    public void Resolve_ExecutionModeUnknown_PassesThroughExplicit()
+    {
+        // Validation of unknown values lives at config-load time (V-19),
+        // not in the resolver. If an unknown value reaches the resolver
+        // anyway, it's surfaced verbatim with Explicit provenance.
+        var resolved = RequirementInputResolver.Resolve(
+            Type(executionMode: "serial"), childCount: 0);
+
+        resolved.ExecutionMode.ShouldBe("serial");
+        resolved.ExecutionModeProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    [Fact]
+    public void Resolve_ExecutionModeDefault_DoesNotMarkAnyInferred()
+    {
+        // Default (static fallback) is distinct from Inferred (heuristic) —
+        // unset execution_mode must NOT flip AnyInferred on its own.
+        var resolved = RequirementInputResolver.Resolve(
+            Type(decomposable: true), childCount: 0);
+
+        resolved.ExecutionModeProvenance.ShouldBe(ResolutionProvenance.Default);
+        resolved.AnyInferred.ShouldBeFalse();
     }
 }

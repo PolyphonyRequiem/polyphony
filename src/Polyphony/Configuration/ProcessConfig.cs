@@ -70,6 +70,25 @@ public sealed class TypeConfig
     /// </summary>
     [YamlMember(Alias = "actionable_executor")]
     public string? ActionableExecutor { get; set; }
+
+    /// <summary>
+    /// Optional. Controls how requirements within an item of this type relate
+    /// to one another at edge-graph build time. Allowed values are the
+    /// constants on <see cref="Sdlc.ExecutionMode"/>:
+    /// <see cref="Sdlc.ExecutionMode.Parallel"/> (default — requirements may
+    /// dispatch in parallel once their definitional prerequisites are met) and
+    /// <see cref="Sdlc.ExecutionMode.PlanThenImplement"/> (plan must complete
+    /// before implementation begins).
+    /// </summary>
+    /// <remarks>
+    /// PR #4 of the Phase 7 edges arc ships only the schema + resolver +
+    /// validator for this field. The actual edge injection that gives
+    /// <c>plan_then_implement</c> its meaning lands in PR #5. Existing
+    /// configs without this key continue to behave exactly as today
+    /// (<c>parallel</c> is the default).
+    /// </remarks>
+    [YamlMember(Alias = "execution_mode")]
+    public string? ExecutionMode { get; set; }
 }
 
 public sealed class ReviewPolicies
