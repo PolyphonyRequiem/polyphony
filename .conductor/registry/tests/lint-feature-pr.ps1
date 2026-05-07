@@ -16,6 +16,13 @@
     11. Entry point references a valid agent name
     12. Abort option routes to remediation_abort or $end (merged=false)
     13. Sub-workflow routes to remediation_counter on merged==false
+    14. ADO platform parity (Phase 5 closeout):
+        - feature_pr_creator_ado node exists
+        - feature_pr_creator_failed_gate_ado node exists
+        - feature_pr_updater_poster_ado node exists
+        - pr_lifecycle_ado has at least one explicit `to: remediation_counter` route
+        - the legacy `ado_remediation_not_supported_emitter` short-circuit
+          is GONE (positive removal assertion)
     Exits 0 if clean, 1 if violations found.
 #>
 [CmdletBinding()]
@@ -177,6 +184,84 @@ if (-not $hasRemediationRoute) {
     }
 }
 
+# ── Check 16-20: ADO platform parity (Phase 5 closeout) ──────────────────
+# These checks codify the parity contract from
+# docs/decisions/ado-feature-pr-parity.md: feature-pr.yaml must NOT carry
+# any ADO-specific short-circuits, and the ADO leg must hit every node a
+# GitHub PR would (creator, failure gate, remediation chain, updater
+# poster).
+
+# 16: ADO creator node exists.
+if ($content -notmatch 'name:\s*feature_pr_creator_ado') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-ado-creator'
+        Detail = "No feature_pr_creator_ado node found - ADO leg must have its own creator (calls 'pr create-feature-ado')"
+    }
+}
+
+# 17: ADO creator-failed gate exists.
+if ($content -notmatch 'name:\s*feature_pr_creator_failed_gate_ado') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-ado-creator-failed-gate'
+        Detail = "No feature_pr_creator_failed_gate_ado node found - ADO leg must surface creator failures via a human gate"
+    }
+}
+
+# 18: ADO updater poster exists. Mirrors plan-level.yaml's
+# plan_reviewer_poster_ado: agent emits comment_body, sibling script
+# posts via `polyphony pr post-comment-ado`.
+if ($content -notmatch 'name:\s*feature_pr_updater_poster_ado') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-ado-updater-poster'
+        Detail = "No feature_pr_updater_poster_ado script found - ADO remediation must post the updater's comment_body via 'polyphony pr post-comment-ado'"
+    }
+}
+
+# 19: pr_lifecycle_ado must route to remediation_counter (no short-circuit
+# allowed). Scan only the routes block of pr_lifecycle_ado.
+$adoLifecycleBlock = ''
+$inAdoLifecycle = $false
+$inAdoRoutes = $false
+$adoRoutesLines = @()
+foreach ($line in $lines) {
+    if ($line -match '^\s*-\s*name:\s*pr_lifecycle_ado\s*$') {
+        $inAdoLifecycle = $true
+        continue
+    }
+    if ($inAdoLifecycle -and $line -match '^\s*-\s*name:\s*\S+\s*$') {
+        # Next node — exit the block.
+        $inAdoLifecycle = $false
+        $inAdoRoutes = $false
+        continue
+    }
+    if ($inAdoLifecycle) {
+        if ($line -match '^\s*routes:\s*$') {
+            $inAdoRoutes = $true
+            continue
+        }
+        if ($inAdoRoutes) {
+            $adoRoutesLines += $line
+        }
+    }
+}
+$adoRoutesText = [string]::Join([Environment]::NewLine, $adoRoutesLines)
+if ($adoRoutesText -notmatch 'to:\s*remediation_counter') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-ado-remediation-route'
+        Detail = "pr_lifecycle_ado has no route to remediation_counter - ADO leg must enter the remediation chain on merged==false (no short-circuit)"
+    }
+}
+
+# 20: The legacy `ado_remediation_not_supported_emitter` short-circuit must
+# be GONE. Positive removal assertion so a future regression that adds it
+# back fails lint.
+if ($content -match 'ado_remediation_not_supported_emitter') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'ado-remediation-stub-present'
+        Detail = "Legacy ado_remediation_not_supported_emitter short-circuit found - ADO remediation is fully wired since v1.2.0; remove this node"
+    }
+}
+
 # ── Report ────────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "FAIL: $($violations.Count) feature-pr.yaml violation(s)" -ForegroundColor Red
@@ -187,5 +272,5 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: feature-pr.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, creator/platform-router/github-lifecycle/ado-lifecycle, remediation counter (max 3), cap gate, planner, seeder)" -ForegroundColor Green
+Write-Host "PASS: feature-pr.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, creator/platform-router/github-lifecycle/ado-lifecycle, remediation counter (max 3), cap gate, planner, seeder, ADO parity: creator+failed-gate+updater-poster+remediation-route, no legacy stub)" -ForegroundColor Green
 exit 0

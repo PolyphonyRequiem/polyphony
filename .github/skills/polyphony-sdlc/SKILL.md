@@ -175,16 +175,23 @@ and merges when approved.
 
 ---
 
-### `ado-pr.yaml` — ADO PR Lifecycle (Stub)
+### `ado-pr.yaml` — ADO PR Lifecycle
 
-**Responsibility:** Placeholder for Azure DevOps PR operations. Returns a structured
-error indicating ADO PR support is not yet implemented, with a human gate for manual
-PR management. Shares the same interface contract as `github-pr.yaml`.
+**Responsibility:** Azure DevOps PR review/poll/merge cycle. Mirrors
+`github-pr.yaml`'s contract via `polyphony pr poll-status-ado` and
+`pr merge-feature-ado`, with human-gate fallbacks for the pending
+state and a stuck-review timeout (PR #148) that escalates after
+60 fruitless polls.
 
 | Agent | Type | Description |
 |-------|------|-------------|
-| `ado_pr_error` | script | Emit structured error: ADO PR not implemented |
-| `ado_pr_manual_gate` | human_gate | Manual PR management or abort |
+| `ado_pr_validator` | script | Validate ADO PR inputs (organization/project/repository/PR number) |
+| `ado_pr_status_check` | script | `polyphony pr poll-status-ado` — read reviewer vote + state |
+| `ado_pr_pending_gate` | human_gate | Re-poll / manual-verify-merge / trigger remediation / abort |
+| `ado_pr_changes_requested_gate` | human_gate | Re-poll / trigger remediation / abort |
+| `ado_pr_pending_poll_counter` | script | Per-PR pending-poll counter; routes to `ado_stuck_review_gate` at the cap |
+| `ado_stuck_review_gate` | human_gate | `continue_waiting` / `override_approved` / `abort` |
+| `ado_pr_merger` | script | `polyphony pr merge-feature-ado` — complete the PR |
 
 ---
 
@@ -196,22 +203,30 @@ Capped at **3 remediation cycles**; after that, a human gate fires for escalatio
 
 | Agent | Type | Description |
 |-------|------|-------------|
-| `feature_pr_creator` | script | Create feature PR via `polyphony pr create-feature-pr` (reuses an existing open PR for the same head/base pair if one exists) |
+| `feature_pr_creator` | script | (GitHub) Create feature PR via `polyphony pr create-feature-pr` |
+| `feature_pr_creator_ado` | script | (ADO) Create feature PR via `polyphony pr create-feature-ado` |
+| `feature_pr_creator_failed_gate_ado` | human_gate | Operator gate when ADO PR creation fails |
 | `pr_platform_router` | script | Route to `github-pr.yaml` or `ado-pr.yaml` based on `platform` input |
 | `pr_lifecycle_github` | workflow | Delegates to `github-pr.yaml` for review/fix/merge |
-| `pr_lifecycle_ado` | workflow | Delegates to `ado-pr.yaml` (stub — human gate) |
+| `pr_lifecycle_ado` | workflow | Delegates to `ado-pr.yaml` for review/fix/merge (full lifecycle as of v1.2.0) |
 | `remediation_counter` | script | Track remediation cycle count (max 3) |
 | `remediation_cap_gate` | human_gate | Escalate when 3 remediation cycles exceeded |
 | `remediation_abort` | script | Handle abort from cap gate |
-| `remediation_planner` | agent (Opus 1M) | Plan fixes for reviewer feedback as an addendum |
+| `remediation_planner` | agent (Opus 1M) | Plan fixes for reviewer feedback as an addendum (platform-aware: `gh` on GitHub, `pr poll-status-ado` on ADO) |
 | `remediation_seeder` | agent (Sonnet) | Seed new remediation PG from the addendum plan |
-| `remediation_implementer` | workflow | Delegates to `implement-pg.yaml` for the remediation PG |
-| `feature_pr_updater` | agent (Sonnet) | Re-request review on the feature PR after a remediation cycle merges |
+| `remediation_implementer` | workflow | Delegates to `implement-mg.yaml` for the remediation MG |
+| `feature_pr_updater` | agent (Sonnet) | Generate the re-review comment after a remediation cycle (platform-aware: posts directly via `gh` on GitHub; emits `comment_body` on ADO) |
+| `feature_pr_updater_poster_ado` | script | (ADO) Post the updater's `comment_body` via `polyphony pr post-comment-ado` |
 
-> **Platform abstraction parity:** Like `implement-pg.yaml`, the feature PR lifecycle
+> **Platform abstraction parity:** Like `implement-mg.yaml`, the feature PR lifecycle
 > goes through `pr_platform_router` → `pr_lifecycle_github` / `pr_lifecycle_ado`. The
-> review/fix/merge logic lives in `github-pr.yaml` (or the ADO stub) — not duplicated
-> in `feature-pr.yaml`.
+> review/fix/merge logic lives in `github-pr.yaml` and `ado-pr.yaml` — not duplicated
+> in `feature-pr.yaml`. As of v1.2.0 both legs run the same remediation chain
+> (planner → seeder → implementer → updater → router); the ADO leg additionally
+> uses `feature_pr_updater_poster_ado` to post the re-review comment via
+> `polyphony pr post-comment-ado` (the **dual-poster pattern**, mirroring
+> `plan-level.yaml`'s `plan_reviewer` + `plan_reviewer_poster_ado`).
+> See `docs/decisions/ado-feature-pr-parity.md`.
 
 **Remediation cycle flow:**
 

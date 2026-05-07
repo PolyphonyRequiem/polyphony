@@ -451,9 +451,10 @@ agents:
         status check.
       - **Trigger remediation** — exit with `merged=false`. The parent
         `feature-pr.yaml` workflow will start a remediation cycle
-        (planner → seeder → implementer → re-request review). Note:
-        ADO remediation is not yet wired — `feature-pr.yaml` will
-        short-circuit to a "remediation not supported on ADO" exit.
+        (planner → seeder → implementer → re-request review). As of
+        feature-pr.yaml v1.2.0 this is fully wired on ADO — the planner
+        uses reviewer identity + vote from `pr poll-status-ado`, and the
+        updater posts the re-review comment via `pr post-comment-ado`.
       - **Abort** — exit with `merged=false` and no remediation. PR
         remains open for manual resolution.
     options:
@@ -541,8 +542,9 @@ agents:
       - **Re-poll** — re-run the status check (use after reviewers vote).
       - **I manually verified merge** — PR was merged outside polyphony's
         view (rare — e.g., an admin force-merged). Records `override=true`.
-      - **Trigger remediation** — exit with `merged=false`. Parent
-        `feature-pr.yaml` will short-circuit (ADO remediation not wired).
+      - **Trigger remediation** — exit with `merged=false`. The parent
+        `feature-pr.yaml` workflow will run a remediation cycle (wired
+        end-to-end on ADO as of feature-pr.yaml v1.2.0).
       - **Abort** — exit with `merged=false` and no remediation.
     options:
       - label: "🔁 Re-poll status"

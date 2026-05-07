@@ -338,6 +338,70 @@ prompt. See `actionable.yaml` once it lands (Phase 6 PR #4 in flight).
 
 ---
 
+## The dual-poster pattern
+
+LLM agents do not have the `polyphony` tool registered, so any time an
+agent needs to "post" something via a polyphony verb (a PR comment,
+a status update, a comment thread), use the **dual-poster pattern**:
+the agent generates the content; a sibling script node actually invokes
+the verb.
+
+This is the canonical shape for "LLM produces text → polyphony writes
+it to a remote system":
+
+1. The agent declares the to-be-posted content as a typed output (e.g.
+   `comment_body: string`) and sets a `posted: false` flag in its
+   own output. The agent's prompt should be explicit that it cannot
+   invoke `polyphony` directly and must therefore route to the poster.
+2. A sibling `type: script` node consumes
+   `<agent>.output.comment_body` and runs the polyphony verb (e.g.
+   `polyphony pr post-comment-ado --body "{{ … }}"`).
+3. The agent's `routes:` block conditionally routes to the poster
+   only on the platform that needs it (typically guarded by
+   `{{ workflow.input.platform == 'ado' }}`); on the platform where
+   the agent has a direct tool (`gh` for GitHub), the agent posts
+   itself and routes straight to the next node.
+
+Live instances:
+
+| Workflow | Agent | Poster |
+|---|---|---|
+| `plan-level.yaml` | `plan_reviewer` | `plan_reviewer_poster_ado` |
+| `feature-pr.yaml` | `feature_pr_updater` | `feature_pr_updater_poster_ado` |
+
+If a third instance shows up that follows the same shape but with a
+different verb, repeat the pattern. If a fourth shows up, consider
+lifting it into a shared sub-workflow. See
+`docs/decisions/ado-feature-pr-parity.md` for the rationale.
+
+---
+
+## Platform sub-workflow pattern
+
+The two platform PR-lifecycle YAMLs (`github-pr.yaml` and `ado-pr.yaml`)
+are the canonical place where platform-specific PR mechanics live.
+Parent workflows that need a "do the PR review/merge cycle" step
+(`feature-pr.yaml`, `implement-mg.yaml`, plan PR sub-flows in
+`plan-level.yaml`) MUST invoke them as `type: workflow` nodes behind
+a `pr_platform_router` rather than re-implementing the lifecycle.
+
+This means:
+
+- Adding a new PR kind on a new platform is "add a sub-workflow + add a
+  router node" rather than "fork the parent".
+- Surgical edits to the platform sub-workflow propagate to every
+  parent automatically.
+- The parent workflow stays focused on its own concerns (creator,
+  remediation chain, etc.) and the platform sub-workflow stays
+  focused on review-state polling, human gates, and the merge call.
+
+Concrete example: `feature-pr.yaml` v1.2.0 closes the ADO leg
+without touching `ado-pr.yaml`'s structure — only its prompt strings
+get refreshed. The remediation chain is platform-aware via Jinja in
+the parent, not by forking the sub-workflow.
+
+---
+
 ## The three-vocabulary rule
 
 Workflows speak EVENTS. The engine maps EVENT → STATE NAME via process-config. Twig

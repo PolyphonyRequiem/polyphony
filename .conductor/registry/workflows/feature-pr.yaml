@@ -10,6 +10,14 @@
 # → pr_platform_router (re-review). Capped at 3 cycles;
 # after that, a human gate fires for escalation.
 #
+# Both platform legs are full-lifecycle as of v1.2.0 (Phase 5 closeout):
+# GitHub remediation uses `gh` to read PR review feedback and re-request
+# review; ADO remediation uses the work-item ancestry + the platform-poll
+# state from `pr poll-status-ado` to plan the addendum, and posts the
+# re-review comment via `polyphony pr post-comment-ado` (PR #122). The
+# remediation cycle is platform-aware via Jinja branching on
+# `workflow.input.platform`. See `docs/decisions/ado-feature-pr-parity.md`.
+#
 # Invariants:
 #   Pre:  All PGs are merged into the feature branch; feature branch is ready
 #         for a PR to the target branch.
@@ -23,8 +31,9 @@ workflow:
     sub-workflow (github-pr.yaml | ado-pr.yaml) based on the platform
     input. Runs remediation cycles (capped at 3) when the sub-workflow
     fails to merge. After each remediation, re-requests review via
-    feature_pr_updater. Escalates to human gate after cap is exceeded.
-  version: "1.1.0"
+    feature_pr_updater (gh on GitHub, `pr post-comment-ado` on ADO).
+    Escalates to human gate after cap is exceeded.
+  version: "1.2.0"
   entry_point: pr_platform_router
   metadata:
     min_polyphony_version: "1.0.1"
@@ -330,18 +339,20 @@ agents:
   # ── ADO PR lifecycle sub-workflow ────────────────────────────────────────
   #
   # Invokes ado-pr.yaml for the ADO PR lifecycle (poll → merge with
-  # human gates for non-approved states). Threads ADO connection inputs
-  # plus pr_number from feature_pr_creator_ado.
+  # human gates for non-approved states, plus the stuck-review escalation
+  # added in PR #148). Threads ADO connection inputs plus pr_number from
+  # feature_pr_creator_ado.
   #
-  # ADO remediation is NOT yet wired — the planner/seeder/updater chain
-  # uses GitHub-only `gh` calls. On merged=false, route to a clear
-  # "remediation not supported on ADO" emitter that exits with
-  # merged=false rather than entering the GitHub remediation cycle.
+  # On merged=false (operator chose "Trigger remediation" at one of the
+  # ado-pr.yaml gates, or any other non-merge terminal), routes to
+  # remediation_counter — same chain as the GitHub leg. The remediation
+  # planner / updater branch on workflow.input.platform internally so the
+  # cycle works on both platforms (Phase 5 closeout — see
+  # `docs/decisions/ado-feature-pr-parity.md`).
   #
   # Invariants:
   #   Pre:  pr_platform_router.output.platform == 'ado'; ADO PR exists.
-  #   Post: PR is reviewed (natively in ADO) and merged — or operator
-  #         exited with merged=false.
+  #   Post: PR is merged (natively in ADO) — or remediation cycle begins.
   - name: pr_lifecycle_ado
     type: workflow
     description: ADO PR lifecycle — poll, human gates, merge
@@ -358,46 +369,12 @@ agents:
     routes:
       - to: $end
         when: "{{ pr_lifecycle_ado.output.merged == true }}"
-      # ADO remediation cycle is not yet wired — short-circuit to a
-      # clean "not supported" emitter rather than entering the
-      # GitHub-only remediation chain (planner/seeder/updater all use
-      # `gh` directly).
-      - to: ado_remediation_not_supported_emitter
+      - to: remediation_counter
         when: "{{ pr_lifecycle_ado.output.merged == false }}"
-      # Catch-all: undefined/missing 'merged' -> ado-not-supported.
-      - to: ado_remediation_not_supported_emitter
-
-  # ── ADO remediation-not-supported emitter ──────────────────────────────
-  #
-  # Terminal node when an ADO feature PR fails to merge. The remediation
-  # chain (planner/seeder/updater) is GitHub-only and cannot run on ADO
-  # without `pr post-comment-ado` / `pr request-review-ado` verbs that
-  # don't exist yet. Operator must remediate manually in ADO and re-invoke
-  # the workflow.
-  #
-  # Emits merged=false so the parent (apex driver) sees a clean
-  # "not merged" outcome and routes to its own feature_pr_failed_gate
-  # for operator escalation.
-  #
-  # Invariants:
-  #   Pre:  pr_lifecycle_ado returned merged=false.
-  #   Post: Workflow output.merged is false; exits.
-  - name: ado_remediation_not_supported_emitter
-    type: script
-    description: Emit merged=false — ADO remediation cycle not yet wired
-    command: pwsh
-    args:
-      - "-NoProfile"
-      - "-Command"
-      - >-
-        @{
-          merged = $false;
-          pr_url = '';
-          reason = 'ado_remediation_not_supported';
-          detail = 'ADO PR did not merge. The remediation chain (planner/seeder/updater) is GitHub-only and cannot run on ADO without `pr post-comment-ado` and `pr request-review-ado` verbs which do not exist yet. Remediate manually in ADO and re-invoke the workflow.'
-        } | ConvertTo-Json -Compress
-    routes:
-      - to: $end
+      # Catch-all per M4: undefined/missing 'merged' -> remediation cycle
+      # (treats ambiguous outcomes as 'not merged') so the operator gets
+      # a remediation gate path rather than silent termination.
+      - to: remediation_counter
 
   # ── Remediation cycle counter ───────────────────────────────────────────
   #
@@ -460,7 +437,8 @@ agents:
       | Field | Value |
       |-------|-------|
       | Work Item | `{{ workflow.input.work_item_id }}` |
-      | PR Number | `{{ feature_pr_creator_github.output.pr_number }}` |
+      | Platform | `{{ workflow.input.platform }}` |
+      | PR Number | `{% if feature_pr_creator_ado is defined %}{{ feature_pr_creator_ado.output.pr_number }}{% elif feature_pr_creator_github is defined %}{{ feature_pr_creator_github.output.pr_number }}{% else %}(unknown){% endif %}` |
       | Feature Branch | `{{ workflow.input.feature_branch }}` |
       | Target Branch | `{{ workflow.input.target_branch }}` |
       | Remediation Cycles | {{ remediation_counter.output.iteration }} |
@@ -513,8 +491,20 @@ agents:
   # ── Remediation planner ─────────────────────────────────────────────────
   #
   # Creates an addendum plan based on the review feedback. Reads PR review
-  # comments from the platform (via gh api) and the original plan to produce
-  # a targeted remediation plan that addresses only the requested changes.
+  # context from the platform and the original plan to produce a targeted
+  # remediation plan that addresses only the requested changes.
+  #
+  # Platform-aware (Phase 5 closeout):
+  #   - github: uses `gh pr view` and `gh api .../reviews` to fetch the
+  #     full review body and inline comment text.
+  #   - ado: uses `polyphony pr poll-status-ado` (via filesystem reading
+  #     of its own preceding logs is NOT relied on — the agent calls the
+  #     verb-shaped output directly via the `polyphony` tool through a
+  #     bash invocation if needed). No verb returns thread/comment text
+  #     yet; the agent generates the addendum from reviewer identity +
+  #     vote + the original plan + operator-supplied context. A follow-up
+  #     `pr get-comments-ado` verb is tracked in
+  #     `docs/decisions/ado-feature-pr-parity.md`.
   #
   # Invariants:
   #   Pre:  PR sub-workflow returned merged=false;
@@ -541,15 +531,36 @@ agents:
       ## Context
 
       - **Work item:** {{ workflow.input.work_item_id }}
-      - **PR number:** {{ feature_pr_creator_github.output.pr_number }}
+      - **Platform:** {{ workflow.input.platform }}
+      - **PR number:** {% if workflow.input.platform == 'ado' and feature_pr_creator_ado is defined %}{{ feature_pr_creator_ado.output.pr_number }}{% elif feature_pr_creator_github is defined %}{{ feature_pr_creator_github.output.pr_number }}{% else %}(unknown){% endif %}
+      - **PR URL:** {% if workflow.input.platform == 'ado' and feature_pr_creator_ado is defined %}{{ feature_pr_creator_ado.output.pr_url }}{% elif feature_pr_creator_github is defined %}{{ feature_pr_creator_github.output.pr_url }}{% else %}(unknown){% endif %}
       - **Remediation cycle:** {{ remediation_counter.output.iteration }}
       - **Original plan:** {{ workflow.input.plan_path }}
 
       ## Instructions
 
+      {% if workflow.input.platform == 'ado' -%}
+      1. **Read the PR review context** — Polyphony does not yet ship a
+         verb that returns ADO PR thread/comment text. You have these
+         honest sources of truth:
+         - The reviewer **identity + vote** can be queried with
+           `polyphony pr poll-status-ado --organization '{{ workflow.input.organization }}' --project '{{ workflow.input.project }}' --repository-id '{{ workflow.input.repository }}' --pr-number {{ feature_pr_creator_ado.output.pr_number }}`
+           (use the `bash` tool to invoke). The output includes
+           `reviewers[]` with `identity` and `vote` (-10/-5/0/+5/+10).
+         - The original plan at `{{ workflow.input.plan_path }}` and any
+           prior addenda under `docs/projects/{{ workflow.input.work_item_id }}-addendum-*.plan.md`.
+         - The diff on the feature branch (`git diff
+           {{ workflow.input.target_branch }}..{{ workflow.input.feature_branch }}`).
+         - The PR URL above — operators may also have left context in
+           the work-item discussion (use `twig show {{ workflow.input.work_item_id }}`).
+         Be HONEST about the limit: if you cannot infer specific issues
+         from the available context, list "operator triage required" as
+         a remediation task and surface that in the addendum.
+      {% else -%}
       1. **Read the PR review feedback** — Use `gh pr view {{ feature_pr_creator_github.output.pr_number }}`
          and `gh api repos/{owner}/{repo}/pulls/{{ feature_pr_creator_github.output.pr_number }}/reviews`
          to fetch all review comments and requested changes.
+      {%- endif %}
       2. **Read the original plan** (if available) to understand context
       3. **Analyze each review issue** to determine scope of work needed
       4. **Create an addendum plan document** that:
@@ -557,6 +568,9 @@ agents:
          - Lists specific tasks to address each review issue
          - Estimates effort and files affected
          - Notes the remediation cycle number
+         - On ADO, explicitly notes which inputs the addendum was built
+           from (reviewer votes only? operator-supplied issues? diff
+           inspection?) so downstream agents know the planning fidelity.
       5. **Save the addendum** as `docs/projects/{{ workflow.input.work_item_id }}-addendum-{{ remediation_counter.output.iteration }}.plan.md`
 
       ## Output
@@ -670,8 +684,8 @@ agents:
   # review on the feature PR before looping back to pr_platform_router.
   #
   # Uses implement-mg.yaml (not implement-pg.yaml) so the remediation
-  # path benefits from PR H's pr_platform_router — both GitHub (full
-  # lifecycle) and ADO (human-gate stub) are supported here.
+  # path benefits from its pr_platform_router — both GitHub and ADO MG
+  # PRs are supported there (PRs #110 / #118).
   #
   # Invariants:
   #   Pre:  remediation_seeder.output.work_item_ids is a non-empty array;
@@ -704,14 +718,26 @@ agents:
   # ── Feature PR updater ─────────────────────────────────────────────────
   #
   # Re-requests review on the feature PR after the remediation PG has been
-  # implemented and merged into the feature branch. Uses `gh api` to
-  # dismiss stale reviews and request a fresh review cycle, then routes
-  # back to pr_platform_router to re-enter the review flow.
+  # implemented and merged into the feature branch. Platform-aware
+  # (Phase 5 closeout):
+  #   - github: uses `gh pr comment`, `gh api .../requested_reviewers`,
+  #     and `gh pr ready` directly via the `gh` tool.
+  #   - ado: emits the rendered comment_body via output.comment_body and
+  #     routes to feature_pr_updater_poster_ado, which posts the comment
+  #     via `polyphony pr post-comment-ado`. Reviewer re-request is
+  #     out-of-band on ADO — reviewers are configured per branch policy
+  #     in the ADO project (no per-PR re-request API call needed in the
+  #     same shape as GitHub). Mirrors plan-level.yaml's
+  #     plan_reviewer + plan_reviewer_poster_ado pattern from PR #123.
+  #
+  # Either way, control returns to pr_platform_router for the next
+  # review cycle.
   #
   # Invariants:
   #   Pre:  remediation_implementer has completed; remediation changes are
   #         merged into the feature branch.
-  #   Post: Review is re-requested on the feature PR; routes to
+  #   Post: A re-review comment has been posted on the PR (via gh on
+  #         GitHub, queued for the poster script on ADO); routes to
   #         pr_platform_router for the next review cycle.
   - name: feature_pr_updater
     type: agent
@@ -719,6 +745,27 @@ agents:
     description: Re-request review on the feature PR after remediation
     tools:
       - gh
+      - filesystem
+    output:
+      posted:
+        type: boolean
+        description: Whether a comment was posted by THIS agent (true on github happy path; false on ado, where feature_pr_updater_poster_ado posts it)
+      pr_number:
+        type: number
+        description: PR number that was updated
+      remediation_cycle:
+        type: number
+        description: Remediation cycle number this update corresponds to
+      review_requested:
+        type: boolean
+        description: True on github when the API call to re-request review succeeded; always false on ado (out-of-band per ADO policy)
+      comment_body:
+        type: string
+        description: |
+          The fully-rendered markdown comment ready to be posted. On ado
+          this is consumed by feature_pr_updater_poster_ado. On github it
+          is informational (the LLM has already posted it via gh) but is
+          still emitted for log parity.
     prompt: |
       You are the feature PR updater for the twig SDLC workflow.
 
@@ -730,18 +777,49 @@ agents:
       ## Context
 
       - **Work item:** {{ workflow.input.work_item_id }}
-      - **PR number:** {{ feature_pr_creator_github.output.pr_number }}
+      - **Platform:** {{ workflow.input.platform }}
+      - **PR number:** {% if workflow.input.platform == 'ado' and feature_pr_creator_ado is defined %}{{ feature_pr_creator_ado.output.pr_number }}{% elif feature_pr_creator_github is defined %}{{ feature_pr_creator_github.output.pr_number }}{% else %}(unknown){% endif %}
       - **Feature branch:** {{ workflow.input.feature_branch }}
       - **Target branch:** {{ workflow.input.target_branch }}
       - **Remediation cycle:** {{ remediation_counter.output.iteration }}
       - **Addendum plan:** {{ remediation_planner.output.addendum_plan_path }}
 
-      ## Instructions
+      ## Comment shape
 
-      1. **Add a PR comment** summarizing the remediation work:
+      The comment body must use this structure (markdown):
+
+      ```
+      ## Remediation Cycle {{ remediation_counter.output.iteration }} Complete
+
+      Remediation changes have been implemented and merged into the
+      feature branch. Please re-review.
+
+      **Addendum plan:** {{ remediation_planner.output.addendum_plan_path }}
+
+      _Posted by the polyphony feature_pr_updater agent._
+      ```
+
+      {% if workflow.input.platform == 'ado' %}
+      ## Instructions (Azure DevOps)
+
+      You do NOT have a tool to post the comment yourself. Render the
+      comment body using the shape above and emit it via
+      `output.comment_body` — a downstream script
+      (`feature_pr_updater_poster_ado`) will post it via
+      `polyphony pr post-comment-ado`. Do NOT attempt to call `gh`; this
+      is an ADO PR and `gh` will fail.
+
+      Set `output.posted = false` and `output.review_requested = false`
+      (the poster script will record the real post status when it runs;
+      reviewer re-request is out-of-band on ADO — the project's branch
+      policy already pins required reviewers).
+      {% else %}
+      ## Instructions (GitHub)
+
+      1. **Add a PR comment** with the rendered body:
          ```
          gh pr comment {{ feature_pr_creator_github.output.pr_number }} \
-           --body "## Remediation Cycle {{ remediation_counter.output.iteration }} Complete\n\nRemediation changes have been implemented and merged into the feature branch. Please re-review.\n\nAddendum plan: {{ remediation_planner.output.addendum_plan_path }}"
+           --body "<rendered comment body>"
          ```
 
       2. **Re-request review** using the GitHub API. Fetch the most recent
@@ -759,16 +837,66 @@ agents:
          gh pr ready {{ feature_pr_creator_github.output.pr_number }}
          ```
 
+      Set `output.posted = true` and `output.review_requested = true`
+      after the gh calls succeed.
+      {% endif %}
+
       ## Output
 
       Return a JSON object:
       ```json
       {
-        "pr_number": {{ feature_pr_creator_github.output.pr_number }},
-        "review_requested": true,
-        "comment_posted": true,
-        "remediation_cycle": {{ remediation_counter.output.iteration }}
+        "posted": {% if workflow.input.platform == 'ado' %}false{% else %}true{% endif %},
+        "pr_number": {% if workflow.input.platform == 'ado' %}{{ feature_pr_creator_ado.output.pr_number }}{% else %}{{ feature_pr_creator_github.output.pr_number }}{% endif %},
+        "review_requested": {% if workflow.input.platform == 'ado' %}false{% else %}true{% endif %},
+        "remediation_cycle": {{ remediation_counter.output.iteration }},
+        "comment_body": "<full rendered markdown comment per the shape above>"
       }
       ```
+    routes:
+      # On ADO platform, route to the poster script which actually posts
+      # the comment via `polyphony pr post-comment-ado`. On github the
+      # LLM already posted via the `gh` tool, so route straight back to
+      # the platform router for the next review cycle.
+      - to: feature_pr_updater_poster_ado
+        when: "{{ workflow.input.platform == 'ado' }}"
+      - to: pr_platform_router
+
+  # ── Feature PR updater poster (ADO) ────────────────────────────────────
+  #
+  # Posts the comment body produced by feature_pr_updater to the ADO PR
+  # via `polyphony pr post-comment-ado` (since the LLM has no `polyphony`
+  # tool registered for direct invocation). Routes back to
+  # pr_platform_router so the next review cycle re-enters via
+  # pr_lifecycle_ado.
+  #
+  # NOTE: even if the post fails (already-commented races, transient API
+  # failures), we still proceed back to the router. The next poll surfaces
+  # the real PR state — a missed re-review comment is not a workflow-fatal
+  # condition since the pending-review gate / stuck-review gate already
+  # cover the operator-attention path.
+  #
+  # Invariants:
+  #   Pre:  workflow.input.platform == 'ado'; feature_pr_updater produced
+  #         output.comment_body.
+  #   Post: A best-effort post has been attempted; routes to
+  #         pr_platform_router for the next review cycle.
+  - name: feature_pr_updater_poster_ado
+    type: script
+    description: Post the feature_pr_updater's rendered comment to the ADO PR.
+    command: polyphony
+    args:
+      - "pr"
+      - "post-comment-ado"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
+      - "--pr-number"
+      - "{{ feature_pr_creator_ado.output.pr_number }}"
+      - "--body"
+      - "{{ feature_pr_updater.output.comment_body }}"
     routes:
       - to: pr_platform_router
