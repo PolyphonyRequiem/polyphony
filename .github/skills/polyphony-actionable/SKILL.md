@@ -220,3 +220,78 @@ advisory context the agent reads from its prompt.
   terms" sections.
 - Workflow author conventions: **polyphony-workflow-author** skill.
 - Branch naming: **polyphony-branch-model** skill.
+
+## Tested behaviors (Phase 6 PR #8)
+
+`.conductor/registry/tests/e2e-actionable.Tests.ps1` is the
+end-to-end suite for the workflow. It complements (does not
+duplicate) `lint-actionable.ps1` (structural presence) and
+`tests/Polyphony.Tests/Infrastructure/RouteActionableExecutorScriptTests.cs`
+(router-script JSON envelope). The suite parses `actionable.yaml`
+into an in-memory graph (via `powershell-yaml`'s `ConvertFrom-Yaml`)
+and asserts the following end-to-end behaviors:
+
+**Polyphony executor leg:**
+- `executor=polyphony` routes from `executor_router` to `ensure_evidence_branch`.
+- The full happy path is reachable: `ensure_evidence_branch →
+  compose_addendum → actionable_agent → open_evidence_pr →
+  evidence_floor_check → evidence_reviewer (approve) →
+  merge_evidence_pr → workflow_completed`.
+- `evidence_floor_check`'s `passes_floor == false` route targets
+  `floor_failed_gate` (NOT the LLM reviewer — design pick #6).
+- `floor_failed_gate` exposes `abort` / `retry` / `manual_complete`
+  with routes `workflow_abandoned` / `actionable_agent` /
+  `workflow_completed`.
+- `evidence_reviewer` routes `approve` → `merge_evidence_pr`,
+  `request_changes` → `revise_loop_gate`, `block` →
+  `workflow_error_gate`, with a catch-all to `workflow_error_gate`
+  (M4 — missing/malformed decisions fail safely).
+- `revise_loop_gate` exposes `retry` (→ `actionable_agent`) and
+  `abandon` (→ `workflow_abandoned`).
+- `compose_addendum` errors route to `workflow_error_gate` BEFORE
+  the agent runs (the agent never sees a partial envelope).
+- `merge_evidence_pr` only reaches `workflow_completed` when
+  `merged == true`.
+- `workflow_error_gate`'s `retry` re-enters at `executor_router`
+  (operator can flip executor mid-recovery).
+
+**Polyphony agent prompt threading:**
+- The agent prompt template references `workflow.input.work_item_id`,
+  `workflow.input.apex_id`, `ensure_evidence_branch.output.branch`,
+  and `ensure_evidence_branch.output.base_branch`.
+- The agent prompt template consumes every `compose_addendum` output
+  field (`facets`, `skills`, `mcps`, `guidance`, `guidance_present`)
+  — without this, PR #5's facet-profile composition would ship but
+  never reach the agent.
+- The revise-loop re-entry block is guarded by `revise_loop_gate is
+  defined` and surfaces `evidence_reviewer.output.comment`.
+- Both the agent and the reviewer are pinned to opus-class models.
+
+**Human executor leg:**
+- `executor=human` routes from `executor_router` to
+  `human_satisfaction_gate`.
+- `human_satisfaction_gate` exposes `satisfied` / `not_yet` /
+  `abandoned` with routes `workflow_completed` /
+  `human_satisfaction_gate` (self-loop) / `workflow_abandoned`.
+- The human leg never transitively reaches a polyphony-only node
+  (ensure_evidence_branch, compose_addendum, actionable_agent,
+  open_evidence_pr, evidence_floor_check, floor_failed_gate,
+  evidence_reviewer, revise_loop_gate, merge_evidence_pr) — leg
+  disjointness is asserted by reachability analysis.
+
+**Cross-leg coverage:**
+- The router declares an unconditional catch-all route (last entry)
+  targeting `workflow_error_gate`.
+- Both terminals route to `$end`.
+- The workflow output map guards every leg-specific reference with
+  `is defined` (M3 — StrictUndefined safety when only one leg has
+  produced an envelope).
+
+**Router script (live execution under pwsh):**
+- `executor=polyphony` / `executor=human` emit the documented
+  envelope and exit 0.
+- Default executor (`-WorkItemId N` with no `-Executor`) is
+  `polyphony` — matches `workflow.input.executor.default`.
+- Unknown executor values populate `error` but the script still
+  exits 0 (so the workflow's catch-all picks them up rather than
+  halting the conductor run).

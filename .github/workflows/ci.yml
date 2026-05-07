@@ -57,6 +57,14 @@ jobs:
         shell: pwsh
         run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
 
+      - name: Install powershell-yaml
+        # Required by the actionable.yaml e2e suite (Phase 6 PR #8) —
+        # parses the workflow into an in-memory graph for reachability
+        # / option-route assertions. Module ships a single .psm1 +
+        # supporting assembly; install is a few seconds.
+        shell: pwsh
+        run: Install-Module -Name powershell-yaml -Force -SkipPublisherCheck -Scope CurrentUser
+
       - name: Test (Pester)
         shell: pwsh
         working-directory: polyphony
@@ -69,4 +77,15 @@ jobs:
         working-directory: polyphony
         run: |
           $result = Invoke-Pester -Path .conductor/registry/tests/lint-strict-undefined.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
+
+      - name: E2E (actionable.yaml)
+        # Phase 6 PR #8 — graph-walk + agent-prompt-threading +
+        # router-script behavior tests for actionable.yaml. Goes
+        # beyond the structural lint by asserting end-to-end paths
+        # through both executor legs.
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path .conductor/registry/tests/e2e-actionable.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
