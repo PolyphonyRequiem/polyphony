@@ -48,11 +48,10 @@ A canonical, correct example: `scripts/scope-closer.ps1:53-72`.
 
 | Intent                                                           | Use                                               | Source                          |
 |------------------------------------------------------------------|---------------------------------------------------|---------------------------------|
-| What requirements are dispatchable for this work item right now? | `polyphony state next-ready --work-item N`        | `Commands/StateCommands.NextReady.cs` |
 | What state name should I pass to `twig state` for event X?       | `polyphony validate --work-item N --event X`      | `Commands/ValidateCommand.cs`   |
 | Is this transition even legal right now?                         | `polyphony validate --work-item N --event X`      | `Commands/ValidateCommand.cs`   |
 | Walk children: facets, states, tags                        | `polyphony hierarchy --work-item N --depth 3`     | `Commands/HierarchyCommand.cs`  |
-| Get suggested branch names for this work item                    | `polyphony branch route` → `output.workspace_hint`| `Routing/BranchNameResolver.cs` |
+| What's ready to work on next? (per-requirement disposition)      | `polyphony state next-ready --work-item N`        | `Commands/StateCommands.NextReady.cs` |
 | Validate `.conductor/process-config.yaml` itself                 | `polyphony validate-config --config .conductor`   | `Commands/ValidateConfigCommand.cs` |
 | Build the cross-item edge graph; surface conflicts               | `polyphony edges check --work-item N`             | `Commands/EdgesCommands.Check.cs` |
 | Ensure an evidence branch exists (orphan or apex-scoped)         | `polyphony branch ensure-evidence-branch N`       | `Commands/BranchCommands.EnsureEvidenceBranch.cs` |
@@ -66,7 +65,7 @@ A canonical, correct example: `scripts/scope-closer.ps1:53-72`.
 | Create a child work item                                         | `twig new --parent <id> --type <T> --title "…"`   | twig CLI                        |
 
 Rule of thumb: if you find yourself wanting to invent a new polyphony verb, re-read
-`polyphony-cli-reference.md`. The four existing verbs cover every read concern. Writes
+`polyphony-cli-reference.md`. The existing read verbs cover every read concern. Writes
 all go through `twig`.
 
 > **The Phase 6 + 7 additions** (`edges check`, `branch ensure-evidence-branch`,
@@ -180,7 +179,7 @@ Agent Addendum" section for the conceptual model and the
 config-load-time validator (V-20).
 
 > **Wiring status.** The composer + injector ship in PRs #128 / #129
-> as standalone primitives. The apex-driver / `worklist build` retrofit
+> as standalone primitives. The driver / `worklist build` retrofit
 > that calls them at agent-invocation prep time is the in-flight
 > retrofit work — workflow YAMLs that reference facet profiles should
 > assume the composition layer is available, not hand-roll the union
@@ -279,7 +278,7 @@ for its idiom; copy from it rather than re-inventing.
 | `scripts/impl-router.ps1`         | Within-PG task selection via facet filtering and `polyphony hierarchy`. Note: contains a remaining `twig state Doing` literal at line 106 to be replaced. |
 | `scripts/pg-router.ps1`           | PR group lifecycle: groups items by PG tag, checks remote branches and gh PR state, returns the next PG action. |
 | `scripts/child-router.ps1`        | Plannable-child discovery for recursive planning (`plan-level.yaml`). The reference for facet-based filtering ("`_.facets -contains 'plannable'`"). |
-| `scripts/feature-pr-creator.ps1`  | gh-PR creation against `workspace_hint.feature_branch`. The reference for using `polyphony branch route` only for branch-name validation. |
+| `scripts/feature-pr-creator.ps1`  | gh-PR creation against the resolved feature branch. The reference for branch-name validation in PR-creation flows. |
 | `scripts/load-work-tree.ps1`      | Hierarchy → PG-grouped tree with completion status. The reference for `Group-ByPG` and PG enumeration. |
 
 ---
@@ -352,14 +351,13 @@ See `scripts/child-router.ps1:13` for the explicit doc-comment of this conventio
 
 ### Polyphony output is stable; consume by field name
 
-- `polyphony state next-ready` → `work_item_id`, `requirements`
-  (per-disposition arrays; `Models/StateNextReadyResult.cs`).
-- `polyphony branch route` → `current_pg`, `branch_name`,
-  `workspace_hint.feature_branch` (`Models/BranchRouteResult.cs`).
 - `polyphony validate` → `is_valid`, `target_state`, `event`, `message`
   (`Models/ValidateResult.cs`).
 - `polyphony hierarchy` → `work_item_id`, `title`, `type`, `state`, `facets`,
   `tags`, `children` (recursive; `Models/HierarchyResult.cs`).
+- `polyphony state next-ready` → `status`, `requirements`, `next` (per-item
+  requirement set with `(kind, disposition)` pairs; the `next` array is the
+  ready set the workflow should dispatch on).
 
 These fields are covered by `tests/Polyphony.Tests/Commands/JsonOutputContractTests.cs`,
 so they will not change shape silently. If you find yourself reaching for a field that
@@ -375,7 +373,7 @@ it requires:
 
 ```yaml
 workflow:
-  name: plan-level
+  name: my-workflow
   version: "1.0.0"
   metadata:
     min_polyphony_version: "1.0.0"   # required, enforced by Pester lint
@@ -391,10 +389,11 @@ not at release time.
 
 The check is enforced at runtime by `polyphony state preflight` /
 `polyphony state preflight-lite` via the `--workflow-yaml "{{ workflow.file }}"`
-flag (already wired in the root preflight agent and both planning /
-implement preflight-lite agents). On mismatch, preflight returns a failed
-check, the gate routes to retry/abort, and there is no Proceed Anyway —
-silent misroutes are exactly what this guard exists to prevent.
+flag. Wherever a workflow declares `min_polyphony_version`, its preflight
+agent reads the YAML, parses the metadata, and compares against the
+running CLI's version. On mismatch, preflight returns a failed check, the
+gate routes to retry/abort, and there is no Proceed Anyway — silent
+misroutes are exactly what this guard exists to prevent.
 
 > **Why a flag, not a `{{ workflow.metadata.min_polyphony_version }}`
 > template?** Conductor only exposes `workflow.input`, `workflow.dir`,

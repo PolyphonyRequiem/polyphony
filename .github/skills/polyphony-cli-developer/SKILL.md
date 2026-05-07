@@ -19,7 +19,7 @@ helpers, use **polyphony-workflow-author**.
 ## The ConsoleAppFramework command pattern
 
 Every command class follows the same shape (cited: `Commands/ValidateCommand.cs`,
-`Commands/RouteCommand.cs`, `Commands/HierarchyCommand.cs`,
+`Commands/StateCommands.NextReady.cs`, `Commands/HierarchyCommand.cs`,
 `Commands/ValidateConfigCommand.cs`):
 
 ```csharp
@@ -96,7 +96,7 @@ You do not need to register the command class itself.
 ### Where models live
 
 `src/Polyphony/Models/<Name>Result.cs` — one file per result record. Examples:
-`ValidateResult.cs`, `HierarchyResult.cs`, `BranchRouteResult.cs`. Pattern:
+`ValidateResult.cs`, `HierarchyResult.cs`, `EdgesCheckResult.cs`. Pattern:
 
 ```csharp
 namespace Polyphony;
@@ -104,7 +104,7 @@ namespace Polyphony;
 public sealed record FooResult
 {
     public required int WorkItemId { get; init; }
-    public required string Phase { get; init; }
+    public required string Status { get; init; }
     public string? Message { get; init; }    // optional → omitted from JSON when null
 }
 ```
@@ -120,10 +120,10 @@ public sealed record FooResult
 required for trim-safe / AOT-publishable JSON. Every result type must be listed:
 
 ```csharp
-[JsonSerializable(typeof(BranchRouteResult))]
 [JsonSerializable(typeof(ValidateResult))]
 [JsonSerializable(typeof(HierarchyResult))]
 [JsonSerializable(typeof(HierarchyResult[]))]
+[JsonSerializable(typeof(EdgesCheckResult))]
 [JsonSerializable(typeof(ConfigValidationResult))]
 [JsonSerializable(typeof(ConfigValidationDiagnostic[]))]
 [JsonSourceGenerationOptions(
@@ -156,7 +156,7 @@ Property names in C# are PascalCase; in JSON they're snake_case. This is enforce
 3 CacheError      — twig cache inaccessible / work item not found
 ```
 
-Pattern when a work item is not found (cited: `RouteCommand.cs:25-30`,
+Pattern when a work item is not found (cited: `StateCommands.NextReady.cs:25-32`,
 `ValidateCommand.cs:24-29`, `HierarchyCommand.cs:22-27`):
 
 ```csharp
@@ -236,7 +236,7 @@ public sealed class FooCommandTests : CommandTestBase
 ```
 
 (Pattern from `tests/Polyphony.Tests/Commands/ValidateCommandTests.cs:15-75`,
-`tests/Polyphony.Tests/Commands/RouteCommandTests.cs:15-58`.)
+`tests/Polyphony.Tests/Commands/StateNextReadyTests.cs`.)
 
 ### `JsonOutputContractTests` — what to add when you ship a new verb
 
@@ -246,13 +246,13 @@ JSON contract. When adding `polyphony foo`, add equivalents of these existing te
 
 | Required test                                         | Pattern from                                                                       |
 |--------------------------------------------------------|------------------------------------------------------------------------------------|
-| `Foo_SnakeCaseFieldNames_PresentInRawJson`             | `Route_SnakeCaseFieldNames_PresentInRawJson` (lines 44-74)                          |
-| `Foo_NullFieldsOmitted_WhenWritingNull`                | `Route_NullFieldsOmitted_WhenWritingNull` (lines 76-96)                             |
-| `Foo_DeserializationRoundTrip_FieldsMapped`            | `Route_DeserializationRoundTrip_FieldsMapped` (lines 98-119)                        |
-| `Foo_NotFound_ReturnsErrorJson_WithCacheErrorExitCode` | `Route_NotFound_ReturnsErrorJson_WithCacheErrorExitCode` (lines 136-154)            |
-| Update `AllCommands_NotFound_ErrorJsonFormatConsistent` | extend the `foreach` loop to also exercise `FooCommand` (lines 427-453)            |
+| `Foo_SnakeCaseFieldNames_PresentInRawJson`             | `Validate_SnakeCaseFieldNames_PresentInRawJson`                                     |
+| `Foo_NullFieldsOmitted_WhenWritingNull`                | `Validate_ValidTransition_NullFieldsOmitted` / `Hierarchy_NullTagsOmitted_WhenWritingNull` |
+| `Foo_DeserializationRoundTrip_FieldsMapped`            | `Validate_DeserializationRoundTrip_FieldsMapped` / `Hierarchy_DeserializationRoundTrip_FieldsMapped` |
+| `Foo_NotFound_ReturnsErrorJson_WithCacheErrorExitCode` | `Validate_NotFound_ReturnsErrorJson_WithCacheErrorExitCode` / `Hierarchy_NotFound_ReturnsErrorJson_WithCacheErrorExitCode` |
+| Update `AllCommands_NotFound_ErrorJsonFormatConsistent` | extend the `foreach` loop to also exercise `FooCommand`                            |
 
-Use the helper `AssertNoPascalCase` (lines 497-501) — verifies `"WorkItemId"` etc. do
+Use the helper `AssertNoPascalCase` — verifies `"WorkItemId"` etc. do
 **not** appear in the raw JSON.
 
 ---

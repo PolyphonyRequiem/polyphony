@@ -106,24 +106,23 @@ If `facets` is `[]`, the work item's type is missing from your
 match, downstream workflows treat the item as neither plannable nor
 implementable and skip it silently.
 
-### 3.3 — `state next-ready` returns dispatchable requirements
+### 3.3 — `state next-ready` returns a per-requirement view
 
 ```powershell
 polyphony state next-ready --work-item $WI | ConvertFrom-Json | Format-List
 ```
 
-Expected: `work_item_id`, `requirements` (per-disposition arrays such as
-`ready`, `blocked`, `satisfied`, `not_applicable`). Each requirement carries
-the kind (`plan`, `seed`, `implement`, `close-out`, …) inferred from the
-type's facets. `state next-ready` is the routing primitive consumed by the
-apex driver; legacy phase strings are no longer emitted.
+Expected: `work_item_id`, `status`, `requirements`, `next`. `status`
+collapses the per-requirement view into a routing hint
+(`needed | ready | fulfilling | satisfied | empty`); `requirements` is
+the full `(kind, disposition)` set; `next` is the ready-to-dispatch
+subset (the workflow's `for_each` input).
 
 ### 3.4 — `validate` returns `is_valid` + `target_state`
 
-Pick an event the work item's type supports. The two events the live SDLC
-workflow actually emits are `begin_planning` (from
-`scripts/detect-state.ps1`) and `implementation_complete` (from
-`scripts/scope-closer.ps1:55`). Use `implementation_complete` for an item
+Pick an event the work item's type supports. Common events emitted by
+sub-workflow scripts include `begin_planning` and `implementation_complete`
+(see `scripts/scope-closer.ps1:55`). Use `implementation_complete` for an item
 in an `InProgress`-category state:
 
 ```powershell
@@ -222,10 +221,10 @@ Full contract: `docs/polyphony-architecture.md` "The three vocabularies".
 | Verb              | `--config` is a … | Default                            |
 |-------------------|-------------------|------------------------------------|
 | `validate-config` | **directory**     | `.conductor`                       |
-| `route` / `validate` / `hierarchy` | **file path** | `.conductor/process-config.yaml` |
+| `validate` / `hierarchy` / `state next-ready` | **file path** | `.conductor/process-config.yaml` |
 
-Source: `ValidateConfigCommand.cs:20-22`, `RouteCommand.cs:23`,
-`ValidateCommand.cs:22`, `HierarchyCommand.cs:19`. Passing a file to
+Source: `ValidateConfigCommand.cs:20-22`, `ValidateCommand.cs:22`,
+`HierarchyCommand.cs:19`, `StateCommands.NextReady.cs:22`. Passing a file to
 `validate-config` or a directory to the others fails noisily — easy to miss
 when copying commands between docs.
 

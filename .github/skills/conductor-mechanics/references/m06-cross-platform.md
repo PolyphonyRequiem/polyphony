@@ -12,7 +12,7 @@ FileNotFoundError: [WinError 2] The system cannot find the file specified
 ```
 
 …or a slightly less obvious failure where the agent looks like it ran but
-the workflow's `state_detector` etc. emits a `phase=error` because the
+the workflow's downstream router emits a `status=error` because the
 nested subprocess couldn't find the wrapper.
 
 ## Why
@@ -48,13 +48,13 @@ If publishing an `.exe` isn't an option, route through PowerShell so the
 shell does the resolution:
 
 ```yaml
-- name: preflight_check
+- name: state_router
   type: script
   command: pwsh
   args:
     - "-NoProfile"
     - "-Command"
-    - "polyphony state preflight --work-item {{ workflow.input.work_item_id }}"
+    - "polyphony state next-ready --work-item {{ workflow.input.work_item_id }}"
 ```
 
 Slower (pwsh startup) and adds a quoting layer, but resolves PATHEXT.
@@ -167,6 +167,6 @@ There's currently no escape syntax in conductor for `${...}` (no
 
 ## Discovery
 Polyphony self-hosting dogfood iteration 1: `polyphony.cmd` on PATH worked
-when invoked from PowerShell scripts (e.g. `detect-state.ps1`) but failed
+when invoked from PowerShell wrapper scripts but failed
 the moment a workflow tried `command: polyphony` directly. Resolved by
 publishing a real `polyphony.exe`.
