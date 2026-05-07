@@ -140,13 +140,17 @@ public sealed class RequirementSetDeriverTests
     // ── Pure container: empty facet set + decomposable=true ──────────────
 
     [Fact]
-    public void Derive_PureContainer_HasNoOwnRequirements()
+    public void Derive_PureContainer_HasOnlyItemSatisfiedRequirement()
     {
         var result = RequirementSetDeriver.Derive(facets: [], decomposable: true);
 
         result.IsValid.ShouldBeTrue();
         result.Set.ShouldNotBeNull();
-        result.Set!.Items.ShouldBeEmpty();
+        // Pure containers carry only the synthetic terminal — their
+        // satisfaction is filled in by cross-item rollup from children.
+        result.Set!.Items.Count.ShouldBe(1);
+        result.Set.Items[0].Kind.ShouldBe(RequirementKind.ItemSatisfied);
+        // No within-item edges: nothing to flow into the terminal.
         result.Set.Edges.ShouldBeEmpty();
     }
 
@@ -180,15 +184,17 @@ public sealed class RequirementSetDeriverTests
     // ── Implementable only ───────────────────────────────────────────────
 
     [Fact]
-    public void Derive_ImplementableLeaf_EmitsImplementationMergedOnly()
+    public void Derive_ImplementableLeaf_EmitsImplementationMergedAndItemSatisfied()
     {
         var result = RequirementSetDeriver.Derive(["implementable"], decomposable: false);
 
         result.IsValid.ShouldBeTrue();
         var set = result.Set.ShouldNotBeNull();
-        AssertHasKinds(set, RequirementKind.ImplementationMerged);
-        set.Items.Count.ShouldBe(1);
-        set.Edges.ShouldBeEmpty();
+        AssertHasKinds(set, RequirementKind.ImplementationMerged, RequirementKind.ItemSatisfied);
+        set.Items.Count.ShouldBe(2);
+        // Sole own-work leaf flows into the synthetic terminal.
+        AssertEdge(set, RequirementKind.ImplementationMerged, RequirementKind.ItemSatisfied);
+        set.Edges.Count.ShouldBe(1);
     }
 
     // ── Actionable only ──────────────────────────────────────────────────
@@ -213,9 +219,11 @@ public sealed class RequirementSetDeriverTests
 
         result.IsValid.ShouldBeTrue();
         var set = result.Set.ShouldNotBeNull();
-        AssertHasKinds(set, RequirementKind.ActionSatisfied);
+        AssertHasKinds(set, RequirementKind.ActionSatisfied, RequirementKind.ItemSatisfied);
         AssertNoKind(set, RequirementKind.EvidenceAccepted);
-        set.Edges.ShouldBeEmpty();
+        // Sole own-work leaf flows into the synthetic terminal.
+        AssertEdge(set, RequirementKind.ActionSatisfied, RequirementKind.ItemSatisfied);
+        set.Edges.Count.ShouldBe(1);
     }
 
     // ── Plannable + implementable ────────────────────────────────────────

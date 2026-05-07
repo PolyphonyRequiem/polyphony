@@ -205,8 +205,52 @@ public static class RequirementSetDeriver
             }
         }
 
+        // (3) Synthetic terminal: every item gets `item_satisfied` as the
+        //     unambiguous target for cross-item rollup edges (child terminal
+        //     → parent terminal). Within an item, every "leaf" requirement
+        //     (no outgoing within-item edges) connects to item_satisfied.
+        //
+        //     For a pure organizational container (empty facet set +
+        //     decomposable=true), item_satisfied is the only requirement;
+        //     its prerequisites are filled in entirely by cross-item rollup.
+        requirements.Add(NewRequirement(RequirementKind.ItemSatisfied));
+        var leafKinds = ComputeLeafKinds(requirements, edges);
+        foreach (var leaf in leafKinds)
+        {
+            edges.Add(DefinitionalEdge(leaf, RequirementKind.ItemSatisfied));
+        }
+
         var set = new RequirementSet(requirements, edges);
         return new RequirementSetDerivation(set, errors, warnings);
+    }
+
+    /// <summary>
+    /// Returns the kinds of requirements that have no outgoing within-item
+    /// edges, EXCLUDING <see cref="RequirementKind.ItemSatisfied"/> itself.
+    /// These are the "leaf" requirements that need to flow into the synthetic
+    /// terminal. Order is the requirement-list emission order so the resulting
+    /// edges are deterministic for golden-output tests.
+    /// </summary>
+    private static IReadOnlyList<string> ComputeLeafKinds(
+        IReadOnlyList<Requirement> requirements,
+        IReadOnlyList<RequirementEdge> edges)
+    {
+        var hasOutgoing = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var edge in edges)
+        {
+            hasOutgoing.Add(edge.PrerequisiteKind);
+        }
+
+        var leaves = new List<string>();
+        foreach (var req in requirements)
+        {
+            if (req.Kind == RequirementKind.ItemSatisfied) continue;
+            if (!hasOutgoing.Contains(req.Kind))
+            {
+                leaves.Add(req.Kind);
+            }
+        }
+        return leaves;
     }
 
     private static Requirement NewRequirement(string kind) =>

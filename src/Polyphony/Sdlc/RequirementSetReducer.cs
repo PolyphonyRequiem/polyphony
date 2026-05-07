@@ -72,7 +72,17 @@ public static class RequirementSetReducer
             .GroupBy(e => e.DependentKind, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
 
-        // Phase 2: fixpoint Needed → Ready promotion.
+        // Phase 2: fixpoint Needed → Ready/Satisfied promotion.
+        //
+        // ItemSatisfied is a synthetic terminal — it is never observed. Its
+        // disposition is derived purely from its incoming edges:
+        //   * If it has no incoming within-item edges (pure container case),
+        //     it stays Needed; only cross-item rollup from children can move
+        //     it (out of scope for PR #1).
+        //   * If all incoming edges are met, it promotes straight to Satisfied
+        //     (skipping Ready) — there is nothing to dispatch, the item is
+        //     wholly done.
+        // All other requirements use the standard Needed → Ready promotion.
         bool changed;
         do
         {
@@ -82,9 +92,18 @@ public static class RequirementSetReducer
                 var req = items[i];
                 if (req.Disposition != Disposition.Needed) continue;
 
+                var isTerminal = string.Equals(
+                    req.Kind, RequirementKind.ItemSatisfied, StringComparison.Ordinal);
+
                 if (!edgesByDependent.TryGetValue(req.Kind, out var prereqEdges))
                 {
-                    // No incoming edges — promote unconditionally.
+                    if (isTerminal)
+                    {
+                        // Pure container: no leaves to roll up. Wait for
+                        // cross-item rollup (future). Stay Needed.
+                        continue;
+                    }
+                    // Standard requirement with no prerequisites — promote.
                     items[i] = req with { Disposition = Disposition.Ready };
                     changed = true;
                     continue;
@@ -111,7 +130,8 @@ public static class RequirementSetReducer
 
                 if (allMet)
                 {
-                    items[i] = req with { Disposition = Disposition.Ready };
+                    var promoted = isTerminal ? Disposition.Satisfied : Disposition.Ready;
+                    items[i] = req with { Disposition = promoted };
                     changed = true;
                 }
             }
