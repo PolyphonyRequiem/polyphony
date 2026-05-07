@@ -142,6 +142,14 @@ Edges enter the dependency graph through three distinct sources. Each source has
 | **Configuration** | Operator-authored, REQUIRED settings that govern the pipeline's behavior (`process-config.yaml`, `policy.yaml`, `profile.yaml`). Loaded at startup; missing/malformed config fails fast. |
 | **Guidance** | Operator-authored, OPTIONAL agent instructions, tool addendums, MCP addendums, and acceptance-criteria templates that augment but do not change the pipeline's structural behavior. Absent guidance falls back to defaults. |
 
+## Workflows
+
+| Term | Definition |
+|---|---|
+| **Actionable workflow** | The conductor workflow (`actionable.yaml`) that satisfies the **actionable facet** of a single work item. Routes on the item's `executor` property: the **polyphony** leg drives the agent and produces an **evidence PR**, while the **human** leg only records satisfaction via the **human satisfaction gate**. Entry point: `executor_router`. Sibling to `plannable.yaml` and `implementable.yaml`. |
+| **Executor (`polyphony` / `human`)** | The actor that performs an actionable item's work, declared per item on the actionable facet. `polyphony` means the agent does the work and emits evidence; `human` means the action is outside polyphony's authority and only the human's confirmation of satisfaction is recorded. The executor is the input to the actionable workflow's `executor_router` step and the value carried through to the workflow's `executor` output. |
+| **Human satisfaction gate** | The `human_gate` node on the actionable workflow's human leg. Asks the human whether the action has been performed; on `satisfied`, routes to `workflow_completed`; on `not_yet`, loops back to itself; on `abandoned`, routes to `workflow_abandoned`. The only step on the human leg — no evidence branch, agent, or PR is opened. |
+
 ## Open glossary questions
 
 _All initial questions resolved. New questions surfacing during plan drafting will land here._
