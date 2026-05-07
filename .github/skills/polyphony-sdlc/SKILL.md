@@ -1,48 +1,36 @@
 ---
 name: polyphony-sdlc
 description: >-
-  Type-agnostic SDLC workflow documentation. Covers the polyphony
-  conductor workflow suite — recursive planning, parallel PG execution,
-  feature PR remediation, and platform abstraction. Reference when
-  invoking, debugging, or extending the v2 pipeline.
+  Type-agnostic SDLC vocabulary and sub-workflow library documentation.
+  Covers the polyphony engine vocabulary (facets, requirements, dispositions,
+  EdgeGraph, waves), the routing-style verb envelope contract, and the
+  sub-workflow building blocks (recursive planning, parallel PG execution,
+  feature PR remediation, platform abstraction). Reference when invoking,
+  debugging, or composing the polyphony SDLC pipeline.
 user-invokable: false
 ---
 
-# Polyphony SDLC v2 Workflow Suite
+# Polyphony SDLC Engine + Sub-Workflow Library
 
-Type-agnostic SDLC pipeline powered by the Polyphony routing engine and the
-`conductor` orchestrator. Accepts **any work item type at any hierarchy level**,
-derives requirement-set dispatchability via `polyphony state next-ready`, and
-drives it through planning, implementation, PR review, feature PR remediation,
-and close-out — all via multi-agent orchestration with no hardcoded type names.
+Type-agnostic SDLC vocabulary and a library of composable sub-workflows
+powered by the polyphony engine and the `conductor` orchestrator. Accepts
+**any work item type at any hierarchy level** — facet vocabulary
+(plannable, implementable, actionable, decomposable) and per-item
+requirement state drive every routing decision; no work item type names
+appear in any YAML routing condition.
 
-> **Replaces** the original `twig-sdlc-full@twig` workflow. The polyphony
-> sub-workflows live under `.conductor/registry/workflows/`.
-
-> **Apex driver in transition.** The legacy `polyphony-full@polyphony` /
-> `polyphony-planning@polyphony` root entry points have been deleted. The
-> type-agnostic apex driver that orchestrates the sub-workflows end-to-end
-> is being rebuilt around the EdgeGraph + `state next-ready` (requirement +
-> disposition) model. Until that lands, sub-workflows are dispatched
-> directly (e.g. `plan-level@polyphony`, `polyphony-implement@polyphony`).
-
-## Workflow Inputs
-
-The planning entry point (`plan-level.yaml`) accepts:
-
-| Input | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `work_item_id` | `number` | **yes** | — | ADO work item ID (any type at any hierarchy level) |
-| `intent` | `string` | no | `resume` | `new` — fresh start · `redo` — delete and redo · `resume` — pick up where left off |
-| `user_plan_path` | `string` | no | `""` | Path to a user-authored plan document; the architect refines rather than discards it |
+> **Apex orchestrator status.** The original apex SDLC entry workflow has
+> been retired; a replacement apex driver lands in a future PR. Until
+> then, polyphony has no top-level apex SDLC workflow — sub-workflows
+> in this library are invoked directly (or composed by a driver that
+> consumes the engine's wave dispatch).
 
 ## Workflow Metadata
 
-All metadata is passed dynamically via `--metadata` / `-m` flags at invocation time.
-The workflow YAMLs contain no metadata — the invoking agent resolves all values for
-the dashboard and event log. **`tracker=ado` is required** so downstream tooling
-(dashboard, observation filer, post-mortem skills) knows which provider's APIs and
-URL conventions to use.
+When a sub-workflow in this library is invoked, metadata is passed
+dynamically via `--metadata` / `-m` flags. **`tracker=ado` is required**
+so downstream tooling (dashboard, observation filer, post-mortem
+skills) knows which provider's APIs and URL conventions to use.
 
 | Field | Example | Description |
 |-------|---------|-------------|
@@ -61,56 +49,53 @@ URL conventions to use.
 > work-item provider and is independent of the PR platform routing inside
 > `implement-pg.yaml` (`pr_platform_router`).
 
-## Phase Detection and Routing
+## Per-Requirement State (replaces phase strings)
 
-Sub-workflows derive their dispatchable next steps from
-`polyphony state next-ready`, which returns per-disposition arrays
-(`ready`, `blocked`, `satisfied`, `not_applicable`) over the requirement set
-implied by the item's facets. The legacy single-string phase model has been
-removed; routing is now requirement+disposition based.
+The engine no longer surfaces a coarse "phase" string. Instead, each
+work item carries a derived **`RequirementSet`** — a list of
+`(kind, disposition)` requirements plus the within-item edges that
+gate them. Drivers and workflows route on per-requirement readiness:
 
 ```
-preflight_check → state next-ready
-                      │
-                      ├── plan ready        → planning sub-workflow
-                      ├── implement ready   → implementation sub-workflow
-                      ├── close-out ready   → close-out sub-workflow
-                      └── all satisfied     → $end
+polyphony state next-ready --work-item N
+  → status: needed | ready | fulfilling | satisfied | empty
+  → requirements: [ { kind, disposition }, … ]
+  → next:        [ { kind, disposition }, … ]   # the ready set
 ```
 
-On `intent=new`, the plan is generated from scratch; on `resume`, existing
-state is discovered and the workflow picks up where it left off (P3:
-re-entry by state discovery).
+`status` collapses the per-requirement view into a single routing
+hint, with `"empty"` reserved for pure-container items (the only
+requirement is `item_satisfied`, still `Needed` pending cross-item
+rollup — see "Engine Vocabulary" below). For the cross-item picture
+spanning multiple items, callers build an `EdgeGraph` and consume
+`ToWaves()` for topological dispatch.
 
 ## Recursion Depth Budget (C3)
 
-The conductor engine enforces a maximum depth of 10. The polyphony workflow budget uses 9
-levels, leaving 1 level of headroom:
+The conductor engine enforces a maximum depth of 10. Sub-workflows in
+this library compose to depths well under that ceiling — the deepest
+chain today bottoms out around depth 5 (driver → `plan-level.yaml`
+self-recursion → `github-pr.yaml`):
 
 ```
-Depth 0: apex driver                          (root: preflight → next-ready → dispatch)
-Depth 1: polyphony-implement.yaml             (implementation orchestration)
-         OR plan-level.yaml                   (planning orchestration)
-Depth 2: plan-level.yaml self-recursion       (child level planning)
-Depth 3-7: plan-level.yaml self-recursion     (up to 5 nested plannable levels)
-Depth 8: github-pr.yaml / ado-pr.yaml         (PR lifecycle — leaf)
-         OR implement-pg.yaml                  (PG lifecycle)
+Depth 0: <driver / direct invocation>
+Depth 1: plan-level.yaml                      (recursive planning core)
+Depth 2-N: plan-level.yaml self-recursion     (nested plannable levels)
+Depth N+1: github-pr.yaml / ado-pr.yaml       (PR lifecycle — leaf)
+            OR implement-pg.yaml               (PG lifecycle)
 ```
 
-The `depth_guard` script in `plan-level.yaml` validates `depth < max_depth` (default
-max_depth=6). If the limit is reached, a `depth_exceeded_gate` human gate fires so the
-user can approve going deeper or abort.
+The `depth_guard` script in `plan-level.yaml` validates `depth < max_depth`
+(default `max_depth=6`). If the limit is reached, a `depth_exceeded_gate`
+human gate fires so the user can approve going deeper or abort.
 
-## The Workflow YAML Files
+## Sub-Workflow Library
 
-> The legacy `polyphony-full.yaml` root and `polyphony-planning.yaml`
-> planning entry points have been deleted. The apex driver that replaces
-> them is being rebuilt; until then, callers dispatch sub-workflows
-> directly. The remaining files are:
+The sub-workflows below are the composable building blocks the
+(future) apex driver will dispatch into; several can also be invoked
+directly with their own `--input` shape.
 
----
-
-### 1. `plan-level.yaml` — Recursive Planning Core
+### `plan-level.yaml` — Recursive Planning Core
 
 **Responsibility:** Plans a single hierarchy level. Loads type-specific context from
 `.conductor/work-item-types/`, runs the architect agent with parallel review pipeline,
@@ -140,15 +125,17 @@ and seeds children. Self-recurses for nested plannable levels via `for_each`.
 
 ---
 
-### 2. `polyphony-implement.yaml` — Implementation Orchestration
+### `polyphony-implement.yaml` — Implementation Orchestration Sub-Workflow
 
-**Responsibility:** Implementation entry point. Acquires the same-root run lock, loads the
-work tree hierarchy, discovers PG/MG structure, and dispatches pending MGs sequentially via
-`for_each` to `implement-mg.yaml`. Releases the lock on every exit path.
+**Responsibility:** Implementation-phase orchestration sub-workflow. Acquires the
+same-root run lock, loads the work tree hierarchy, discovers PG/MG structure, and
+dispatches pending MGs sequentially via `for_each` to `implement-mg.yaml`. Releases
+the lock on every exit path. **Not an apex** — invoked by a driver (or directly with
+`--input work_item_id=<ID>`) when the implementation phase is the unit of work.
 
 | Agent | Type | Description |
 |-------|------|-------------|
-| `preflight_lite` | script | Quick 3-check validation |
+| `preflight_lite` | script | Quick 3-check validation via `polyphony state preflight-lite` |
 | `preflight_lite_gate` | human_gate | Retry / abort on failure |
 | `lock_acquire` | script | Acquire same-root run lock via `polyphony lock acquire` |
 | `lock_busy_gate` | human_gate | Retry / force-release / abort when an existing lock blocks acquisition |
@@ -162,7 +149,7 @@ work tree hierarchy, discovers PG/MG structure, and dispatches pending MGs seque
 
 ---
 
-### 3. `implement-pg.yaml` — Single PG Lifecycle
+### `implement-pg.yaml` — Single PG Lifecycle
 
 **Responsibility:** Implements all tasks in a single Processing Group, creates and merges
 a PG-level PR, and closes completed work items in ADO after merge.
@@ -185,11 +172,11 @@ a PG-level PR, and closes completed work items in ADO after merge.
 | `pr_platform_router` | script | Route to `github-pr.yaml` or `ado-pr.yaml` |
 | `pr_lifecycle_github` | workflow | Delegates to `github-pr.yaml` |
 | `pr_lifecycle_ado` | workflow | Delegates to `ado-pr.yaml` |
-| `scope_closer` | script | Transition completed items to Done via `scope-closer.ps1` |
+| `scope_closer` | script | Transition completed items to terminal state via `scope-closer.ps1` |
 
 ---
 
-### 4. `github-pr.yaml` — GitHub PR Lifecycle
+### `github-pr.yaml` — GitHub PR Lifecycle
 
 **Responsibility:** Platform-specific PR lifecycle for GitHub. Reviews the PR with an
 Opus 1M reviewer, fixes issues via a Sonnet fixer in a loop (max 10 iterations per P7),
@@ -206,7 +193,7 @@ and merges when approved.
 
 ---
 
-### 5. `ado-pr.yaml` — ADO PR Lifecycle (Stub)
+### `ado-pr.yaml` — ADO PR Lifecycle (Stub)
 
 **Responsibility:** Placeholder for Azure DevOps PR operations. Returns a structured
 error indicating ADO PR support is not yet implemented, with a human gate for manual
@@ -219,7 +206,7 @@ PR management. Shares the same interface contract as `github-pr.yaml`.
 
 ---
 
-### 6. `feature-pr.yaml` — Feature PR and Remediation
+### `feature-pr.yaml` — Feature PR and Remediation
 
 **Responsibility:** Creates a feature PR (all PGs merged → feature branch → target
 branch), reviews it, and runs remediation cycles when the reviewer requests changes.
@@ -266,7 +253,7 @@ feature_pr_creator → pr_platform_router → pr_lifecycle_github (or _ado)
 
 ---
 
-### 7. `close-out.yaml` — Close-Out and Observation Filing
+### `close-out.yaml` — Close-Out and Observation Filing
 
 **Responsibility:** Post-implementation close-out. Generates structured observations
 from the completed work item hierarchy and files them as new ADO work items using
@@ -344,17 +331,19 @@ Each workflow YAML also declares a **min CLI version** it requires:
 
 ```yaml
 workflow:
-  name: plan-level
+  name: my-workflow
   version: "1.0.0"
   metadata:
     min_polyphony_version: "1.0.0"
 ```
 
-On every run, `polyphony state preflight` and `polyphony state preflight-lite`
-check the running CLI's `AssemblyInformationalVersion` against
-`metadata.min_polyphony_version` and **fail preflight on mismatch**.
-The existing `preflight_gate` routes a failed preflight to retry/abort
-— there is no "Proceed Anyway" option for version mismatches.
+Wherever a workflow declares `min_polyphony_version`, its preflight
+agent (`polyphony state preflight` for full validation, `polyphony
+state preflight-lite` for the lightweight 3-check variant) compares
+the running CLI's `AssemblyInformationalVersion` against the declared
+minimum and **fails preflight on mismatch**. The owning workflow's
+`preflight_gate` routes a failed preflight to retry/abort — there is
+no "Proceed Anyway" option for version mismatches.
 
 Comparison ignores `+build-metadata` (per SemVer); pre-release identifiers
 (`-alpha.5`) are NOT stripped and compare per SemVer rules.
@@ -392,62 +381,38 @@ For full rationale and the three-layer truth model see
 4. The target repo has `.conductor/process-config.yaml` with type
    definitions, templates, and `polyphony validate-config` passes.
 
-### New root work item with a User Plan
+### Apex Invocation (deferred)
+
+End-to-end SDLC invocation requires an apex driver. The current apex
+driver has been retired and its replacement has not yet landed —
+**there is no top-level `conductor run` entry-point in this library
+right now**. Apex invocation patterns (worktree setup, `--input` shape,
+`-m` metadata) will be republished here once the new apex driver
+ships.
+
+### Direct Sub-Workflow Invocation
+
+Individual sub-workflows in the library can still be invoked directly
+when a driver isn't required — for example, `polyphony-implement.yaml`
+to drive only the implementation phase, or `feature-pr.yaml` to run
+the feature-PR review and remediation loop standalone. Each sub-workflow
+declares its own `--input` shape; consult the YAML for the exact contract.
+
+In every case, the standard worktree + metadata pattern still applies:
 
 ```powershell
-# Set up a worktree for the root work item
+# Standard worktree setup before any conductor run
 git worktree add -b sdlc/<ID> ../polyphony-<ID> main
 cd ../polyphony-<ID>
 dotnet restore
 Copy-Item -Recurse ../polyphony/.twig .twig
 twig set <ID>
 twig sync
-
-# Launch the planning sub-workflow with a user-authored plan
-# (until the apex driver lands, dispatch sub-workflows directly).
-conductor run plan-level@polyphony `
-  --input work_item_id=<ID> `
-  --input intent=new `
-  --input user_plan_path=path/to/plan.md `
-  -m tracker=ado `
-  -m project_url=https://dev.azure.com/dangreen-msft/Twig `
-  -m git_repo=C:\Users\dangreen\projects\polyphony `
-  -m workitem_id=<ID> `
-  -m worktree_name=polyphony-<ID> `
-  -m cwd=C:\Users\dangreen\projects\polyphony-<ID> `
-  --web
 ```
 
-### Resume an Existing Work Item
-
-```powershell
-# Resume from wherever the work item left off (default intent)
-conductor run plan-level@polyphony `
-  --input work_item_id=<ID> `
-  -m tracker=ado `
-  -m project_url=https://dev.azure.com/dangreen-msft/Twig `
-  -m git_repo=C:\Users\dangreen\projects\polyphony `
-  -m workitem_id=<ID> `
-  -m worktree_name=polyphony-<ID> `
-  -m cwd=C:\Users\dangreen\projects\polyphony-<ID> `
-  --web
-```
-
-### Redo from Scratch
-
-```powershell
-# Delete existing children/branches and start over
-conductor run plan-level@polyphony `
-  --input work_item_id=<ID> `
-  --input intent=redo `
-  -m tracker=ado `
-  -m project_url=https://dev.azure.com/dangreen-msft/Twig `
-  -m git_repo=C:\Users\dangreen\projects\polyphony `
-  -m workitem_id=<ID> `
-  -m worktree_name=polyphony-<ID> `
-  -m cwd=C:\Users\dangreen\projects\polyphony-<ID> `
-  --web
-```
+The required `-m` metadata block (see "Workflow Metadata" above) is the
+same regardless of which sub-workflow is invoked: `tracker`,
+`project_url`, `git_repo`, `workitem_id`, `worktree_name`, `cwd`.
 
 > **Always launch detached** — wrap with `Start-Process -WindowStyle Hidden` so
 > conductor survives if the parent session drops. Always use `--web` (not `--web-bg`).
@@ -464,7 +429,7 @@ most-specific-wins scoping: `root` → `type:<Name>` → `defaults`.
 |--------|-------------|------|-------------|
 | `approvals` | `plan-level.yaml` (review_router / plan_approval) | `mode`, `max_revision_cycles`, `quality_threshold` | Controls whether the plan approval gate fires and under what conditions |
 | `pr` | `github-pr.yaml` / `ado-pr.yaml` | `mode`, `max_fix_loops`, `max_remediation_cycles` | Controls PR merge gating and fix loop caps |
-| `concurrency` | `polyphony-implement.yaml` / `plan-level.yaml` | `max_concurrent_children`, `max_concurrent_pgs` | Limits parallel workflow and PG execution |
+| `concurrency` | `polyphony-implement.yaml` and the recursive `plan-level.yaml` for_each blocks | `max_concurrent_children`, `max_concurrent_pgs` | Limits parallel sub-workflow and PG execution |
 | `open_questions` | `plan-level.yaml` (open_questions_policy → routing) | `mode`, `min_severity`, `max_question_loops` | Controls whether architect open questions gate for user input |
 
 ### `open_questions` Domain
