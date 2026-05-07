@@ -1,7 +1,8 @@
-# Onboarding Guide — v2 SDLC Workflow Configuration
+# Onboarding Guide — Polyphony SDLC Configuration
 
-A step-by-step guide for onboarding a new repository to the `twig-sdlc-v2-full@twig`
-conductor workflow. This guide uses **kyber** (a fictitious post-quantum
+A step-by-step guide for onboarding a new repository to the
+`apex-driver@polyphony` conductor workflow (and the wider polyphony
+sub-workflow library). This guide uses **kyber** (a fictitious post-quantum
 cryptography library on a custom `KyberAgile` ADO process template) as a worked
 example throughout. After following this guide, you will have a working
 `.conductor/` configuration for any ADO process template — standard or custom.
@@ -756,37 +757,41 @@ spaces-to-hyphens (`ConfigValidator.cs:162-163`).
 
 ## 9. First Run
 
-Once validation passes, you're ready to run the v2 SDLC workflow.
-
-> **Caveat:** This guide describes the *intended* flow. End-to-end validation
-> of the polyphony + twig + kyber path is in progress and has not yet been
-> completed. Treat the steps below as the configured contract; expect to file
-> small fixes as the first run surfaces them.
+Once validation passes, you're ready to drive an apex through the polyphony
+SDLC pipeline.
 
 ### Invoking the Workflow
 
-The workflow is invoked through `conductor run` with a work item ID. The root
-workflow takes three named inputs (`work_item_id`, `intent`, optional
-`user_plan_path`) — see `.github/skills/polyphony-sdlc/SKILL.md:330-355` for
-the full input contract:
+The canonical SDLC entry point is `apex-driver@polyphony` — a tree-walking
+dispatcher built on the EdgeGraph + `state next-ready` model that drives an
+apex (run-root) work item end-to-end. The only required input is `apex_id`;
+`intent` (`new` / `resume` / `replan`, default `new`), `platform` (default
+`ado`), and `organization` / `project` / `repository` are optional and
+threaded through to lifecycle sub-workflows. See
+`.github/skills/polyphony-sdlc/SKILL.md` *Invocation* and the ADR
+[`docs/decisions/apex-driver.md`](decisions/apex-driver.md) for the full
+input contract and per-outcome examples.
 
 ```powershell
-# Resume an existing work item (default intent)
-conductor run twig-sdlc-v2-full@twig `
-  --input work_item_id=<ID> `
+# Drive a fresh apex through a full SDLC pass
+conductor run apex-driver@polyphony `
+  --input apex_id=<ID> `
   --web
 
-# Launch with a user-authored plan (intent=new)
-conductor run twig-sdlc-v2-full@twig `
-  --input work_item_id=<ID> `
+# Resume an in-flight apex after a human gate or interruption
+conductor run apex-driver@polyphony `
+  --input apex_id=<ID> `
+  --input intent=resume `
+  --web
+
+# Full invocation with all inputs explicit (recommended for non-default platform / org)
+conductor run apex-driver@polyphony `
+  --input apex_id=<ID> `
   --input intent=new `
-  --input user_plan_path=path/to/plan.md `
-  --web
-
-# Wipe existing children/branches and start over (intent=redo)
-conductor run twig-sdlc-v2-full@twig `
-  --input work_item_id=<ID> `
-  --input intent=redo `
+  --input platform=ado `
+  --input organization=<org> `
+  --input project=<project> `
+  --input repository=<repo> `
   --web
 ```
 
@@ -794,9 +799,12 @@ conductor run twig-sdlc-v2-full@twig `
 > conductor survives if the parent session drops. Always use `--web`, not
 > `--web-bg`.
 
-The workflow automatically detects your `.conductor/process-config.yaml` and uses
-it for routing decisions. If no config is found, it falls back to the legacy
-`twig-sdlc-full@twig` workflow.
+The apex-driver re-derives the right leg per item per wave from observable
+state, so individual sub-workflows (`plan-level`, `actionable`,
+`implement-pg`, `feature-pr`, …) should rarely be invoked directly. Reach
+for a sub-workflow invocation only when you want to *replay* or *override* a
+single leg of an in-flight apex — see `workflows/README.md` for the per-leg
+contracts.
 
 ### What to Expect
 
@@ -1070,7 +1078,7 @@ Use this checklist when onboarding a new repo:
 - [ ] Fill in `profile.yaml` — project info, tech stack, build commands (V-14)
 - [ ] Run `polyphony validate-config --config .conductor --output human`
 - [ ] Fix any errors, review warnings
-- [ ] Run `conductor run twig-sdlc-v2-full@twig --input work_item_id=<id> --web` on a test work item
+- [ ] Run `conductor run apex-driver@polyphony --input apex_id=<id> --web` on a test apex work item
 - [ ] Verify routing, agent behavior, and PR lifecycle work correctly
 
 

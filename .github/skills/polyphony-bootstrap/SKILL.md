@@ -265,7 +265,7 @@ config emits 10 of those warnings before V-11..V-14. Recommended order:
 [ ] 3.4  validate --work-item $WI --event <evt> returns is_valid + target_state
 [ ] 3.5  twig process $type lists $target_state in its state set
 [ ] 4    Walk every (type, event) pair in transitions: through 3.5 (catches 5a)
-[ ] 6    docs/onboarding-guide.md § 9: conductor run twig-sdlc-v2-full@twig works
+[ ] 6    docs/onboarding-guide.md § 9: conductor run apex-driver@polyphony works
 ```
 
 If every line passes, the repo is bootstrapped.

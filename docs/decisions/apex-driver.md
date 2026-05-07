@@ -139,7 +139,110 @@ gate. With `ignore`, it continues. In all three cases the next-loop
 worklist build picks up the (possibly mutated) tree state — no
 explicit "rewind" mechanism needed.
 
-## Classification rules (lifecycle-router.ps1)
+## Invocation
+
+`apex-driver@polyphony` is the canonical SDLC entry point. The CLI does not
+itself drive a pass; this workflow does. Prerequisites (verify before invoking):
+
+- `polyphony health` exits 0 (CLI present, env wired, twig cache reachable).
+- `twig` is on PATH and authenticated against the target ADO org/project
+  (`twig workspace` returns a workspace).
+- `gh` is on PATH and authenticated for any GitHub-hosted PR work
+  (`gh auth status` clean), and/or `az` for the ADO PR leg.
+- `conductor` is on PATH and the polyphony registry is registered:
+  `conductor registry add polyphony PolyphonyRequiem/polyphony` (or a local
+  path).
+- The target repo has `.conductor/process-config.yaml` and
+  `polyphony validate-config --config .conductor` exits 0.
+
+### Minimum invocation
+
+The only required input is the apex (run-root) work-item id; `platform`
+defaults to `ado` and `intent` defaults to `new`:
+
+```powershell
+conductor run apex-driver@polyphony --input apex_id=<ID> --web
+```
+
+### Full invocation (all inputs explicit)
+
+```powershell
+conductor run apex-driver@polyphony `
+  --input apex_id=<ID> `
+  --input intent=new `
+  --input platform=ado `
+  --input organization=<org> `
+  --input project=<project> `
+  --input repository=<repo> `
+  -m tracker=ado `
+  -m project_url=https://dev.azure.com/<org>/<project> `
+  -m git_repo=<absolute repo path> `
+  -m workitem_id=<ID> `
+  -m worktree_name=<repo>-<ID> `
+  -m cwd=<absolute worktree path> `
+  --web
+```
+
+Per the polyphony-sdlc skill's *Workflow Metadata* section, the `-m`
+metadata block is what the dashboard, observation filer, and close-out
+skills consume. `tracker=ado` is currently the only supported value.
+
+### Outcomes
+
+The driver terminates in one of three observable states; the workflow's
+`output:` map carries `apex_id`, `satisfied`, `abandoned`, `preflight_failed`,
+and `renegotiation_pending`.
+
+**Satisfied** — apex root reports `satisfied` and the EdgeGraph reports no
+remaining work. Re-running with `--input intent=resume` is a no-op (the
+worklist is empty); the run is closed-out via `close-out.yaml`.
+
+```powershell
+conductor run apex-driver@polyphony --input apex_id=2930 --web
+# → apex_id=2930, satisfied=true, abandoned=false, renegotiation_pending=false
+```
+
+**Abandoned** — operator chose `abort` at one of the apex-level human gates
+(preflight failure, conflict resolution, renegotiation, wave conflict).
+The apex feature branch and per-item branches are left in place for forensic
+inspection. Re-enter with `--input intent=resume` after triaging.
+
+```powershell
+conductor run apex-driver@polyphony --input apex_id=2930 --input intent=resume --web
+# → apex_id=2930, satisfied=false, abandoned=true
+```
+
+**Renegotiation pending** — a child plan-level invocation reported
+`renegotiation_pending: true`. The driver consults
+`policy.renegotiation.auto_decide` (`prompt` / `auto_restart` / `ignore`) in
+`.conductor/policy.yaml` and surfaces `renegotiation_gate`. The workflow's
+output carries `renegotiation_pending=true`; the operator either accepts
+the renegotiation (loop continues with the mutated tree) or aborts.
+
+```powershell
+conductor run apex-driver@polyphony --input apex_id=2930 --input intent=resume --web
+# → apex_id=2930, satisfied=false, abandoned=false, renegotiation_pending=true
+```
+
+### Per-leg invocations (replay / override)
+
+`apex-driver` re-derives the right leg per item per wave from observable
+state, so most users should not invoke a leg directly. Reach for a per-leg
+invocation only when you want to *replay* or *override* a single leg of an
+in-flight apex:
+
+```powershell
+conductor run plan-level@polyphony           --input work_item_id=<ID> --web
+conductor run actionable@polyphony           --input work_item_id=<ID> --web
+conductor run implement-pg@polyphony         --input work_item_id=<ID> --web
+conductor run feature-pr@polyphony           --input work_item_id=<ID> --web
+```
+
+Each sub-workflow declares its own `--input` shape; consult the YAML in
+`.conductor/registry/workflows/` for the contract. The standard `-m`
+metadata block applies regardless of which leg is invoked.
+
+
 
 In priority order:
 
