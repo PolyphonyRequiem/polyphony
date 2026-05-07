@@ -53,6 +53,7 @@ public sealed class PolicyCommands
                 MaxConcurrentPgs = config.Concurrency.MaxConcurrentPgs!.Value,
             },
             Guidance = SnapshotGuidance(config.Guidance!),
+            RootFallback = SnapshotRootFallback(config.RootFallback!),
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PolicyLoadResult));
@@ -194,6 +195,12 @@ public sealed class PolicyCommands
         };
     }
 
+    private static PolicyRootFallbackSnapshot SnapshotRootFallback(RootFallbackPolicy rootFallback) =>
+        new()
+        {
+            AutoDecide = rootFallback.AutoDecide ?? RootFallbackAutoDecide.Prompt,
+        };
+
     private static (List<string> Errors, List<string> Warnings) ValidateRules(PolicyConfig config)
     {
         var errors = new List<string>();
@@ -222,7 +229,21 @@ public sealed class PolicyCommands
         // ado_field requires a non-empty ado_field_name.
         ValidateGuidanceForReporting(config.Guidance, errors);
 
+        // Root fallback: auto_decide must be one of the canonical strings (when set).
+        ValidateRootFallbackForReporting(config.RootFallback, errors);
+
         return (errors, warnings);
+    }
+
+    private static void ValidateRootFallbackForReporting(RootFallbackPolicy? rootFallback, List<string> errors)
+    {
+        if (rootFallback?.AutoDecide is null) return;
+        var value = rootFallback.AutoDecide;
+        if (!RootFallbackAutoDecide.IsValid(value))
+            errors.Add(
+                $"root_fallback.auto_decide '{value}' is not a known auto-decide policy. " +
+                $"Expected '{RootFallbackAutoDecide.Prompt}', '{RootFallbackAutoDecide.UseActiveItem}', " +
+                $"or '{RootFallbackAutoDecide.Abort}'.");
     }
 
     private static void ValidateGuidanceForReporting(GuidancePolicy? guidance, List<string> errors)

@@ -24,10 +24,13 @@ namespace Polyphony.Policy;
 ///   <item><description>concurrency.max_concurrent_pgs = 3</description></item>
 ///   <item><description>guidance.source = description_block</description></item>
 ///   <item><description>guidance.ado_field_name = null</description></item>
+///   <item><description>root_fallback.auto_decide = prompt</description></item>
 /// </list>
 ///
 /// Also enforces a load-time invariant: when <c>guidance.source</c> is
-/// <c>ado_field</c>, <c>guidance.ado_field_name</c> must be non-empty.
+/// <c>ado_field</c>, <c>guidance.ado_field_name</c> must be non-empty, and
+/// <c>root_fallback.auto_decide</c> must be one of <c>prompt</c>,
+/// <c>use_active_item</c>, or <c>abort</c> when set.
 /// </summary>
 public static class PolicyLoader
 {
@@ -109,6 +112,11 @@ public static class PolicyLoader
         config.Guidance.Source ??= GuidanceSource.DescriptionBlock;
 
         ValidateGuidance(config.Guidance);
+
+        config.RootFallback ??= new RootFallbackPolicy();
+        config.RootFallback.AutoDecide ??= RootFallbackAutoDecide.Prompt;
+
+        ValidateRootFallback(config.RootFallback);
     }
 
     private static void ValidateGuidance(GuidancePolicy guidance)
@@ -143,5 +151,15 @@ public static class PolicyLoader
             throw new InvalidOperationException(
                 $"{scope}.source is '{GuidanceSource.AdoField}' but {scope}.ado_field_name is not set. " +
                 "Set ado_field_name to the ADO custom field reference name (e.g. 'Custom.PolyphonyGuidance').");
+    }
+
+    private static void ValidateRootFallback(RootFallbackPolicy rootFallback)
+    {
+        var value = rootFallback.AutoDecide;
+        if (value is not null && !RootFallbackAutoDecide.IsValid(value))
+            throw new InvalidOperationException(
+                $"root_fallback.auto_decide '{value}' is not a known auto-decide policy. " +
+                $"Expected '{RootFallbackAutoDecide.Prompt}', '{RootFallbackAutoDecide.UseActiveItem}', " +
+                $"or '{RootFallbackAutoDecide.Abort}'.");
     }
 }

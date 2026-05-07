@@ -31,6 +31,9 @@ public sealed record PolicyLoadResult
 
     /// <summary>Resolved per-item guidance source (Phase 6 PR #6).</summary>
     public required PolicyGuidanceSnapshot Guidance { get; init; }
+
+    /// <summary>Resolved root-fallback policy (Phase 1 root-fallback-gate).</summary>
+    public required PolicyRootFallbackSnapshot RootFallback { get; init; }
 }
 
 /// <summary>
@@ -74,4 +77,17 @@ public sealed record PolicyGuidanceSnapshot
 
     /// <summary>Per-type effective source overrides, when configured.</summary>
     public Dictionary<string, string>? ByTypeSource { get; init; }
+}
+
+/// <summary>
+/// Root-fallback snapshot exposed via <c>policy load</c>. Captures the
+/// resolved <c>auto_decide</c> value the <c>root-fallback-gate</c>
+/// sub-workflow consumes to decide between the human gate and an
+/// auto-resolution path.
+/// </summary>
+public sealed record PolicyRootFallbackSnapshot
+{
+    /// <summary>One of <c>prompt</c>, <c>use_active_item</c>, or <c>abort</c>
+    /// (the <see cref="Polyphony.Policy.RootFallbackAutoDecide"/> constants).</summary>
+    public required string AutoDecide { get; init; }
 }

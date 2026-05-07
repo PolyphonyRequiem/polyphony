@@ -587,6 +587,128 @@ public sealed class PolicyCommandsTests : CommandTestBase
         output.ShouldNotContain("\"min_severity\"");
         output.ShouldNotContain("\"max_question_loops\"");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // root_fallback (Phase 1 root-fallback-gate)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Load_NoFile_AppliesRootFallbackDefaultPrompt()
+    {
+        using var fx = new PolicyFileFixture();
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.RootFallback.ShouldNotBeNull();
+        result.RootFallback.AutoDecide.ShouldBe("prompt");
+    }
+
+    [Theory]
+    [InlineData("prompt")]
+    [InlineData("use_active_item")]
+    [InlineData("abort")]
+    public void Load_FileWithRootFallback_PreservesAutoDecide(string autoDecide)
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy($$"""
+            schema_version: 1
+            root_fallback:
+              auto_decide: {{autoDecide}}
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.RootFallback.AutoDecide.ShouldBe(autoDecide);
+    }
+
+    [Fact]
+    public void Load_BadAutoDecide_ReturnsConfigError()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            root_fallback:
+              auto_decide: vibes_only
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var doc = JsonDocument.Parse(output);
+        var err = doc.RootElement.GetProperty("error").GetString();
+        err.ShouldNotBeNull();
+        err.ShouldContain("vibes_only");
+        err.ShouldContain("root_fallback.auto_decide");
+    }
+
+    [Fact]
+    public void Validate_GoodRootFallback_ReturnsValid()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            approvals:
+              defaults: { mode: warning, max_revision_cycles: 5 }
+            pr:
+              defaults: { mode: warning, max_fix_loops: 10, max_remediation_cycles: 3 }
+            root_fallback:
+              auto_decide: use_active_item
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeTrue();
+        result.Errors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Validate_BadAutoDecide_ReturnsErrorViaParse()
+    {
+        // Loader-level validation kicks in inside Parse → ApplyBuiltInDefaults
+        // for invalid auto_decide values; surface as a config error.
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            root_fallback:
+              auto_decide: yolo
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeFalse();
+        result.Errors.Length.ShouldBeGreaterThan(0);
+        result.Errors.ShouldContain(e => e.Contains("yolo") || e.Contains("auto_decide"));
+    }
+
+    [Fact]
+    public void Load_RootFallback_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        using var fx = new PolicyFileFixture();
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        output.ShouldContain("\"root_fallback\"");
+        output.ShouldContain("\"auto_decide\"");
+        output.ShouldNotContain("\"RootFallback\"");
+        output.ShouldNotContain("\"AutoDecide\"");
+    }
 }
 
 /// <summary>

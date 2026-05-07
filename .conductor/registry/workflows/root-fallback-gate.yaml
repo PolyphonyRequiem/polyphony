@@ -1,0 +1,236 @@
+# root-fallback-gate — Phase 1 shared sub-workflow.
+#
+# Resolves the case where a sub-workflow is invoked WITHOUT a root
+# work-item id in its input. The caller passes the work item it was
+# itself invoked on (`active_work_item_id`); this sub-workflow either
+# surfaces a human gate, or auto-resolves per the workspace's
+# `root_fallback.auto_decide` policy, and returns a structured
+# `{ root_id, decision, auto_policy_applied }` envelope.
+#
+# Auto-decide policy (read from `.conductor/policy.yaml > root_fallback`):
+#
+#   - `prompt`           — surface the human gate (default).
+#                          decision is one of {use_active_item, abort};
+#                          auto_policy_applied = false.
+#   - `use_active_item`  — auto-resolve: root = active item.
+#                          decision = `auto_resolved`; auto_policy_applied = true.
+#   - `abort`            — auto-resolve: fail the workflow with a clear error.
+#                          decision = `abort`; auto_policy_applied = true.
+#
+# Invariants:
+#   Pre:  active_work_item_id is the work item the calling sub-workflow
+#         was invoked on. The caller has already determined it has no
+#         `root_id` / `apex_id` to operate on.
+#   Post: Either root_id is a positive integer (caller continues with
+#         that as root) or root_id == 0 with decision == 'abort' (caller
+#         must fail honestly — do not paper over).
+
+workflow:
+  name: root-fallback-gate
+  description: >-
+    Resolves the case where a sub-workflow is invoked without a root
+    work-item id. Either prompts the user (default), or auto-resolves
+    per the `root_fallback.auto_decide` policy, and returns a
+    structured `{ root_id, decision, auto_policy_applied }` envelope.
+  version: "1.0.0"
+  entry_point: load_policy
+  metadata:
+    min_polyphony_version: "1.0.1"
+
+  limits:
+    # Shallow workflow — load policy, route, optional human gate, terminal.
+    max_iterations: 20
+
+  input:
+    active_work_item_id:
+      type: number
+      required: true
+      description: >-
+        The work item the calling sub-workflow was invoked on. When the
+        caller's policy + the operator agree to use_active_item, this
+        becomes the root for the rest of the calling workflow's run.
+
+tools:
+  - twig
+
+output:
+  # Per M3 (StrictUndefined) every reference to a verb's output is
+  # guarded with `is defined` because at most one terminal runs in any
+  # given execution. Per M7 booleans are piped through `| string | lower`
+  # so the parent workflow receives a real bool rather than capital
+  # "True" / "False".
+  root_id: >-
+    {%- if terminal_use_active_item_prompted is defined -%}{{ workflow.input.active_work_item_id }}
+    {%- elif terminal_use_active_item_auto is defined -%}{{ workflow.input.active_work_item_id }}
+    {%- else -%}0{%- endif -%}
+  decision: >-
+    {%- if terminal_use_active_item_prompted is defined -%}use_active_item
+    {%- elif terminal_use_active_item_auto is defined -%}auto_resolved
+    {%- elif terminal_abort_prompted is defined -%}abort
+    {%- elif terminal_abort_auto is defined -%}abort
+    {%- else -%}abort{%- endif -%}
+  auto_policy_applied: >-
+    {%- if terminal_use_active_item_auto is defined or terminal_abort_auto is defined -%}true
+    {%- else -%}false{%- endif -%}
+
+agents:
+  # ── Load policy ───────────────────────────────────────────────────────────
+  #
+  # Loads `.conductor/policy.yaml` (or the defaults-only snapshot when
+  # the file is missing) and emits the full policy envelope. Downstream
+  # routing reads `load_policy.output.root_fallback.auto_decide`.
+  #
+  # Invariants:
+  #   Pre:  none — `polyphony policy load` always returns a fully
+  #         defaulted snapshot.
+  #   Post: load_policy.output.root_fallback.auto_decide is one of
+  #         {prompt, use_active_item, abort} (validated by the loader).
+  - name: load_policy
+    type: script
+    description: Load the workspace policy snapshot
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+    routes:
+      - to: prompt_user
+        when: "{{ load_policy.output.root_fallback.auto_decide == 'prompt' }}"
+      - to: terminal_use_active_item_auto
+        when: "{{ load_policy.output.root_fallback.auto_decide == 'use_active_item' }}"
+      - to: terminal_abort_auto
+        when: "{{ load_policy.output.root_fallback.auto_decide == 'abort' }}"
+      # Catch-all per M4 — defensively route any unknown value to the
+      # human gate so the operator decides rather than raising
+      # `No matching route found`. The loader validates the field at
+      # parse time, so this is a belt-and-braces guard.
+      - to: prompt_user
+
+  # ── Prompt user ───────────────────────────────────────────────────────────
+  #
+  # Surfaces the root-fallback human gate. Fires only when policy
+  # `auto_decide` is `prompt` (the default). The operator picks
+  # use_active_item (treat the active work item as the root) or abort
+  # (terminate the calling workflow).
+  #
+  # Invariants:
+  #   Pre:  load_policy.output.root_fallback.auto_decide == 'prompt'.
+  #   Post: Operator chose use_active_item (->terminal_use_active_item_prompted)
+  #         or abort (-> terminal_abort_prompted).
+  - name: prompt_user
+    type: human_gate
+    description: Ask the operator how to handle a missing root work-item id
+    prompt: |
+      ## ⚠️ Root work item not provided
+
+      A sub-workflow was invoked **without** a root work-item id. The
+      operator must decide whether to treat the currently-active work
+      item as the root for this run, or abort.
+
+      ### Active work item
+
+      **#{{ workflow.input.active_work_item_id }}**
+
+      ### Options
+
+      - **Use active item** — treat
+        #{{ workflow.input.active_work_item_id }} as the root for this
+        run. The calling sub-workflow continues with this id wherever it
+        would have used the missing root.
+      - **Abort** — fail the calling workflow with a clear error. Pick
+        this when the active item is clearly NOT the right root (e.g.,
+        the operator launched the sub-workflow from the wrong place).
+
+      ### Bypassing this gate
+
+      Workspaces with a high-confidence policy can skip this gate by
+      setting `root_fallback.auto_decide` in `.conductor/policy.yaml`
+      to `use_active_item` or `abort`. See the
+      `polyphony-workflow-author` skill for guidance.
+    options:
+      - label: "✅ Use active item (#{{ workflow.input.active_work_item_id }} as root)"
+        value: use_active_item
+        route: terminal_use_active_item_prompted
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_prompted
+
+  # ── Terminal: use_active_item via prompt ─────────────────────────────────
+  #
+  # No-op terminal. Emits a JSON envelope so a downstream observer can
+  # read which leg of the workflow ran. The workflow `output:` block
+  # uses `is defined` checks against this terminal name.
+  - name: terminal_use_active_item_prompted
+    type: script
+    description: Terminal — operator chose use_active_item from the human gate
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          decision = 'use_active_item';
+          auto_policy_applied = $false;
+          root_id = {{ workflow.input.active_work_item_id }}
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: abort via prompt ───────────────────────────────────────────
+  - name: terminal_abort_prompted
+    type: script
+    description: Terminal — operator chose abort from the human gate
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          decision = 'abort';
+          auto_policy_applied = $false;
+          root_id = 0
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: use_active_item via auto-policy ────────────────────────────
+  #
+  # Fires when policy `auto_decide == 'use_active_item'`. The active
+  # work item is silently promoted to root with no human gate.
+  # `decision = 'auto_resolved'` distinguishes this from the prompted
+  # path so observers can attribute the choice to policy, not the human.
+  - name: terminal_use_active_item_auto
+    type: script
+    description: Terminal — auto-policy resolved to use_active_item
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          decision = 'auto_resolved';
+          auto_policy_applied = $true;
+          root_id = {{ workflow.input.active_work_item_id }}
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: abort via auto-policy ──────────────────────────────────────
+  #
+  # Fires when policy `auto_decide == 'abort'`. The calling workflow
+  # MUST honour `decision == 'abort'` and fail honestly per P7 — do
+  # not paper over with a default root id.
+  - name: terminal_abort_auto
+    type: script
+    description: Terminal — auto-policy resolved to abort
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          decision = 'abort';
+          auto_policy_applied = $true;
+          root_id = 0
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end

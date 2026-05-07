@@ -35,4 +35,8 @@ workflows:
     description: "Actionable facet workflow — executor router, polyphony leg (evidence PR), or human leg (satisfaction gate)"
     path: workflows/actionable.yaml
     versions: ["1.0.0"]
+  root-fallback-gate:
+    description: "Root fallback gate — resolves a sub-workflow invoked without a root work-item id (Phase 1 shared sub-workflow)"
+    path: workflows/root-fallback-gate.yaml
+    versions: ["1.0.0"]
 
