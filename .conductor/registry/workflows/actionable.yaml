@@ -1,0 +1,682 @@
+# actionable — Single-item lifecycle for an item carrying the
+#               `actionable` facet.
+#
+# Phase 6 PR #4 of 8 — initial scaffold. Wires the new evidence-branch
+# (PR #132 / commit e63d84f) and evidence-PR (PR #130 / commit 97bd373)
+# verbs into a runnable subworkflow with an executor router.
+#
+# The router branches on the `executor` input:
+#
+#   - executor = polyphony → ensure_evidence_branch → actionable_agent
+#                            → open_evidence_pr → evidence_reviewer
+#                            → merge_evidence_pr → workflow_completed
+#   - executor = human    → human_satisfaction_gate → workflow_completed
+#                            (or workflow_abandoned)
+#
+# This is the Phase 6 design sketch lines 77-100 made executable. The
+# polyphony leg is GH-only in this PR (consistent with PR #3 / commit
+# 97bd373 — the underlying `pr open-evidence-pr` verb only knows about
+# `gh`). ADO siblings of the evidence verbs are a deferred wave-0 follow-up
+# per the same pattern feature-pr.yaml uses for ADO remediation.
+#
+# Invariants:
+#   Pre:  Work item carries the actionable facet. When executor=polyphony,
+#         the `feature/{apex_id}` branch (or the explicit --from-ref)
+#         exists on the remote.
+#   Post: Either workflow_completed (item is satisfied — evidence PR
+#         merged for polyphony executor; gate "satisfied" recorded for
+#         human executor) or workflow_abandoned (operator decided not to
+#         pursue this item further).
+#
+# Re-entry behavior (P3):
+#   Both `branch ensure-evidence-branch` and `pr open-evidence-pr` are
+#   idempotent — the former reuses an existing local/remote branch;
+#   the latter reuses an existing OPEN PR for the same head/base pair.
+#   The agent stub re-runs from scratch on resume; that is fine for the
+#   scaffold (PR #5 will wire in facet-profile context that may want to
+#   resume mid-conversation, at which point this comment should be
+#   revisited).
+#
+# Deferred wiring (forward references — DO NOT add in this PR):
+#   - PR #5: facet-profile composition into actionable_agent.prompt_addendum
+#   - PR #5: per-item guidance injection (consumes PR #6's
+#            `polyphony guidance extract` data — verb already shipped
+#            in commit 32a3c2e)
+#   - PR #7: evidence floor check (≥1 commit + non-empty PR body)
+#            between actionable_agent and evidence_reviewer
+#   - PR #8: full evidence_reviewer rubric (currently a placeholder
+#            that approves unless the agent emits an explicit `block`)
+#   - Out of scope: wiring this workflow as a subworkflow of
+#                   polyphony-full.yaml. A later PR owns that.
+
+workflow:
+  name: actionable
+  description: >-
+    Single-item lifecycle for an item carrying the `actionable` facet.
+    Routes on the `executor` input — polyphony performs the action and
+    promotes evidence via an evidence PR; human acts outside polyphony
+    and only a satisfaction gate is recorded. Phase 6 PR #4 scaffold —
+    facet-profile composition, per-item guidance, the evidence floor
+    check, and the full review rubric land in PRs #5-#8.
+  version: "1.0.0"
+  entry_point: executor_router
+  metadata:
+    min_polyphony_version: "1.0.1"
+
+  limits:
+    # The workflow is shallow — at most one revision loop on the
+    # polyphony leg before a human gates the retry. 50 covers the
+    # routine path with comfortable headroom for revise-loop iterations
+    # bounded only by the human at revise_loop_gate.
+    max_iterations: 50
+
+  input:
+    work_item_id:
+      type: number
+      required: true
+      description: >-
+        ADO work item id of the actionable item being satisfied. Type is
+        runtime-injected; do not hardcode type names.
+    apex_id:
+      type: number
+      required: false
+      default: 0
+      description: >-
+        Optional apex (run-root feature) work-item id used to compose the
+        evidence branch and PR base. When omitted (or zero), defaults to
+        `work_item_id` (orphan evidence — branch `evidence/{work_item_id}`,
+        base `main`). When supplied, branch is `evidence/{apex}-{item}`
+        and base is `feature/{apex}`.
+    executor:
+      type: string
+      required: false
+      default: polyphony
+      description: >-
+        Who performs the action: `polyphony` (default — polyphony invokes
+        the agent and produces an evidence PR) or `human` (the action is
+        outside polyphony's authority; satisfaction is recorded via a
+        human gate, no evidence PR is required).
+    platform:
+      type: string
+      required: false
+      default: ado
+      description: >-
+        PR platform for the evidence PR — `ado` (default — matches the
+        Phase 5 work-item source convention) or `github`. THIS PR LEAVES
+        THIS INPUT UNROUTED on the polyphony leg: the underlying evidence
+        verbs (`branch ensure-evidence-branch`, `pr open-evidence-pr`,
+        `gh pr merge`) are GH-only today, mirroring the wave-0 pattern in
+        feature-pr.yaml. Threading a platform router that short-circuits
+        the ADO branch is a follow-up PR once the ADO sibling verbs ship.
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO organization name. Reserved for the deferred ADO sibling of
+        the evidence verbs; ignored on the GH-only polyphony leg in this
+        PR. Threaded through verbatim so callers don't have to special-case
+        this workflow once ADO support lands.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO project name. Reserved — see `organization`.
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO repository identifier (GUID or name). Reserved — see
+        `organization`.
+    from_ref:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        Optional base branch override for the evidence branch. When
+        empty, `branch ensure-evidence-branch` defaults to
+        `feature/{apex_id}`. Pass a sibling MG branch name (or any other
+        ref that exists on the remote) for layered evidence.
+
+tools:
+  - twig
+  - gh
+  - filesystem
+
+output:
+  # Per M3 (StrictUndefined), every reference to a verb's output is
+  # guarded with `is defined` because only ONE leg of the executor
+  # router has actually produced output in any given execution. Per M7,
+  # booleans are piped through `| string | lower` so the parent
+  # workflow receives a real bool rather than capital "True"/"False".
+  satisfied: >-
+    {% if workflow_completed is defined %}{{ (workflow_completed.output.satisfied | default(false)) | string | lower }}
+    {%- else %}false{% endif %}
+  executor: "{{ workflow.input.executor }}"
+  pr_url: >-
+    {% if open_evidence_pr is defined %}{{ open_evidence_pr.output.pr_url | default('') }}
+    {%- else %}{% endif %}
+  pr_number: >-
+    {% if open_evidence_pr is defined %}{{ open_evidence_pr.output.pr_number | default(0) }}
+    {%- else %}0{% endif %}
+  evidence_branch: >-
+    {% if ensure_evidence_branch is defined %}{{ ensure_evidence_branch.output.branch | default('') }}
+    {%- else %}{% endif %}
+
+agents:
+  # ── Executor router ────────────────────────────────────────────────────
+  #
+  # Deterministic 3-LOC script (P8 — scripts > agents for routing).
+  # Reads `workflow.input.executor`, validates it is one of the allowed
+  # values, and emits `{ executor, work_item_id }` so the routes can
+  # branch. Unknown executor values surface as an `error` field that
+  # falls through to workflow_error_gate.
+  #
+  # Invariants:
+  #   Pre:  workflow.input.executor is one of {polyphony, human}.
+  #   Post: output.executor mirrors the validated input value.
+  - name: executor_router
+    type: script
+    description: Route to polyphony (agent + evidence PR) or human (satisfaction gate) leg
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/route-actionable-executor.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Executor"
+      - "{{ workflow.input.executor }}"
+    routes:
+      - to: ensure_evidence_branch
+        when: "{{ executor_router.output.executor == 'polyphony' }}"
+      - to: human_satisfaction_gate
+        when: "{{ executor_router.output.executor == 'human' }}"
+      # Catch-all per M4: an unknown executor value (router emits
+      # `output.error`) routes to the workflow error gate so a human
+      # decides retry/abandon rather than `No matching route found`.
+      - to: workflow_error_gate
+
+  # ── Evidence branch ensure (polyphony leg) ──────────────────────────────
+  #
+  # Idempotently materializes `evidence/{apex}-{item}` (or the orphan
+  # form `evidence/{item}` when apex equals item) from the base branch.
+  # Base defaults to `feature/{apex_id}`; `from_ref` overrides.
+  #
+  # Routing-style failure handling: per the verb's contract
+  # (BranchEnsureEvidenceResult.Action == "error" with a populated
+  # `Error` field), a failure is detectable on the JSON envelope. When
+  # the verb returns a non-zero exit code conductor will halt the run;
+  # the `output.error` route below is the defensive path for callers
+  # that catch the error and produce an envelope.
+  #
+  # Invariants:
+  #   Pre:  When apex differs from item, `feature/{apex_id}` (or the
+  #         supplied `from_ref`) exists on the remote.
+  #   Post: The evidence branch is checked out locally and pushed to
+  #         the remote; output.branch and output.base_branch are set.
+  - name: ensure_evidence_branch
+    type: script
+    description: Idempotently create or check out the evidence branch
+    command: polyphony
+    args:
+      - "branch"
+      - "ensure-evidence-branch"
+      - "{{ workflow.input.work_item_id }}"
+      - "--apex-id"
+      - "{{ workflow.input.apex_id }}"
+      - "--from-ref"
+      - "{{ workflow.input.from_ref }}"
+    routes:
+      - to: workflow_error_gate
+        when: "{{ ensure_evidence_branch.output.action == 'error' or (ensure_evidence_branch.output.error is defined and ensure_evidence_branch.output.error != '') }}"
+      - to: actionable_agent
+
+  # ── Actionable agent (polyphony leg) ────────────────────────────────────
+  #
+  # Performs the actionable work and commits any artifacts to the
+  # evidence branch. The prompt is a STUB in this PR — see deferred
+  # wiring at the top of the file:
+  #
+  #   - PR #5 will compose facet-profile-derived skill/MCP addenda from
+  #     `process-config.yaml` into `prompt_addendum`.
+  #   - PR #5 will also inject per-item guidance extracted by
+  #     `polyphony guidance extract` (verb shipped in commit 32a3c2e
+  #     under PR #6).
+  #
+  # Until those land, the agent runs without facet-profile-derived
+  # skill/MCP addenda and without per-item guidance context. That is
+  # intentional — this PR ships the workflow shape only.
+  #
+  # TODO(p6-pr5): wire ComposeProfile() output into agent.prompt_addendum
+  #               and per-item guidance context.
+  #
+  # Invariants:
+  #   Pre:  Evidence branch is checked out.
+  #   Post: Any artifacts are committed to the evidence branch;
+  #         output.summary is a one-paragraph human-readable summary
+  #         the PR description can quote verbatim.
+  - name: actionable_agent
+    type: agent
+    model: claude-opus-4.6
+    description: Perform the actionable work and commit evidence to the evidence branch
+    tools:
+      - twig
+      - gh
+      - filesystem
+    output:
+      # Per M2 — routes do not currently consume this field, but
+      # downstream PRs (the evidence_reviewer rubric in PR #8) will,
+      # and templates already reference `actionable_agent.output.summary`.
+      summary:
+        type: string
+        description: One-paragraph human-readable summary of what was done
+    prompt: |
+      You are the actionable executor for the polyphony SDLC workflow.
+
+      ## Your Mission
+
+      Perform the actionable work for item #{{ workflow.input.work_item_id }}.
+      Commit any artifacts (notes, configuration, transcripts, links) to the
+      current evidence branch (which has already been created and checked
+      out for you). Write a summary that the evidence PR description can
+      quote verbatim.
+
+      ## Context
+
+      - **Work item id:** {{ workflow.input.work_item_id }}
+      - **Apex (run-root) id:** {{ workflow.input.apex_id }} (0 means orphan — work item is its own apex)
+      - **Evidence branch:** `{{ ensure_evidence_branch.output.branch }}`
+      - **Base branch:** `{{ ensure_evidence_branch.output.base_branch }}`
+
+      ## Instructions
+
+      1. Read the full work item description from ADO using
+         `twig show {{ workflow.input.work_item_id }}`.
+      2. Perform the actionable work. The shape of "evidence" is
+         intentionally unconstrained — files, transcripts, links, notes
+         in the PR description, all are valid (see `docs/glossary.md`
+         under "Evidence").
+      3. If you produce file artifacts, commit them to the evidence
+         branch with a descriptive message that references
+         `AB#{{ workflow.input.work_item_id }}`. Stage only the files you
+         actually modified (use explicit paths, never `git add -A`).
+      4. Return a JSON object with a `summary` field — one paragraph the
+         downstream PR-description renderer can quote verbatim.
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      { "summary": "One paragraph describing what was done and where the evidence lives" }
+      ```
+
+      ## Constraints
+
+      - Do NOT modify files outside the scope of this work item.
+      - Do NOT push to any branch other than the evidence branch.
+      - The agent has no facet-profile addendum in this PR — see the
+        deferred-wiring TODO above. If a tool you need is unavailable,
+        say so in the summary; do not paper over a missing capability.
+
+      {% if revise_loop_gate is defined %}
+      ## Revise loop — previous reviewer feedback
+
+      The evidence_reviewer requested changes on a previous iteration of
+      this work. Address the feedback below. Do not re-do work that was
+      already accepted; focus on the requested changes.
+
+      {% if evidence_reviewer is defined %}{{ evidence_reviewer.output.comment }}{% endif %}
+      {% endif %}
+    routes:
+      # TODO(p6-pr7): insert evidence_floor_check (script — verifies
+      # ≥1 commit on the evidence branch and a non-empty PR body)
+      # between this step and open_evidence_pr. The floor catches
+      # agent-crashed-before-producing-anything misfires; the reviewer
+      # remains the judgment gate.
+      - to: open_evidence_pr
+
+  # ── Evidence PR open (polyphony leg) ────────────────────────────────────
+  #
+  # Opens (or reuses) the evidence PR via `polyphony pr open-evidence-pr`.
+  # Head defaults to the evidence branch composed by ensure_evidence_branch;
+  # base defaults to `feature/{apex_id}` (or `main` for the orphan case).
+  # Idempotent — reuses an existing OPEN PR for the same head/base pair.
+  #
+  # Per M3 the head and base flags are derived from the upstream
+  # `ensure_evidence_branch` envelope — `ensure_evidence_branch` is
+  # always defined when this step runs (route precondition).
+  #
+  # Invariants:
+  #   Pre:  Evidence branch exists locally and on the remote (post
+  #         condition of ensure_evidence_branch).
+  #   Post: Evidence PR exists; output.pr_number and output.pr_url set.
+  - name: open_evidence_pr
+    type: script
+    description: Open (or reuse) the evidence PR targeting the parent feature branch
+    command: polyphony
+    args:
+      - "pr"
+      - "open-evidence-pr"
+      - "{{ workflow.input.work_item_id }}"
+      - "--apex-id"
+      - "{{ workflow.input.apex_id }}"
+      - "--head"
+      - "{{ ensure_evidence_branch.output.branch }}"
+      - "--base-branch"
+      - "{{ ensure_evidence_branch.output.base_branch }}"
+    routes:
+      - to: workflow_error_gate
+        when: "{{ open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' }}"
+      - to: evidence_reviewer
+
+  # ── Evidence reviewer (polyphony leg) ───────────────────────────────────
+  #
+  # Judges whether the evidence on the PR is sufficient to satisfy the
+  # actionable item. THIS IS A PLACEHOLDER in this PR — the full rubric
+  # (mirroring plan_reviewer / scope_reviewer with action-evidence
+  # dimensions) lands in PR #8 alongside the single-item E2E test.
+  #
+  # The placeholder rule is intentionally permissive: default to
+  # `approve` unless the agent emits an explicit `block` for a hard
+  # blocker (e.g., evidence references a branch that doesn't exist).
+  # `request_changes` is wired but the placeholder rarely emits it —
+  # PR #8's rubric will use it routinely.
+  #
+  # TODO(p6-pr8): replace this stub with the full evidence-judgment
+  #               rubric. Use rubric-based scoring per P11 with
+  #               dimensions to be settled in PR #8.
+  #
+  # Invariants:
+  #   Pre:  Evidence PR exists.
+  #   Post: output.decision is one of approve | request_changes | block.
+  - name: evidence_reviewer
+    type: agent
+    model: claude-opus-4.7
+    description: Judge whether the evidence PR satisfies the actionable item (placeholder rubric)
+    tools:
+      - twig
+      - gh
+      - filesystem
+    output:
+      # Per M2 — routes consume `output.decision`.
+      decision:
+        type: string
+        description: One of `approve`, `request_changes`, `block`
+      comment:
+        type: string
+        description: >-
+          Reviewer comment. Surfaced verbatim to the agent on
+          request_changes (revise loop) and to the operator on block /
+          approve.
+    prompt: |
+      You are the evidence reviewer for the polyphony SDLC workflow.
+
+      ## Your Mission
+
+      Judge whether the evidence PR for actionable item
+      #{{ workflow.input.work_item_id }} is sufficient to satisfy the
+      requirement.
+
+      ## Placeholder rubric (THIS PR ONLY)
+
+      The full rubric lands in PR #8 alongside the single-item E2E test.
+      Until then, follow the permissive placeholder:
+
+      - **Default to `approve`** when an evidence PR exists and the
+        agent's summary plausibly addresses the work item.
+      - Emit `block` ONLY for hard blockers — branch missing, PR
+        references a deleted resource, or the actionable_agent reported
+        it could not perform the work and produced no evidence.
+      - Emit `request_changes` for soft, fixable issues (typo in
+        summary, missing reference) that one revise-loop iteration
+        would resolve.
+
+      ## Context
+
+      - **Work item id:** {{ workflow.input.work_item_id }}
+      - **Evidence PR:** #{{ open_evidence_pr.output.pr_number }} — {{ open_evidence_pr.output.pr_url }}
+      - **Head branch:** `{{ open_evidence_pr.output.head_branch }}`
+      - **Base branch:** `{{ open_evidence_pr.output.base_branch }}`
+      {% if actionable_agent is defined %}- **Agent summary:** {{ actionable_agent.output.summary }}{% endif %}
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      { "decision": "approve | request_changes | block", "comment": "..." }
+      ```
+    routes:
+      - to: merge_evidence_pr
+        when: "{{ evidence_reviewer.output.decision == 'approve' }}"
+      - to: revise_loop_gate
+        when: "{{ evidence_reviewer.output.decision == 'request_changes' }}"
+      - to: workflow_error_gate
+        when: "{{ evidence_reviewer.output.decision == 'block' }}"
+      # Catch-all per M4: unknown / missing decision routes to the
+      # error gate so the operator decides rather than raising
+      # `No matching route found`.
+      - to: workflow_error_gate
+
+  # ── Revise loop gate (polyphony leg) ────────────────────────────────────
+  #
+  # Fires when evidence_reviewer requested changes. Per P7 (fail
+  # honestly), there is no automatic retry cap — the human at this gate
+  # decides when to abandon. The retry route re-enters at the agent
+  # rather than re-running the branch / PR open verbs (both idempotent;
+  # rerunning would be safe but wasteful).
+  #
+  # Invariants:
+  #   Pre:  evidence_reviewer.output.decision == 'request_changes'.
+  #   Post: Operator chose retry (re-enter actionable_agent) or
+  #         abandon (terminate via workflow_abandoned).
+  - name: revise_loop_gate
+    type: human_gate
+    description: Reviewer requested changes — operator decides retry or abandon
+    prompt: |
+      ## 🔄 Evidence reviewer requested changes — item #{{ workflow.input.work_item_id }}
+
+      The evidence reviewer judged the current evidence PR insufficient
+      and asked for changes. The agent will re-run with the reviewer's
+      feedback in context if you choose **Retry**.
+
+      ### Reviewer comment
+
+      {{ evidence_reviewer.output.comment }}
+
+      ### Evidence PR
+
+      {{ open_evidence_pr.output.pr_url }}
+
+      ---
+
+      Choose an action:
+
+      - **Retry** — re-enter the actionable_agent with the reviewer's
+        feedback in prompt context. The branch / PR are reused
+        (both verbs are idempotent); only the agent re-runs.
+      - **Abandon** — terminate this workflow without satisfying the
+        item. The PR remains open for human follow-up.
+    options:
+      - label: "🔄 Retry (re-enter agent)"
+        value: retry
+        route: actionable_agent
+      - label: "🛑 Abandon"
+        value: abandon
+        route: workflow_abandoned
+
+  # ── Evidence PR merge (polyphony leg) ───────────────────────────────────
+  #
+  # Squash-merges the evidence PR via `gh`. There is no
+  # `polyphony pr merge-evidence-pr` verb today — the analogue of
+  # `pr merge-impl-pr` for the evidence branch is a wave-2 follow-up.
+  # `gh pr merge --squash --auto` matches the head-deletion behavior
+  # we want for evidence (the branch is per-item and short-lived).
+  #
+  # GH-only by construction; the platform input is unrouted on this
+  # leg in this PR (see workflow header note + `platform` input
+  # description).
+  #
+  # Invariants:
+  #   Pre:  evidence_reviewer.output.decision == 'approve'.
+  #   Post: Evidence PR merged (or queued via --auto when CI is
+  #         pending); output.merged set on the script's envelope.
+  - name: merge_evidence_pr
+    type: script
+    description: Squash-merge the evidence PR via gh (GH-only — see header note)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $prNumber = {{ open_evidence_pr.output.pr_number }};
+        $prUrl = '{{ open_evidence_pr.output.pr_url }}';
+        try {
+            gh pr merge $prNumber --squash --auto --delete-branch 2>&1 | Out-Null;
+            $exit = $LASTEXITCODE;
+            [ordered]@{ pr_number = $prNumber; pr_url = $prUrl; merged = ($exit -eq 0); exit_code = $exit } | ConvertTo-Json -Compress;
+            if ($exit -ne 0) { exit 0 }
+        } catch {
+            [ordered]@{ pr_number = $prNumber; pr_url = $prUrl; merged = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress;
+        }
+    routes:
+      - to: workflow_completed
+        when: "{{ merge_evidence_pr.output.merged == true }}"
+      - to: workflow_error_gate
+        when: "{{ merge_evidence_pr.output.merged == false }}"
+      # Catch-all per M4: missing/malformed merged field -> error gate.
+      - to: workflow_error_gate
+
+  # ── Human satisfaction gate (human leg) ────────────────────────────────
+  #
+  # The human leg is the entire workflow for executor=human. Polyphony
+  # has no authority to perform the action itself, so satisfaction is
+  # recorded via this gate. Re-checking is its own option (operators
+  # often want to leave the workflow open while a downstream process
+  # they triggered finishes).
+  #
+  # Invariants:
+  #   Pre:  executor_router.output.executor == 'human'.
+  #   Post: Operator chose satisfied (workflow_completed),
+  #         not_yet (re-show this gate), or abandoned (workflow_abandoned).
+  - name: human_satisfaction_gate
+    type: human_gate
+    description: Record satisfaction of a human-executed actionable item
+    prompt: |
+      ## ✅ Item #{{ workflow.input.work_item_id }} is marked as a human-executed actionable
+
+      Polyphony does not have authority to perform this action itself.
+      Has it been satisfied?
+
+      Choose an action:
+
+      - **Satisfied** — the action has been performed; mark the
+        workflow complete and continue. No evidence PR is required for
+        the human leg; satisfaction is implicit in this gate decision.
+      - **Not yet** — re-show this gate. Use this when the action is
+        in flight (e.g., waiting on someone else's reply) and you want
+        the workflow to stay open without abandoning it.
+      - **Abandoned** — the action will not be performed; terminate
+        the workflow without satisfying the item.
+    options:
+      - label: "✅ Satisfied"
+        value: satisfied
+        route: workflow_completed
+      - label: "⏳ Not yet (re-show)"
+        value: not_yet
+        route: human_satisfaction_gate
+      - label: "🛑 Abandoned"
+        value: abandoned
+        route: workflow_abandoned
+
+  # ── Workflow error gate (shared) ───────────────────────────────────────
+  #
+  # Fires on any error path — verb error envelope, reviewer block, or
+  # merge failure. Per P7 the retry option has no automatic cap; the
+  # human decides when to abandon. Retry re-enters at the executor
+  # router so a flipped-mind operator can change the executor input
+  # mid-recovery.
+  #
+  # Per M3 (StrictUndefined), every reference to a verb's output is
+  # guarded with `is defined` because at most one of the upstream verbs
+  # has actually populated an error envelope when this gate fires.
+  #
+  # Invariants:
+  #   Pre:  At least one upstream step has signaled an error.
+  #   Post: Operator chose retry (re-enter executor_router) or
+  #         abandon (workflow_abandoned).
+  - name: workflow_error_gate
+    type: human_gate
+    description: An error occurred — operator decides retry or abandon
+    prompt: |
+      ## ❌ Actionable workflow error — item #{{ workflow.input.work_item_id }}
+
+      An upstream step signaled an error or unrecoverable state.
+
+      {% if executor_router is defined and executor_router.output.error is defined and executor_router.output.error != '' -%}
+      **Stage:** executor_router
+      **Detail:** {{ executor_router.output.error }}
+      {%- elif ensure_evidence_branch is defined and ensure_evidence_branch.output.error is defined and ensure_evidence_branch.output.error != '' -%}
+      **Stage:** ensure_evidence_branch
+      **Detail:** {{ ensure_evidence_branch.output.error }}
+      {%- elif open_evidence_pr is defined and open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' -%}
+      **Stage:** open_evidence_pr
+      **Detail:** {{ open_evidence_pr.output.error }}
+      {%- elif evidence_reviewer is defined and evidence_reviewer.output.decision == 'block' -%}
+      **Stage:** evidence_reviewer
+      **Detail:** {{ evidence_reviewer.output.comment }}
+      {%- elif merge_evidence_pr is defined -%}
+      **Stage:** merge_evidence_pr
+      **Detail:** {% if merge_evidence_pr.output.error is defined %}{{ merge_evidence_pr.output.error }}{% else %}gh pr merge exited with code {{ merge_evidence_pr.output.exit_code | default('?') }}{% endif %}
+      {%- else -%}
+      **Stage:** unknown
+      **Detail:** Routed to error gate without an explicit error envelope.
+      {%- endif %}
+
+      Choose an action:
+
+      - **Retry** — re-enter at the executor router. Both
+        `branch ensure-evidence-branch` and `pr open-evidence-pr` are
+        idempotent (existing branch / PR is reused). Safe regardless
+        of which stage failed.
+      - **Abandon** — terminate the workflow without satisfying the
+        item.
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: executor_router
+      - label: "🛑 Abandon"
+        value: abandon
+        route: workflow_abandoned
+
+  # ── Terminal: workflow completed ───────────────────────────────────────
+  #
+  # No-op terminal. Emits `satisfied: true` so the parent workflow can
+  # observe the outcome via the workflow `output:` map.
+  - name: workflow_completed
+    type: script
+    description: Terminal — item satisfied
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - "@{ satisfied = $true; work_item_id = {{ workflow.input.work_item_id }} } | ConvertTo-Json -Compress"
+    routes:
+      - to: $end
+
+  # ── Terminal: workflow abandoned ───────────────────────────────────────
+  #
+  # No-op terminal. Emits `satisfied: false` so the parent workflow can
+  # distinguish abandonment from completion.
+  - name: workflow_abandoned
+    type: script
+    description: Terminal — workflow abandoned without satisfying the item
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - "@{ satisfied = $false; abandoned = $true; work_item_id = {{ workflow.input.work_item_id }} } | ConvertTo-Json -Compress"
+    routes:
+      - to: $end
