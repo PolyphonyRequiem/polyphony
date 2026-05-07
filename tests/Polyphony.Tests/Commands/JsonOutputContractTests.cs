@@ -647,6 +647,118 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
+    // Worklist build command — JSON contract (Phase 7 PR #7 retrofit)
+    // =========================================================================
+
+    [Fact]
+    public async Task WorklistBuild_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        // Build a tmp manifest pointing at the seeded root so the verb can
+        // walk + emit the new envelope.
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(13_001).WithType(EpicType).WithTitle("Worklist root").WithState(InProgressState).Build());
+        var (manifestPath, dispose) = WriteRunManifest(13_001);
+        try
+        {
+            var cmd = CreateWorklistCommands();
+            var (exitCode, output) = await CaptureConsoleAsync(() =>
+                cmd.Build(rootId: 13_001, manifestPath: manifestPath, json: true));
+
+            exitCode.ShouldBe(ExitCodes.Success);
+            output.ShouldContain("\"root_id\"");
+            output.ShouldContain("\"items_walked\"");
+            output.ShouldContain("\"has_conflicts\"");
+            output.ShouldContain("\"conflicts\"");
+            output.ShouldContain("\"waves\"");
+            output.ShouldContain("\"wave_index\"");
+            // Cutover: `depth` is gone from the wave entry.
+            output.ShouldNotContain("\"depth\"");
+
+            AssertNoPascalCase(output, "RootId");
+            AssertNoPascalCase(output, "ItemsWalked");
+            AssertNoPascalCase(output, "HasConflicts");
+            AssertNoPascalCase(output, "Conflicts");
+            AssertNoPascalCase(output, "Waves");
+            AssertNoPascalCase(output, "WaveIndex");
+        }
+        finally { dispose(); }
+    }
+
+    [Fact]
+    public async Task WorklistBuild_DeserializationRoundTrip_FieldsMapped()
+    {
+        await SeedAsync(new WorkItemBuilder()
+            .WithId(13_002).WithType(EpicType).WithTitle("Roundtrip").WithState(InProgressState).Build());
+        var (manifestPath, dispose) = WriteRunManifest(13_002);
+        try
+        {
+            var cmd = CreateWorklistCommands();
+            var (_, output) = await CaptureConsoleAsync(() =>
+                cmd.Build(rootId: 13_002, manifestPath: manifestPath, json: true));
+
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.WorklistResult);
+            result.ShouldNotBeNull();
+            result!.RootId.ShouldBe(13_002);
+            result.ItemsWalked.ShouldBe(1);
+            result.HasConflicts.ShouldBeFalse();
+            result.Conflicts.ShouldNotBeNull();
+            result.Conflicts.ShouldBeEmpty();
+            result.Waves.Count.ShouldBe(1);
+        }
+        finally { dispose(); }
+    }
+
+    [Fact]
+    public async Task WorklistBuild_NotFound_ReturnsErrorEnvelope_WithSuccessExitCode()
+    {
+        // No twig items seeded — manifest exists but root is missing.
+        var (manifestPath, dispose) = WriteRunManifest(13_003);
+        try
+        {
+            var cmd = CreateWorklistCommands();
+            var (exitCode, output) = await CaptureConsoleAsync(() =>
+                cmd.Build(rootId: 13_003, manifestPath: manifestPath, json: true));
+
+            // Routing-style: always exit 0, error code in envelope.
+            exitCode.ShouldBe(ExitCodes.Success);
+            var doc = JsonDocument.Parse(output);
+            doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+            doc.RootElement.GetProperty("error_code").GetString().ShouldBe("root_not_found");
+            doc.RootElement.GetProperty("root_id").GetInt32().ShouldBe(13_003);
+            // Even error envelopes carry has_conflicts + conflicts so consumers
+            // can read them without first distinguishing error vs conflict.
+            doc.RootElement.GetProperty("has_conflicts").GetBoolean().ShouldBeFalse();
+            doc.RootElement.GetProperty("conflicts").GetArrayLength().ShouldBe(0);
+            doc.RootElement.GetProperty("waves").GetArrayLength().ShouldBe(0);
+            doc.RootElement.GetProperty("items_walked").GetInt32().ShouldBe(0);
+        }
+        finally { dispose(); }
+    }
+
+    /// <summary>
+    /// Writes a minimal <c>run.yaml</c> for the verb's manifest_path arg.
+    /// Returns a disposer that cleans up the temp directory.
+    /// </summary>
+    private static (string Path, Action Dispose) WriteRunManifest(int rootId)
+    {
+        var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"polyphony-worklist-contract-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var manifestPath = System.IO.Path.Combine(dir, "run.yaml");
+        Polyphony.Manifest.RunManifestStore.Save(manifestPath, new Polyphony.Manifest.RunManifest
+        {
+            Schema = 1,
+            RootId = rootId,
+            PlatformProject = "github.com/owner/repo",
+            CreatedAt = DateTime.UtcNow,
+            CreatedBy = "test",
+            BranchModelVersion = 1,
+            PlanGenerations = new Dictionary<string, int>(StringComparer.Ordinal),
+            MergedPlanPrs = new List<Polyphony.Manifest.MergedPlanPrEntry>(),
+        });
+        return (manifestPath, () => { try { Directory.Delete(dir, recursive: true); } catch { } });
+    }
+
+    // =========================================================================
 
 
     [Fact]
@@ -1099,6 +1211,12 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         var config = CreateConfigBuilder().Build();
         return new EdgesCommands(Repository, config);
+    }
+
+    private WorklistCommands CreateWorklistCommands()
+    {
+        var config = CreateConfigBuilder().Build();
+        return new WorklistCommands(Repository, config);
     }
 
     private static ProcessConfigBuilder CreateConfigBuilder()

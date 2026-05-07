@@ -3,13 +3,23 @@ namespace Polyphony;
 /// <summary>
 /// Output of <c>polyphony worklist build</c> — the ordered list of plan-tree
 /// work items, grouped into "waves" that can be dispatched in parallel by
-/// the (future) tree-walker workflow. A wave is ready when all items in
+/// the (future) apex driver workflow. A wave is ready when all items in
 /// earlier waves have reached a terminal state (e.g. plan PR merged, or
 /// skipped).
 ///
 /// <para>Routing-style verb: always exits 0; consumers branch on the
+/// <see cref="HasConflicts"/> + <see cref="Conflicts"/> pair, then on the
 /// <see cref="Error"/> / <see cref="ErrorCode"/> fields. The verb is
 /// pure-read — it never mutates the manifest or hits the platform.</para>
+///
+/// <para>Wave ordering is computed by <see cref="Polyphony.Sdlc.EdgeGraph.ToWaves"/>
+/// over the merged within-item + cross-item edge graph (Phase 7 PR #7
+/// hard cutover from BFS-by-depth). Wave 0 contains items whose entry
+/// requirements have no inbound cross-item edges — typically the run
+/// root, plus items whose parent is a non-plannable container. When
+/// <see cref="HasConflicts"/> is true, <see cref="Waves"/> is the empty
+/// array — consumers route to a conflict-resolution gate before
+/// inspecting waves.</para>
 /// </summary>
 public sealed record WorklistResult
 {
@@ -17,10 +27,40 @@ public sealed record WorklistResult
     public required int RootId { get; init; }
 
     /// <summary>
-    /// Ordered waves (wave 0 = root only). Each wave's items can be
+    /// Number of items the verb reached during the BFS walk. Zero on
+    /// errors that fail before the walk completes (missing manifest,
+    /// missing root, etc.). Always populated.
+    /// </summary>
+    public required int ItemsWalked { get; init; }
+
+    /// <summary>
+    /// Convenience flag — equivalent to <c>Conflicts.Count &gt; 0</c>.
+    /// Workflow YAML routes on this rather than re-counting client-side.
+    /// Always <c>false</c> on error envelopes (errors live in
+    /// <see cref="Error"/> / <see cref="ErrorCode"/>, not in
+    /// <see cref="Conflicts"/>).
+    /// </summary>
+    public required bool HasConflicts { get; init; }
+
+    /// <summary>
+    /// Conflicts detected during edge graph build, in the deterministic
+    /// order emitted by <see cref="Polyphony.Sdlc.EdgeGraph.Build"/>
+    /// (unknown-item entries first, then cycles smallest-id-first).
+    /// Always present (empty array on a clean build) so workflow
+    /// consumers can read this field without first inspecting
+    /// <see cref="HasConflicts"/>. Shape matches the
+    /// <c>edges check</c> verb's <c>conflicts[]</c> array (same record
+    /// type) so consumers can share rendering code.
+    /// </summary>
+    public required IReadOnlyList<EdgesCheckConflict> Conflicts { get; init; }
+
+    /// <summary>
+    /// Ordered waves (wave 0 = items with no inbound cross-item edges
+    /// into their entry requirements). Each wave's items can be
     /// dispatched in parallel; wave N depends on wave N-1 having reached
     /// a terminal state. Empty when the verb errored before walking
-    /// the tree.
+    /// the tree, or when <see cref="HasConflicts"/> is true (consumers
+    /// must resolve conflicts before consuming waves).
     /// </summary>
     public required IReadOnlyList<WorklistWave> Waves { get; init; }
 
@@ -31,14 +71,17 @@ public sealed record WorklistResult
     /// Categorical error code routed by workflow YAML. One of:
     /// <c>invalid_argument</c>, <c>manifest_not_found</c>,
     /// <c>manifest_invalid</c>, <c>root_id_mismatch</c>,
-    /// <c>root_not_found</c>. Null on success.
+    /// <c>root_not_found</c>, <c>type_unknown</c>,
+    /// <c>derivation_failed</c>, <c>cache_error</c>,
+    /// <c>graph_invalid</c>. Null on success.
     /// </summary>
     public string? ErrorCode { get; init; }
 }
 
 /// <summary>
 /// One wave in <see cref="WorklistResult.Waves"/> — a set of work items
-/// at the same plan-tree depth that can be dispatched concurrently.
+/// whose entry requirements all become ready at the same topological
+/// depth (per <see cref="Polyphony.Sdlc.EdgeGraph.ToWaves"/>).
 /// </summary>
 public sealed record WorklistWave(int WaveIndex, IReadOnlyList<WorklistItem> Items);
 

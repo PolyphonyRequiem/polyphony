@@ -3,26 +3,42 @@ using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Manifest;
+using Polyphony.Sdlc;
+using Twig.Domain.Aggregates;
 
 namespace Polyphony.Commands;
 
 /// <summary>
 /// <c>polyphony worklist build</c> — compute the ordered, wave-grouped
-/// list of plan-tree work items that the (future) tree-walker workflow
-/// will dispatch in parallel.
+/// list of plan-tree work items that the apex driver workflow will
+/// dispatch in parallel.
 ///
 /// <para>Pure inspection verb: walks children from
 /// <see cref="Twig.Domain.Interfaces.IWorkItemRepository"/> in BFS order,
-/// reads <c>.polyphony/run.yaml</c> for plan-PR ledger entries and
-/// generation counters, and emits a <see cref="WorklistResult"/>. No
-/// manifest mutation, no platform calls.</para>
+/// derives each item's <see cref="RequirementSet"/> via the same
+/// <see cref="RequirementInputResolver"/> + <see cref="RequirementSetDeriver"/>
+/// + <see cref="ExecutionModeInjector"/> composition used by
+/// <c>state next-ready</c> and <c>edges check</c>, builds a single
+/// <see cref="EdgeGraph"/> over the resulting requirement sets, reads
+/// <c>.polyphony/run.yaml</c> for plan-PR ledger entries and generation
+/// counters, and emits a <see cref="WorklistResult"/>. No manifest
+/// mutation, no platform calls.</para>
 ///
-/// <para>Wave assignment is by plan-tree depth — wave 0 is the root
-/// only, wave N contains the items whose parent sits in wave N-1.
-/// Plan-tree depth is the BFS depth from the root, which is NOT
-/// necessarily the same as the work-item-type depth (an Epic with a
-/// Task child sits at wave 1, even though the type ladder normally
-/// inserts Issue between them).</para>
+/// <para>Wave assignment is by topological depth over the union graph
+/// (within-item edges ∪ definitional cross-item edges, plus mode-injected
+/// edges per <see cref="ExecutionModeInjector"/>). Wave 0 contains items
+/// whose entry requirements have no inbound cross-item edges — typically
+/// the run root, plus items whose parent is a non-plannable container.
+/// On a definitional plan tree (every parent plannable + decomposable),
+/// the topological order coincides with BFS depth from the root.</para>
+///
+/// <para>Routing-style verb: ALWAYS exits 0. Errors live in the
+/// envelope's <see cref="WorklistResult.Error"/> /
+/// <see cref="WorklistResult.ErrorCode"/> fields; conflicts live in
+/// <see cref="WorklistResult.HasConflicts"/> /
+/// <see cref="WorklistResult.Conflicts"/>. When conflicts are present
+/// <see cref="WorklistResult.Waves"/> is the empty array — explicit
+/// emptiness is the contract for downstream consumers.</para>
 /// </summary>
 public sealed partial class WorklistCommands
 {
@@ -48,13 +64,7 @@ public sealed partial class WorklistCommands
     {
         if (rootId <= 0)
         {
-            EmitWorklist(new WorklistResult
-            {
-                RootId = rootId,
-                Waves = Array.Empty<WorklistWave>(),
-                Error = $"--root-id must be positive (got {rootId})",
-                ErrorCode = "invalid_argument",
-            }, json);
+            EmitWorklist(EmptyResult(rootId, $"--root-id must be positive (got {rootId})", "invalid_argument"), json);
             return ExitCodes.Success;
         }
 
@@ -67,114 +77,239 @@ public sealed partial class WorklistCommands
         }
         catch (FileNotFoundException ex)
         {
-            EmitWorklist(new WorklistResult
-            {
-                RootId = rootId,
-                Waves = Array.Empty<WorklistWave>(),
-                Error = ex.Message,
-                ErrorCode = "manifest_not_found",
-            }, json);
+            EmitWorklist(EmptyResult(rootId, ex.Message, "manifest_not_found"), json);
             return ExitCodes.Success;
         }
         catch (Exception ex)
         {
-            EmitWorklist(new WorklistResult
-            {
-                RootId = rootId,
-                Waves = Array.Empty<WorklistWave>(),
-                Error = ex.Message,
-                ErrorCode = "manifest_invalid",
-            }, json);
+            EmitWorklist(EmptyResult(rootId, ex.Message, "manifest_invalid"), json);
             return ExitCodes.Success;
         }
 
         if (manifest.RootId != rootId)
         {
+            EmitWorklist(EmptyResult(rootId, $"Manifest root_id {manifest.RootId} does not match --root-id {rootId}", "root_id_mismatch"), json);
+            return ExitCodes.Success;
+        }
+
+        // Walk the subtree → flat list of (item, parentId). The walk is
+        // tree-shape only; per-item requirement derivation happens next.
+        List<WalkedItem> walked;
+        try
+        {
+            walked = await WalkSubtreeAsync(rootId, ct).ConfigureAwait(false);
+        }
+        catch (CollectionFailureException ex)
+        {
+            EmitWorklist(EmptyResult(rootId, ex.Message, ex.Code), json);
+            return ExitCodes.Success;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            EmitWorklist(EmptyResult(rootId, ex.Message, "cache_error"), json);
+            return ExitCodes.Success;
+        }
+
+        // Resolve per-item inputs → derive RequirementSet → inject the
+        // execution_mode edges. Mirrors the composition used by
+        // state next-ready and edges check.
+        List<EdgeGraphInput> inputs;
+        try
+        {
+            inputs = await BuildEdgeGraphInputsAsync(walked, ct).ConfigureAwait(false);
+        }
+        catch (CollectionFailureException ex)
+        {
+            EmitWorklist(EmptyResult(rootId, ex.Message, ex.Code), json);
+            return ExitCodes.Success;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            EmitWorklist(EmptyResult(rootId, ex.Message, "cache_error"), json);
+            return ExitCodes.Success;
+        }
+
+        EdgeGraph graph;
+        try
+        {
+            graph = EdgeGraph.Build(inputs);
+        }
+        catch (Exception ex)
+        {
+            // Safety net — Build only throws on empty or duplicate inputs;
+            // both are programmer errors here, but routing keeps a stable
+            // envelope shape rather than a stack trace.
+            EmitWorklist(EmptyResult(rootId, ex.Message, "graph_invalid"), json);
+            return ExitCodes.Success;
+        }
+
+        // Project EdgeGraph conflicts through the same envelope shape that
+        // `edges check` uses, so workflow consumers can share rendering
+        // code regardless of which verb produced the report.
+        var conflicts = graph.Conflicts.Select(c => new EdgesCheckConflict
+        {
+            Kind = c.Kind,
+            Description = c.Description,
+            ContributingEdges = c.ContributingEdges,
+        }).ToArray();
+
+        if (conflicts.Length > 0)
+        {
+            // Conflict gate: emit empty waves + populated conflicts. Exit 0
+            // routing-style — the apex driver decides whether to halt.
             EmitWorklist(new WorklistResult
             {
                 RootId = rootId,
+                ItemsWalked = walked.Count,
+                HasConflicts = true,
+                Conflicts = conflicts,
                 Waves = Array.Empty<WorklistWave>(),
-                Error = $"Manifest root_id {manifest.RootId} does not match --root-id {rootId}",
-                ErrorCode = "root_id_mismatch",
             }, json);
             return ExitCodes.Success;
         }
 
-        // BFS the plan tree from the root, building wave-by-wave. Wave 0
-        // is always the root (even when twig has no record of it — we
-        // surface that via plan_status=unknown so the dispatcher gets a
-        // non-empty result it can act on).
-        var waves = await BuildWavesAsync(rootId, manifest, ct).ConfigureAwait(false);
+        var waves = ProjectWaves(graph.ToWaves(), walked, manifest, rootId);
 
         EmitWorklist(new WorklistResult
         {
             RootId = rootId,
+            ItemsWalked = walked.Count,
+            HasConflicts = false,
+            Conflicts = Array.Empty<EdgesCheckConflict>(),
             Waves = waves,
         }, json);
         return ExitCodes.Success;
     }
 
     /// <summary>
-    /// BFS the plan tree from <paramref name="rootId"/>, grouping items
-    /// by depth into waves. Each item is annotated with its parent id,
-    /// plan status, latest plan-PR number, and current generation.
+    /// BFS the plan tree from <paramref name="rootId"/>, returning a flat
+    /// list of (item, parent id, knownInTwig) tuples in deterministic
+    /// (id-ascending) order. The root must exist in the twig cache —
+    /// the new edges-aware verb cannot derive a requirement set without
+    /// the type, so a missing root surfaces as <c>root_not_found</c>
+    /// rather than the legacy "unknown" placeholder.
     /// </summary>
     /// <remarks>
     /// We deduplicate ids defensively even though the twig cache treats
     /// children as a strict tree — the verb is read-only and a malformed
     /// cache should not produce duplicate items in the worklist.
     /// </remarks>
-    private async Task<IReadOnlyList<WorklistWave>> BuildWavesAsync(
+    private async Task<List<WalkedItem>> WalkSubtreeAsync(
         int rootId,
-        RunManifest manifest,
         CancellationToken ct)
     {
-        var waves = new List<WorklistWave>();
+        var rootItem = await _repository.GetByIdAsync(rootId, ct).ConfigureAwait(false);
+        if (rootItem is null)
+        {
+            throw new CollectionFailureException(
+                $"Run root {rootId} not found in twig cache.",
+                "root_not_found");
+        }
+
+        var walked = new List<WalkedItem>
+        {
+            new(rootItem, ParentItemId: 0),
+        };
         var seen = new HashSet<int> { rootId };
 
-        // Wave 0: the root. parent=0 marks "no parent in the worklist".
-        var rootItem = BuildItem(rootId, parentItemId: 0, manifest, rootId, knownInTwig: true);
-        // We don't actually know yet whether the root is in twig — peek
-        // and override if missing.
-        var rootCacheEntry = await _repository.GetByIdAsync(rootId, ct).ConfigureAwait(false);
-        if (rootCacheEntry is null)
+        // Standard BFS — children-by-parent, ascending id within each level.
+        var currentLevel = new List<int> { rootId };
+        while (currentLevel.Count > 0)
         {
-            rootItem = BuildItem(rootId, parentItemId: 0, manifest, rootId, knownInTwig: false);
-        }
-        waves.Add(new WorklistWave(0, new[] { rootItem }));
-
-        // Walk subsequent waves until none of the previous wave's items
-        // have any (unseen) children.
-        var previousWave = new List<int> { rootId };
-        var waveIndex = 1;
-        while (previousWave.Count > 0)
-        {
-            var nextWaveItems = new List<WorklistItem>();
-            var nextWaveIds = new List<int>();
-
-            foreach (var parentId in previousWave)
+            var nextLevel = new List<int>();
+            foreach (var parentId in currentLevel)
             {
                 ct.ThrowIfCancellationRequested();
                 var children = await _repository.GetChildrenAsync(parentId, ct).ConfigureAwait(false);
-                // Stable order: by id ascending. The twig repository does
-                // not guarantee an order; we want determinism for the
-                // dispatcher and for tests.
                 foreach (var child in children.OrderBy(c => c.Id))
                 {
                     if (!seen.Add(child.Id)) continue;
-                    nextWaveItems.Add(BuildItem(child.Id, parentItemId: parentId, manifest, rootId, knownInTwig: true));
-                    nextWaveIds.Add(child.Id);
+                    walked.Add(new WalkedItem(child, parentId));
+                    nextLevel.Add(child.Id);
                 }
             }
-
-            if (nextWaveItems.Count == 0) break;
-
-            waves.Add(new WorklistWave(waveIndex, nextWaveItems));
-            previousWave = nextWaveIds;
-            waveIndex++;
+            currentLevel = nextLevel;
         }
 
-        return waves;
+        return walked;
+    }
+
+    /// <summary>
+    /// Resolves <see cref="ResolvedRequirementInputs"/>, derives each
+    /// item's <see cref="RequirementSet"/>, applies the execution-mode
+    /// injector, and packs <see cref="EdgeGraphInput"/>s. Identical to
+    /// the per-item composition used by <c>edges check</c>; centralizing
+    /// here would couple the two verbs and is deferred until a third
+    /// verb needs the same composition.
+    /// </summary>
+    private async Task<List<EdgeGraphInput>> BuildEdgeGraphInputsAsync(
+        IReadOnlyList<WalkedItem> walked,
+        CancellationToken ct)
+    {
+        var inputs = new List<EdgeGraphInput>(walked.Count);
+        foreach (var w in walked)
+        {
+            ct.ThrowIfCancellationRequested();
+            var typeName = w.Item.Type.Value ?? "";
+            if (string.IsNullOrEmpty(typeName) || !_processConfig.Types.TryGetValue(typeName, out var typeConfig))
+            {
+                throw new CollectionFailureException(
+                    $"Type '{typeName}' (item {w.Item.Id}) not found in process config.",
+                    "type_unknown");
+            }
+
+            var children = await _repository.GetChildrenAsync(w.Item.Id, ct).ConfigureAwait(false);
+            var resolved = RequirementInputResolver.Resolve(typeConfig, children.Count);
+            var derivation = RequirementSetDeriver.Derive(
+                typeConfig.Facets,
+                resolved.Decomposable,
+                resolved.FacetOrder,
+                resolved.ActionableExecutor);
+
+            if (!derivation.IsValid || derivation.Set is null)
+            {
+                throw new CollectionFailureException(
+                    $"Derivation failed for item {w.Item.Id}: " + string.Join("; ", derivation.Errors),
+                    "derivation_failed");
+            }
+
+            var injected = ExecutionModeInjector.Inject(derivation.Set, resolved.ExecutionMode);
+            inputs.Add(new EdgeGraphInput(w.Item.Id, w.ParentItemId, injected));
+        }
+        return inputs;
+    }
+
+    /// <summary>
+    /// Projects <see cref="EdgeGraph.ToWaves"/> output (item ids only)
+    /// into <see cref="WorklistWave"/>s carrying full per-item manifest
+    /// metadata.
+    /// </summary>
+    private static IReadOnlyList<WorklistWave> ProjectWaves(
+        IReadOnlyList<EdgeGraphWave> waves,
+        IReadOnlyList<WalkedItem> walked,
+        RunManifest manifest,
+        int rootId)
+    {
+        var parentById = new Dictionary<int, int>(walked.Count);
+        foreach (var w in walked)
+        {
+            parentById[w.Item.Id] = w.ParentItemId;
+        }
+
+        var projected = new List<WorklistWave>(waves.Count);
+        foreach (var wave in waves)
+        {
+            var items = new List<WorklistItem>(wave.ItemIds.Count);
+            foreach (var itemId in wave.ItemIds)
+            {
+                var parentItemId = parentById.TryGetValue(itemId, out var pid) ? pid : 0;
+                items.Add(BuildItem(itemId, parentItemId, manifest, rootId));
+            }
+            projected.Add(new WorklistWave(wave.WaveIndex, items));
+        }
+        return projected;
     }
 
     /// <summary>
@@ -185,8 +320,7 @@ public sealed partial class WorklistCommands
         int itemId,
         int parentItemId,
         RunManifest manifest,
-        int rootId,
-        bool knownInTwig)
+        int rootId)
     {
         // Manifest keys are "root" for the run root, numeric strings for
         // descendants (matches the schema enforced by RunManifestValidator).
@@ -210,23 +344,11 @@ public sealed partial class WorklistCommands
             }
         }
 
-        string status;
-        int? planPrNumber;
-        if (!knownInTwig)
-        {
-            status = "unknown";
-            planPrNumber = latest?.PrNumber;
-        }
-        else if (latest is not null)
-        {
-            status = "merged";
-            planPrNumber = latest.PrNumber;
-        }
-        else
-        {
-            status = "pending";
-            planPrNumber = null;
-        }
+        // Items reaching this point are by construction known in twig
+        // (the walk failed fast on a missing root and only enumerates
+        // children that the cache produced).
+        var status = latest is not null ? "merged" : "pending";
+        var planPrNumber = latest?.PrNumber;
 
         return new WorklistItem(
             ItemId: itemId,
@@ -235,6 +357,18 @@ public sealed partial class WorklistCommands
             PlanPrNumber: planPrNumber,
             CurrentGeneration: generation);
     }
+
+    private static WorklistResult EmptyResult(int rootId, string error, string errorCode) =>
+        new()
+        {
+            RootId = rootId,
+            ItemsWalked = 0,
+            HasConflicts = false,
+            Conflicts = Array.Empty<EdgesCheckConflict>(),
+            Waves = Array.Empty<WorklistWave>(),
+            Error = error,
+            ErrorCode = errorCode,
+        };
 
     private static void EmitWorklist(WorklistResult result, bool json)
     {
@@ -251,13 +385,14 @@ public sealed partial class WorklistCommands
     /// <summary>
     /// Renders the human-readable form. Layout:
     /// <code>
-    /// worklist: root=100  waves=3
+    /// worklist: root=100  items=3  waves=2
     ///   wave 0:
     ///     item 100  parent=0    status=merged   pr=#42  generation=1
     ///   wave 1:
     ///     item 250  parent=100  status=pending  generation=0
     ///     item 310  parent=100  status=pending  generation=0
     /// </code>
+    /// On conflicts, the body is replaced with a short conflicts block.
     /// Errors render as a single line prefixed with <c>error:</c>.
     /// </summary>
     private static string RenderHuman(WorklistResult result)
@@ -276,8 +411,19 @@ public sealed partial class WorklistCommands
             return sb.ToString();
         }
 
+        sb.Append("  items=").Append(result.ItemsWalked.ToString(CultureInfo.InvariantCulture));
         sb.Append("  waves=").Append(result.Waves.Count.ToString(CultureInfo.InvariantCulture));
         sb.AppendLine();
+
+        if (result.HasConflicts)
+        {
+            sb.Append("  conflicts=").Append(result.Conflicts.Count.ToString(CultureInfo.InvariantCulture)).AppendLine();
+            foreach (var c in result.Conflicts)
+            {
+                sb.Append("    ").Append(c.Kind).Append(": ").AppendLine(c.Description);
+            }
+            return sb.ToString().TrimEnd();
+        }
 
         foreach (var wave in result.Waves)
         {
@@ -297,5 +443,23 @@ public sealed partial class WorklistCommands
         }
 
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Snapshot of one work item enumerated by the BFS walk together
+    /// with its parent id (0 for the run root). Used as the carrier
+    /// between the walk and the edge-graph input builder.
+    /// </summary>
+    private sealed record WalkedItem(WorkItem Item, int ParentItemId);
+
+    /// <summary>
+    /// Internal control-flow exception used to short-circuit the BFS walk
+    /// or per-item derivation when the verb cannot continue. Carries the
+    /// routing-style <see cref="Code"/> the verb surfaces in the JSON
+    /// envelope. Mirrors the same pattern in <c>EdgesCommands.Check</c>.
+    /// </summary>
+    private sealed class CollectionFailureException(string message, string code) : Exception(message)
+    {
+        public string Code { get; } = code;
     }
 }
