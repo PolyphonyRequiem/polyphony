@@ -70,11 +70,13 @@ You are not changing anything; you want the model.
   `C:\Users\dangreen\projects\twig2\`.
 - **The `conductor` workflow engine** — YAML schema, routing semantics,
   re-entry, human gates. Use the **conductor** skill.
-- **The v2 SDLC workflow suite** — root `twig-sdlc-v2-full.yaml`, the
-  9-workflow tree, recursion budget, parallel PG execution. Use the
+- **The polyphony SDLC workflow suite** — `apex-driver.yaml` (the canonical
+  entry point) plus the sub-workflow library (`plan-level`, `actionable`,
+  `implement-pg`, `implement-mg`, `feature-pr`, `github-pr`, `ado-pr`,
+  `close-out`, …), recursion budget, parallel PG execution. Use the
   **polyphony-sdlc** skill (`.github/skills/polyphony-sdlc/SKILL.md`).
-  The workflow YAMLs themselves live in
-  `C:\Users\dangreen\projects\twig2\workflows\`, not in this repo.
+  The workflow YAMLs themselves live in `.conductor/registry/workflows/`
+  in this repo (see `workflows/README.md`).
 - **Per-repo agent guidance** (`agent-guidance/architect.md` etc.) — those
   are tuning files for downstream agents, not polyphony documentation.
 

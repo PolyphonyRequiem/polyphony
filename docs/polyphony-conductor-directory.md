@@ -6,8 +6,9 @@ per-type definition and template files, agent-guidance files, and
 `profile.yaml`.
 
 Polyphony itself reads only `process-config.yaml`. The rest is consumed by
-agents inside the `twig-sdlc-v2-full@twig` workflow suite. Polyphony only
-checks *existence* of these files via warnings V-9..V-14
+agents inside the `apex-driver@polyphony` workflow suite (planning,
+implementation, review, close-out). Polyphony only checks *existence* of
+these files via warnings V-9..V-14
 (`src/Polyphony/Configuration/ConfigValidator.cs:97-148`).
 
 ---

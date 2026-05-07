@@ -33,17 +33,19 @@ in and what to do next.
 
 ### 2. The conductor workflow suite (`.conductor/registry/workflows/`)
 
-YAML workflow files driving `conductor` (the multi-agent orchestrator) through
-sub-phases of the SDLC — planning (`plan-level`), implementation
-(`implement-pg`, `implement-mg`), PR lifecycle
-(`feature-pr`, `github-pr`, `ado-pr`), and close-out. The workflows shell out
-to the polyphony CLI for every routing decision and every configuration query,
-so the YAML itself contains zero type-name conditionals.
+YAML workflow files driving `conductor` (the multi-agent orchestrator). The
+**`apex-driver@polyphony`** workflow is the canonical SDLC entry point — a
+tree-walking dispatcher built on the EdgeGraph + `state next-ready` model
+that drives an apex (run-root) work item end-to-end through planning
+(`plan-level`), implementation (`implement-pg`, `implement-mg`), PR
+lifecycle (`feature-pr`, `github-pr`, `ado-pr`), and close-out. The
+workflows shell out to the polyphony CLI for every routing decision and
+every configuration query, so the YAML itself contains zero type-name
+conditionals.
 
-> **Status:** the type-agnostic root entry point that orchestrates these
-> sub-workflows end-to-end is being rebuilt around the EdgeGraph + `state
-> next-ready` model. Until the new apex driver lands, sub-workflows are
-> launched directly (e.g. `plan-level@polyphony`, `implement-pg@polyphony`).
+The sub-workflows above can also be invoked directly when you want to
+replay or override a single leg of a run (see [`workflows/README.md`](workflows/README.md)),
+but `apex-driver` is what you reach for to drive an SDLC pass.
 
 The two share a name (and ship from the same repo so they version together),
 but they are independent artifacts. You install the CLI as a binary; you
@@ -149,33 +151,42 @@ If all four pass, you're ready to run a workflow.
 ## Quick start
 
 The fastest way to see polyphony work is to drive an existing ADO work item
-through it. From a repo that already has its own `.conductor/` configured
-(see *Configure your repo*, below):
+through `apex-driver@polyphony`. From a repo that already has its own
+`.conductor/` configured (see *Configure your repo*, below):
 
 ```powershell
-# Set up an isolated worktree for this work item
-$ID = 1234
-git worktree add -b sdlc/$ID ../$(Split-Path $pwd -Leaf)-$ID main
-cd ../$(Split-Path $pwd -Leaf)-$ID
+# Set up an isolated worktree for this apex
+$APEX = 1234
+git worktree add -b sdlc/$APEX ../$(Split-Path $pwd -Leaf)-$APEX main
+cd ../$(Split-Path $pwd -Leaf)-$APEX
 dotnet restore
-twig set $ID
+twig set $APEX
 twig sync
 
-# Launch a planning sub-workflow (the type-agnostic apex driver is being
-# rebuilt; until then, dispatch sub-workflows directly).
+# Drive the apex through a full SDLC pass.
 Start-Process -WindowStyle Hidden -FilePath conductor -ArgumentList @(
-  "run", "plan-level@polyphony",
-  "--input", "work_item_id=$ID",
-  "--input", "intent=resume",
+  "run", "apex-driver@polyphony",
+  "--input", "apex_id=$APEX",
+  "--input", "intent=new",
+  "--input", "platform=ado",
+  "--input", "organization=<org>",
+  "--input", "project=<project>",
+  "--input", "repository=<repo>",
   "-m", "tracker=ado",
   "-m", "project_url=https://dev.azure.com/<org>/<project>",
   "-m", "git_repo=$((Resolve-Path ..).Path)\<repo>",
-  "-m", "workitem_id=$ID",
-  "-m", "worktree_name=<repo>-$ID",
+  "-m", "workitem_id=$APEX",
+  "-m", "worktree_name=<repo>-$APEX",
   "-m", "cwd=$(Resolve-Path .)",
   "--web"
 )
 ```
+
+Use `--input intent=resume` to re-enter an in-flight apex after a human gate
+or interruption; the dispatch loop is observable-state-driven and re-derives
+the next wave from the work-item tree on every iteration. Sub-workflows
+(`plan-level`, `implement-pg`, `feature-pr`, …) can be invoked directly to
+replay or override a single leg — see [`workflows/README.md`](workflows/README.md).
 
 The full set of metadata fields (and what each does in the dashboard) is
 documented in the
@@ -314,7 +325,11 @@ The YAMLs in `.conductor/registry/workflows/`:
 
 | File                               | Role                                                                |
 |------------------------------------|---------------------------------------------------------------------|
+| `apex-driver.yaml`                 | **Canonical SDLC entry point.** Tree-walking dispatch over EdgeGraph waves with per-item worktree isolation, observable-state re-entry, and renegotiation handling. |
+| `apex-wave-dispatch.yaml`          | Per-wave inner sub-workflow invoked by apex-driver — for_each over wave items + integrate the wave. |
+| `apex-item-dispatch.yaml`          | Per-item innermost sub-workflow invoked by apex-wave-dispatch — classify lifecycle, spawn/teardown worktree, dispatch lifecycle. |
 | `plan-level.yaml`                  | Recursive planning core. Self-recurses for nested plannable levels. |
+| `actionable.yaml`                  | Actionable-facet workflow — executor router, polyphony evidence PR or human satisfaction gate. |
 | `implement-pg.yaml`                | Single PG lifecycle: tasks → review → PR → merge → scope close.     |
 | `implement-mg.yaml`                | Single merge-group lifecycle.                                       |
 | `github-pr.yaml`                   | GitHub PR lifecycle (review + fix loop, max 10 iterations).         |
@@ -323,10 +338,13 @@ The YAMLs in `.conductor/registry/workflows/`:
 | `close-out.yaml`                   | Post-mortem + structured-observation filing.                        |
 | `cascade-remedy.yaml`              | Cascade remediation across descendant plans.                        |
 | `remedy-stale-descendant.yaml`     | Stale-descendant remediation sub-workflow.                          |
+| `root-fallback-gate.yaml`          | Fallback gate when a sub-workflow is invoked without a root work-item id. |
 
-> The type-agnostic apex driver that orchestrates these sub-workflows
-> end-to-end is being rebuilt around `state next-ready` and the EdgeGraph
-> model. Until then, sub-workflows are dispatched directly.
+> **Reach for `apex-driver@polyphony` first.** The other workflows are valid
+> as targeted single-leg invocations (replay a planning level, re-run a
+> feature-PR remediation cycle), but the apex-driver is what runs an SDLC
+> pass end-to-end. See [`workflows/README.md`](workflows/README.md) and
+> [`docs/decisions/apex-driver.md`](docs/decisions/apex-driver.md).
 
 For agent rosters, recursion budgets, and the platform-abstraction model
 (GitHub vs. ADO), read the

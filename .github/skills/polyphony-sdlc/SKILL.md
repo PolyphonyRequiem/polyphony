@@ -19,17 +19,57 @@ powered by the polyphony engine and the `conductor` orchestrator. Accepts
 requirement state drive every routing decision; no work item type names
 appear in any YAML routing condition.
 
-> **Apex driver status.** Phase 7 ships the apex-driver
-> (`apex-driver.yaml`) — the keystone tree-walking SDLC orchestrator
-> that builds a worklist for an apex tree, dispatches each wave's
-> items in parallel through `apex-wave-dispatch.yaml` →
-> `apex-item-dispatch.yaml`, integrates each wave by merging per-item
-> branches into the apex feature branch, and re-evaluates the
-> worklist until the apex root reports `satisfied`. See the
-> "Apex driver invocation" section below for the four-input contract.
-> The MVP wires the dispatch skeleton end-to-end with the actual
-> per-item lifecycle dispatch (plan-level / actionable / implement-pg
-> / feature-pr) deferred to a follow-up PR behind a placeholder step.
+> **Apex driver status (Phase 7, shipped).** `apex-driver.yaml` is the
+> canonical SDLC entry point: a tree-walking orchestrator that builds a
+> worklist for an apex tree, dispatches each wave's items in parallel
+> through `apex-wave-dispatch.yaml` → `apex-item-dispatch.yaml`,
+> integrates each wave by merging per-item branches into the apex
+> feature branch, and re-evaluates the worklist until the apex root
+> reports `satisfied`. Per-item lifecycle dispatch (plan-level /
+> actionable / implement-pg / feature-pr) is now wired end-to-end as of
+> the Phase 7 follow-up. See "Invocation" below for the canonical
+> command line and the "Apex driver invocation" section further down
+> for the full input contract and re-entry semantics.
+
+## Invocation
+
+The canonical SDLC entry point is **`apex-driver@polyphony`**. The only
+required input is `apex_id` — the apex (run-root) work-item id:
+
+```powershell
+conductor run apex-driver@polyphony --input apex_id=<ID> --web
+```
+
+Full invocation with all inputs explicit and the standard `-m` metadata
+block (see *Workflow Metadata* below):
+
+```powershell
+Start-Process -WindowStyle Hidden -FilePath conductor -ArgumentList @(
+  "run", "apex-driver@polyphony",
+  "--input", "apex_id=<ID>",
+  "--input", "intent=new",            # new | resume | replan
+  "--input", "platform=ado",
+  "--input", "organization=<org>",
+  "--input", "project=<project>",
+  "--input", "repository=<repo>",
+  "-m", "tracker=ado",
+  "-m", "project_url=https://dev.azure.com/<org>/<project>",
+  "-m", "git_repo=<absolute repo path>",
+  "-m", "workitem_id=<ID>",
+  "-m", "worktree_name=<repo>-<ID>",
+  "-m", "cwd=<absolute worktree path>",
+  "--web"
+)
+```
+
+Sub-workflows (`plan-level`, `actionable`, `implement-pg`, `feature-pr`,
+…) can be invoked directly to replay or override a single leg, but the
+apex-driver re-derives the right leg per item from observable state, so
+direct sub-workflow invocations should be rare. See the "Apex driver
+invocation" section further down for re-entry semantics, the renegotiation
+flow, and the dispatched script set, and the ADR
+[`docs/decisions/apex-driver.md`](../../../docs/decisions/apex-driver.md)
+for full rationale and per-outcome examples.
 
 ## Workflow Metadata
 
@@ -410,13 +450,19 @@ For full rationale and the three-layer truth model see
 
 ### Apex driver invocation
 
-The keystone entry-point is `apex-driver.yaml`. Inputs:
+The canonical SDLC entry point is `apex-driver.yaml`. Invoke as
+`conductor run apex-driver@polyphony --input apex_id=<ID> --web` (see
+the top-of-file *Invocation* section for the command line and `-m`
+metadata block). Inputs:
 
-| Input | Required | Description |
-|-------|----------|-------------|
-| `apex_id` | yes | Apex root work-item id (numeric). |
-| `intent` | yes | Free-text intent that explains *why* this apex run is happening — surfaces in close-out and gate prompts. |
-| `platform` | no | Optional override for the PR platform (defaults to whatever `implement-pg.yaml`'s `pr_platform_router` resolves). |
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `apex_id` | yes | — | ADO work-item id of the apex (run-root) feature. Treated as the tree root for `polyphony worklist build`. |
+| `intent` | no | `new` | One of `new` / `resume` / `replan`. Drives preflight behavior; the dispatch loop is observable-state-driven and identical across all three. |
+| `platform` | no | `ado` | Work-item source platform. Threaded through to lifecycle sub-workflows verbatim; the apex-driver itself is platform-agnostic. |
+| `organization` | no | `""` | ADO organization name. Required by feature-pr / plan-level on the ADO leg (`platform=ado`); ignored on `github`. |
+| `project` | no | `""` | ADO project name (see `organization`). |
+| `repository` | no | `""` | ADO repository identifier (GUID or name) (see `organization`). |
 
 Companion deterministic scripts (in `.conductor/registry/scripts/`):
 

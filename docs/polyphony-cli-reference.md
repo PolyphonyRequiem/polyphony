@@ -44,7 +44,7 @@ Polyphony exists in two layers that share a name:
 | Layer | What it is | Where it lives | Who consumes it |
 |---|---|---|---|
 | **Polyphony CLI** | C# binary; ~24 verbs returning JSON. Pure decisions over twig cache + config. | `src/Polyphony/`, ships as `polyphony.exe` | Workflow YAMLs (via `pwsh -Command "polyphony …"`); humans at the terminal |
-| **Polyphony workflow suite** | Conductor YAML files (planning core, implementation entry, PR sub-workflows, close-out). Multi-agent orchestration. The type-agnostic apex driver is being rebuilt around the EdgeGraph + `state next-ready` model. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run <workflow>@polyphony …`); humans at human-gates |
+| **Polyphony workflow suite** | Conductor YAML files (apex-driver tree-walker, planning core, implementation entry, PR sub-workflows, close-out). Multi-agent orchestration. The canonical SDLC entry point is `apex-driver@polyphony`, which dispatches sub-workflows per item per wave from observable state. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run apex-driver@polyphony --input apex_id=<ID>` for a full pass; `conductor run <sub-workflow>@polyphony …` for targeted replays); humans at human-gates |
 
 They ship from the same repo since the in-repo workflow co-location migration,
 but they are independent artifacts:
@@ -99,6 +99,24 @@ For the workflow suite documentation — which YAML calls which verb, what each
 agent's job is, the recursion budget — see the **`polyphony-sdlc` skill**
 (`.github/skills/polyphony-sdlc/SKILL.md`). This document is purely about the
 CLI.
+
+### How do I run an SDLC pass?
+
+The CLI itself does not run a pass — it reports state and decides routing.
+The pass is run by the conductor workflow suite. The canonical entry point
+is `apex-driver@polyphony`:
+
+```powershell
+conductor run apex-driver@polyphony --input apex_id=<ID> --web
+```
+
+`apex_id` is the only required input. `intent` (`new` / `resume` / `replan`,
+default `new`), `platform` (default `ado`), and `organization` / `project` /
+`repository` are optional and threaded through to lifecycle sub-workflows.
+For the full invocation contract (with the `-m` metadata block, prerequisites,
+and per-leg replay) see [`workflows/README.md`](../workflows/README.md), the
+`polyphony-sdlc` skill, and the ADR
+[`docs/decisions/apex-driver.md`](decisions/apex-driver.md).
 
 ---
 
