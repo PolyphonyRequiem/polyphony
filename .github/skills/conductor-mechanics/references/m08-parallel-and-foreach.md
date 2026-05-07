@@ -134,7 +134,9 @@ This was historically rejected by the validator but is now supported (see
 upstream conductor PR #102). The earlier limitation was real — workflows
 written before the fix used wrapper scripts shelling out to `conductor run`.
 Modern workflows should use the inline form; production example:
-`polyphony-conductor-workflows/workflows/polyphony-implement.yaml:259-278`.
+`.conductor/registry/workflows/plan-level.yaml:1740-1765` (the
+`plan_children_group` block uses the top-level `for_each:` syntax with
+the same `workflow:` + `input_mapping:` idiom against the loop variable).
 
 The keys are **`agent:` (singular)** — not `body:` — and **`input_mapping:`**
 — not `inputs:`. The loop variable (named via `as:`) and `_index` / `_key`

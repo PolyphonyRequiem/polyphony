@@ -685,14 +685,14 @@ agents:
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
       # Remediation runs at the apex layer — the apex IS the root for the
-      # remediation MG. Mirrors the synthesis in polyphony-implement.yaml's
-      # mg_execution_group input_mapping.
+      # remediation MG. Mirrors the root_id synthesis the apex driver uses
+      # when dispatching MGs to implement-mg.yaml.
       root_id: "{{ workflow.input.work_item_id }}"
       pg_number: "{{ remediation_seeder.output.pg_number }}"
       # Synthesize Rev 4-valid mg_path from the legacy pg_number using the
-      # same `pg-{number}` convention pg_dispatcher uses in
-      # polyphony-implement.yaml. Items in the remediation PG still carry
-      # the legacy `PG-{number}` tag for `branch next-impl` /
+      # same `pg-{number}` convention the apex driver applies when
+      # dispatching MGs. Items in the remediation PG still carry the
+      # legacy `PG-{number}` tag for `branch next-impl` /
       # `branch close-scope` to find them.
       mg_path: "pg-{{ remediation_seeder.output.pg_number }}"
       work_item_ids: "{{ remediation_seeder.output.work_item_ids }}"

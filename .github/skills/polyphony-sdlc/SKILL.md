@@ -125,30 +125,6 @@ and seeds children. Self-recurses for nested plannable levels via `for_each`.
 
 ---
 
-### `polyphony-implement.yaml` — Implementation Orchestration Sub-Workflow
-
-**Responsibility:** Implementation-phase orchestration sub-workflow. Acquires the
-same-root run lock, loads the work tree hierarchy, discovers PG/MG structure, and
-dispatches pending MGs sequentially via `for_each` to `implement-mg.yaml`. Releases
-the lock on every exit path. **Not an apex** — invoked by a driver (or directly with
-`--input work_item_id=<ID>`) when the implementation phase is the unit of work.
-
-| Agent | Type | Description |
-|-------|------|-------------|
-| `preflight_lite` | script | Quick 3-check validation via `polyphony state preflight-lite` |
-| `preflight_lite_gate` | human_gate | Retry / abort on failure |
-| `lock_acquire` | script | Acquire same-root run lock via `polyphony lock acquire` |
-| `lock_busy_gate` | human_gate | Retry / force-release / abort when an existing lock blocks acquisition |
-| `lock_force_release` | script | Operator-confirmed `polyphony lock force-release` then loop to acquire |
-| `load_work_tree` | script | Load work item hierarchy and PG structure via `polyphony branch load-tree` |
-| `pg_dispatcher` | script | Prepare pending PGs array for `for_each` dispatch (synthesizes Rev 4 `mg_path = pg-{number}`) |
-| `mg_execution_group` | for_each (workflow) | Sequential MG execution — spawns one `implement-mg.yaml` per pending MG (max_concurrent: 1 until Phase 7 worktrees) |
-| `pg_summary_gate` | human_gate | Surface partial MG failures; retry or abort (abort routes through lock release) |
-| `lock_release` | script | Best-effort token-based lock release on the success / no-op exit path |
-| `lock_release_pre_abort` | script | Best-effort token-based lock release on the abort exit path |
-
----
-
 ### `implement-pg.yaml` — Single PG Lifecycle
 
 **Responsibility:** Implements all tasks in a single Processing Group, creates and merges
@@ -393,10 +369,10 @@ ships.
 ### Direct Sub-Workflow Invocation
 
 Individual sub-workflows in the library can still be invoked directly
-when a driver isn't required — for example, `polyphony-implement.yaml`
-to drive only the implementation phase, or `feature-pr.yaml` to run
-the feature-PR review and remediation loop standalone. Each sub-workflow
-declares its own `--input` shape; consult the YAML for the exact contract.
+when a driver isn't required — for example, `plan-level.yaml` to drive
+only the planning phase, or `feature-pr.yaml` to run the feature-PR
+review and remediation loop standalone. Each sub-workflow declares its
+own `--input` shape; consult the YAML for the exact contract.
 
 In every case, the standard worktree + metadata pattern still applies:
 
@@ -429,7 +405,7 @@ most-specific-wins scoping: `root` → `type:<Name>` → `defaults`.
 |--------|-------------|------|-------------|
 | `approvals` | `plan-level.yaml` (review_router / plan_approval) | `mode`, `max_revision_cycles`, `quality_threshold` | Controls whether the plan approval gate fires and under what conditions |
 | `pr` | `github-pr.yaml` / `ado-pr.yaml` | `mode`, `max_fix_loops`, `max_remediation_cycles` | Controls PR merge gating and fix loop caps |
-| `concurrency` | `polyphony-implement.yaml` and the recursive `plan-level.yaml` for_each blocks | `max_concurrent_children`, `max_concurrent_pgs` | Limits parallel sub-workflow and PG execution |
+| `concurrency` | the apex driver's MG dispatch and the recursive `plan-level.yaml` for_each blocks | `max_concurrent_children`, `max_concurrent_pgs` | Limits parallel sub-workflow and PG execution |
 | `open_questions` | `plan-level.yaml` (open_questions_policy → routing) | `mode`, `min_severity`, `max_question_loops` | Controls whether architect open questions gate for user input |
 
 ### `open_questions` Domain
