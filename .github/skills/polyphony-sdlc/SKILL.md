@@ -595,7 +595,7 @@ Per-type knob in `process-config.yaml`:
 
 ```yaml
 types:
-  Issue:
+  Apex:
     facets: [plannable, implementable]
     execution_mode: plan_then_implement   # default: parallel
 ```
@@ -684,9 +684,9 @@ guidance:
 
   # Optional per-type overrides (most-specific-wins).
   by_type:
-    Task:
+    Leaf:
       source: ado_field
-      ado_field_name: Custom.TaskGuidance
+      ado_field_name: Custom.LeafGuidance
 ```
 
 - **`description_block`** (default) — the driver extracts a fenced HTML
