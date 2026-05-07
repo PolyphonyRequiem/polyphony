@@ -20,7 +20,6 @@ var app = ConsoleApp.Create()
         services.AddPolyphonyServices(configPath, twigDir);
     });
 
-app.Add<RouteCommand>();
 app.Add<ValidateCommand>();
 app.Add<ValidateConfigCommand>();
 app.Add<HierarchyCommand>();

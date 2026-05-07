@@ -1,10 +1,9 @@
 # polyphony-implement — Implementation orchestration sub-workflow.
 #
-# Invoked by the root workflow (polyphony-full.yaml) when
-# phase=ready_for_implementation or phase=in_progress. Acquires the
-# same-root run lock, runs a lightweight preflight, loads the work tree
-# for MG structure, and dispatches each pending MG sequentially via
-# for_each to implement-mg.yaml.
+# Invoked by the apex driver (or directly) when implementation of a root
+# work item is dispatchable. Acquires the same-root run lock, runs a
+# lightweight preflight, loads the work tree for MG structure, and
+# dispatches each pending MG sequentially via for_each to implement-mg.yaml.
 #
 # Invariants:
 #   Pre:  work_item_id exists in ADO; phase is ready_for_implementation or in_progress.

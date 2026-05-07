@@ -96,7 +96,7 @@ You do not need to register the command class itself.
 ### Where models live
 
 `src/Polyphony/Models/<Name>Result.cs` — one file per result record. Examples:
-`RouteResult.cs`, `ValidateResult.cs`, `HierarchyResult.cs`. Pattern:
+`ValidateResult.cs`, `HierarchyResult.cs`, `BranchRouteResult.cs`. Pattern:
 
 ```csharp
 namespace Polyphony;
@@ -120,7 +120,7 @@ public sealed record FooResult
 required for trim-safe / AOT-publishable JSON. Every result type must be listed:
 
 ```csharp
-[JsonSerializable(typeof(RouteResult))]
+[JsonSerializable(typeof(BranchRouteResult))]
 [JsonSerializable(typeof(ValidateResult))]
 [JsonSerializable(typeof(HierarchyResult))]
 [JsonSerializable(typeof(HierarchyResult[]))]

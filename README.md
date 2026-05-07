@@ -33,10 +33,17 @@ in and what to do next.
 
 ### 2. The conductor workflow suite (`.conductor/registry/workflows/`)
 
-Nine YAML files registered as `polyphony-full@polyphony` that drive
-`conductor` (the multi-agent orchestrator) through the full SDLC. The workflows
-shell out to the polyphony CLI for every routing decision and every
-configuration query, so the YAML itself contains zero type-name conditionals.
+YAML workflow files driving `conductor` (the multi-agent orchestrator) through
+sub-phases of the SDLC — planning (`plan-level`), implementation
+(`polyphony-implement`, `implement-pg`, `implement-mg`), PR lifecycle
+(`feature-pr`, `github-pr`, `ado-pr`), and close-out. The workflows shell out
+to the polyphony CLI for every routing decision and every configuration query,
+so the YAML itself contains zero type-name conditionals.
+
+> **Status:** the type-agnostic root entry point that orchestrates these
+> sub-workflows end-to-end is being rebuilt around the EdgeGraph + `state
+> next-ready` model. Until the new apex driver lands, sub-workflows are
+> launched directly (e.g. `plan-level@polyphony`, `polyphony-implement@polyphony`).
 
 The two share a name (and ship from the same repo so they version together),
 but they are independent artifacts. You install the CLI as a binary; you
@@ -50,7 +57,8 @@ register the workflow suite with `conductor`.
   working in this codebase.
 - **`.conductor/`** — the configuration consumed by both the CLI and the
   workflow suite at runtime. Polyphony's *own* `.conductor/` directory is
-  the dogfood example: this repo runs itself through `polyphony-full@polyphony`.
+  the dogfood example: this repo runs itself through the polyphony workflow
+  suite.
 
 ---
 
@@ -116,7 +124,7 @@ serves both `twig` and `polyphony`.
 # From the polyphony repo root — point conductor at this repo's registry path
 conductor registry add polyphony .
 
-conductor registry list polyphony       # Lists polyphony-full and friends
+conductor registry list polyphony       # Lists the registered workflows
 ```
 
 The `add` source can be either a local path (above) or a GitHub `owner/repo`:
@@ -131,7 +139,7 @@ conductor registry add polyphony PolyphonyRequiem/polyphony
 polyphony health                                # CLI + env diagnostics
 polyphony validate-config                       # process-config.yaml schema
 polyphony policy validate                       # policy.yaml schema (if used)
-conductor validate .conductor/registry/workflows/polyphony-full.yaml
+conductor validate .conductor/registry/workflows/plan-level.yaml
 ```
 
 If all four pass, you're ready to run a workflow.
@@ -153,9 +161,10 @@ dotnet restore
 twig set $ID
 twig sync
 
-# Launch the workflow detached, with the conductor web UI for live status
+# Launch a planning sub-workflow (the type-agnostic apex driver is being
+# rebuilt; until then, dispatch sub-workflows directly).
 Start-Process -WindowStyle Hidden -FilePath conductor -ArgumentList @(
-  "run", "polyphony-full@polyphony",
+  "run", "plan-level@polyphony",
   "--input", "work_item_id=$ID",
   "--input", "intent=resume",
   "-m", "tracker=ado",
@@ -175,7 +184,7 @@ documented in the
 For a no-workflow smoke test that exercises only the CLI:
 
 ```powershell
-polyphony route       --work-item 1234       # JSON: phase + action + reason
+polyphony state next-ready --work-item 1234 # JSON: dispatchable requirements + edges
 polyphony hierarchy   --work-item 1234       # Tree with role annotations
 polyphony validate    --work-item 1234 --event begin_planning
 polyphony state preflight --work-item 1234   # Full preflight (12 checks)
@@ -249,7 +258,6 @@ The tables below are the quick-reference index.
 | Command                       | Purpose                                                  |
 |-------------------------------|----------------------------------------------------------|
 | `polyphony health`            | Environment + configuration diagnostics.                 |
-| `polyphony route`             | Phase + action routing for a work item.                  |
 | `polyphony validate`          | Validate a state transition against ADO + SDLC rules.    |
 | `polyphony validate-config`   | Schema-check `.conductor/process-config.yaml`.           |
 | `polyphony hierarchy`         | Display work item hierarchy with role annotations.       |
@@ -260,7 +268,7 @@ The tables below are the quick-reference index.
 |-----------------------------------|------------------------------------------------------------------|
 | `polyphony state preflight`       | Verify config, tools, and work item readiness before a run.      |
 | `polyphony state preflight-lite`  | Lightweight subset for nested workflow entry points.             |
-| `polyphony state detect`          | Root-workflow phase detection (`state_detector` JSON shape).     |
+| `polyphony state next-ready`      | Dispatchable requirements for a work item (EdgeGraph driver).    |
 
 ### `polyphony plan <verb>`
 
@@ -302,19 +310,24 @@ The tables below are the quick-reference index.
 
 ## The workflow suite at a glance
 
-The nine YAMLs in `.conductor/registry/workflows/`:
+The YAMLs in `.conductor/registry/workflows/`:
 
-| File                       | Role                                                                |
-|----------------------------|---------------------------------------------------------------------|
-| `polyphony-full.yaml`      | Root entry. Preflight + phase detection + dispatch.                 |
-| `polyphony-planning.yaml`  | Planning entry. Lite preflight + recursive plan + work-tree seed.   |
-| `plan-level.yaml`          | Recursive planning core. Self-recurses for nested plannable levels. |
-| `polyphony-implement.yaml` | Implementation entry. Loads work tree, dispatches PGs in parallel.  |
-| `implement-pg.yaml`        | Single PG lifecycle: tasks → review → PR → merge → scope close.     |
-| `github-pr.yaml`           | GitHub PR lifecycle (review + fix loop, max 10 iterations).         |
-| `ado-pr.yaml`              | ADO PR lifecycle (currently a manual-gate stub).                    |
-| `feature-pr.yaml`          | Feature PR + remediation cycles (max 3, then human gate).           |
-| `close-out.yaml`           | Post-mortem + structured-observation filing.                        |
+| File                               | Role                                                                |
+|------------------------------------|---------------------------------------------------------------------|
+| `plan-level.yaml`                  | Recursive planning core. Self-recurses for nested plannable levels. |
+| `polyphony-implement.yaml`         | Implementation entry. Loads work tree, dispatches PGs in parallel.  |
+| `implement-pg.yaml`                | Single PG lifecycle: tasks → review → PR → merge → scope close.     |
+| `implement-mg.yaml`                | Single merge-group lifecycle.                                       |
+| `github-pr.yaml`                   | GitHub PR lifecycle (review + fix loop, max 10 iterations).         |
+| `ado-pr.yaml`                      | ADO PR lifecycle (currently a manual-gate stub).                    |
+| `feature-pr.yaml`                  | Feature PR + remediation cycles (max 3, then human gate).           |
+| `close-out.yaml`                   | Post-mortem + structured-observation filing.                        |
+| `cascade-remedy.yaml`              | Cascade remediation across descendant plans.                        |
+| `remedy-stale-descendant.yaml`     | Stale-descendant remediation sub-workflow.                          |
+
+> The type-agnostic apex driver that orchestrates these sub-workflows
+> end-to-end is being rebuilt around `state next-ready` and the EdgeGraph
+> model. Until then, sub-workflows are dispatched directly.
 
 For agent rosters, recursion budgets, and the platform-abstraction model
 (GitHub vs. ADO), read the
@@ -343,7 +356,7 @@ Agent skills (loaded by Copilot CLI and Claude Code when in this repo):
 | `polyphony-bootstrap`       | Onboarding a new repo to the polyphony engine.                          |
 | `polyphony-cli-developer`   | Adding/modifying/testing CLI verbs in `src/Polyphony/Commands/`.        |
 | `polyphony-workflow-author` | Authoring/modifying workflow YAMLs or PowerShell scripts.               |
-| `polyphony-sdlc`            | Invoking, debugging, or extending the polyphony-full workflow suite.    |
+| `polyphony-sdlc`            | Invoking, debugging, or extending the polyphony workflow suite.        |
 | `conductor-design`          | Designing/reviewing/modifying conductor workflows (principles).         |
 | `conductor-mechanics`       | Authoring/debugging conductor YAML (runtime plumbing).                  |
 | `twig-cli`                  | Managing ADO work items via the twig CLI.                               |
@@ -372,7 +385,7 @@ Invoke-Pester tests/
 ```
 
 Polyphony dogfoods itself — feature work on this repo is normally driven by
-`polyphony-full@polyphony`. Direct commits to `main` are reserved for hotfixes
+the polyphony workflow suite. Direct commits to `main` are reserved for hotfixes
 and the rare doc-only change. See the
 [`polyphony-sdlc`](.github/skills/polyphony-sdlc/SKILL.md) skill for how to
 launch a run against a polyphony Epic in this repo.

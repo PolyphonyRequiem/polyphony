@@ -106,18 +106,17 @@ If `facets` is `[]`, the work item's type is missing from your
 match, downstream workflows treat the item as neither plannable nor
 implementable and skip it silently.
 
-### 3.3 — `route` returns a phase + action
+### 3.3 — `state next-ready` returns dispatchable requirements
 
 ```powershell
-polyphony route --work-item $WI | ConvertFrom-Json | Format-List
+polyphony state next-ready --work-item $WI | ConvertFrom-Json | Format-List
 ```
 
-Expected: `work_item_id`, `phase`, `action`, optional `message`,
-`workspace_hint` (populated only if `branch_strategy:` is set —
-`src/Polyphony/Routing/BranchNameResolver.cs:34-43`). Phase will be one of
-the eight `SdlcPhase` constants: `needs_planning`, `needs_seeding`,
-`ready_for_implementation`, `in_progress`, `ready_for_completion`, `done`,
-`removed`, `unknown`.
+Expected: `work_item_id`, `requirements` (per-disposition arrays such as
+`ready`, `blocked`, `satisfied`, `not_applicable`). Each requirement carries
+the kind (`plan`, `seed`, `implement`, `close-out`, …) inferred from the
+type's facets. `state next-ready` is the routing primitive consumed by the
+apex driver; legacy phase strings are no longer emitted.
 
 ### 3.4 — `validate` returns `is_valid` + `target_state`
 

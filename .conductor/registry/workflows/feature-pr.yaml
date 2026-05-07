@@ -246,7 +246,7 @@ agents:
       `polyphony pr create-feature-ado` and `pr merge-feature-ado` require
       all three of `--organization`, `--project`, and `--repository`.
       Re-invoke the workflow chain with those inputs supplied (typically
-      threaded from `polyphony-full.yaml`'s inputs).
+      threaded from the apex driver's inputs).
 
       Feature branch:
       `{{ workflow.input.feature_branch }}`
@@ -375,7 +375,7 @@ agents:
   # don't exist yet. Operator must remediate manually in ADO and re-invoke
   # the workflow.
   #
-  # Emits merged=false so the parent (polyphony-full.yaml) sees a clean
+  # Emits merged=false so the parent (apex driver) sees a clean
   # "not merged" outcome and routes to its own feature_pr_failed_gate
   # for operator escalation.
   #

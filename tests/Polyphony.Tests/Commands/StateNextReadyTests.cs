@@ -1,9 +1,7 @@
 using System.Text.Json;
-using NSubstitute;
 using Polyphony.Commands;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
-using Polyphony.Routing;
 using Polyphony.Sdlc;
 using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
@@ -34,11 +32,7 @@ public sealed class StateNextReadyTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        var ghTokenResolver = new GhTokenResolver(Substitute.For<IGitClient>());
-        var phaseDetector = new PhaseDetector(config);
-        var validator = new TransitionValidator(config);
-        var walker = new HierarchyWalker(config, Repository);
-        return new StateCommands(twig, git, gh, runner, ghTokenResolver, phaseDetector, validator, walker, Repository, config);
+        return new StateCommands(twig, git, gh, runner, Repository, config);
     }
 
     [Fact]

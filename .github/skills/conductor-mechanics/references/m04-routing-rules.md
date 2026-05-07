@@ -41,15 +41,15 @@ For every `phase` / `verdict` / `action` field your routes branch on:
 ### Unconditional terminal route
 
 ```yaml
-- name: state_detector
+- name: state_check
   type: script
   routes:
     - to: planning
-      when: "{{ state_detector.output.phase == 'needs_planning' }}"
+      when: "{{ state_check.output.next_action == 'plan' }}"
     - to: implementation
-      when: "{{ state_detector.output.phase == 'needs_implementation' }}"
+      when: "{{ state_check.output.next_action == 'implement' }}"
     - to: closing
-      when: "{{ state_detector.output.phase == 'needs_close_out' }}"
+      when: "{{ state_check.output.next_action == 'close' }}"
     - to: error_gate                # ← catch-all, no `when:`
 ```
 
@@ -59,7 +59,7 @@ A route without a `when:` always matches and must be **last** in the table.
 
 ```yaml
 - to: error_gate
-  when: "{{ state_detector.output.phase == 'error' }}"
+  when: "{{ state_check.output.next_action == 'error' }}"
 ```
 
 Pair with a `human_gate` or a script that surfaces the failure with the
@@ -95,8 +95,8 @@ stderr in AB#2923).
   human can then triage and decide.
 
 ## Discovery
-Polyphony AB#2922. The `polyphony-full.yaml` root routed three known
-phases from `state_detector` but nothing handled `phase=error`, so a
-real failure surfaced as `ValueError: No matching route found.`
+Polyphony AB#2922. A root workflow routed three known
+next-actions from a `state_check` agent but nothing handled the error
+disposition, so a real failure surfaced as `ValueError: No matching route found.`
 instead of an actionable error.
 

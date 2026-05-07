@@ -66,7 +66,7 @@ YAML loading uses `UnderscoredNamingConvention` and `IgnoreUnmatchedProperties`
 | `types`            | map     | **yes**  | At least one entry. Validation V-2.                                                                |
 | `transitions`      | map     | yes      | One entry per type with facets. Validation V-5, V-6.                                         |
 | `review_policies`  | object  | no       | Optional; consumed by workflow review-loop nodes.                                                  |
-| `branch_strategy`  | object  | no       | When present, drives `polyphony route`'s `workspace_hint`. When absent, `workspace_hint` is null.  |
+| `branch_strategy`  | object  | no       | When present, drives `polyphony branch route`'s `workspace_hint`. When absent, `workspace_hint` is null.  |
 
 ### `types[<TypeName>]`
 

@@ -31,7 +31,7 @@ post-mortems:
 | `child-router.ps1` | `polyphony plan next-child` |
 | `preflight-check.ps1` | `polyphony state preflight` |
 | `preflight-lite.ps1` | `polyphony state preflight --lite` (sub-flag, not separate verb) |
-| `detect-state.ps1` | `polyphony state detect` |
+| `detect-state.ps1` | `polyphony state detect` *(later removed in the SdlcPhase cutover; superseded by `polyphony state next-ready`)* |
 | `load-type-context.ps1` | `polyphony state load-type` |
 | `load-agent-guidance.ps1` | `polyphony state load-guidance` |
 | `load-work-tree.ps1` | `polyphony branch load-tree` |
@@ -117,7 +117,7 @@ under the Epic. This was the lead reviewer-blocking-issue from the abandoned SDL
 
 ## Why an ADR rather than re-running the SDLC pipeline
 
-The SDLC pipeline (`polyphony-full@polyphony`) was launched against this Epic, hit a
+The SDLC pipeline (the polyphony workflow suite) was launched against this Epic, hit a
 PowerShell encoding bug (cp1252 stdout corrupting `→` to byte 0x1A in JSON), and
 required iterative human gates that don't fit the Copilot-CLI agent's notification
 model. The migration is being implemented directly to deliver the structural fix the

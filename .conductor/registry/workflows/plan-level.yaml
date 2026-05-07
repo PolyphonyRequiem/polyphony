@@ -175,7 +175,7 @@ agents:
   #
   # Resolves the run's root work-item id by walking up from work_item_id
   # looking for the polyphony:root tag. plan-level.yaml is invoked from
-  # polyphony-planning.yaml which only knows work_item_id; the plan-PR
+  # the apex driver (which only threads work_item_id); the plan-PR
   # verbs (branch ensure-plan, pr open-plan-pr, pr merge-plan-pr) need
   # both root_id and item_id, so we derive root_id once at entry.
   #
@@ -1117,11 +1117,10 @@ agents:
   # so the human can review on GitHub/ADO and come back to continue.
   #
   # NOTE: design doc Q3 recommended option (b) "exit-with-pending" so the
-  # outer state_detector loop re-enters when human feedback lands. We
-  # currently use option (a) human_gate because polyphony-full.yaml's
-  # state_detector still uses the OLD single-string phase model and would
-  # infinite-loop on the awaiting_review state. Switch to option (b)
-  # lands with Phase 2c (workflow YAML migration to requirement+disposition).
+  # outer apex driver re-enters when human feedback lands. We currently
+  # use option (a) human_gate because the apex driver is being rebuilt
+  # around the requirement+disposition model. Switch to option (b) lands
+  # with Phase 2c (workflow YAML migration to requirement+disposition).
   - name: pending_review_gate
     type: human_gate
     prompt: |
@@ -1471,7 +1470,7 @@ agents:
       - `project`: `{{ workflow.input.project }}`
       - `repository`: `{{ workflow.input.repository }}`
 
-      Re-run polyphony-full with all three set, or pass `platform: github`.
+      Re-run the apex driver with all three set, or pass `platform: github`.
 
       ---
 

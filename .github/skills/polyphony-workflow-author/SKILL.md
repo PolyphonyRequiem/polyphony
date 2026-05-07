@@ -48,11 +48,11 @@ A canonical, correct example: `scripts/scope-closer.ps1:53-72`.
 
 | Intent                                                           | Use                                               | Source                          |
 |------------------------------------------------------------------|---------------------------------------------------|---------------------------------|
-| What phase is this work item in? What action should we take?     | `polyphony route --work-item N`                   | `Commands/RouteCommand.cs`      |
+| What requirements are dispatchable for this work item right now? | `polyphony state next-ready --work-item N`        | `Commands/StateCommands.NextReady.cs` |
 | What state name should I pass to `twig state` for event X?       | `polyphony validate --work-item N --event X`      | `Commands/ValidateCommand.cs`   |
 | Is this transition even legal right now?                         | `polyphony validate --work-item N --event X`      | `Commands/ValidateCommand.cs`   |
 | Walk children: facets, states, tags                        | `polyphony hierarchy --work-item N --depth 3`     | `Commands/HierarchyCommand.cs`  |
-| Get suggested branch names for this work item                    | `polyphony route` → `output.workspace_hint`       | `Routing/BranchNameResolver.cs` |
+| Get suggested branch names for this work item                    | `polyphony branch route` → `output.workspace_hint`| `Routing/BranchNameResolver.cs` |
 | Validate `.conductor/process-config.yaml` itself                 | `polyphony validate-config --config .conductor`   | `Commands/ValidateConfigCommand.cs` |
 | Build the cross-item edge graph; surface conflicts               | `polyphony edges check --work-item N`             | `Commands/EdgesCommands.Check.cs` |
 | Ensure an evidence branch exists (orphan or apex-scoped)         | `polyphony branch ensure-evidence-branch N`       | `Commands/BranchCommands.EnsureEvidenceBranch.cs` |
@@ -277,10 +277,9 @@ for its idiom; copy from it rather than re-inventing.
 |-----------------------------------|--------------------------------------------------------------------------------------|
 | `scripts/scope-closer.ps1`        | Validate-then-transition: `polyphony validate` → `twig state $target_state`. The reference for state-name handling. |
 | `scripts/impl-router.ps1`         | Within-PG task selection via facet filtering and `polyphony hierarchy`. Note: contains a remaining `twig state Doing` literal at line 106 to be replaced. |
-| `scripts/detect-state.ps1`        | Top-level phase detection: combines `polyphony route` + `polyphony validate` + `twig tree` into the root `state_detector` JSON shape consumed by `twig-sdlc-v2-full.yaml`. |
 | `scripts/pg-router.ps1`           | PR group lifecycle: groups items by PG tag, checks remote branches and gh PR state, returns the next PG action. |
 | `scripts/child-router.ps1`        | Plannable-child discovery for recursive planning (`plan-level.yaml`). The reference for facet-based filtering ("`_.facets -contains 'plannable'`"). |
-| `scripts/feature-pr-creator.ps1`  | gh-PR creation against `workspace_hint.feature_branch`. The reference for using `polyphony route` only for branch-name validation. |
+| `scripts/feature-pr-creator.ps1`  | gh-PR creation against `workspace_hint.feature_branch`. The reference for using `polyphony branch route` only for branch-name validation. |
 | `scripts/load-work-tree.ps1`      | Hierarchy → PG-grouped tree with completion status. The reference for `Group-ByPG` and PG enumeration. |
 
 ---
@@ -353,8 +352,10 @@ See `scripts/child-router.ps1:13` for the explicit doc-comment of this conventio
 
 ### Polyphony output is stable; consume by field name
 
-- `polyphony route` → `phase`, `action`, `message`, `workspace_hint.feature_branch`,
-  `workspace_hint.pg_branch` (`Models/RouteResult.cs`).
+- `polyphony state next-ready` → `work_item_id`, `requirements`
+  (per-disposition arrays; `Models/StateNextReadyResult.cs`).
+- `polyphony branch route` → `current_pg`, `branch_name`,
+  `workspace_hint.feature_branch` (`Models/BranchRouteResult.cs`).
 - `polyphony validate` → `is_valid`, `target_state`, `event`, `message`
   (`Models/ValidateResult.cs`).
 - `polyphony hierarchy` → `work_item_id`, `title`, `type`, `state`, `facets`,
@@ -374,7 +375,7 @@ it requires:
 
 ```yaml
 workflow:
-  name: polyphony-full
+  name: plan-level
   version: "1.0.0"
   metadata:
     min_polyphony_version: "1.0.0"   # required, enforced by Pester lint

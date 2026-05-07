@@ -1,18 +1,10 @@
 workflows:
-  polyphony-full:
-    description: "Type-agnostic SDLC root — preflight, state detection, planning, implementation, close-out"
-    path: workflows/polyphony-full.yaml
-    versions: ["1.0.0", "1.0.1"]
-  polyphony-planning:
-    description: "Planning orchestration sub-workflow — preflight then recursive plan-level"
-    path: workflows/polyphony-planning.yaml
-    versions: ["1.0.0", "1.0.1"]
   polyphony-implement:
     description: "Implementation orchestration sub-workflow — preflight, work tree load, per-PG dispatch"
     path: workflows/polyphony-implement.yaml
     versions: ["1.0.0", "1.0.1", "1.1.0", "1.2.0"]
   plan-level:
-    description: "Recursive planning core — single hierarchy level (sub-workflow, called by polyphony-planning)"
+    description: "Recursive planning core — single hierarchy level (sub-workflow)"
     path: workflows/plan-level.yaml
     versions: ["1.0.0", "1.0.1"]
   implement-pg:

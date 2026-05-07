@@ -9,7 +9,6 @@ using Polyphony.Sdlc;
 
 namespace Polyphony;
 
-[JsonSerializable(typeof(RouteResult))]
 [JsonSerializable(typeof(ValidateResult))]
 [JsonSerializable(typeof(HierarchyResult))]
 [JsonSerializable(typeof(HierarchyResult[]))]
@@ -80,8 +79,6 @@ namespace Polyphony;
 [JsonSerializable(typeof(PrMergePlanAdoResult))]
 [JsonSerializable(typeof(PrValidatePlanDiffResult))]
 [JsonSerializable(typeof(MgNestingDecisionResult))]
-[JsonSerializable(typeof(StateDetectResult))]
-[JsonSerializable(typeof(ChildrenStateCounts))]
 [JsonSerializable(typeof(BranchRouteResult))]
 [JsonSerializable(typeof(StatePreflightLiteResult))]
 [JsonSerializable(typeof(StatePreflightResult))]

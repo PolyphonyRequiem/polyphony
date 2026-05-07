@@ -14,8 +14,7 @@ conductor registry add polyphony C:/path/to/polyphony-conductor-workflows --type
 invoke the entry workflows by name:
 
 ```powershell
-conductor run polyphony-full@polyphony       --input work_item_id=<ID> --web
-conductor run polyphony-planning@polyphony   --input work_item_id=<ID> --web
+conductor run plan-level@polyphony           --input work_item_id=<ID> --web
 conductor run polyphony-implement@polyphony  --input work_item_id=<ID> --web
 ```
 

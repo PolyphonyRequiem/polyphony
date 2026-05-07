@@ -44,7 +44,7 @@ Polyphony exists in two layers that share a name:
 | Layer | What it is | Where it lives | Who consumes it |
 |---|---|---|---|
 | **Polyphony CLI** | C# binary; ~24 verbs returning JSON. Pure decisions over twig cache + config. | `src/Polyphony/`, ships as `polyphony.exe` | Workflow YAMLs (via `pwsh -Command "polyphony …"`); humans at the terminal |
-| **Polyphony workflow suite** | 9 conductor YAML files (root + planning + implementation + close-out + 2 PR sub-workflows). Multi-agent orchestration. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run polyphony-full@polyphony …`); humans at human-gates |
+| **Polyphony workflow suite** | Conductor YAML files (planning core, implementation entry, PR sub-workflows, close-out). Multi-agent orchestration. The type-agnostic apex driver is being rebuilt around the EdgeGraph + `state next-ready` model. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run <workflow>@polyphony …`); humans at human-gates |
 
 They ship from the same repo since the in-repo workflow co-location migration,
 but they are independent artifacts:
@@ -182,12 +182,12 @@ ConvertFrom-Json)` and trust the property names.
 ### Conceptual model
 
 "Routing" in polyphony means **deciding which next step the workflow should
-take** for a given work item. There are two levels of this decision:
+take** for a given work item. The current model is:
 
-- **SDLC phase routing** (`polyphony route`, `polyphony state detect`):
-  Given a work item ID, what *lifecycle phase* is it in? Does it need
-  planning, seeding, implementation, close-out, or is it done? This is the
-  decision the root workflow (`polyphony-full.yaml`) makes once at the top.
+- **Requirement-set routing** (`polyphony state next-ready`): Given a work
+  item ID, derive its requirement set from the type's facets, reduce against
+  observable state (plan / seeds / implementation), and return the
+  dispatchable requirements. The apex driver routes on these.
 
 - **PR-group routing** (`polyphony branch route`): Given a hierarchy of work
   items already partitioned into PR groups (PGs) via `PG-N` tags, which PG
@@ -201,96 +201,6 @@ have an `if (typeName == "Epic")` anywhere — it reads the type's facets
 from `process-config.yaml` and decides on those. This is what makes the system
 type-agnostic across Basic / Agile / Scrum / CMMI process templates and
 across whatever custom hierarchy a repo defines.
-
-### `polyphony route`
-
-```text
-polyphony route --work-item <id> [--config <path>]
-```
-
-| Flag | Type | Default |
-|---|---|---|
-| `--work-item` | int | required |
-| `--config` | str | `.conductor/process-config.yaml` |
-
-Returns the SDLC phase the item is in, plus a recommended `action`. The
-decision is made by `PhaseDetector.cs:20-43`, which reads:
-
-- The item's `StateCategory` (from `Twig.Domain.Services.Process.StateCategoryResolver`)
-- The item's type's `facets` from `process-config.yaml`
-- Any `polyphony:planned` tag on `System.Tags` (which short-circuits "needs
-  planning" once children have been seeded — see
-  `PhaseDetector.cs:60-67`)
-
-Phase constants (`src/Polyphony/Routing/SdlcPhase.cs`):
-
-| Phase | Meaning |
-|---|---|
-| `needs_planning` | Plannable item in `Proposed` category with no plan yet |
-| `needs_seeding` | Plan exists but children haven't been created |
-| `ready_for_implementation` | Plannable item with all children seeded |
-| `in_progress` | Implementable item in `InProgress` category |
-| `ready_for_completion` | All children complete; item itself not yet closed |
-| `done` | In a terminal state (Completed) |
-| `removed` | In Removed category |
-| `unknown` | Type has no facets, or work item not found |
-
-Action constants (`src/Polyphony/Routing/SdlcAction.cs`):
-`plan` · `seed` · `implement` · `monitor` · `close` · `none`.
-
-JSON shape (`src/Polyphony/Models/RouteResult.cs`):
-
-```jsonc
-{
-  "work_item_id":    1234,
-  "phase":           "ready_for_implementation",
-  "action":          "implement",
-  "message":         "All children of Epic 1234 have been planned …",
-  "workspace_hint": {
-    "feature_branch": "feature/1234-some-slug",
-    "pg_branch":      "pg-{n}/1234-some-slug"
-  }
-}
-```
-
-`workspace_hint` is populated only when `branch_strategy` is set in the config
-(`BranchNameResolver.cs:34-43`). Templates substitute `{id}`, `{root_id}`,
-`{slug}`. The `pg_branch` is intentionally a *template* with `{n}` left
-unsubstituted — caller fills in the PG number.
-
-**Use when:** A workflow needs to decide which sub-workflow to dispatch to
-next. The root routing decision in `polyphony-full.yaml` is driven entirely
-by this verb (via `state detect`, which wraps it).
-
-**Don't use when:** You need to *change* a state — `route` is read-only.
-Use `validate` to learn the target state, then `twig state <name>` to apply it.
-
-### `polyphony state detect`
-
-```text
-polyphony state detect --work-item <id> [--intent new|redo|resume] [--plan-path <path>] [--plan-root <dir>]
-```
-
-The root workflow's single biggest decision verb. Wraps `polyphony route`
-with three additional inputs:
-
-1. **User intent** (`--intent new|redo|resume`) — distinguishes a fresh
-   start from picking up a half-done run. `redo` overrides phase routing to
-   force re-planning even if children exist.
-2. **Plan artifact discovery** — looks for a planning markdown under
-   `--plan-root` (default `docs/projects/`), correlates by frontmatter
-   `work_item_id:` or legacy `| Work Item | #N` table rows.
-3. **Git/PR state** — checks the local repo for the feature branch and the
-   remote for any matching PR.
-
-The output is the *canonical root routing payload* — a flat record with
-everything the root YAML needs to route between planning, implementation,
-and close-out without making additional CLI calls.
-
-**Use when:** You're authoring the root node of a new SDLC workflow.
-
-**Don't use when:** You only need the SDLC phase and don't care about plan
-artifacts or git state — `polyphony route` is the lighter call.
 
 ### `polyphony branch route`
 
@@ -513,15 +423,17 @@ on `has_plannable_children`.
 The `state` group covers two related concerns:
 
 1. **Preflight** — *before we start, is everything wired up?* Two flavors:
-   `state preflight` (full, used by the root workflow), and `state preflight-lite`
-   (3 checks, used by sub-workflows that re-enter mid-run).
-2. **Detect** — *what's our current position in the lifecycle?* See § 3
-   above for the full description of `state detect`.
+   `state preflight` (full) and `state preflight-lite` (3 checks, used by
+   sub-workflows that re-enter mid-run).
+2. **Next-ready dispatch** — *which requirements are dispatchable right now?*
+   `state next-ready` derives the requirement set from the item's facets,
+   reduces against observable plan/seed/implementation signals, and returns
+   the per-disposition arrays the apex driver routes on.
 
 Both follow the **routing-style exit convention**: always exit 0; route on the
-JSON payload's `ready` (preflight) or `phase` (detect) field. Errors are
-reported via the payload, not via process exit code, so the root workflow can
-route to a human gate even on environment failures.
+JSON payload's `ready` (preflight) or per-requirement disposition (next-ready)
+fields. Errors are reported via the payload, not via process exit code, so the
+calling workflow can route to a human gate even on environment failures.
 
 ### `polyphony state preflight`
 
@@ -779,8 +691,8 @@ Idempotent: if the branch exists locally, checks it out; if it exists on
 remote but not locally, fetches and checks out; if it exists nowhere, creates
 from `--base-branch` (default `main`) and pushes. Default remote is `origin`.
 
-The root workflow calls this once after state detection. Sub-workflows trust
-the branch name as an input rather than re-running the check.
+The apex driver calls `branch ensure-feature` once after state detection.
+Sub-workflows trust the branch name as an input rather than re-running the check.
 
 ### `polyphony branch next-impl`
 
@@ -914,7 +826,7 @@ else:
 
 | Verb | Why it justifies a typed binary |
 |---|---|
-| `route` / `state detect` | Type-agnostic phase detection over `StateCategory` × `facets`. Doing this correctly across Basic/Agile/Scrum/CMMI templates needs the `Twig.Domain` resolvers — and PowerShell calling into .NET assemblies is awkward enough that owning the call here pays for itself. |
+| `state next-ready` | Type-agnostic dispatchability over facet-derived requirement sets. The reduction logic over `StateCategory` × `facets` × observable signals needs the `Twig.Domain` resolvers — and PowerShell calling into .NET assemblies is awkward enough that owning the call here pays for itself. |
 | `validate` | Returns `target_state` so PowerShell never types `"Done"` literally. This single field is the seam that makes the SDLC process-template-agnostic. |
 | `validate-config` | 14 schema rules are far easier to author and test as C# than as a YAML linter. |
 | `branch route` | Stale-PR defense, parallel-PG dispatch via `--pg-number`, type-agnostic terminal-state checks via `StateCategoryResolver` — three subtle ratchets that previously bit us in the PowerShell version. |

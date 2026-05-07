@@ -48,13 +48,13 @@ If publishing an `.exe` isn't an option, route through PowerShell so the
 shell does the resolution:
 
 ```yaml
-- name: state_detector
+- name: preflight_check
   type: script
   command: pwsh
   args:
     - "-NoProfile"
     - "-Command"
-    - "polyphony route --work-item {{ workflow.input.work_item_id }}"
+    - "polyphony state preflight --work-item {{ workflow.input.work_item_id }}"
 ```
 
 Slower (pwsh startup) and adds a quoting layer, but resolves PATHEXT.
