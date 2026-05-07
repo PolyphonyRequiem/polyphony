@@ -28,6 +28,9 @@ public sealed record PolicyLoadResult
 
     /// <summary>Resolved concurrency caps.</summary>
     public required PolicyConcurrencySnapshot Concurrency { get; init; }
+
+    /// <summary>Resolved per-item guidance source (Phase 6 PR #6).</summary>
+    public required PolicyGuidanceSnapshot Guidance { get; init; }
 }
 
 /// <summary>
@@ -53,4 +56,22 @@ public sealed record PolicyConcurrencySnapshot
 {
     public required int MaxConcurrentChildren { get; init; }
     public required int MaxConcurrentPgs { get; init; }
+}
+
+/// <summary>
+/// Per-item guidance snapshot exposed via <c>policy load</c>. Captures the
+/// effective workspace default plus any per-type overrides so workflows can
+/// pass the snapshot down without re-reading the policy file.
+/// </summary>
+public sealed record PolicyGuidanceSnapshot
+{
+    /// <summary>One of the <see cref="Polyphony.Sdlc.GuidanceSource"/> constants.</summary>
+    public required string Source { get; init; }
+
+    /// <summary>ADO custom field name (only set when <see cref="Source"/> is
+    /// <see cref="Polyphony.Sdlc.GuidanceSource.AdoField"/>).</summary>
+    public string? AdoFieldName { get; init; }
+
+    /// <summary>Per-type effective source overrides, when configured.</summary>
+    public Dictionary<string, string>? ByTypeSource { get; init; }
 }

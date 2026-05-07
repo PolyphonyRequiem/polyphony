@@ -23,6 +23,59 @@ public sealed class PolicyConfig
 
     /// <summary>Concurrency knobs (orthogonal to mode/scope).</summary>
     public ConcurrencyPolicy? Concurrency { get; set; }
+
+    /// <summary>
+    /// Per-item guidance source-of-record (Phase 6 PR #6). Default is
+    /// <see cref="Polyphony.Sdlc.GuidanceSource.DescriptionBlock"/>; opt into
+    /// <see cref="Polyphony.Sdlc.GuidanceSource.AdoField"/> by setting
+    /// <c>guidance.source</c> + <c>guidance.ado_field_name</c>.
+    /// </summary>
+    public GuidancePolicy? Guidance { get; set; }
+}
+
+/// <summary>
+/// Per-item guidance configuration. Top-level fields act as the workspace
+/// default; <see cref="ByType"/> entries override per work-item type
+/// (most-specific-wins via <see cref="PolicyResolver.ResolveGuidance"/>).
+/// </summary>
+public sealed class GuidancePolicy
+{
+    /// <summary>
+    /// Default source for guidance extraction. One of the
+    /// <see cref="Polyphony.Sdlc.GuidanceSource"/> constants. Null falls back
+    /// to <see cref="Polyphony.Sdlc.GuidanceSource.DescriptionBlock"/> via
+    /// <see cref="PolicyLoader.ApplyBuiltInDefaults"/>.
+    /// </summary>
+    public string? Source { get; set; }
+
+    /// <summary>
+    /// ADO custom field reference name (e.g. <c>Custom.PolyphonyGuidance</c>).
+    /// Required when <see cref="Source"/> is
+    /// <see cref="Polyphony.Sdlc.GuidanceSource.AdoField"/>; ignored otherwise.
+    /// </summary>
+    public string? AdoFieldName { get; set; }
+
+    /// <summary>
+    /// Optional per-type overrides. Keyed by work-item type name (e.g.
+    /// <c>Issue</c>, <c>Task</c>). Each value layers most-specific-wins on
+    /// top of the workspace default.
+    /// </summary>
+    public Dictionary<string, GuidanceRule>? ByType { get; set; }
+}
+
+/// <summary>
+/// Per-type guidance override. Each field is independently optional — a
+/// type-scoped rule that sets only <see cref="Source"/> inherits the
+/// workspace default's <see cref="AdoFieldName"/>.
+/// </summary>
+public sealed class GuidanceRule
+{
+    /// <summary>One of the <see cref="Polyphony.Sdlc.GuidanceSource"/> constants, or null to inherit.</summary>
+    public string? Source { get; set; }
+
+    /// <summary>ADO custom field name (used when the effective source is
+    /// <see cref="Polyphony.Sdlc.GuidanceSource.AdoField"/>), or null to inherit.</summary>
+    public string? AdoFieldName { get; set; }
 }
 
 /// <summary>

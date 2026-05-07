@@ -1,3 +1,4 @@
+using Polyphony.Sdlc;
 using YamlDotNet.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -21,7 +22,12 @@ namespace Polyphony.Policy;
 ///   <item><description>open_questions.defaults.max_question_loops = 3</description></item>
 ///   <item><description>concurrency.max_concurrent_children = 3</description></item>
 ///   <item><description>concurrency.max_concurrent_pgs = 3</description></item>
+///   <item><description>guidance.source = description_block</description></item>
+///   <item><description>guidance.ado_field_name = null</description></item>
 /// </list>
+///
+/// Also enforces a load-time invariant: when <c>guidance.source</c> is
+/// <c>ado_field</c>, <c>guidance.ado_field_name</c> must be non-empty.
 /// </summary>
 public static class PolicyLoader
 {
@@ -98,5 +104,44 @@ public static class PolicyLoader
         config.Concurrency ??= new ConcurrencyPolicy();
         config.Concurrency.MaxConcurrentChildren ??= 3;
         config.Concurrency.MaxConcurrentPgs ??= 3;
+
+        config.Guidance ??= new GuidancePolicy();
+        config.Guidance.Source ??= GuidanceSource.DescriptionBlock;
+
+        ValidateGuidance(config.Guidance);
+    }
+
+    private static void ValidateGuidance(GuidancePolicy guidance)
+    {
+        ValidateGuidanceRule(
+            scope: "guidance",
+            source: guidance.Source,
+            adoFieldName: guidance.AdoFieldName);
+
+        if (guidance.ByType is null) return;
+        foreach (var (typeName, rule) in guidance.ByType)
+        {
+            // Per-type rules inherit unspecified fields from the workspace default,
+            // so the effective values are what we validate against.
+            var effectiveSource = rule.Source ?? guidance.Source;
+            var effectiveField = rule.AdoFieldName ?? guidance.AdoFieldName;
+            ValidateGuidanceRule(
+                scope: $"guidance.by_type.{typeName}",
+                source: effectiveSource,
+                adoFieldName: effectiveField);
+        }
+    }
+
+    private static void ValidateGuidanceRule(string scope, string? source, string? adoFieldName)
+    {
+        if (source is not null && !GuidanceSource.IsValid(source))
+            throw new InvalidOperationException(
+                $"{scope}.source '{source}' is not a known guidance source. " +
+                $"Expected '{GuidanceSource.DescriptionBlock}' or '{GuidanceSource.AdoField}'.");
+
+        if (source == GuidanceSource.AdoField && string.IsNullOrWhiteSpace(adoFieldName))
+            throw new InvalidOperationException(
+                $"{scope}.source is '{GuidanceSource.AdoField}' but {scope}.ado_field_name is not set. " +
+                "Set ado_field_name to the ADO custom field reference name (e.g. 'Custom.PolyphonyGuidance').");
     }
 }
