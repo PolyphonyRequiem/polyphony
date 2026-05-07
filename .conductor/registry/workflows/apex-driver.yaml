@@ -261,13 +261,49 @@ agents:
     args:
       - "branch"
       - "ensure-feature"
+      - "--branch"
       - "feature/apex-{{ workflow.input.apex_id }}"
     routes:
+      - to: init_manifest
+        when: "{{ preflight_ensure_branch.output.error is not defined or preflight_ensure_branch.output.error == '' }}"
+      - to: preflight_failure_gate
+      # M4 catch-all
+      - to: preflight_failure_gate
+
+  # ── Preflight: initialize run manifest ───────────────────────────────────
+  #
+  # Creates `.polyphony/run.yaml` if missing; validates an existing
+  # manifest matches the requested apex (root_id). The manifest is the
+  # canonical resume key — `polyphony worklist build` reads it.
+  #
+  # Topology-hash validation against the live ADO tree is intentionally
+  # deferred (see manifest-bootstrap.ps1 docstring + branch-model ADR).
+  # For this MVP, matching root_id is sufficient to consider an existing
+  # manifest reusable.
+  #
+  # Invariants:
+  #   Pre:  feature branch ensured.
+  #   Post: .polyphony/run.yaml exists AND its root_id matches apex_id.
+  - name: init_manifest
+    type: script
+    description: Initialize or validate the per-run manifest (.polyphony/run.yaml)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/manifest-bootstrap.ps1"
+      - "-ApexId"
+      - "{{ workflow.input.apex_id }}"
+      - "-Organization"
+      - "{{ workflow.input.organization }}"
+      - "-Project"
+      - "{{ workflow.input.project }}"
+    routes:
       - to: build_worklist
-      # M4 catch-all — branch ensure failures bubble through to dispatch.
-      # The dispatch loop will fail downstream with clearer context if
-      # the branch really is broken.
-      - to: build_worklist
+        when: "{{ init_manifest.output.success | string | lower == 'true' }}"
+      - to: preflight_failure_gate
+      # M4 catch-all
+      - to: preflight_failure_gate
 
   # ─────────────────────────────────────────────────────────────────────────
   # SECTION 2 — Dispatch loop
@@ -302,6 +338,7 @@ agents:
     args:
       - "worklist"
       - "build"
+      - "--root-id"
       - "{{ workflow.input.apex_id }}"
       - "--json"
     routes:
@@ -332,12 +369,19 @@ agents:
       - "--render"
       - "json"
     routes:
+      # `polyphony edges check` is routing-style — error envelope wins
+      # over the conflict bool. Send envelope errors through the
+      # worklist gate so the operator sees the same failure surface as
+      # build_worklist errors.
+      - to: worklist_failure_gate
+        when: "{{ check_conflicts.output.error is defined and check_conflicts.output.error != '' }}"
       - to: conflict_resolution_gate
         when: "{{ check_conflicts.output.has_conflicts | string | lower == 'true' }}"
       - to: wave_dispatch_loop
         when: "{{ check_conflicts.output.has_conflicts | string | lower == 'false' }}"
-      # M4 catch-all
-      - to: wave_dispatch_loop
+      # M4 catch-all — undefined has_conflicts means the JSON envelope
+      # wasn't shaped as expected; treat as a worklist-layer failure.
+      - to: worklist_failure_gate
 
   # ── Conflict resolution gate ─────────────────────────────────────────────
   #
@@ -627,23 +671,41 @@ agents:
     prompt: |
       ## ❌ Apex preflight failed
 
-      `polyphony state next-ready` returned status=error for apex
-      **#{{ workflow.input.apex_id }}**.
+      A preflight step for apex **#{{ workflow.input.apex_id }}** did
+      not produce a clean envelope. One of the following is the cause:
 
-      ### Error
-
+      ### `polyphony state next-ready` error
       ```
       {%- if preflight_apex_state.output.error is defined -%}
       {{ preflight_apex_state.output.error }}
       {%- else -%}
-      (no error message captured — check polyphony logs)
+      (no error — this step succeeded or did not run)
+      {%- endif -%}
+      ```
+
+      ### `polyphony branch ensure-feature` error
+      ```
+      {%- if preflight_ensure_branch.output.error is defined and preflight_ensure_branch.output.error != '' -%}
+      {{ preflight_ensure_branch.output.error }}
+      {%- else -%}
+      (no error — this step succeeded or did not run)
+      {%- endif -%}
+      ```
+
+      ### `init_manifest` error
+      ```
+      {%- if init_manifest.output.error is defined and init_manifest.output.error != '' -%}
+      [{{ init_manifest.output.error_code | default('?') }}] {{ init_manifest.output.error }}
+      {%- else -%}
+      (no error — this step succeeded or did not run)
       {%- endif -%}
       ```
 
       ### Options
 
       - **Retry preflight** — re-run state next-ready (e.g. after
-        fixing the apex's type config in ADO).
+        fixing the apex's type config in ADO, repairing the working
+        tree, or removing a stale `.polyphony/run.yaml`).
       - **Abort** — terminate the workflow with `preflight_failed=true`.
     options:
       - label: "🔁 Retry preflight"

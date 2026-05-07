@@ -13,7 +13,7 @@
     cross-item edge graph.
 
     Topological ordering is consumed from
-    `polyphony edges check --work-item <ApexId> --render json`. Items
+    `polyphony edges check <ApexId> --render json`. Items
     whose `item_satisfied` requirement depends on other items are merged
     AFTER their prerequisites, so the resulting commit graph mirrors the
     declared dependency structure.
@@ -150,7 +150,7 @@ try {
     # surfaces failure via `Error`/`ErrorCode` in the JSON.
     $stderrFile = [System.IO.Path]::GetTempFileName()
     try {
-        $stdout = & $PolyphonyExe edges check --work-item $ApexId --render json 2>$stderrFile
+        $stdout = & $PolyphonyExe edges check $ApexId --render json 2>$stderrFile
         $exit = $LASTEXITCODE
         $stderr = Get-Content -Raw $stderrFile -ErrorAction SilentlyContinue
     }
