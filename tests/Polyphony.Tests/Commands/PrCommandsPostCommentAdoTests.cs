@@ -533,5 +533,10 @@ public sealed class PrCommandsPostCommentAdoTests : CommandTestBase
             if (ThrowOnCreateThread is not null) throw ThrowOnCreateThread;
             return Task.FromResult(CreateThreadResult);
         }
-    }
+    
+        public Task<IReadOnlyList<AdoPullRequestThread>?> ListPullRequestThreadsAsync(
+            string organization, string project, string repository,
+            int pullRequestId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+}
 }
