@@ -58,6 +58,13 @@ internal abstract record ParsedBranch
     public sealed record Evidence(BranchName Branch, RootId RootId, WorkItemId ItemId) : ParsedBranch;
 
     /// <summary>
+    /// <c>evidence/{item_id}</c> — the orphan evidence branch form (Phase 6)
+    /// used when the work item is its own apex. Carries only the item id;
+    /// callers that need an apex should use it as the apex.
+    /// </summary>
+    public sealed record EvidenceOrphan(BranchName Branch, WorkItemId ItemId) : ParsedBranch;
+
+    /// <summary>
     /// A git ref that is syntactically outside the Rev 4 Polyphony grammar.
     /// The raw string is preserved so callers can log/route it; no
     /// <see cref="RootId"/> can be inferred.

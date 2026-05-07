@@ -98,6 +98,19 @@ public sealed class BranchNameParserTests
         evidence.ItemId.Value.ShouldBe(9999);
     }
 
+    [Fact]
+    public void ParseOrUnrecognized_EvidenceOrphan_ReturnsEvidenceOrphanCase()
+    {
+        // Phase 6 added the orphan form for evidence on items that are
+        // their own apex — the redundant `{root}-{item}` would just repeat
+        // the id, so the grammar accepts the bare-id variant.
+        var parsed = BranchNameParser.ParseOrUnrecognized("evidence/9999");
+
+        var orphan = parsed.ShouldBeOfType<ParsedBranch.EvidenceOrphan>();
+        orphan.ItemId.Value.ShouldBe(9999);
+        orphan.Branch.Value.ShouldBe("evidence/9999");
+    }
+
     [Theory]
     [InlineData("main")]
     [InlineData("release/v1")]
@@ -123,7 +136,8 @@ public sealed class BranchNameParserTests
     [InlineData("mg/0_auth")]                         // zero root
     [InlineData("impl/1234")]                         // missing item
     [InlineData("impl/1234-5678-9012")]               // extra segment (Rev 3 form would be plausible here)
-    [InlineData("evidence/1234")]                     // missing item
+    [InlineData("evidence/0")]                        // zero (not positive) — orphan form requires positive
+    [InlineData("evidence/1234-")]                    // trailing dash, no item
     [InlineData("MG/1234_auth")]                      // uppercase prefix
     [InlineData(" impl/1234-5678")]                   // leading whitespace
     [InlineData("impl/1234-5678 ")]                   // trailing whitespace
@@ -143,6 +157,7 @@ public sealed class BranchNameParserTests
     [InlineData("mg/1234_data-layer_migrations_schema")]
     [InlineData("impl/1234-5678")]
     [InlineData("evidence/1234-9999")]
+    [InlineData("evidence/9999")]
     public void TryParse_Recognized_ReturnsTrue(string raw)
     {
         var ok = BranchNameParser.TryParse(raw, out var parsed);

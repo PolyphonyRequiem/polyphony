@@ -70,6 +70,10 @@ public sealed class BranchGrammarRoundTripTests
                 BranchNameBuilder.Evidence(rootId, evidenceItemId),
                 new ParsedBranch.Evidence(BranchName.CreateUnsafe("evidence/1234-9999"), rootId, evidenceItemId),
                 "evidence/1234-9999"),
+            new(
+                BranchNameBuilder.EvidenceOrphan(evidenceItemId),
+                new ParsedBranch.EvidenceOrphan(BranchName.CreateUnsafe("evidence/9999"), evidenceItemId),
+                "evidence/9999 (orphan)"),
         };
     }
 
@@ -101,6 +105,7 @@ public sealed class BranchGrammarRoundTripTests
                 ParsedBranch.MergeGroup mg => BranchNameBuilder.MergeGroup(mg.RootId, mg.Path),
                 ParsedBranch.Impl t => BranchNameBuilder.Impl(t.RootId, t.ItemId),
                 ParsedBranch.Evidence e => BranchNameBuilder.Evidence(e.RootId, e.ItemId),
+                ParsedBranch.EvidenceOrphan eo => BranchNameBuilder.EvidenceOrphan(eo.ItemId),
                 ParsedBranch.Unrecognized u => throw new InvalidOperationException(
                     $"Builder round-trip not defined for Unrecognized: {u.Raw}"),
                 _ => throw new InvalidOperationException("Non-exhaustive ParsedBranch switch — new case added?"),
