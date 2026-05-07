@@ -129,40 +129,10 @@ output:
 agents:
   # ── Dispatch items ────────────────────────────────────────────────────────
   #
-  # Parallel per-item lifecycle classification + worktree spawn. Each
-  # iteration calls lifecycle-router.ps1 to determine which lifecycle
-  # workflow the item belongs in, then spawns a per-item worktree so
-  # the eventual lifecycle dispatch (DEFERRED — see workflow header)
-  # has an isolated checkout to operate on.
-  #
-  # max_concurrent: 3 mirrors policy.concurrency.max_concurrent_pgs and
-  # is the conservative MVP cap — runs comfortably under most ADO rate
-  # limits and saturates a typical developer workstation.
-  #
-  # failure_mode: continue_on_error so a single bad item doesn't stop
-  # the wave; the integrator step decides how to handle partial waves.
-  - name: dispatch_items
-    type: for_each
-    description: Per-item parallel classification + worktree spawn
-    # Bare dotted path per M8. wave_items is a JSON string; conductor
-    # parses it on iteration so the per-item template sees an object.
-    source: workflow.input.wave_items
-    as: item
-    max_concurrent: 3
-    failure_mode: continue_on_error
-    agent:
-      name: dispatch_one_item
-      type: workflow
-      workflow: ./apex-item-dispatch.yaml
-      input_mapping:
-        apex_id: "{{ workflow.input.apex_id }}"
-        work_item_id: "{{ item.item_id }}"
-        platform: "{{ workflow.input.platform }}"
-        organization: "{{ workflow.input.organization }}"
-        project: "{{ workflow.input.project }}"
-        repository: "{{ workflow.input.repository }}"
-    routes:
-      - to: aggregate_renegotiation
+  # See top-level `for_each: dispatch_items` at end of file. Conductor
+  # schema requires for_each blocks to live in their own top-level section,
+  # not nested under `agents:` (M8). Routes cross sections — `dispatch_items`
+  # routes to `aggregate_renegotiation` below.
 
   # ── Aggregate renegotiation bubble-up ────────────────────────────────────
   #
@@ -257,3 +227,45 @@ agents:
       - "{{ workflow.input.wave_index }}"
     routes:
       - to: $end
+
+# ── Dispatch items (for_each) ─────────────────────────────────────────────
+#
+# Parallel per-item lifecycle classification + worktree spawn. Each
+# iteration calls lifecycle-router.ps1 to determine which lifecycle
+# workflow the item belongs in, then spawns a per-item worktree so
+# the eventual lifecycle dispatch (DEFERRED — see workflow header)
+# has an isolated checkout to operate on.
+#
+# max_concurrent: 3 mirrors policy.concurrency.max_concurrent_pgs and
+# is the conservative MVP cap — runs comfortably under most ADO rate
+# limits and saturates a typical developer workstation.
+#
+# failure_mode: continue_on_error so a single bad item doesn't stop
+# the wave; the integrator step decides how to handle partial waves.
+#
+# Conductor schema: for_each lives at workflow root, not nested under
+# `agents:` (M8). `source:` is a BARE dotted path. Routes cross sections
+# — `dispatch_items` routes to `aggregate_renegotiation` in agents.
+for_each:
+  - name: dispatch_items
+    type: for_each
+    description: Per-item parallel classification + worktree spawn
+    # wave_items is a JSON string; conductor parses it on iteration so
+    # the per-item template sees an object.
+    source: workflow.input.wave_items
+    as: item
+    max_concurrent: 3
+    failure_mode: continue_on_error
+    agent:
+      name: dispatch_one_item
+      type: workflow
+      workflow: ./apex-item-dispatch.yaml
+      input_mapping:
+        apex_id: "{{ workflow.input.apex_id }}"
+        work_item_id: "{{ item.item_id }}"
+        platform: "{{ workflow.input.platform }}"
+        organization: "{{ workflow.input.organization }}"
+        project: "{{ workflow.input.project }}"
+        repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: aggregate_renegotiation

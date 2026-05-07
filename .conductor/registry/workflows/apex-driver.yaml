@@ -381,46 +381,11 @@ agents:
 
   # ── Wave dispatch loop ────────────────────────────────────────────────────
   #
-  # for_each over waves. Each iteration:
-  #   1. Fans the wave's items out across per-item worktrees and
-  #      dispatches each into its lifecycle sub-workflow.
-  #   2. Integrates the completed branches back into the apex feature
-  #      branch in topological order.
-  #
-  # max_concurrent: 1 — waves are sequential by definition (a later
-  # wave's items depend on an earlier wave's items being complete).
-  # Within a wave, the inner for_each runs items in parallel.
-  #
-  # failure_mode: continue_on_error so a single wave's failures flow
-  # through to the wave_failed_gate rather than aborting the loop.
-  #
-  # Invariants:
-  #   Pre:  build_worklist.output.waves is non-empty.
-  #   Post: every wave has been dispatched and integrated, OR the
-  #         operator chose abort at wave_failed_gate.
-  - name: wave_dispatch_loop
-    type: for_each
-    description: Sequential per-wave dispatch + integration
-    # `source:` is a BARE dotted path per M8 — wrapping in {{ }} causes
-    # config-load rejection.
-    source: build_worklist.output.waves
-    as: wave
-    max_concurrent: 1
-    failure_mode: continue_on_error
-    agent:
-      name: dispatch_one_wave
-      type: workflow
-      workflow: ./apex-wave-dispatch.yaml
-      input_mapping:
-        apex_id: "{{ workflow.input.apex_id }}"
-        wave_index: "{{ wave.wave_index }}"
-        wave_items: "{{ wave.items | tojson }}"
-        platform: "{{ workflow.input.platform }}"
-        organization: "{{ workflow.input.organization }}"
-        project: "{{ workflow.input.project }}"
-        repository: "{{ workflow.input.repository }}"
-    routes:
-      - to: wave_loop_summary
+  # See top-level `for_each: wave_dispatch_loop` at end of file. Conductor
+  # schema requires for_each blocks to live in their own top-level section,
+  # not nested under `agents:` (M8). Routes cross sections — agents here
+  # route to `wave_dispatch_loop`, and `wave_dispatch_loop` routes back to
+  # `wave_loop_summary` below.
 
   # ── Wave loop summary ────────────────────────────────────────────────────
   #
@@ -800,3 +765,51 @@ agents:
         @{ apex_id = {{ workflow.input.apex_id }}; satisfied = $false; preflight_failed = $true } | ConvertTo-Json -Compress
     routes:
       - to: $end
+
+# ── Wave dispatch loop (for_each) ─────────────────────────────────────────
+#
+# for_each over waves. Each iteration:
+#   1. Fans the wave's items out across per-item worktrees and
+#      dispatches each into its lifecycle sub-workflow.
+#   2. Integrates the completed branches back into the apex feature
+#      branch in topological order.
+#
+# max_concurrent: 1 — waves are sequential by definition (a later
+# wave's items depend on an earlier wave's items being complete).
+# Within a wave, the inner for_each runs items in parallel.
+#
+# failure_mode: continue_on_error so a single wave's failures flow
+# through to the wave_failed_gate rather than aborting the loop.
+#
+# Conductor schema: for_each lives at workflow root, not nested under
+# `agents:` (M8). `source:` is a BARE dotted path (not a Jinja
+# expression). Routes cross sections — `wave_dispatch_loop` is reached
+# from agents above and routes back to `wave_loop_summary` in the
+# agents section.
+#
+# Invariants:
+#   Pre:  build_worklist.output.waves is non-empty.
+#   Post: every wave has been dispatched and integrated, OR the
+#         operator chose abort at wave_failed_gate.
+for_each:
+  - name: wave_dispatch_loop
+    type: for_each
+    description: Sequential per-wave dispatch + integration
+    source: build_worklist.output.waves
+    as: wave
+    max_concurrent: 1
+    failure_mode: continue_on_error
+    agent:
+      name: dispatch_one_wave
+      type: workflow
+      workflow: ./apex-wave-dispatch.yaml
+      input_mapping:
+        apex_id: "{{ workflow.input.apex_id }}"
+        wave_index: "{{ wave.wave_index }}"
+        wave_items: "{{ wave.items | tojson }}"
+        platform: "{{ workflow.input.platform }}"
+        organization: "{{ workflow.input.organization }}"
+        project: "{{ workflow.input.project }}"
+        repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: wave_loop_summary

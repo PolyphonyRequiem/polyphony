@@ -10,18 +10,21 @@
 param()
 $ErrorActionPreference = 'Stop'
 
-$workflowsDir = Join-Path $PSScriptRoot '..' 'workflows'
+$workflowsDir = Join-Path $PSScriptRoot '..' '.conductor' 'registry' 'workflows'
 
 if (-not (Test-Path $workflowsDir)) {
-    Write-Host 'SKIP: workflows/ directory not found' -ForegroundColor Yellow
-    exit 0
+    Write-Host "FAIL: workflows directory not found at $workflowsDir" -ForegroundColor Red
+    Write-Host '  This lint expects .conductor/registry/workflows/ to exist relative to the repo root.' -ForegroundColor Yellow
+    Write-Host '  If the registry layout has moved, update $workflowsDir in this script.' -ForegroundColor Yellow
+    exit 1
 }
 
 $yamlFiles = @(Get-ChildItem $workflowsDir -Filter '*.yaml' -File)
 
 if ($yamlFiles.Count -eq 0) {
-    Write-Host 'SKIP: No .yaml files found in workflows/' -ForegroundColor Yellow
-    exit 0
+    Write-Host "FAIL: No .yaml files found in $workflowsDir" -ForegroundColor Red
+    Write-Host '  An empty workflows directory is treated as a regression (silent SKIP would mask real bugs).' -ForegroundColor Yellow
+    exit 1
 }
 
 $conductorCmd = Get-Command conductor -ErrorAction SilentlyContinue
