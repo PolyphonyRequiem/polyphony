@@ -89,3 +89,17 @@ jobs:
         run: |
           $result = Invoke-Pester -Path .conductor/registry/tests/e2e-actionable.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
+
+      - name: E2E (apex-driver)
+        # Phase 7 capstone — graph-walk + branch-on-router +
+        # router-script-to-YAML contract tests for the apex-driver
+        # tree-walker (apex-driver.yaml + apex-wave-dispatch.yaml +
+        # apex-item-dispatch.yaml). Catches drift between
+        # lifecycle-router.ps1's emitted route values and the YAML's
+        # `when:` clauses, and pins the bubble-up table across all
+        # three workflows. Reuses the powershell-yaml install above.
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path .conductor/registry/tests/e2e-apex-driver.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }

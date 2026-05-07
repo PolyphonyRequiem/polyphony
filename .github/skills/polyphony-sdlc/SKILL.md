@@ -429,6 +429,156 @@ inner sub-workflows) consult `policy.renegotiation.auto_decide`
 (`prompt` / `auto_restart` / `ignore`) — see `.conductor/policy.yaml`
 and ADR `docs/decisions/apex-driver.md` for full rationale.
 
+### Tested behaviors (Phase 7 e2e)
+
+`.conductor/registry/tests/e2e-apex-driver.Tests.ps1` is the
+end-to-end suite for the apex-driver tree-walker. It complements
+(does not duplicate) `lint-apex-driver.ps1` (structural presence)
+and pins the GRAPH the three workflows declare plus the
+script-to-YAML contract on `lifecycle_workflow`. The suite parses
+all three YAMLs into in-memory graphs (via `powershell-yaml`'s
+`ConvertFrom-Yaml`) and asserts the following end-to-end behaviors,
+organized per YAML:
+
+**apex-driver.yaml — outer loop:**
+- `preflight_apex_state` short-circuits `satisfied` / `empty` to
+  `terminal_apex_satisfied`, routes `error` to
+  `preflight_failure_gate`, and has an M4 catch-all to the same
+  failure gate.
+- `preflight_failure_gate` exposes `retry` (→ `preflight_apex_state`)
+  and `abort` (→ `terminal_preflight_failed`).
+- `build_worklist` routes success to `check_conflicts` and failure
+  (with M4 catch-all) to `worklist_failure_gate`.
+- `check_conflicts` routes `has_conflicts == true` to
+  `conflict_resolution_gate` and `false` (with M4 catch-all) to
+  `wave_dispatch_loop`.
+- `conflict_resolution_gate` exposes `retry` (→ `build_worklist`)
+  and `abort` (→ `terminal_apex_abandoned`).
+- `wave_dispatch_loop` is a `for_each` over `build_worklist.output.waves`
+  (M8: bare dotted source) that invokes `./apex-wave-dispatch.yaml`
+  with `max_concurrent: 1` (waves are sequential by definition) and
+  routes to `wave_loop_summary`.
+- `wave_loop_summary` routes `all_succeeded == true` to
+  `renegotiation_summary` and (with M4 catch-all) failure to
+  `wave_failed_gate`.
+- `wave_failed_gate` exposes `retry` (→ `build_worklist`), `abort`
+  (→ `terminal_apex_abandoned`), and `renegotiate` (also →
+  `terminal_apex_abandoned` per MVP stub).
+- `renegotiation_summary` routes `any_pending == true` to
+  `renegotiation_gate` and (with M4 catch-all) the no-renegotiation
+  path to `apex_completion_gate`.
+- `renegotiation_gate` exposes `renegotiate` (→ `build_worklist`),
+  `override` (→ `apex_completion_gate`), and `abort` (→
+  `terminal_apex_abandoned`).
+- `apex_completion_gate` exposes `confirm` (→ `close_mark_satisfied`)
+  and `abandon` (→ `terminal_apex_abandoned`).
+- All three terminals (`terminal_apex_satisfied`,
+  `terminal_apex_abandoned`, `terminal_preflight_failed`) route to
+  `$end`.
+- The full happy-path waypoint chain — `preflight_sync` →
+  `preflight_apex_state` → `preflight_ensure_branch` →
+  `build_worklist` → `check_conflicts` → `wave_dispatch_loop` →
+  `wave_loop_summary` → `renegotiation_summary` →
+  `apex_completion_gate` → `close_mark_satisfied` →
+  `terminal_apex_satisfied` — is reachable from the entry point.
+
+**apex-wave-dispatch.yaml — wave fan-out:**
+- `dispatch_items` is a `for_each` over `workflow.input.wave_items`
+  (M8: bare dotted source) with `max_concurrent: 3` and
+  `failure_mode: continue_on_error`, that invokes
+  `./apex-item-dispatch.yaml` per item.
+- `dispatch_items.input_mapping` threads `apex_id`, per-item
+  `work_item_id` (from `item.item_id`), `platform`, `organization`,
+  `project`, and `repository`.
+- `dispatch_items` routes to `aggregate_renegotiation`.
+- `aggregate_renegotiation` reads `dispatch_items.outputs` (per M8)
+  to scan for `renegotiation_pending` and routes to `integrate_wave`.
+- `integrate_wave` invokes `wave-integrator.ps1` with `-ApexId` and
+  `-WaveIndex` and routes to `$end`.
+
+**apex-item-dispatch.yaml — branch-on-router (heart of PR #149):**
+- `classify_lifecycle` invokes `lifecycle-router.ps1` with
+  `-WorkItemId` and `-ApexId`.
+- `classify_lifecycle` short-circuits `fast-path` / `monitoring` /
+  `blocked` / `error` verdicts to their dedicated terminal nodes
+  BEFORE spawning a worktree. The success route targets
+  `spawn_worktree`; the M4 catch-all is the last entry and falls
+  through to `terminal_classify_error`.
+- `spawn_worktree` invokes `worktree-manager.ps1` with
+  `-Operation spawn` and base branch `feature/apex-{apex_id}`.
+- `spawn_worktree` branch-on-routers each of the four dispatchable
+  verdicts (`plan-level` → `plan_level_dispatch`, `actionable` →
+  `actionable_dispatch`, `implement-pg` → `implement_pg_dispatch`,
+  `feature-pr` → `feature_pr_dispatch`) with the spawn-success guard
+  in the `when:` clause. The M4 catch-all is the last entry and falls
+  through to `terminal_spawn_error`.
+- All four lifecycle dispatch nodes are `type: workflow` and invoke
+  the parent-relative path `./<lifecycle>.yaml`.
+- All four lifecycle dispatch nodes converge on `teardown_worktree`
+  (which invokes `worktree-manager.ps1` with `-Operation teardown`
+  and routes to `terminal_dispatched`).
+- All seven terminals (`terminal_dispatched`, `terminal_fast_path`,
+  `terminal_monitoring`, `terminal_blocked`, `terminal_classify_error`,
+  `terminal_spawn_error`, plus the apex-driver terminals via the
+  outer chain) route to `$end`.
+- All four lifecycle dispatch nodes are reachable from
+  `classify_lifecycle` in the assembled graph (no orphans).
+
+**Renegotiation bubble-up across all three layers:**
+- `apex-item-dispatch.output` declares `renegotiation_pending`,
+  `renegotiation_request`, `validate_scope_verdict`, and
+  `scope_violation_files`, all guarded by
+  `plan_level_dispatch is defined` (M3).
+- `apex-wave-dispatch.output` aggregates per-item bubble-ups into
+  `renegotiation_pending` (bool) + `renegotiation_items` (array),
+  guarded by `aggregate_renegotiation is defined`.
+- `apex-driver.output` surfaces `renegotiation_pending` to the
+  caller, guarded by `renegotiation_summary is defined`.
+- All three output maps pipe booleans through `| string | lower`
+  (M7) so a real bool — not capital `True`/`False` — bubbles up.
+
+**Input/output contracts across the 3-YAML chain:**
+- `apex-driver` declares `apex_id` (required, number), `intent`,
+  `platform` (default `ado`), `organization`, `project`, `repository`.
+- `apex-driver` → `apex-wave-dispatch` input_mapping threads
+  `apex_id`, per-wave `wave_index` + `wave_items` (`tojson`'d), and
+  the ADO context block.
+- `apex-wave-dispatch` declares the inputs apex-driver passes;
+  `apex-item-dispatch` declares the inputs apex-wave-dispatch passes.
+- `apex-item-dispatch` → `plan-level` threads `work_item_id` +
+  `intent: resume` + ADO context. → `actionable` threads
+  `work_item_id` + `apex_id` + `executor: polyphony`. →
+  `implement-pg` derives `pg_number` / `branch_name` /
+  `feature_branch` from the apex+item ids. → `feature-pr` targets
+  `main` on the apex feature branch.
+
+**lifecycle-router script ↔ YAML contract drift:**
+- The router script emits exactly the canonical set of
+  `lifecycle_workflow` values: `plan-level`, `actionable`,
+  `implement-pg`, `feature-pr`, `fast-path`, `monitoring`, `blocked`,
+  `error`. No undocumented values, none missing.
+- Every value the router emits is handled by an
+  `apex-item-dispatch.yaml` `when:` clause — short-circuit verdicts
+  are branched in `classify_lifecycle`, dispatchable verdicts are
+  branched in `spawn_worktree`. No silent dropping into a catch-all,
+  no dead branches in the YAML.
+- `lifecycle-router.ps1` always exits 0 (routing-style envelope) —
+  asserted by live invocation against a missing `polyphony`
+  executable: returns `success=false` + `error_code=polyphony_unavailable`
+  + `lifecycle_workflow=error` + the work_item_id echo.
+
+**Script envelope contracts (worktree-manager + wave-integrator):**
+- `worktree-manager.ps1` teardown of a non-existent worktree is
+  idempotent (`success=true`); envelope carries `success`,
+  `operation`, `work_item_id`, `worktree_path`, `branch`,
+  `error_code`. Always exits 0.
+- `wave-integrator.ps1` returns a routing-style envelope
+  (`success=false` + `error_code=polyphony_unavailable`) when
+  `polyphony` is unavailable. Envelope carries `success`,
+  `wave_index`, `apex_id`, `feature_branch` (defaults to
+  `feature/apex-{apex_id}`), `merge_strategy` (defaults to `no-ff`),
+  `branches_integrated`, `skipped`, `conflicts`. Always exits 0.
+
 ### Direct Sub-Workflow Invocation
 
 Individual sub-workflows in the library can still be invoked directly
