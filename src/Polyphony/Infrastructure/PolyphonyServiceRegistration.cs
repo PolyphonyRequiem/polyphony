@@ -64,6 +64,15 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<Polyphony.Locking.RunLockStore>();
         services.AddSingleton<Polyphony.Locking.RunLockPathResolver>();
 
+        // Command classes that are referenced as constructor dependencies of
+        // OTHER command classes must be registered explicitly. ConsoleAppFramework
+        // resolves top-level command parameters from the container but does not
+        // auto-register sibling command classes. RootCommands depends on
+        // ScopeCommands; without this registration, ScopeCommands resolves to
+        // null and `polyphony root declare` NREs at first call. Verified by
+        // PolyphonyServiceRegistrationTests.Command_ResolvesCleanlyFromDI.
+        services.AddSingleton<Commands.ScopeCommands>();
+
         return services;
     }
 }
