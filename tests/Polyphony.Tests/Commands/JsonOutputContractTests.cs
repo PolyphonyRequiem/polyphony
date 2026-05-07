@@ -1173,6 +1173,135 @@ public sealed class JsonOutputContractTests : CommandTestBase
             .WithBranchStrategy();
     }
 
+    // =========================================================================
+    // Plan extract-renegotiation-flag — JSON contract (Phase 3 P8)
+    //
+    // Verb invocation is covered in PlanCommandsExtractRenegotiationFlagTests;
+    // here we just verify the result type round-trips through PolyphonyJsonContext
+    // with snake_case keys + null omission.
+    // =========================================================================
+
+    [Fact]
+    public void PlanExtractRenegotiationFlag_JsonContract_SnakeCase_RoundTrip()
+    {
+        var present = new PlanExtractRenegotiationFlagResult
+        {
+            Success = true,
+            PrNumber = 1234,
+            FlagPresent = true,
+            RenegotiationRequest = "please replan",
+            FencedBlockWellFormed = true,
+        };
+        var json = JsonSerializer.Serialize(present, PolyphonyJsonContext.Default.PlanExtractRenegotiationFlagResult);
+
+        json.ShouldContain("\"success\"");
+        json.ShouldContain("\"pr_number\"");
+        json.ShouldContain("\"flag_present\"");
+        json.ShouldContain("\"renegotiation_request\"");
+        json.ShouldContain("\"fenced_block_well_formed\"");
+        AssertNoPascalCase(json, "PrNumber");
+        AssertNoPascalCase(json, "FlagPresent");
+        AssertNoPascalCase(json, "FencedBlockWellFormed");
+        // Null fields must be omitted on the success path.
+        json.ShouldNotContain("\"error_code\"");
+        json.ShouldNotContain("\"error_message\"");
+
+        var parsed = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.PlanExtractRenegotiationFlagResult);
+        parsed.ShouldNotBeNull();
+        parsed.PrNumber.ShouldBe(1234);
+        parsed.FlagPresent.ShouldBeTrue();
+        parsed.RenegotiationRequest.ShouldBe("please replan");
+        parsed.FencedBlockWellFormed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void PlanExtractRenegotiationFlag_ErrorEnvelope_PopulatesCodeAndMessage()
+    {
+        var error = new PlanExtractRenegotiationFlagResult
+        {
+            Success = false,
+            PrNumber = 1234,
+            FlagPresent = false,
+            FencedBlockWellFormed = false,
+            ErrorCode = "malformed_renegotiation_block",
+            ErrorMessage = "open without close",
+        };
+        var json = JsonSerializer.Serialize(error, PolyphonyJsonContext.Default.PlanExtractRenegotiationFlagResult);
+
+        json.ShouldContain("\"error_code\"");
+        json.ShouldContain("\"error_message\"");
+        json.ShouldContain("malformed_renegotiation_block");
+        // RenegotiationRequest is null and must be omitted.
+        json.ShouldNotContain("\"renegotiation_request\"");
+    }
+
+    // =========================================================================
+    // Plan validate-scope — JSON contract (Phase 3 P8)
+    // =========================================================================
+
+    [Fact]
+    public void PlanValidateScope_JsonContract_SnakeCase_RoundTrip()
+    {
+        var allow = new PlanValidateScopeResult
+        {
+            Success = true,
+            PrNumber = 1234,
+            FilesTouched = ["plans/1100/1101.md", "plans/1100/parent-amendment.md"],
+            FilesInScope = ["plans/1100/1101.md"],
+            FilesOutOfScope = ["plans/1100/parent-amendment.md"],
+            FlagPresent = true,
+            Verdict = "allow",
+            Warnings = [],
+        };
+        var json = JsonSerializer.Serialize(allow, PolyphonyJsonContext.Default.PlanValidateScopeResult);
+
+        json.ShouldContain("\"pr_number\"");
+        json.ShouldContain("\"files_touched\"");
+        json.ShouldContain("\"files_in_scope\"");
+        json.ShouldContain("\"files_out_of_scope\"");
+        json.ShouldContain("\"flag_present\"");
+        json.ShouldContain("\"verdict\"");
+        json.ShouldContain("\"warnings\"");
+        AssertNoPascalCase(json, "PrNumber");
+        AssertNoPascalCase(json, "FilesTouched");
+        AssertNoPascalCase(json, "FilesInScope");
+        AssertNoPascalCase(json, "FilesOutOfScope");
+        AssertNoPascalCase(json, "FlagPresent");
+        AssertNoPascalCase(json, "Verdict");
+        // Null fields omitted on the allow path.
+        json.ShouldNotContain("\"error_code\"");
+        json.ShouldNotContain("\"error_message\"");
+
+        var parsed = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.PlanValidateScopeResult);
+        parsed.ShouldNotBeNull();
+        parsed.Verdict.ShouldBe("allow");
+        parsed.FilesInScope.Count.ShouldBe(1);
+        parsed.FilesOutOfScope.Count.ShouldBe(1);
+        parsed.FlagPresent.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void PlanValidateScope_BlockingVerdict_SerializesErrorCode()
+    {
+        var block = new PlanValidateScopeResult
+        {
+            Success = true,
+            PrNumber = 1234,
+            FilesTouched = ["src/code.cs"],
+            FilesInScope = Array.Empty<string>(),
+            FilesOutOfScope = ["src/code.cs"],
+            FlagPresent = false,
+            Verdict = "block",
+            Warnings = Array.Empty<string>(),
+            ErrorCode = "scope_violation_no_flag",
+            ErrorMessage = "out of scope without flag",
+        };
+        var json = JsonSerializer.Serialize(block, PolyphonyJsonContext.Default.PlanValidateScopeResult);
+
+        json.ShouldContain("\"verdict\":\"block\"");
+        json.ShouldContain("scope_violation_no_flag");
+    }
+
     /// <summary>
     /// Asserts that the exact PascalCase property name does not appear as a JSON key.
     /// Uses ordinal (case-sensitive) comparison to avoid false positives where

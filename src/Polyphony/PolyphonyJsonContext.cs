@@ -30,6 +30,8 @@ namespace Polyphony;
 [JsonSerializable(typeof(ChildPendingParentChange))]
 [JsonSerializable(typeof(PlanDeriveAncestorChainResult))]
 [JsonSerializable(typeof(PlanExtractParentPatchResult))]
+[JsonSerializable(typeof(PlanExtractRenegotiationFlagResult))]
+[JsonSerializable(typeof(PlanValidateScopeResult))]
 [JsonSerializable(typeof(PlanStatusResult))]
 [JsonSerializable(typeof(PlanStatusItem))]
 [JsonSerializable(typeof(PlanWritePlanResult))]
