@@ -168,6 +168,19 @@ Edges enter the dependency graph through three distinct sources. Each source has
 | **Plan status enum** | The five values `plan_status` may take in the plan status verb's per-item rows: `needed` (item has the plannable facet but no plan PR exists yet), `open` (plan PR exists and is OPEN on the platform), `merged` (plan PR has been merged), `abandoned` (plan PR was closed without merging), `n/a` (item has no plannable facet — hidden from the items array unless `--include-na` is passed; always counted in `summary.plan_n_a` so the operator can see full tree scope). |
 | **Pending revisions** | A boolean signal on a `plan_status="open"` row: `true` when the open plan PR carries an unresolved `CHANGES_REQUESTED` review decision (the reviewer asked for changes that the next plan-PR push has not yet addressed). Surfaced both per-item (`pending_revisions`) and as a summary counter so an operator can answer "how many open plan PRs need attention right now?" in a single read. Only meaningful when `plan_status == "open"` — null otherwise so consumers can distinguish "no signal" from "open, no pending revisions" from "open, changes requested". |
 
+## Apex driver
+
+| Term | Definition |
+|---|---|
+| **Apex driver** | The Phase 7 keystone SDLC orchestrator (`apex-driver.yaml`). A *driver*, not a pipeline: it builds a worklist for the apex tree, dispatches each wave's items in parallel through `apex-wave-dispatch.yaml` → `apex-item-dispatch.yaml`, integrates the wave, and re-evaluates the worklist until the apex root reports satisfied. Replaces the deleted `polyphony-full.yaml`. Inputs: `apex_id`, `intent`, `platform`. |
+| **Dispatch loop** | The outer loop of the apex driver: `build_worklist` → `wave_dispatch_loop` (for_each over waves) → `apex_completion_gate`. The loop variable is the *worklist itself* — recomputed from observable state every iteration — not a step counter or pointer into a static plan. |
+| **Lifecycle router** | The `lifecycle-router.ps1` deterministic classifier that wraps `polyphony state next-ready` and emits a routing envelope (`route: plan-level | actionable | implement-pg | feature-pr | fast-path | monitoring | blocked | error`). Consumed by `apex-item-dispatch.yaml`'s `classify_lifecycle` step. Same pattern as `route-actionable-executor.ps1`. |
+| **Wave integrator** | The `wave-integrator.ps1` script that merges per-item branches into the apex feature branch in topological order from `polyphony edges check`. Default merge strategy is `--no-ff` for auditability. Conflicts abort the single merge (not the wave) and roll up to a wave-level human gate. |
+| **Per-item worktree** | An isolated git worktree at `<repo-parent>/<repo-name>-item-<work_item_id>` on branch `sdlc/apex/<work_item_id>`, branched from the apex feature branch. Spawned by `worktree-manager.ps1` for each item dispatched within a wave; torn down after lifecycle dispatch completes. Idempotent — safe to re-spawn or re-tear-down on re-entry. |
+| **Per-MG worktree** | Analogous to per-item worktree but scoped to a merge group (MG). Future extension; not in MVP. |
+| **Observable-state re-entry** | The property that lets the apex driver resume after a human gate, restart, or interruption without persisting per-step pointers: every iteration re-builds the worklist from `polyphony state next-ready` and the EdgeGraph, so the next wave is whatever's ready *now*. |
+| **Bubble-up signal** | A `renegotiation_pending: true` (or analogous) output that an inner sub-workflow surfaces to the apex driver. Triggers consultation of `policy.renegotiation.auto_decide` (`prompt` / `auto_restart` / `ignore`) and either gates, restarts the loop, or continues. Plan-level wiring of this signal is deferred. |
+
 ## Open glossary questions
 
 _All initial questions resolved. New questions surfacing during plan drafting will land here._

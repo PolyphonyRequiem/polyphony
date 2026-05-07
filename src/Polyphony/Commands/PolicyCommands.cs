@@ -54,6 +54,7 @@ public sealed class PolicyCommands
             },
             Guidance = SnapshotGuidance(config.Guidance!),
             RootFallback = SnapshotRootFallback(config.RootFallback!),
+            Renegotiation = SnapshotRenegotiation(config.Renegotiation!),
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PolicyLoadResult));
@@ -201,6 +202,12 @@ public sealed class PolicyCommands
             AutoDecide = rootFallback.AutoDecide ?? RootFallbackAutoDecide.Prompt,
         };
 
+    private static PolicyRenegotiationSnapshot SnapshotRenegotiation(RenegotiationPolicy renegotiation) =>
+        new()
+        {
+            AutoDecide = renegotiation.AutoDecide ?? RenegotiationAutoDecide.Prompt,
+        };
+
     private static (List<string> Errors, List<string> Warnings) ValidateRules(PolicyConfig config)
     {
         var errors = new List<string>();
@@ -232,6 +239,9 @@ public sealed class PolicyCommands
         // Root fallback: auto_decide must be one of the canonical strings (when set).
         ValidateRootFallbackForReporting(config.RootFallback, errors);
 
+        // Renegotiation: auto_decide must be one of the canonical strings (when set).
+        ValidateRenegotiationForReporting(config.Renegotiation, errors);
+
         return (errors, warnings);
     }
 
@@ -244,6 +254,17 @@ public sealed class PolicyCommands
                 $"root_fallback.auto_decide '{value}' is not a known auto-decide policy. " +
                 $"Expected '{RootFallbackAutoDecide.Prompt}', '{RootFallbackAutoDecide.UseActiveItem}', " +
                 $"or '{RootFallbackAutoDecide.Abort}'.");
+    }
+
+    private static void ValidateRenegotiationForReporting(RenegotiationPolicy? renegotiation, List<string> errors)
+    {
+        if (renegotiation?.AutoDecide is null) return;
+        var value = renegotiation.AutoDecide;
+        if (!RenegotiationAutoDecide.IsValid(value))
+            errors.Add(
+                $"renegotiation.auto_decide '{value}' is not a known auto-decide policy. " +
+                $"Expected '{RenegotiationAutoDecide.Prompt}', '{RenegotiationAutoDecide.AutoRestart}', " +
+                $"or '{RenegotiationAutoDecide.Ignore}'.");
     }
 
     private static void ValidateGuidanceForReporting(GuidancePolicy? guidance, List<string> errors)

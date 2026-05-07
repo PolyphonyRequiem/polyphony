@@ -1,0 +1,652 @@
+# apex-driver — Phase 7 keystone SDLC orchestrator.
+#
+# Replaces the deleted `polyphony-full.yaml`. Walks the apex
+# (run-root) work item's tree as discovered by `polyphony worklist
+# build`, edge-checks the result, and dispatches each item into the
+# right lifecycle sub-workflow per wave. Per-item worktrees keep
+# parallel dispatches isolated; topological wave integration merges
+# completed branches back into the apex feature branch in
+# edge-correct order.
+#
+# Four-input contract:
+#
+#   apex_id  — REQUIRED. The apex (run-root feature) work-item id.
+#              Treated as the tree root for `polyphony worklist build`.
+#   intent   — REQUIRED. One of `new` / `resume` / `replan`. Drives
+#              preflight behavior; the dispatch loop itself is purely
+#              observable-state-driven (P3) and identical across all
+#              three intents.
+#
+# Design picks (signed off — see docs/decisions/apex-driver.md):
+#
+#   Q1 — Dispatch granularity is parallel-by-default within wave with
+#        per-item worktree isolation. `isolation_scope: per_mg`
+#        (planner-declared on the parent MG container) serializes the
+#        wave's items inside a shared MG worktree; `per_item` (default)
+#        spawns a fresh worktree per item and runs them in parallel
+#        bounded by `concurrency.max_concurrent_pgs`. MVP ships
+#        per_item; per_mg serialization is a stub (defers to per_item
+#        until a follow-up wires the MG container check).
+#
+#   Q2 — Multi-facet items execute in planner-declared `facet_sequence`
+#        order. The default is `[actionable, implementable]`: action
+#        evidence is satisfied first, then implementation. The
+#        lifecycle-router script picks whichever facet is currently
+#        dispatchable; the implicit `action_satisfied → implementation_merged`
+#        edge in the requirement set enforces sequencing without the
+#        workflow needing to re-read `process-config.yaml`.
+#
+#   Q3 — Renegotiation bubble-up is gated by `renegotiation.auto_decide`
+#        in `.conductor/policy.yaml`:
+#          - `prompt`       — surface the renegotiation human gate.
+#          - `auto_restart` — re-enter the parent's plan-level workflow
+#                             so the parent can re-author. MVP STUB:
+#                             treated identically to `prompt` until the
+#                             auto-restart loop ships in a follow-up.
+#          - `ignore`       — treat the child plan as accepted; continue.
+#        plan-level.yaml does NOT yet emit `renegotiation_pending`
+#        (PR #141 shipped the verbs but not the workflow wiring); the
+#        bubble-up reference here is therefore optimistic and guarded
+#        with `is defined`. When the wiring lands, this workflow does
+#        not need to change.
+#
+#   Q4 — Resume is pure observable-state re-entry. `intent: resume`
+#        re-runs `worklist build` + `edges check` and lets the
+#        dispatch loop pick up wherever the prior run left off. The
+#        apex-driver writes NO checkpoint state of its own; the source
+#        of truth is the work-item tree (P1).
+#
+# Routing-style envelope contract (per polyphony-workflow-author skill):
+#   * Every script step ALWAYS exits 0; failures surface via JSON
+#     envelope fields (`success`, `error_code`, etc.).
+#   * Workflows route on envelope fields, NOT exit codes.
+#
+# Conductor mechanics gotchas honored throughout:
+#   M3  StrictUndefined — every cross-leg verb output is guarded with
+#       `is defined`; nested attributes use `default(...)` only on
+#       the attribute, not the variable.
+#   M4  Routes have no implicit fallback — every reachable agent
+#       state has an explicit catch-all `to:` last.
+#   M7  Workflow `output:` map booleans piped through `| string | lower`.
+#   M8  for_each `source:` is a BARE dotted path (not Jinja-quoted);
+#       errors-array surfaced as `<group>.errors`; results in `<group>.outputs`.
+#   M9  `max_iterations` raised well above default 10 — the dispatch
+#       loop is a wave for_each over a worklist that may contain
+#       hundreds of items.
+#
+# Forward references (DEFERRED — DO NOT add in this PR):
+#   * E2E execution tests (separate PR p7-tree-walker-e2e).
+#   * Per-MG worktree serialization (currently per_item only).
+#   * Auto-restart on renegotiation (currently prompt-equivalent).
+#   * Caller cutover (no production caller wired to apex-driver yet).
+
+workflow:
+  name: apex-driver
+  description: >-
+    Tree-walking apex-level SDLC orchestrator. Dispatches each work
+    item under `apex_id` into the right lifecycle sub-workflow
+    (plan-level / actionable / implement-pg / feature-pr / fast-path)
+    in topological wave order, with per-item worktree isolation and
+    edge-correct wave integration. Replaces the deleted
+    polyphony-full.yaml.
+  version: "1.0.0"
+  entry_point: preflight_sync
+  metadata:
+    min_polyphony_version: "1.0.1"
+
+  limits:
+    # The dispatch loop is a for_each over waves; each wave is itself a
+    # for_each over items; each item invocation is a sub-workflow. The
+    # default 10 is wildly insufficient. 500 covers an apex tree with up
+    # to ~30 waves of ~16 items each comfortably; raise further if
+    # workspaces routinely exceed.
+    max_iterations: 500
+
+  input:
+    apex_id:
+      type: number
+      required: true
+      description: >-
+        ADO work item id of the apex (run-root feature). Treated as the
+        tree root for `polyphony worklist build`. Type is
+        runtime-injected (P5 — type-agnostic).
+    intent:
+      type: string
+      required: false
+      default: new
+      description: >-
+        One of `new` / `resume` / `replan`. Drives preflight behavior:
+        - new     — fresh start; ensure feature branch from origin/main.
+        - resume  — re-enter an in-flight apex; re-run worklist + edges
+                    and let the dispatch loop pick up.
+        - replan  — same as `new` for now; reserved for a future hook
+                    that re-invokes plan-level on the apex.
+    platform:
+      type: string
+      required: false
+      default: ado
+      description: >-
+        Work-item source platform. Threaded through to lifecycle
+        sub-workflows verbatim; apex-driver itself is platform-agnostic.
+
+tools:
+  - twig
+
+# Workflow-level output map. Per M3 every reference to a verb's output
+# is guarded with `is defined`; per M7 booleans are piped through
+# `| string | lower` so the parent receives a real bool not capital
+# "True" / "False".
+output:
+  apex_id: "{{ workflow.input.apex_id }}"
+  satisfied: >-
+    {%- if terminal_apex_satisfied is defined -%}true
+    {%- else -%}false{%- endif -%}
+  abandoned: >-
+    {%- if terminal_apex_abandoned is defined -%}true
+    {%- else -%}false{%- endif -%}
+  preflight_failed: >-
+    {%- if terminal_preflight_failed is defined -%}true
+    {%- else -%}false{%- endif -%}
+
+agents:
+  # ─────────────────────────────────────────────────────────────────────────
+  # SECTION 1 — Preflight
+  #
+  # Sync work-item state, validate the apex resolves, and ensure the
+  # apex feature branch exists. All preflight steps are idempotent so
+  # `intent: resume` re-runs them safely.
+  # ─────────────────────────────────────────────────────────────────────────
+
+  # ── Preflight: sync ADO state ─────────────────────────────────────────────
+  #
+  # Pull the latest work-item state from ADO so worklist build sees
+  # current dispositions. Always run, even on resume — the operator may
+  # have edited items between invocations.
+  #
+  # Invariants:
+  #   Pre:  twig is configured for the active workspace.
+  #   Post: local twig cache is fresh.
+  - name: preflight_sync
+    type: script
+    description: Sync work-item cache from ADO via twig
+    command: twig
+    args:
+      - "sync"
+    routes:
+      - to: preflight_apex_state
+      # Catch-all per M4 — twig sync failures shouldn't halt the run;
+      # apex-driver continues with stale cache and the operator can
+      # re-invoke if dispatch picks up wrong state.
+      - to: preflight_apex_state
+
+  # ── Preflight: validate apex via state next-ready ─────────────────────────
+  #
+  # Confirms the apex id resolves to a real, dispatchable tree. Uses
+  # `polyphony state next-ready` rather than a custom validator — it
+  # already knows how to resolve work-item types and emits a structured
+  # status. If the apex is satisfied or empty already, fast-path to the
+  # close section.
+  #
+  # Invariants:
+  #   Pre:  workflow.input.apex_id is a positive integer.
+  #   Post: preflight_apex_state.output.status is one of
+  #         {dispatchable, monitoring, satisfied, empty, blocked, error}.
+  - name: preflight_apex_state
+    type: script
+    description: Validate apex resolves and inspect its starting status
+    command: polyphony
+    args:
+      - "state"
+      - "next-ready"
+      - "--work-item"
+      - "{{ workflow.input.apex_id }}"
+    routes:
+      - to: preflight_ensure_branch
+        when: "{{ preflight_apex_state.output.status == 'dispatchable' }}"
+      - to: preflight_ensure_branch
+        when: "{{ preflight_apex_state.output.status == 'monitoring' }}"
+      - to: preflight_ensure_branch
+        when: "{{ preflight_apex_state.output.status == 'blocked' }}"
+      - to: terminal_apex_satisfied
+        when: "{{ preflight_apex_state.output.status == 'satisfied' }}"
+      - to: terminal_apex_satisfied
+        when: "{{ preflight_apex_state.output.status == 'empty' }}"
+      - to: preflight_failure_gate
+        when: "{{ preflight_apex_state.output.status == 'error' }}"
+      # M4 catch-all — unknown statuses surface via the failure gate.
+      - to: preflight_failure_gate
+
+  # ── Preflight: ensure feature branch ─────────────────────────────────────
+  #
+  # Idempotent — `polyphony branch ensure-feature` reuses an existing
+  # local/remote branch when present. Spawns from origin/main on first
+  # run; on resume, the branch is already there and the verb is a no-op.
+  #
+  # Invariants:
+  #   Pre:  preflight_apex_state confirmed a dispatchable tree.
+  #   Post: feature/apex-{apex_id} exists locally.
+  - name: preflight_ensure_branch
+    type: script
+    description: Ensure feature/apex-{apex_id} exists (idempotent)
+    command: polyphony
+    args:
+      - "branch"
+      - "ensure-feature"
+      - "feature/apex-{{ workflow.input.apex_id }}"
+    routes:
+      - to: build_worklist
+      # M4 catch-all — branch ensure failures bubble through to dispatch.
+      # The dispatch loop will fail downstream with clearer context if
+      # the branch really is broken.
+      - to: build_worklist
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SECTION 2 — Dispatch loop
+  #
+  # The heart of the apex-driver. Each pass:
+  #   1. Build the worklist (waves of work items in topological order).
+  #   2. Edge-check for cross-item conflicts.
+  #   3. Iterate waves, dispatching each item into its lifecycle
+  #      sub-workflow inside a per-item worktree.
+  #   4. Integrate completed branches back into the feature branch.
+  #
+  # Re-entry note (P3): the loop is purely observable-state-driven.
+  # On `intent: resume` the worklist build returns the current wave
+  # structure; already-satisfied items classify as `fast-path` and
+  # short-circuit; in-flight items classify as `monitoring`.
+  # ─────────────────────────────────────────────────────────────────────────
+
+  # ── Build worklist ────────────────────────────────────────────────────────
+  #
+  # Walks the apex tree and groups work items into topological waves.
+  # Always exit 0 (routing-style); has_conflicts surfaces via the
+  # envelope.
+  #
+  # Invariants:
+  #   Pre:  apex_id resolves to a tree containing at least one item.
+  #   Post: build_worklist.output.waves is an array of
+  #         { wave_index, items[] } in topological order.
+  - name: build_worklist
+    type: script
+    description: Build the apex worklist (topological waves)
+    command: polyphony
+    args:
+      - "worklist"
+      - "build"
+      - "{{ workflow.input.apex_id }}"
+      - "--json"
+    routes:
+      - to: check_conflicts
+        when: "{{ build_worklist.output.error is not defined or build_worklist.output.error == '' }}"
+      - to: worklist_failure_gate
+      # M4 catch-all
+      - to: worklist_failure_gate
+
+  # ── Check edge conflicts ──────────────────────────────────────────────────
+  #
+  # Cross-item conflict detection is run separately from worklist build
+  # so the conflict list can be surfaced through its own dedicated gate
+  # without losing the wave structure on a re-run.
+  #
+  # Invariants:
+  #   Pre:  build_worklist succeeded.
+  #   Post: check_conflicts.output.has_conflicts is bool; conflicts[]
+  #         is non-empty when has_conflicts is true.
+  - name: check_conflicts
+    type: script
+    description: Edge-check the apex tree for cross-item conflicts
+    command: polyphony
+    args:
+      - "edges"
+      - "check"
+      - "--work-item"
+      - "{{ workflow.input.apex_id }}"
+      - "--render"
+      - "json"
+    routes:
+      - to: conflict_resolution_gate
+        when: "{{ check_conflicts.output.has_conflicts | string | lower == 'true' }}"
+      - to: wave_dispatch_loop
+        when: "{{ check_conflicts.output.has_conflicts | string | lower == 'false' }}"
+      # M4 catch-all
+      - to: wave_dispatch_loop
+
+  # ── Conflict resolution gate ─────────────────────────────────────────────
+  #
+  # Surfaces edge conflicts (e.g. circular dependencies, unsatisfiable
+  # rollups) to a human. Operator picks `retry` (re-run the loop after
+  # editing items in ADO) or `abort` (halt the workflow).
+  #
+  # P6 — this is a genuine human decision; no policy override yet.
+  - name: conflict_resolution_gate
+    type: human_gate
+    description: Edge conflicts detected — operator decides retry or abort
+    prompt: |
+      ## ⚠️ Edge conflicts detected in the apex tree
+
+      `polyphony edges check` reported cross-item conflicts in the
+      worklist for apex **#{{ workflow.input.apex_id }}**. The dispatch
+      loop cannot proceed until they are resolved.
+
+      ### Conflicts
+
+      ```
+      {{ check_conflicts.output.conflicts | tojson(indent=2) }}
+      ```
+
+      ### Options
+
+      - **Retry** — fix the offending items in ADO (re-parent, mark
+        satisfied, etc.) then retry the dispatch loop. This re-runs
+        worklist build + edge check from scratch.
+      - **Abort** — halt the workflow with `apex_satisfied=false`. Use
+        this when the conflict reveals a structural problem worth
+        re-planning at a higher level.
+    options:
+      - label: "🔁 Retry — I fixed the conflicts in ADO"
+        value: retry
+        route: build_worklist
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_apex_abandoned
+
+  # ── Wave dispatch loop ────────────────────────────────────────────────────
+  #
+  # for_each over waves. Each iteration:
+  #   1. Fans the wave's items out across per-item worktrees and
+  #      dispatches each into its lifecycle sub-workflow.
+  #   2. Integrates the completed branches back into the apex feature
+  #      branch in topological order.
+  #
+  # max_concurrent: 1 — waves are sequential by definition (a later
+  # wave's items depend on an earlier wave's items being complete).
+  # Within a wave, the inner for_each runs items in parallel.
+  #
+  # failure_mode: continue_on_error so a single wave's failures flow
+  # through to the wave_failed_gate rather than aborting the loop.
+  #
+  # Invariants:
+  #   Pre:  build_worklist.output.waves is non-empty.
+  #   Post: every wave has been dispatched and integrated, OR the
+  #         operator chose abort at wave_failed_gate.
+  - name: wave_dispatch_loop
+    type: for_each
+    description: Sequential per-wave dispatch + integration
+    # `source:` is a BARE dotted path per M8 — wrapping in {{ }} causes
+    # config-load rejection.
+    source: build_worklist.output.waves
+    as: wave
+    max_concurrent: 1
+    failure_mode: continue_on_error
+    agent:
+      name: dispatch_one_wave
+      type: workflow
+      workflow: ./apex-wave-dispatch.yaml
+      input_mapping:
+        apex_id: "{{ workflow.input.apex_id }}"
+        wave_index: "{{ wave.wave_index }}"
+        wave_items: "{{ wave.items | tojson }}"
+        platform: "{{ workflow.input.platform }}"
+    routes:
+      - to: wave_loop_summary
+
+  # ── Wave loop summary ────────────────────────────────────────────────────
+  #
+  # Inspects the for_each `errors` array (per M8 there's no
+  # `failed_count`; we derive it via length). When all waves succeeded,
+  # transitions to the apex_completion_gate. When any wave failed,
+  # surface via wave_failed_gate.
+  - name: wave_loop_summary
+    type: script
+    description: Summarize the wave dispatch loop outcome
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $failed = {{ wave_dispatch_loop.errors | length }};
+        $total  = {{ wave_dispatch_loop.count }};
+        [ordered]@{
+          total_waves   = $total;
+          failed_waves  = $failed;
+          all_succeeded = ($failed -eq 0);
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: apex_completion_gate
+        when: "{{ wave_loop_summary.output.all_succeeded | string | lower == 'true' }}"
+      - to: wave_failed_gate
+      # M4 catch-all
+      - to: wave_failed_gate
+
+  # ── Wave failed gate ─────────────────────────────────────────────────────
+  #
+  # Surfaces failed waves to a human. Operator picks `retry` (re-enter
+  # the dispatch loop — items the prior run satisfied will fast-path on
+  # the next iteration), `abort` (halt with apex_satisfied=false), or
+  # `escalate_renegotiation` (re-author the apex's plan; deferred).
+  - name: wave_failed_gate
+    type: human_gate
+    description: One or more waves failed — operator decides next step
+    prompt: |
+      ## ❌ Wave dispatch failures
+
+      The apex-driver dispatch loop completed with one or more wave
+      failures for apex **#{{ workflow.input.apex_id }}**.
+
+      ### Wave summary
+
+      - Total waves: **{{ wave_loop_summary.output.total_waves }}**
+      - Failed waves: **{{ wave_loop_summary.output.failed_waves }}**
+
+      ### Failed wave details
+
+      ```
+      {{ wave_dispatch_loop.errors | tojson(indent=2) }}
+      ```
+
+      ### Options
+
+      - **Retry** — re-enter the dispatch loop. Items the prior run
+        already satisfied will fast-path; failed items will be
+        re-dispatched against their current state.
+      - **Abort** — halt the workflow with `apex_satisfied=false`.
+      - **Renegotiate (deferred)** — re-author the apex's plan to
+        accommodate the failures. MVP routes this to abort; a
+        follow-up wires the renegotiation loop.
+    options:
+      - label: "🔁 Retry the dispatch loop"
+        value: retry
+        route: build_worklist
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_apex_abandoned
+      - label: "📝 Renegotiate (deferred — routes to abort in MVP)"
+        value: renegotiate
+        route: terminal_apex_abandoned
+
+  # ── Worklist failure gate ────────────────────────────────────────────────
+  #
+  # Surfaces a failed `worklist build` (e.g. unresolved tag chain,
+  # ADO outage). Operator picks retry or abort.
+  - name: worklist_failure_gate
+    type: human_gate
+    description: Worklist build failed — operator decides next step
+    prompt: |
+      ## ❌ `polyphony worklist build` failed
+
+      The apex-driver could not build a worklist for apex
+      **#{{ workflow.input.apex_id }}**. This usually indicates a
+      transient ADO outage, a misconfigured tag chain, or a
+      structural problem in the work-item tree.
+
+      ### Error
+
+      ```
+      {%- if build_worklist.output.error is defined -%}
+      {{ build_worklist.output.error }}
+      {%- else -%}
+      (no error message captured — check polyphony logs)
+      {%- endif -%}
+      ```
+
+      ### Options
+
+      - **Retry** — re-run worklist build (e.g. after fixing the tag
+        chain in ADO).
+      - **Abort** — halt the workflow with `apex_satisfied=false`.
+    options:
+      - label: "🔁 Retry"
+        value: retry
+        route: build_worklist
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_apex_abandoned
+
+  # ── Preflight failure gate ───────────────────────────────────────────────
+  #
+  # Fires when `polyphony state next-ready` returns status=error during
+  # preflight. The apex id may be invalid, the type may be unknown, or
+  # ADO may be unreachable. Operator decides whether to retry or fail.
+  - name: preflight_failure_gate
+    type: human_gate
+    description: Apex preflight validation failed — operator decides next step
+    prompt: |
+      ## ❌ Apex preflight failed
+
+      `polyphony state next-ready` returned status=error for apex
+      **#{{ workflow.input.apex_id }}**.
+
+      ### Error
+
+      ```
+      {%- if preflight_apex_state.output.error is defined -%}
+      {{ preflight_apex_state.output.error }}
+      {%- else -%}
+      (no error message captured — check polyphony logs)
+      {%- endif -%}
+      ```
+
+      ### Options
+
+      - **Retry preflight** — re-run state next-ready (e.g. after
+        fixing the apex's type config in ADO).
+      - **Abort** — terminate the workflow with `preflight_failed=true`.
+    options:
+      - label: "🔁 Retry preflight"
+        value: retry
+        route: preflight_apex_state
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_preflight_failed
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SECTION 3 — Apex completion gate
+  # ─────────────────────────────────────────────────────────────────────────
+
+  # ── Apex completion gate ─────────────────────────────────────────────────
+  #
+  # Surfaces the assembled apex to a human for final sign-off before
+  # marking it satisfied. P6 — this is the apex-level human gate that
+  # mirrors the per-item satisfaction gates in the lifecycle workflows.
+  #
+  # Invariants:
+  #   Pre:  every wave dispatched and integrated successfully.
+  #   Post: operator confirmed satisfaction or chose to abandon.
+  - name: apex_completion_gate
+    type: human_gate
+    description: Final apex sign-off before marking satisfied
+    prompt: |
+      ## ✅ Apex dispatch complete
+
+      Every wave for apex **#{{ workflow.input.apex_id }}** dispatched
+      and integrated successfully. Confirm satisfaction to mark the
+      apex item_satisfied and close the workflow.
+
+      ### Wave summary
+
+      - Total waves: **{{ wave_loop_summary.output.total_waves }}**
+      - Failed waves: **{{ wave_loop_summary.output.failed_waves }}**
+
+      ### Options
+
+      - **Confirm** — mark the apex item_satisfied via
+        `polyphony validate` + `twig state` and close.
+      - **Abandon** — record `apex_satisfied=false` and close. Use
+        this when the integrated work is not what was intended even
+        though every step technically succeeded.
+    options:
+      - label: "✅ Confirm — mark apex satisfied"
+        value: confirm
+        route: close_mark_satisfied
+      - label: "🛑 Abandon"
+        value: abandon
+        route: terminal_apex_abandoned
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SECTION 4 — Close
+  # ─────────────────────────────────────────────────────────────────────────
+
+  # ── Close: mark apex satisfied ───────────────────────────────────────────
+  #
+  # Sync ADO once more (so the validate event sees a fresh cache),
+  # validate the satisfaction event against the apex's type config,
+  # then transition state via twig.
+  - name: close_mark_satisfied
+    type: script
+    description: Sync, validate, and transition apex to its satisfied state
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        twig sync;
+        $validate = polyphony validate --work-item {{ workflow.input.apex_id }} --event item_satisfied | ConvertFrom-Json;
+        if ($validate.target_state) {
+          twig state $validate.target_state --id {{ workflow.input.apex_id }};
+        }
+        [ordered]@{
+          apex_id      = {{ workflow.input.apex_id }};
+          target_state = $validate.target_state;
+          success      = ($null -ne $validate.target_state);
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: terminal_apex_satisfied
+
+  # ── Terminal: apex satisfied ─────────────────────────────────────────────
+  - name: terminal_apex_satisfied
+    type: script
+    description: Terminal — apex is satisfied
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{ apex_id = {{ workflow.input.apex_id }}; satisfied = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: apex abandoned ─────────────────────────────────────────────
+  - name: terminal_apex_abandoned
+    type: script
+    description: Terminal — apex was abandoned by the operator
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{ apex_id = {{ workflow.input.apex_id }}; satisfied = $false; abandoned = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: preflight failed ───────────────────────────────────────────
+  - name: terminal_preflight_failed
+    type: script
+    description: Terminal — preflight validation failed and operator aborted
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{ apex_id = {{ workflow.input.apex_id }}; satisfied = $false; preflight_failed = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: $end

@@ -34,6 +34,9 @@ public sealed record PolicyLoadResult
 
     /// <summary>Resolved root-fallback policy (Phase 1 root-fallback-gate).</summary>
     public required PolicyRootFallbackSnapshot RootFallback { get; init; }
+
+    /// <summary>Resolved renegotiation bubble-up policy (Phase 7 apex-driver).</summary>
+    public required PolicyRenegotiationSnapshot Renegotiation { get; init; }
 }
 
 /// <summary>
@@ -89,5 +92,18 @@ public sealed record PolicyRootFallbackSnapshot
 {
     /// <summary>One of <c>prompt</c>, <c>use_active_item</c>, or <c>abort</c>
     /// (the <see cref="Polyphony.Policy.RootFallbackAutoDecide"/> constants).</summary>
+    public required string AutoDecide { get; init; }
+}
+
+/// <summary>
+/// Renegotiation bubble-up snapshot exposed via <c>policy load</c>.
+/// Captures the resolved <c>auto_decide</c> value the
+/// <c>apex-driver</c> workflow consumes when a child <c>plan-level</c>
+/// run returns <c>renegotiation_pending=true</c>.
+/// </summary>
+public sealed record PolicyRenegotiationSnapshot
+{
+    /// <summary>One of <c>prompt</c>, <c>auto_restart</c>, or <c>ignore</c>
+    /// (the <see cref="Polyphony.Policy.RenegotiationAutoDecide"/> constants).</summary>
     public required string AutoDecide { get; init; }
 }

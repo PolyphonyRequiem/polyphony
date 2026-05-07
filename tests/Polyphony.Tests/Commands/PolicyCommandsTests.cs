@@ -709,6 +709,128 @@ public sealed class PolicyCommandsTests : CommandTestBase
         output.ShouldNotContain("\"RootFallback\"");
         output.ShouldNotContain("\"AutoDecide\"");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // renegotiation (Phase 7 apex-driver)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Load_NoFile_AppliesRenegotiationDefaultPrompt()
+    {
+        using var fx = new PolicyFileFixture();
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.Renegotiation.ShouldNotBeNull();
+        result.Renegotiation.AutoDecide.ShouldBe("prompt");
+    }
+
+    [Theory]
+    [InlineData("prompt")]
+    [InlineData("auto_restart")]
+    [InlineData("ignore")]
+    public void Load_FileWithRenegotiation_PreservesAutoDecide(string autoDecide)
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy($$"""
+            schema_version: 1
+            renegotiation:
+              auto_decide: {{autoDecide}}
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.Renegotiation.AutoDecide.ShouldBe(autoDecide);
+    }
+
+    [Fact]
+    public void Load_BadRenegotiationAutoDecide_ReturnsConfigError()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            renegotiation:
+              auto_decide: vibes_only
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var doc = JsonDocument.Parse(output);
+        var err = doc.RootElement.GetProperty("error").GetString();
+        err.ShouldNotBeNull();
+        err.ShouldContain("vibes_only");
+        err.ShouldContain("renegotiation.auto_decide");
+    }
+
+    [Fact]
+    public void Validate_GoodRenegotiation_ReturnsValid()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            approvals:
+              defaults: { mode: warning, max_revision_cycles: 5 }
+            pr:
+              defaults: { mode: warning, max_fix_loops: 10, max_remediation_cycles: 3 }
+            renegotiation:
+              auto_decide: auto_restart
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeTrue();
+        result.Errors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Validate_BadRenegotiationAutoDecide_ReturnsErrorViaParse()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            renegotiation:
+              auto_decide: yolo
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeFalse();
+        result.Errors.Length.ShouldBeGreaterThan(0);
+        result.Errors.ShouldContain(e => e.Contains("yolo") || e.Contains("auto_decide"));
+    }
+
+    [Fact]
+    public void Load_Renegotiation_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        using var fx = new PolicyFileFixture();
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        // Note: Shouldly's `ShouldNotContain` is case-insensitive — we cannot assert
+        // the absence of a PascalCase variant when the snake_case form is itself a
+        // case-insensitive substring (no underscore to differentiate them). Positive
+        // assertion suffices: the JSON property must be the snake_case literal.
+        output.ShouldContain("\"renegotiation\"");
+        output.ShouldContain("\"auto_decide\"");
+    }
 }
 
 /// <summary>

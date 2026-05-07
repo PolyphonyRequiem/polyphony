@@ -39,4 +39,16 @@ workflows:
     description: "Root fallback gate — resolves a sub-workflow invoked without a root work-item id (Phase 1 shared sub-workflow)"
     path: workflows/root-fallback-gate.yaml
     versions: ["1.0.0"]
+  apex-driver:
+    description: "Apex SDLC driver — tree-walking dispatch over EdgeGraph waves with per-item worktree isolation, observable-state re-entry, and renegotiation handling (Phase 7 keystone)"
+    path: workflows/apex-driver.yaml
+    versions: ["1.0.0"]
+  apex-wave-dispatch:
+    description: "Per-wave inner sub-workflow invoked by apex-driver — for_each over wave items + integrate the wave (sub-workflow)"
+    path: workflows/apex-wave-dispatch.yaml
+    versions: ["1.0.0"]
+  apex-item-dispatch:
+    description: "Per-item innermost sub-workflow invoked by apex-wave-dispatch — classify lifecycle, spawn/teardown worktree, dispatch lifecycle (sub-workflow)"
+    path: workflows/apex-item-dispatch.yaml
+    versions: ["1.0.0"]
 

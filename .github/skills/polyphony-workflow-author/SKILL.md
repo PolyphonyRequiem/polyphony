@@ -178,6 +178,62 @@ by `polyphony policy validate`.
 
 ---
 
+## Apex driver (tree-walking dispatch)
+
+The Phase 7 keystone is `apex-driver.yaml` — the tree-walking SDLC
+orchestrator that ships with three companion deterministic dispatch
+helpers. When authoring or modifying anything in this area, the rules
+of this skill all apply, plus a few specifics:
+
+**Three-file split.** Conductor's `for_each` invokes one thing per
+iteration, so wave-handling and item-handling each need their own
+sub-workflow:
+
+- `apex-driver.yaml` — outer loop (`build_worklist` →
+  `wave_dispatch_loop` for_each → `apex_completion_gate`).
+- `apex-wave-dispatch.yaml` — per-wave fan-out (`dispatch_items`
+  for_each → `integrate_wave` script).
+- `apex-item-dispatch.yaml` — per-item pipeline (classify → spawn
+  worktree → lifecycle dispatch → teardown worktree).
+
+**Deterministic dispatch helpers.** The three companion scripts under
+`.conductor/registry/scripts/` follow the same routing-style envelope
+pattern as `route-actionable-executor.ps1` (always exit 0; surface
+failure via `error_code` / `error_message`):
+
+- `lifecycle-router.ps1` — wraps `polyphony state next-ready` and
+  classifies each item into `plan-level | actionable | implement-pg
+  | feature-pr | fast-path | monitoring | blocked | error`. The
+  workflow YAML reads `classify_lifecycle.output.route` and
+  dispatches; the YAML stays trivial because the classification
+  rules live in the script (testable, observable).
+- `worktree-manager.ps1` — spawns / tears down per-item git
+  worktrees idempotently. Spawn returns success when the worktree
+  already exists; teardown returns success when the path is already
+  gone. This idempotence is what makes re-entry safe.
+- `wave-integrator.ps1` — merges per-item branches into the apex
+  feature branch in topological order from `polyphony edges check`.
+  `--no-ff` by default. Captures conflicts per branch and continues
+  the wave; conflicts roll up to a wave-level human gate.
+
+**Pattern to copy.** When you need to route across N divergent
+downstream paths from a single inflection point, write a `route-X.ps1`
+that emits a `{route, ...}` envelope and let the YAML be a thin
+switch on `output.route`. Don't try to express the classification as
+Jinja conditions in route blocks — those don't unit-test.
+
+**Re-entry.** The dispatch loop variable is the worklist itself,
+recomputed via `polyphony worklist build` every iteration — never
+persist a "last completed item" pointer. After a gate or a restart,
+re-build the worklist; the EdgeGraph re-classifies what's still
+pending and the next wave is whatever's ready *now*.
+
+The full design rationale lives in
+`docs/decisions/apex-driver.md`; the keyword set lives in the
+`docs/glossary.md` "Apex driver" section.
+
+---
+
 ## Composing facet profiles
 
 The driver injects skills + MCPs onto an agent invocation by composing

@@ -1,0 +1,253 @@
+# apex-item-dispatch — Phase 7 innermost sub-workflow of apex-driver.
+#
+# Dispatches a single work item from a wave through:
+#
+#   1. lifecycle-router.ps1 — classify which lifecycle workflow this
+#      item belongs in (plan-level / actionable / implement-pg /
+#      feature-pr / fast-path) using `polyphony state next-ready`.
+#   2. worktree-manager.ps1 spawn — create a per-item worktree so the
+#      lifecycle dispatch can run in parallel with siblings without
+#      racing branch checkouts.
+#   3. Lifecycle dispatch (DEFERRED — see workflow header).
+#   4. worktree-manager.ps1 teardown — clean up the worktree.
+#
+# Per-item isolation is the thing that lets apex-wave-dispatch run with
+# max_concurrent: 3. Without per-item worktrees, three concurrent
+# lifecycle dispatches would race on the same working tree.
+#
+# DEFERRED (DO NOT add in this PR):
+#   * Lifecycle sub-workflow invocation (steps between spawn and
+#     teardown). The MVP exercises the classifier + worktree lifecycle
+#     end-to-end so the inner mechanics are battle-tested before
+#     real lifecycle dispatch is wired up. A follow-up PR adds:
+#       - plan-level invocation when lifecycle == 'plan-level'
+#       - actionable invocation when lifecycle == 'actionable'
+#       - implement-pg invocation when lifecycle == 'implement-pg'
+#       - feature-pr invocation when lifecycle == 'feature-pr'
+#       - polyphony state advance when lifecycle == 'fast-path'
+#
+# Conductor mechanics gotchas honored:
+#   M3  StrictUndefined `is defined` guards on every cross-leg output.
+#   M4  Explicit catch-all `to:` last on every routing block.
+#   M7  Booleans piped through `| string | lower`.
+
+workflow:
+  name: apex-item-dispatch
+  description: >-
+    Dispatches a single work item: classify lifecycle, spawn per-item
+    worktree, dispatch into lifecycle sub-workflow (DEFERRED in MVP),
+    tear down worktree. Inner sub-workflow of apex-wave-dispatch.
+  version: "1.0.0"
+  entry_point: classify_lifecycle
+  metadata:
+    min_polyphony_version: "1.0.1"
+
+  limits:
+    # Shallow workflow — classify, spawn, (lifecycle deferred), teardown.
+    max_iterations: 50
+
+  input:
+    apex_id:
+      type: number
+      required: true
+    work_item_id:
+      type: number
+      required: true
+    platform:
+      type: string
+      required: false
+      default: ado
+
+output:
+  work_item_id: "{{ workflow.input.work_item_id }}"
+  apex_id: "{{ workflow.input.apex_id }}"
+  lifecycle_workflow: >-
+    {%- if classify_lifecycle is defined -%}{{ classify_lifecycle.output.lifecycle_workflow }}
+    {%- else -%}error{%- endif -%}
+  dispatched: >-
+    {%- if terminal_dispatched is defined -%}true
+    {%- else -%}false{%- endif -%}
+  fast_pathed: >-
+    {%- if terminal_fast_path is defined -%}true
+    {%- else -%}false{%- endif -%}
+
+agents:
+  # ── Classify lifecycle ────────────────────────────────────────────────────
+  #
+  # Calls lifecycle-router.ps1 which wraps `polyphony state next-ready`
+  # and emits the classified `lifecycle_workflow` field. Routing-style
+  # envelope: errors surface via error_code and route to the failure leg.
+  - name: classify_lifecycle
+    type: script
+    description: Classify which lifecycle workflow this item belongs in
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/lifecycle-router.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-ApexId"
+      - "{{ workflow.input.apex_id }}"
+    routes:
+      - to: terminal_fast_path
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'fast-path' }}"
+      - to: terminal_monitoring
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'monitoring' }}"
+      - to: terminal_blocked
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'blocked' }}"
+      - to: terminal_classify_error
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'error' }}"
+      - to: spawn_worktree
+        when: "{{ classify_lifecycle.output.success | string | lower == 'true' }}"
+      # M4 catch-all
+      - to: terminal_classify_error
+
+  # ── Spawn worktree ───────────────────────────────────────────────────────
+  #
+  # Per-item worktree lets parallel sibling dispatches operate
+  # independently. worktree-manager.ps1 is idempotent on resume.
+  - name: spawn_worktree
+    type: script
+    description: Spawn a per-item git worktree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/worktree-manager.ps1"
+      - "-Operation"
+      - "spawn"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-BaseBranch"
+      - "feature/apex-{{ workflow.input.apex_id }}"
+    routes:
+      - to: lifecycle_dispatch_placeholder
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' }}"
+      - to: terminal_spawn_error
+      # M4 catch-all
+      - to: terminal_spawn_error
+
+  # ── Lifecycle dispatch placeholder ───────────────────────────────────────
+  #
+  # The lifecycle sub-workflow (plan-level / actionable / implement-pg /
+  # feature-pr) is invoked here in the follow-up PR. For the MVP we
+  # emit a deterministic envelope so the integration step still has a
+  # branch to consider and the workflow exercises the full
+  # classify → spawn → teardown lifecycle.
+  - name: lifecycle_dispatch_placeholder
+    type: script
+    description: Lifecycle dispatch placeholder (deferred — see workflow header)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        [ordered]@{
+          work_item_id = {{ workflow.input.work_item_id }};
+          lifecycle_workflow = '{{ classify_lifecycle.output.lifecycle_workflow }}';
+          dispatched = $false;
+          deferred = $true;
+          deferred_reason = 'apex-driver MVP — lifecycle invocation lands in a follow-up PR';
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: teardown_worktree
+
+  # ── Teardown worktree ────────────────────────────────────────────────────
+  #
+  # Always run, regardless of dispatch success/failure. Idempotent.
+  - name: teardown_worktree
+    type: script
+    description: Remove the per-item worktree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/worktree-manager.ps1"
+      - "-Operation"
+      - "teardown"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: terminal_dispatched
+
+  # ── Terminals ────────────────────────────────────────────────────────────
+  - name: terminal_dispatched
+    type: script
+    description: Terminal — item dispatched (or placeholder ran in MVP)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{ work_item_id = {{ workflow.input.work_item_id }}; dispatched = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: terminal_fast_path
+    type: script
+    description: Terminal — item is already satisfied or empty (fast-path)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{ work_item_id = {{ workflow.input.work_item_id }}; fast_pathed = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: terminal_monitoring
+    type: script
+    description: Terminal — item is in flight (monitoring); skip this wave
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{ work_item_id = {{ workflow.input.work_item_id }}; monitoring = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: terminal_blocked
+    type: script
+    description: Terminal — item has unmet prerequisites (blocked)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{ work_item_id = {{ workflow.input.work_item_id }}; blocked = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: terminal_classify_error
+    type: script
+    description: Terminal — lifecycle classification failed
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          error = 'lifecycle classification failed';
+          error_code = '{{ classify_lifecycle.output.error_code }}';
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: terminal_spawn_error
+    type: script
+    description: Terminal — worktree spawn failed
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          error = 'worktree spawn failed';
+          error_code = '{{ spawn_worktree.output.error_code }}';
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end

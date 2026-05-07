@@ -1,0 +1,206 @@
+# Apex Driver — Tree-Walking Dispatch with Per-Item Worktree Isolation
+
+> **Status:** Accepted. Phase 7 — apex-driver MVP.
+> **Driver:** Phase 7 needs an SDLC orchestrator that walks an apex
+> tree level by level, dispatches lifecycle work per item with
+> isolation, and re-enters cleanly after human gates or interruptions.
+> The deleted `polyphony-full.yaml` was a single-shot pipeline; the
+> apex-driver is a *driver* — it loops over EdgeGraph waves until the
+> apex root reports `satisfied` (or the loop is abandoned at a gate).
+> **Supersedes:** the deleted `polyphony-full.yaml`.
+
+## Context
+
+The apex tree is a typed forest of work items rooted at an "apex" — a
+root work item whose satisfaction defines completion of an SDLC unit.
+Each non-root item carries one or more facets (plannable, actionable,
+implementable). Facets become satisfied at different times and through
+different machinery, and items have ordering edges between them
+(`children_seeded → ...`, `action_satisfied → implementation_merged`,
+etc.) that the EdgeGraph computes into **waves** — sets of items that
+can be dispatched in parallel within a wave, with strict serialization
+between waves.
+
+The dispatch contract is:
+
+1. Build a worklist for the apex (`polyphony worklist build`).
+2. For each wave (in topological order):
+   - For each item in the wave (in parallel up to a cap):
+     - Classify what *kind* of dispatch the item needs *right now*
+       based on its observable state (`polyphony state next-ready`).
+     - Spawn an isolated worktree.
+     - Run the appropriate lifecycle workflow (plan-level / actionable
+       / implement-pg / feature-pr).
+     - Tear down the worktree.
+   - Integrate the wave (merge per-item branches into the apex feature
+     branch in topological order).
+3. Re-evaluate the worklist (waves can change as items satisfy or
+   renegotiation fires) and loop.
+4. When the apex root reports `satisfied` and the EdgeGraph reports
+   no remaining work, mark the apex satisfied and exit.
+
+Several open design questions had to be settled to ship this:
+
+- **Q1.** Does the dispatch loop live in *one* workflow or fan out to
+  sub-workflows?
+- **Q2.** How does per-item lifecycle classification happen — inside
+  the workflow YAML, or in a script step?
+- **Q3.** How is each item isolated from siblings dispatched in
+  parallel within the same wave?
+- **Q4.** How does the driver re-enter after a human gate, a
+  renegotiation, or an interrupted run?
+
+## Decision
+
+### Q1 — Three-file split, not one
+
+Conductor's `for_each` agent invokes exactly **one** thing per
+iteration. Per-wave handling needs to do *two* things — fan out to N
+item dispatches (for_each), then run the wave integrator (script).
+That requires more than one step per wave, so wave handling must live
+in a sub-workflow.
+
+The same logic recurses one level lower: per-item handling needs to
+classify, spawn a worktree, run a lifecycle workflow, tear down the
+worktree. That's also multiple steps, also a sub-workflow.
+
+We ship **three workflows**:
+
+- `apex-driver.yaml` — outer dispatch loop (`build_worklist` →
+  `wave_dispatch_loop` → `apex_completion_gate` → loop or close).
+- `apex-wave-dispatch.yaml` — per-wave fan-out (`dispatch_items`
+  for_each → `integrate_wave` script).
+- `apex-item-dispatch.yaml` — per-item pipeline (`classify_lifecycle`
+  → `spawn_worktree` → `lifecycle_dispatch` → `teardown_worktree`).
+
+### Q2 — Lifecycle classification is a script
+
+The classification rule set ("if the item's next-ready signal is
+`plan_authored`, route to plan-level; if it's `action_satisfied`,
+route to actionable; …") has to consult `polyphony state next-ready`
+output — a JSON envelope with a `status`, `kind`, `signal`, and a
+flag for whether the item is the apex root. That logic is too much
+for a Jinja expression, would explode the YAML route block, and
+would be untestable.
+
+We ship `lifecycle-router.ps1` — a deterministic classifier that
+wraps the `polyphony state next-ready` call, applies the priority
+rules (plan > action > impl with the action-before-impl rule per the
+implicit `action_satisfied → implementation_merged` edge), and emits
+a routing envelope (`route: plan-level | actionable | implement-pg |
+feature-pr | fast-path | monitoring | blocked | error`). The workflow
+just reads `classify_lifecycle.output.route` and dispatches.
+
+This pattern — *classification as deterministic script, dispatch as
+trivial YAML route* — is the same one used by
+`route-actionable-executor.ps1` for the actionable facet's
+polyphony-vs-human split. We get unit tests, observability via the
+JSON envelope, and a one-line YAML route block.
+
+### Q3 — Per-item git worktrees keyed by work-item id
+
+Each item dispatched in parallel within the same wave gets its own
+worktree at `<repo-parent>/<repo-name>-item-<work_item_id>` on a
+branch named `sdlc/apex/<work_item_id>`. Branches fork from the apex
+feature branch (`feature/apex-<apex_id>`), not from `main`, so the
+per-item branch already contains the integrated work of prior waves.
+
+`worktree-manager.ps1` handles spawn (`git worktree add -b …`) and
+teardown (`git worktree remove --force`) idempotently: spawning is a
+no-op when the worktree exists; teardown is a no-op when it doesn't.
+This is what makes re-entry safe.
+
+After each wave's items complete, `wave-integrator.ps1` merges the
+per-item branches into `feature/apex-<apex_id>` in **topological
+order** (read from `polyphony edges check`). Default merge strategy
+is `--no-ff` — every per-item merge produces an explicit merge
+commit, so the apex feature branch keeps an auditable record of
+which work item contributed which change. Conflicts are captured
+(files, branches involved), the merge is aborted (`git merge
+--abort`), and the wave continues; conflicts are reported up to a
+human gate (`wave_conflict_gate`).
+
+### Q4 — Observable-state re-entry
+
+The driver's loop variable is **the worklist itself** — recomputed
+on every iteration via `polyphony worklist build`. The driver does
+not carry a "step counter" or "last completed item" pointer. After a
+gate or restart, the driver re-builds the worklist, the EdgeGraph
+re-classifies what's still pending, and the next wave is whatever's
+ready *now*. Items already satisfied drop out of the worklist on
+their own.
+
+This is what the **renegotiation** policy hooks into: when a child
+plan-level invocation reports `renegotiation_pending: true` (a
+"bubble-up" signal), apex-driver consults `policy.renegotiation
+.auto_decide`. With `prompt`, it routes to the renegotiation human
+gate. With `auto_restart`, it restarts the dispatch loop without a
+gate. With `ignore`, it continues. In all three cases the next-loop
+worklist build picks up the (possibly mutated) tree state — no
+explicit "rewind" mechanism needed.
+
+## Classification rules (lifecycle-router.ps1)
+
+In priority order:
+
+| `polyphony state next-ready` | Route                |
+|------------------------------|----------------------|
+| status=satisfied or empty    | `fast-path`          |
+| status=monitoring            | `monitoring`         |
+| status=blocked               | `blocked`            |
+| status=error                 | `error`              |
+| dispatchable + plan_*        | `plan-level`         |
+| dispatchable + action_*      | `actionable`         |
+| dispatchable + impl_* + root | `feature-pr`         |
+| dispatchable + impl_* + ¬root| `implement-pg`       |
+
+Plan > action > impl handles multi-facet items (action evidence
+must land before implementation per the implicit edge
+`action_satisfied → implementation_merged`).
+
+## Integration discipline
+
+- One per-item branch per work item per apex run.
+- `--no-ff` by default (auditability over linear history).
+- Topological order from `polyphony edges check`; falls back to wave
+  input order when no explicit topological order is available
+  (the worklist already returns waves in topological order).
+- Conflicts abort the *single* merge, not the *wave*. The wave
+  continues; conflicts roll up to a wave-level human gate.
+- Branches that don't exist locally are recorded in a `skipped[]`
+  list (reason: `branch_not_found`) — happens when a per-item
+  dispatch routed to `fast-path` or `monitoring` and never created
+  a branch.
+
+## Deferred items
+
+The MVP wires the **dispatch skeleton** end-to-end: build worklist,
+loop over waves, classify each item, spawn worktree, tear down
+worktree, integrate wave, gate on conflicts, close on satisfaction.
+The actual *lifecycle dispatch* — invoking `plan-level.yaml`,
+`actionable.yaml`, `implement-pg.yaml`, `feature-pr.yaml` from inside
+`apex-item-dispatch.yaml` — is **deferred** to a follow-up PR, behind
+a `lifecycle_dispatch_placeholder` step. The MVP exercises the
+dispatch mechanics so the inner wiring is validated before the
+outer-loop semantics are tested with real lifecycle workflows.
+
+Plan-level **renegotiation bubble-up** is also deferred:
+`plan-level.yaml` does not yet declare a `renegotiation_pending`
+output. apex-driver consumes it optimistically with `is defined`
+guards (M3); when plan-level lands the bubble-up wiring,
+apex-driver does not need to change.
+
+## Forward references
+
+- `polyphony state next-ready` — observable-state classifier consumed
+  by `lifecycle-router.ps1`.
+- `polyphony worklist build` — wave generator consumed by
+  `apex-driver.yaml`.
+- `polyphony edges check` — topological order generator consumed by
+  `wave-integrator.ps1`.
+- `policy.renegotiation` — renegotiation policy block (introduced
+  alongside this driver in `.conductor/policy.yaml`).
+- ADR `scope-renegotiation.md` — broader renegotiation contract this
+  driver hooks into.
+- ADR `actionable-executor-split.md` — the prior application of the
+  "deterministic classifier script + trivial YAML route" pattern.

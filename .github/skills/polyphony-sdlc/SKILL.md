@@ -19,11 +19,17 @@ powered by the polyphony engine and the `conductor` orchestrator. Accepts
 requirement state drive every routing decision; no work item type names
 appear in any YAML routing condition.
 
-> **Apex orchestrator status.** The original apex SDLC entry workflow has
-> been retired; a replacement apex driver lands in a future PR. Until
-> then, polyphony has no top-level apex SDLC workflow — sub-workflows
-> in this library are invoked directly (or composed by a driver that
-> consumes the engine's wave dispatch).
+> **Apex driver status.** Phase 7 ships the apex-driver
+> (`apex-driver.yaml`) — the keystone tree-walking SDLC orchestrator
+> that builds a worklist for an apex tree, dispatches each wave's
+> items in parallel through `apex-wave-dispatch.yaml` →
+> `apex-item-dispatch.yaml`, integrates each wave by merging per-item
+> branches into the apex feature branch, and re-evaluates the
+> worklist until the apex root reports `satisfied`. See the
+> "Apex driver invocation" section below for the four-input contract.
+> The MVP wires the dispatch skeleton end-to-end with the actual
+> per-item lifecycle dispatch (plan-level / actionable / implement-pg
+> / feature-pr) deferred to a follow-up PR behind a placeholder step.
 
 ## Workflow Metadata
 
@@ -381,14 +387,41 @@ For full rationale and the three-layer truth model see
 4. The target repo has `.conductor/process-config.yaml` with type
    definitions, templates, and `polyphony validate-config` passes.
 
-### Apex Invocation (deferred)
+### Apex driver invocation
 
-End-to-end SDLC invocation requires an apex driver. The current apex
-driver has been retired and its replacement has not yet landed —
-**there is no top-level `conductor run` entry-point in this library
-right now**. Apex invocation patterns (worktree setup, `--input` shape,
-`-m` metadata) will be republished here once the new apex driver
-ships.
+The keystone entry-point is `apex-driver.yaml`. Inputs:
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `apex_id` | yes | Apex root work-item id (numeric). |
+| `intent` | yes | Free-text intent that explains *why* this apex run is happening — surfaces in close-out and gate prompts. |
+| `platform` | no | Optional override for the PR platform (defaults to whatever `implement-pg.yaml`'s `pr_platform_router` resolves). |
+
+Companion deterministic scripts (in `.conductor/registry/scripts/`):
+
+- `lifecycle-router.ps1` — wraps `polyphony state next-ready` to
+  classify each item into one of `plan-level | actionable |
+  implement-pg | feature-pr | fast-path | monitoring | blocked |
+  error`. Same envelope shape as `route-actionable-executor.ps1`.
+- `worktree-manager.ps1` — spawns/tears down per-item git worktrees
+  at `<repo-parent>/<repo-name>-item-<work_item_id>` on branch
+  `sdlc/apex/<work_item_id>` (forked from the apex feature branch).
+  Idempotent.
+- `wave-integrator.ps1` — merges per-item branches into the apex
+  feature branch in topological order from `polyphony edges check`.
+  `--no-ff` by default. Conflicts are captured per-branch and
+  surfaced to a wave-level human gate; the wave continues.
+
+Re-entry semantics: the dispatch loop variable is the worklist
+itself, recomputed every iteration via `polyphony worklist build`,
+so resuming after a human gate or interrupted run requires no
+persisted step pointer — the EdgeGraph re-classifies what's still
+pending and the next wave is whatever's ready *now*.
+
+Renegotiation: bubble-up signals (`renegotiation_pending: true` from
+inner sub-workflows) consult `policy.renegotiation.auto_decide`
+(`prompt` / `auto_restart` / `ignore`) — see `.conductor/policy.yaml`
+and ADR `docs/decisions/apex-driver.md` for full rationale.
 
 ### Direct Sub-Workflow Invocation
 
