@@ -1,0 +1,155 @@
+# apex-wave-dispatch — Phase 7 inner sub-workflow of apex-driver.
+#
+# One iteration of apex-driver's wave_dispatch_loop. Receives a single
+# wave (set of work items in topological order with no intra-wave
+# dependencies) and:
+#
+#   1. Fans the wave's items out across per-item worktrees (parallel,
+#      bounded by max_concurrent).
+#   2. For each item: classify lifecycle → spawn worktree → invoke the
+#      classified lifecycle sub-workflow → tear down worktree.
+#   3. Invokes wave-integrator.ps1 to merge completed branches back
+#      into the apex feature branch in topological order.
+#
+# Lifecycle dispatch is deferred for the MVP — see DEFERRED note below.
+# Wave integration happens unconditionally so partial-wave completions
+# still bring their merged branches forward.
+#
+# Invariants:
+#   Pre:  apex-driver has built the worklist + edge-checked + decided
+#         to dispatch this wave.
+#   Post: every item in the wave has either been dispatched into its
+#         lifecycle sub-workflow or recorded as failed in
+#         dispatch_items.errors. wave-integrator has been invoked.
+#
+# DEFERRED (DO NOT add in this PR):
+#   * Per-item lifecycle sub-workflow invocation. The MVP runs the
+#     deterministic lifecycle classifier per item but does NOT yet
+#     dispatch into plan-level / actionable / implement-pg / feature-pr.
+#     A follow-up PR wires the per-item dispatch once the lifecycle
+#     workflows accept the apex-driver's per-item input contract
+#     (work_item_id + apex_id + worktree_path).
+#   * Per-MG worktree serialization (currently per-item only).
+#
+# Conductor mechanics gotchas honored:
+#   M3  StrictUndefined `is defined` guards on all cross-leg outputs.
+#   M4  Catch-all `to:` last on every routing block.
+#   M7  Booleans piped through `| string | lower` in workflow output.
+#   M8  for_each `source:` is a BARE dotted path; errors via .errors.
+
+workflow:
+  name: apex-wave-dispatch
+  description: >-
+    One wave of the apex-driver dispatch loop. Per-item worktree fanout
+    + lifecycle classification (per-item dispatch deferred) + wave
+    integration via wave-integrator.ps1.
+  version: "1.0.0"
+  entry_point: dispatch_items
+  metadata:
+    min_polyphony_version: "1.0.1"
+
+  limits:
+    # Each wave can hold dozens of items; the for_each iteration count
+    # multiplies up. 200 covers waves of ~50 items with comfortable
+    # headroom for the surrounding orchestration.
+    max_iterations: 200
+
+  input:
+    apex_id:
+      type: number
+      required: true
+      description: >-
+        ADO work item id of the apex (run-root). Threaded into every
+        per-item dispatch and into the wave integrator.
+    wave_index:
+      type: number
+      required: true
+      description: 0-based wave index. Used for naming + integrator correlation.
+    wave_items:
+      type: string
+      required: true
+      description: >-
+        JSON-encoded array of work items in this wave. Each element is a
+        WorklistItem ({ item_id, parent_item_id, plan_status, ... }).
+        Encoded as a string because conductor's input_mapping flattens
+        nested arrays; the `dispatch_items` for_each parses this back.
+    platform:
+      type: string
+      required: false
+      default: ado
+
+tools:
+  - twig
+
+output:
+  wave_index: "{{ workflow.input.wave_index }}"
+  apex_id: "{{ workflow.input.apex_id }}"
+  integrated: >-
+    {%- if integrate_wave is defined -%}{{ integrate_wave.output.success | string | lower }}
+    {%- else -%}false{%- endif -%}
+
+agents:
+  # ── Dispatch items ────────────────────────────────────────────────────────
+  #
+  # Parallel per-item lifecycle classification + worktree spawn. Each
+  # iteration calls lifecycle-router.ps1 to determine which lifecycle
+  # workflow the item belongs in, then spawns a per-item worktree so
+  # the eventual lifecycle dispatch (DEFERRED — see workflow header)
+  # has an isolated checkout to operate on.
+  #
+  # max_concurrent: 3 mirrors policy.concurrency.max_concurrent_pgs and
+  # is the conservative MVP cap — runs comfortably under most ADO rate
+  # limits and saturates a typical developer workstation.
+  #
+  # failure_mode: continue_on_error so a single bad item doesn't stop
+  # the wave; the integrator step decides how to handle partial waves.
+  - name: dispatch_items
+    type: for_each
+    description: Per-item parallel classification + worktree spawn
+    # Bare dotted path per M8. wave_items is a JSON string; conductor
+    # parses it on iteration so the per-item template sees an object.
+    source: workflow.input.wave_items
+    as: item
+    max_concurrent: 3
+    failure_mode: continue_on_error
+    agent:
+      name: dispatch_one_item
+      type: workflow
+      workflow: ./apex-item-dispatch.yaml
+      input_mapping:
+        apex_id: "{{ workflow.input.apex_id }}"
+        work_item_id: "{{ item.item_id }}"
+        platform: "{{ workflow.input.platform }}"
+    routes:
+      - to: integrate_wave
+
+  # ── Integrate wave ────────────────────────────────────────────────────────
+  #
+  # After every item dispatch settles (success or failure), merge the
+  # completed child branches back into the apex feature branch in
+  # topological order. wave-integrator.ps1 reads the edge graph from
+  # `polyphony edges check` and orders merges so prerequisite items
+  # land before dependents.
+  #
+  # The script always exits 0 (routing-style); conflicts surface via
+  # the `conflicts[]` envelope field.
+  #
+  # Invariants:
+  #   Pre:  dispatch_items has run (failures captured in .errors).
+  #   Post: every successfully-dispatched item's branch is either in
+  #         integrate_wave.output.branches_integrated or has a row in
+  #         .skipped / .conflicts.
+  - name: integrate_wave
+    type: script
+    description: Merge completed child branches into the apex feature branch
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/wave-integrator.ps1"
+      - "-ApexId"
+      - "{{ workflow.input.apex_id }}"
+      - "-WaveIndex"
+      - "{{ workflow.input.wave_index }}"
+    routes:
+      - to: $end

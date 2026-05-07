@@ -41,6 +41,18 @@ public sealed class PolicyConfig
     /// <c>use_active_item</c> or <c>abort</c>.
     /// </summary>
     public RootFallbackPolicy? RootFallback { get; set; }
+
+    /// <summary>
+    /// Renegotiation bubble-up policy (Phase 7 apex-driver). Controls how
+    /// the <c>apex-driver</c> workflow handles a child <c>plan-level</c>
+    /// invocation that returns <c>renegotiation_pending=true</c>. Default
+    /// is <see cref="RenegotiationAutoDecide.Prompt"/> (surface a human
+    /// gate so the operator picks renegotiate / override / abort);
+    /// high-confidence workspaces can opt into <c>auto_restart</c>
+    /// (re-enter the parent's plan-level automatically) or <c>ignore</c>
+    /// (treat the child plan as accepted and continue).
+    /// </summary>
+    public RenegotiationPolicy? Renegotiation { get; set; }
 }
 
 /// <summary>
@@ -78,6 +90,46 @@ public static class RootFallbackAutoDecide
     /// <summary>True when <paramref name="value"/> is one of the canonical tokens.</summary>
     public static bool IsValid(string value) =>
         value is Prompt or UseActiveItem or Abort;
+}
+
+/// <summary>
+/// Renegotiation bubble-up policy. Drives apex-driver behavior when a
+/// child plan-level sub-workflow returns
+/// <c>renegotiation_pending=true</c> — i.e. the child planner is asking
+/// the parent to re-author its plan to accommodate the child.
+/// </summary>
+public sealed class RenegotiationPolicy
+{
+    /// <summary>
+    /// Auto-decide policy. One of the <see cref="RenegotiationAutoDecide"/>
+    /// constants. Null falls back to <see cref="RenegotiationAutoDecide.Prompt"/>
+    /// via <see cref="PolicyLoader.ApplyBuiltInDefaults"/>.
+    /// </summary>
+    public string? AutoDecide { get; set; }
+}
+
+/// <summary>
+/// Canonical string constants for <see cref="RenegotiationPolicy.AutoDecide"/>.
+/// Mirrors <see cref="RootFallbackAutoDecide"/>'s string-constant pattern
+/// so the YAML deserializer accepts the literal token verbatim.
+/// </summary>
+public static class RenegotiationAutoDecide
+{
+    /// <summary>Surface the renegotiation human gate (default).</summary>
+    public const string Prompt = "prompt";
+
+    /// <summary>Auto-resolve by re-entering the parent's plan-level workflow.
+    /// MVP: stub — the apex-driver workflow treats this identically to
+    /// <see cref="Prompt"/> until full bubble-up wiring lands.</summary>
+    public const string AutoRestart = "auto_restart";
+
+    /// <summary>Auto-resolve by ignoring the child's renegotiation request
+    /// and continuing as if the child plan were accepted.</summary>
+    public const string Ignore = "ignore";
+
+    /// <summary>True when <paramref name="value"/> is one of the canonical tokens.</summary>
+    public static bool IsValid(string value) =>
+        value is Prompt or AutoRestart or Ignore;
 }
 
 /// <summary>

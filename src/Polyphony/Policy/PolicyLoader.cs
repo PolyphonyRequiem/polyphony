@@ -25,12 +25,15 @@ namespace Polyphony.Policy;
 ///   <item><description>guidance.source = description_block</description></item>
 ///   <item><description>guidance.ado_field_name = null</description></item>
 ///   <item><description>root_fallback.auto_decide = prompt</description></item>
+///   <item><description>renegotiation.auto_decide = prompt</description></item>
 /// </list>
 ///
 /// Also enforces a load-time invariant: when <c>guidance.source</c> is
-/// <c>ado_field</c>, <c>guidance.ado_field_name</c> must be non-empty, and
+/// <c>ado_field</c>, <c>guidance.ado_field_name</c> must be non-empty,
 /// <c>root_fallback.auto_decide</c> must be one of <c>prompt</c>,
-/// <c>use_active_item</c>, or <c>abort</c> when set.
+/// <c>use_active_item</c>, or <c>abort</c> when set, and
+/// <c>renegotiation.auto_decide</c> must be one of <c>prompt</c>,
+/// <c>auto_restart</c>, or <c>ignore</c> when set.
 /// </summary>
 public static class PolicyLoader
 {
@@ -117,6 +120,11 @@ public static class PolicyLoader
         config.RootFallback.AutoDecide ??= RootFallbackAutoDecide.Prompt;
 
         ValidateRootFallback(config.RootFallback);
+
+        config.Renegotiation ??= new RenegotiationPolicy();
+        config.Renegotiation.AutoDecide ??= RenegotiationAutoDecide.Prompt;
+
+        ValidateRenegotiation(config.Renegotiation);
     }
 
     private static void ValidateGuidance(GuidancePolicy guidance)
@@ -161,5 +169,15 @@ public static class PolicyLoader
                 $"root_fallback.auto_decide '{value}' is not a known auto-decide policy. " +
                 $"Expected '{RootFallbackAutoDecide.Prompt}', '{RootFallbackAutoDecide.UseActiveItem}', " +
                 $"or '{RootFallbackAutoDecide.Abort}'.");
+    }
+
+    private static void ValidateRenegotiation(RenegotiationPolicy renegotiation)
+    {
+        var value = renegotiation.AutoDecide;
+        if (value is not null && !RenegotiationAutoDecide.IsValid(value))
+            throw new InvalidOperationException(
+                $"renegotiation.auto_decide '{value}' is not a known auto-decide policy. " +
+                $"Expected '{RenegotiationAutoDecide.Prompt}', '{RenegotiationAutoDecide.AutoRestart}', " +
+                $"or '{RenegotiationAutoDecide.Ignore}'.");
     }
 }

@@ -128,3 +128,21 @@ root_fallback:
   #                      loudly.
   auto_decide: prompt
 
+renegotiation:
+  # ACTIVE DEFAULTS: Surface the renegotiation human gate when a child
+  # plan-level sub-workflow returns `renegotiation_pending=true`. Consumed
+  # by the `.conductor/registry/workflows/apex-driver.yaml` workflow.
+  #
+  # Auto-decide policy (one of `prompt`, `auto_restart`, `ignore`):
+  #   prompt        — surface the renegotiation human gate (default).
+  #                   Operator picks renegotiate / override / abort.
+  #   auto_restart  — auto-resolve: re-enter the parent's plan-level
+  #                   workflow so the parent can re-author its plan to
+  #                   accommodate the child. MVP: stub — apex-driver
+  #                   currently treats this identically to `prompt`
+  #                   until the auto-restart loop ships in a follow-up.
+  #   ignore        — auto-resolve: treat the child plan as accepted and
+  #                   continue. Use this when child renegotiation
+  #                   requests are advisory rather than blocking.
+  auto_decide: prompt
+
