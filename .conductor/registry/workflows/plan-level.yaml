@@ -34,7 +34,7 @@ workflow:
     the architect's plan to a plan branch, opening a plan PR, surfacing
     LLM advisory + human approval via native PR review, then merging and
     seeding child work items.
-  version: "2.0.0"
+  version: "2.1.0"
   entry_point: depth_guard
   metadata:
     min_polyphony_version: "1.0.1"
@@ -71,6 +71,37 @@ workflow:
       required: false
       default: 6
       description: Maximum recursion depth before requiring human approval
+    # ── ADO platform inputs (v2.1) ──────────────────────────────────────
+    # These are optional for backwards compatibility — when omitted, the
+    # workflow runs the GitHub leg via `gh` + `polyphony pr open-plan-pr`
+    # exactly as before. When `platform: ado` is supplied, the open/poll/
+    # merge script agents are routed to their `*_ado` counterparts which
+    # consume the ADO REST API via `polyphony pr {open,poll-status,merge}-
+    # plan-ado` (verbs from #100 / #104). The plan_reviewer LLM is
+    # platform-aware: on github it posts directly via the `gh` tool; on
+    # ado it emits a structured comment body and a downstream
+    # `plan_reviewer_poster_ado` script posts via `polyphony pr
+    # post-comment-ado` (verb from PR-A of this pair).
+    platform:
+      type: string
+      required: false
+      default: github
+      description: "PR platform: 'github' (default) or 'ado'"
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: ADO organization name. Required when platform=ado; ignored on github.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: ADO project name. Required when platform=ado; ignored on github.
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: ADO repository identifier (GUID or name). Required when platform=ado; ignored on github.
 
 tools:
   - twig
@@ -339,7 +370,10 @@ agents:
         when: "{{ state_detector.output.state == 'merged_unseeded' }}"
       - to: closed_unmerged_gate
         when: "{{ state_detector.output.state == 'closed_unmerged' }}"
-      - to: poll_status
+      # v2.1: route through pr_poll_platform_router so awaiting_review
+      # re-entry can feed either poll_status (github) or
+      # poll_status_ado (ado).
+      - to: pr_poll_platform_router
         when: "{{ state_detector.output.state == 'awaiting_review' }}"
       - to: architect
         when: "{{ state_detector.output.state == 'stale_generation' }}"
@@ -716,7 +750,11 @@ agents:
     routes:
       - to: commit_and_push_error_gate
         when: "{{ commit_and_push.output.error is defined and commit_and_push.output.error }}"
-      - to: open_plan_pr
+      # v2.1: route through pr_open_platform_router so the same
+      # commit-and-push leg can feed either open_plan_pr (github) or
+      # open_plan_pr_ado (ado). On github (default) the router is a
+      # no-op fall-through.
+      - to: pr_open_platform_router
 
   # ── Commit and push error gate ────────────────────────────────────────
   - name: commit_and_push_error_gate
@@ -796,29 +834,40 @@ agents:
         value: abort
         route: $end
 
-  # ── Plan reviewer (LLM advisory) ───────────────────────────────────────
+  # ── Plan reviewer (LLM advisory — platform-aware) ─────────────────────
   #
-  # Single LLM reviewer per design doc Q2. Posts an advisory PR comment
-  # via `gh pr review --comment --body` and returns. Does NOT vote
-  # approve/changes_requested — option 2 from the P7-pre identity model
-  # decision: LLM is advisory, human approval is the gate.
+  # Single LLM reviewer per design doc Q2. Produces a critique using a
+  # rubric and either:
+  #   - github platform: posts directly via `gh pr review --comment --body`
+  #     (the LLM owns the post; same behavior as v2.0).
+  #   - ado platform: emits the rendered comment body via output.comment_body
+  #     and a downstream `plan_reviewer_poster_ado` script posts it via
+  #     `polyphony pr post-comment-ado` (no `polyphony` tool is registered
+  #     for LLM agents, so the post must be a separate script step).
   #
-  # Per Q5, the agent uses the gh tool directly; no aggregator script.
+  # Either way the LLM does NOT vote approve/changes_requested — option 2
+  # from the P7-pre identity model decision: LLM is advisory, human
+  # approval is the gate. The rubric, comment shape, and re-review
+  # semantics are identical across platforms.
   #
   # Invariants:
-  #   Pre:  open_plan_pr produced output.pr_url + output.pr_number.
-  #   Post: A comment is posted on the PR; output.posted == true.
+  #   Pre:  open_plan_pr (github) or open_plan_pr_ado (ado) produced
+  #         output.pr_url + output.pr_number.
+  #   Post: github → comment is posted on the PR; output.posted == true.
+  #         ado    → output.comment_body holds the markdown to be posted
+  #                  by plan_reviewer_poster_ado; output.posted == false
+  #                  (will flip to true after the poster script runs).
   - name: plan_reviewer
     type: agent
     model: claude-opus-4.7
-    description: Post a single advisory review comment on the plan PR (LLM does NOT vote)
+    description: Produce a single advisory plan review (post via gh on github; emit body for ado)
     tools:
       - gh
       - filesystem
     output:
       posted:
         type: boolean
-        description: Whether a comment was posted (true on success, false on skip/error)
+        description: Whether a comment was posted by THIS agent (true on github happy path; false on ado, where the downstream poster script is responsible)
       pr_number:
         type: number
         description: PR number that was reviewed
@@ -835,15 +884,45 @@ agents:
         description: Plan concerns (also included in the posted comment)
         items:
           type: string
+      comment_body:
+        type: string
+        description: |
+          The fully-rendered markdown comment ready to be posted. On ado
+          this is consumed by plan_reviewer_poster_ado. On github it is
+          informational (the LLM has already posted it via gh) but is
+          still emitted for log parity.
     prompt: |
       You are an advisory plan reviewer for an SDLC planning workflow.
 
       ## Your Mission
 
-      Read the plan and post **one** advisory comment on the plan PR using
-      `gh pr review {{ open_plan_pr.output.pr_number }} --comment --body "..."`.
-      You do NOT vote `--approve` or `--request-changes` — human review is the
-      gate. Your job is to give the human reviewer a useful starting point.
+      Read the plan and produce **one** advisory comment using the rubric
+      and shape below. You do NOT vote `--approve` or `--request-changes`
+      — human review is the gate. Your job is to give the human reviewer
+      a useful starting point.
+
+      {% if workflow.input.platform == 'ado' %}
+      **Platform: Azure DevOps.** You do NOT have a tool to post the
+      comment yourself. Render the comment body and emit it via
+      `output.comment_body` — a downstream script
+      (`plan_reviewer_poster_ado`) will post it via
+      `polyphony pr post-comment-ado`. Do NOT attempt to call `gh`; this
+      is an ADO PR and `gh` will fail.
+
+      Set `output.posted = false` (the poster script will record the real
+      post status when it runs).
+      {% else %}
+      **Platform: GitHub.** Post the comment directly using:
+
+      `gh pr review {{ open_plan_pr.output.pr_number }} --comment --body "..."`
+
+      Set `output.posted = true` after a successful post.
+
+      Do **not** post multiple comments. If you've already posted a review
+      on this PR (use `gh pr view {{ open_plan_pr.output.pr_number }}
+      --comments` to check), post a new comment that explicitly references
+      the prior one (e.g., "## Re-review (revision N)").
+      {% endif %}
 
       ## Context
 
@@ -851,8 +930,13 @@ agents:
       - **Type definition:** {{ type_loader.output.definition }}
       - **Decomposition guidance:** {{ type_loader.output.decomposition_guidance }}
       - **Plan template:** {{ type_loader.output.template }}
+      {% if workflow.input.platform == 'ado' -%}
+      - **PR URL:** {{ open_plan_pr_ado.output.pr_url }}
+      - **PR number:** {{ open_plan_pr_ado.output.pr_number }}
+      {% else -%}
       - **PR URL:** {{ open_plan_pr.output.pr_url }}
       - **PR number:** {{ open_plan_pr.output.pr_number }}
+      {%- endif %}
       - **Plan file path:** plans/plan-{{ workflow.input.work_item_id }}.md
 
       Read the plan from disk (the working tree is on the plan branch).
@@ -870,7 +954,7 @@ agents:
 
       ## Comment shape
 
-      Post a single comment with this structure (markdown):
+      The comment body must use this structure (markdown):
 
       ```
       ### 🤖 Polyphony plan reviewer (advisory)
@@ -890,11 +974,6 @@ agents:
       It does not vote — human review is the merge gate._
       ```
 
-      Do **not** post multiple comments. If you've already posted a review on
-      this PR (use `gh pr view {{ open_plan_pr.output.pr_number }} --comments`
-      to check), post a new comment that explicitly references the prior one
-      (e.g., "## Re-review (revision N)").
-
       {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
       ## Repo-Specific Guidance
 
@@ -903,17 +982,23 @@ agents:
 
       ## Output
 
-      After posting, return JSON:
+      Return JSON:
       ```json
       {
-        "posted": true,
-        "pr_number": {{ open_plan_pr.output.pr_number }},
+        "posted": {% if workflow.input.platform == 'ado' %}false{% else %}true{% endif %},
+        "pr_number": {% if workflow.input.platform == 'ado' %}{{ open_plan_pr_ado.output.pr_number }}{% else %}{{ open_plan_pr.output.pr_number }}{% endif %},
         "summary": "<one paragraph>",
         "strengths": ["..."],
-        "concerns": ["..."]
+        "concerns": ["..."],
+        "comment_body": "<full rendered markdown comment per the shape above>"
       }
       ```
     routes:
+      # On ADO platform, route to the poster script which actually posts
+      # the comment via `polyphony pr post-comment-ado`. On github the
+      # LLM already posted via the `gh` tool, so route straight to poll.
+      - to: plan_reviewer_poster_ado
+        when: "{{ workflow.input.platform == 'ado' }}"
       - to: poll_status
 
   # ── Poll status ───────────────────────────────────────────────────────
@@ -976,7 +1061,7 @@ agents:
     options:
       - label: "🔄 Retry"
         value: retry
-        route: poll_status
+        route: pr_poll_platform_router
       - label: "🛑 Abort"
         value: abort
         route: $end
@@ -1018,7 +1103,7 @@ agents:
       - "plan"
       - "extract-parent-patch"
       - "--pr-url"
-      - "{{ state_detector.output.parent_change_pending_children[0].pr_url if (state_detector.output.parent_change_pending_children is defined and state_detector.output.parent_change_pending_children|length > 0) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url) }}"
+      - "{{ state_detector.output.parent_change_pending_children[0].pr_url if (state_detector.output.parent_change_pending_children is defined and state_detector.output.parent_change_pending_children|length > 0) else (open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url)) }}"
       - "--root-id"
       - "{{ root_resolver.output.resolved_root_id }}"
       - "--parent-item-id"
@@ -1045,7 +1130,7 @@ agents:
       The plan PR is open and the polyphony plan_reviewer has posted an
       advisory comment. Human review is required before merging.
 
-      - **PR:** {{ open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url }}
+      - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url) }}
       - **Branch:** `{{ ensure_plan_branch.output.branch if ensure_plan_branch.output.branch is defined else state_detector.output.plan_branch }}`
 
       Review the PR on GitHub/ADO. Approve to proceed with merge + seeding,
@@ -1060,7 +1145,7 @@ agents:
     options:
       - label: "🔄 Continue"
         value: continue
-        route: poll_status
+        route: pr_poll_platform_router
       - label: "🛑 Abort"
         value: abort
         route: $end
@@ -1103,7 +1188,7 @@ agents:
       The architect has produced **{{ revise_counter.output.max_revisions }}**
       revisions but reviewers are still requesting changes.
 
-      - **PR:** {{ open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url }}
+      - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url) }}
 
       Decide what to do:
 
@@ -1116,7 +1201,7 @@ agents:
     options:
       - label: "🔄 Re-poll PR"
         value: repoll
-        route: poll_status
+        route: pr_poll_platform_router
       - label: "✏️ Force one more revision"
         value: force
         route: architect
@@ -1299,6 +1384,330 @@ agents:
         when: "{{ child_router.output.has_plannable_children == true }}"
       - to: $end
 
+  # ════════════════════════════════════════════════════════════════════════
+  # ADO leg (v2.1) — Phase 5 platform threading
+  # ════════════════════════════════════════════════════════════════════════
+  #
+  # The agents below mirror the github-leg flow (commit_and_push →
+  # open_plan_pr → plan_reviewer → poll_status → merge_plan_pr) for ADO.
+  # They are reached only when workflow.input.platform == 'ado' via the
+  # two platform routers (pr_open_platform_router for the open path,
+  # pr_poll_platform_router for the awaiting_review re-entry path).
+  #
+  # Inputs `organization`, `project`, `repository` are required when
+  # platform == 'ado'. The pr_inputs_missing_gate (shared by both
+  # routers) catches the misconfigured case before any verb is invoked.
+
+  # ── Platform router: open path ────────────────────────────────────────
+  #
+  # Reached from commit_and_push. Routes to open_plan_pr (github),
+  # open_plan_pr_ado (ado-ready), or pr_inputs_missing_gate (ado-but-
+  # missing-creds).
+  - name: pr_open_platform_router
+    type: script
+    description: Route plan-PR-open between github and ado legs based on workflow.input.platform.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $platform = "{{ workflow.input.platform }}"
+        $org = "{{ workflow.input.organization }}"
+        $project = "{{ workflow.input.project }}"
+        $repo = "{{ workflow.input.repository }}"
+        $adoReady = ($platform -eq 'ado') -and ($org -ne '') -and ($project -ne '') -and ($repo -ne '')
+        @{
+            platform = $platform
+            ado_ready = $adoReady
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: pr_inputs_missing_gate
+        when: "{{ workflow.input.platform == 'ado' and (workflow.input.organization == '' or workflow.input.project == '' or workflow.input.repository == '') }}"
+      - to: open_plan_pr_ado
+        when: "{{ workflow.input.platform == 'ado' }}"
+      - to: open_plan_pr
+
+  # ── Platform router: poll/re-entry path ───────────────────────────────
+  #
+  # Reached from state_detector when state == awaiting_review (i.e. PR
+  # already exists, we're polling for a verdict). Same triage as
+  # pr_open_platform_router.
+  - name: pr_poll_platform_router
+    type: script
+    description: Route plan-PR-poll between github and ado legs based on workflow.input.platform.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $platform = "{{ workflow.input.platform }}"
+        $org = "{{ workflow.input.organization }}"
+        $project = "{{ workflow.input.project }}"
+        $repo = "{{ workflow.input.repository }}"
+        $adoReady = ($platform -eq 'ado') -and ($org -ne '') -and ($project -ne '') -and ($repo -ne '')
+        @{
+            platform = $platform
+            ado_ready = $adoReady
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: pr_inputs_missing_gate
+        when: "{{ workflow.input.platform == 'ado' and (workflow.input.organization == '' or workflow.input.project == '' or workflow.input.repository == '') }}"
+      - to: poll_status_ado
+        when: "{{ workflow.input.platform == 'ado' }}"
+      - to: poll_status
+
+  # ── Shared gate: ADO connection inputs missing ────────────────────────
+  - name: pr_inputs_missing_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ ADO Connection Inputs Missing
+
+      Workflow was invoked with `platform: ado` but one or more of
+      `organization`, `project`, `repository` is empty. The ADO PR verbs
+      cannot be called without these.
+
+      **Got:**
+      - `organization`: `{{ workflow.input.organization }}`
+      - `project`: `{{ workflow.input.project }}`
+      - `repository`: `{{ workflow.input.repository }}`
+
+      Re-run polyphony-full with all three set, or pass `platform: github`.
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Open plan PR (ADO) ────────────────────────────────────────────────
+  #
+  # ADO analogue of open_plan_pr. Mirrors the same ancestor-snapshot
+  # contract — `polyphony pr open-plan-ado` is responsible for embedding
+  # the ancestor_plan_generations into the PR body so merge-plan-ado can
+  # detect stale_generation later.
+  - name: open_plan_pr_ado
+    type: script
+    description: Open (or reuse) the ADO plan PR with ancestor-generations snapshot.
+    command: polyphony
+    args:
+      - "pr"
+      - "open-plan-ado"
+      - "--root-id"
+      - "{{ root_resolver.output.resolved_root_id }}"
+      - "--item-id"
+      - "{{ workflow.input.work_item_id }}"
+      - "--parent-item-id"
+      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+      - "--ancestor-ids"
+      - "{{ ancestor_chain.output.ancestor_ids }}"
+    routes:
+      - to: open_plan_pr_ado_error_gate
+        when: "{{ open_plan_pr_ado.output.error is defined and open_plan_pr_ado.output.error }}"
+      - to: plan_reviewer
+
+  # ── Open plan PR (ADO) error gate ─────────────────────────────────────
+  - name: open_plan_pr_ado_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ ADO Plan PR Open Failed
+
+      Could not open (or reuse) the plan PR on Azure DevOps for work item
+      **{{ workflow.input.work_item_id }}**.
+
+      **Branch:** `{{ ensure_plan_branch.output.branch }}`
+      **Error:** {{ open_plan_pr_ado.output.error if open_plan_pr_ado.output.error is defined else "Unknown error" }}
+
+      Common causes: stale ancestor snapshot on an existing PR (operator
+      must abandon/recreate); ADO PAT missing or insufficient scope;
+      network timeout; repository identifier mismatch.
+
+      ---
+
+      Choose an action:
+      - **Abort** — cancel planning
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Plan reviewer poster (ADO) ────────────────────────────────────────
+  #
+  # Posts the comment body produced by plan_reviewer to the ADO PR via
+  # `polyphony pr post-comment-ado` (since the LLM has no `polyphony` tool
+  # registered for direct invocation). Routes straight to poll_status_ado.
+  #
+  # NOTE: poll_status_ado is the polling step on the ADO leg — even if
+  # the post fails (already-commented races, transient API failures), we
+  # still proceed to poll the PR. The poll surfaces the real PR state.
+  - name: plan_reviewer_poster_ado
+    type: script
+    description: Post the plan_reviewer's rendered comment to the ADO PR.
+    command: polyphony
+    args:
+      - "pr"
+      - "post-comment-ado"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
+      - "--pr-number"
+      - "{{ open_plan_pr_ado.output.pr_number }}"
+      - "--body"
+      - "{{ plan_reviewer.output.comment_body }}"
+    routes:
+      - to: poll_status_ado
+
+  # ── Poll status (ADO) ─────────────────────────────────────────────────
+  #
+  # ADO analogue of poll_status. Same 6-way routing — approved →
+  # extract_parent_patch (when requests_parent_change) or merge_plan_pr_ado;
+  # changes_requested → revise_counter; pending → pending_review_gate;
+  # merged → seeder; closed → closed_unmerged_gate; error → poll_error_gate
+  # (the github-leg gate is reused — the prompt is platform-agnostic
+  # enough that we don't need a separate ADO version yet).
+  - name: poll_status_ado
+    type: script
+    description: Single-shot poll of ADO plan PR review state (with metadata).
+    command: polyphony
+    args:
+      - "pr"
+      - "poll-status-ado"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-id"
+      - "{{ workflow.input.repository }}"
+      - "--pr-number"
+      - "{{ open_plan_pr_ado.output.pr_number if open_plan_pr_ado.output.pr_number is defined else state_detector.output.pr_number }}"
+      - "--include-metadata"
+    routes:
+      - to: poll_error_gate
+        when: "{{ poll_status_ado.output.error is defined and poll_status_ado.output.error }}"
+      - to: extract_parent_patch
+        when: "{{ poll_status_ado.output.state == 'approved' and poll_status_ado.output.metadata is defined and poll_status_ado.output.metadata is not none and poll_status_ado.output.metadata.requests_parent_change == true }}"
+      - to: merge_plan_pr_ado
+        when: "{{ poll_status_ado.output.state == 'approved' }}"
+      - to: revise_counter
+        when: "{{ poll_status_ado.output.state == 'changes_requested' }}"
+      - to: pending_review_gate
+        when: "{{ poll_status_ado.output.state == 'pending' }}"
+      - to: seeder
+        when: "{{ poll_status_ado.output.state == 'merged' }}"
+      - to: closed_unmerged_gate
+        when: "{{ poll_status_ado.output.state == 'closed' }}"
+      # Catch-all per M4
+      - to: poll_error_gate
+
+  # ── Merge plan PR (ADO) ───────────────────────────────────────────────
+  #
+  # ADO analogue of merge_plan_pr. Same atomic merge + manifest update
+  # contract; same stale_generation detection.
+  - name: merge_plan_pr_ado
+    type: script
+    description: Merge ADO plan PR + bump plan_generations in run manifest.
+    command: polyphony
+    args:
+      - "pr"
+      - "merge-plan-ado"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
+      - "--root-id"
+      - "{{ root_resolver.output.resolved_root_id }}"
+      - "--item-id"
+      - "{{ workflow.input.work_item_id }}"
+      - "--parent-item-id"
+      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+    routes:
+      # NOTE: stale_generation reuses stale_generation_gate. The gate's
+      # prompt references merge_plan_pr.output.* fields — those are
+      # undefined when we arrive via the ADO leg. The gate offers
+      # cascade_remedy_for_self → routes back to merge_plan_pr (github).
+      # On ADO we want to route back to merge_plan_pr_ado instead, so we
+      # use a dedicated gate.
+      - to: merge_plan_pr_ado_stale_gate
+        when: "{{ merge_plan_pr_ado.output.error_code is defined and merge_plan_pr_ado.output.error_code == 'stale_generation' }}"
+      - to: merge_plan_pr_ado_error_gate
+        when: "{{ merge_plan_pr_ado.output.error_code is defined and merge_plan_pr_ado.output.error_code != '' and merge_plan_pr_ado.output.error_code != 'stale_generation' }}"
+      - to: cascade_remedy
+
+  # ── Merge plan PR (ADO) stale-generation gate ─────────────────────────
+  - name: merge_plan_pr_ado_stale_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ This ADO Plan PR's Snapshot Is Stale At Merge
+
+      Plan PR for work item **{{ workflow.input.work_item_id }}** was
+      approved but its `ancestor_plan_generations` snapshot is behind the
+      current manifest:
+
+      - **Ancestor:** `{{ merge_plan_pr_ado.output.ancestor_key }}`
+      - **PR snapshot generation:** {{ merge_plan_pr_ado.output.snapshot_generation }}
+      - **Current manifest generation:** {{ merge_plan_pr_ado.output.current_generation }}
+
+      Run the cascade-remedy sub-workflow (which will auto-rebase or
+      recreate this PR), then retry the merge.
+
+      ---
+
+      Choose an action:
+      - **Run cascade-remedy** — invoke the cascade and re-attempt merge.
+      - **Acknowledge** — stop planning this branch (escalate to human).
+    options:
+      - label: "🔄 Run cascade-remedy + retry merge"
+        value: cascade
+        route: cascade_remedy_for_self_ado
+      - label: "✅ Acknowledge"
+        value: acknowledge
+        route: $end
+
+  # ── Cascade remedy (ADO self-trigger) ─────────────────────────────────
+  - name: cascade_remedy_for_self_ado
+    type: workflow
+    description: Cascade-remedy invoked because THIS ADO plan PR is the stale one at merge time.
+    workflow: ./cascade-remedy.yaml
+    input_mapping:
+      root_id: "{{ root_resolver.output.resolved_root_id }}"
+    routes:
+      - to: merge_plan_pr_ado
+
+  # ── Merge plan PR (ADO) error gate ────────────────────────────────────
+  - name: merge_plan_pr_ado_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ ADO Plan PR Merge Failed
+
+      Could not merge the plan PR for work item
+      **{{ workflow.input.work_item_id }}**.
+
+      **Error code:** `{{ merge_plan_pr_ado.output.error_code }}`
+
+      Common causes: lock acquisition failed (another run holds the
+      same-root lock); push conflict on manifest branch; ADO PAT auth;
+      stale head SHA; reviewer requirements not met.
+
+      ---
+
+      Choose an action:
+      - **Retry** — re-attempt the merge
+      - **Abort** — cancel planning
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: merge_plan_pr_ado
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
   # ── Plan children summary gate ───────────────────────────────────────────
   #
   # Fires only when one or more child planning sub-workflows failed.
@@ -1344,6 +1753,13 @@ for_each:
         work_item_id: "{{ child.id }}"
         depth: "{{ workflow.input.depth + 1 }}"
         max_depth: "{{ workflow.input.max_depth }}"
+        # v2.1: inherit platform threading so recursive child planning
+        # targets the same platform as the apex run. Defaults preserve
+        # github behavior when these inputs were never supplied.
+        platform: "{{ workflow.input.platform }}"
+        organization: "{{ workflow.input.organization }}"
+        project: "{{ workflow.input.project }}"
+        repository: "{{ workflow.input.repository }}"
     routes:
       - to: plan_children_summary_gate
         when: "{{ plan_children_group.errors | length > 0 }}"
