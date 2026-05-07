@@ -1042,6 +1042,78 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
+    // PR check-evidence-floor — JSON contract (Phase 6 PR #7)
+    // =========================================================================
+
+    [Fact]
+    public void CheckEvidenceFloorResult_RoundTrip_PreservesSnakeCaseAndOmitsNulls()
+    {
+        // Happy-path payload — all nullable error fields stay null and
+        // must be omitted from the wire JSON per the WhenWritingNull policy.
+        var passing = new PrCheckEvidenceFloorResult
+        {
+            Success = true,
+            PrNumber = 42,
+            CommitCount = 3,
+            BodyLength = 128,
+            PassesFloor = true,
+            Violations = Array.Empty<string>(),
+            ErrorCode = null,
+            ErrorMessage = null,
+        };
+
+        var json = JsonSerializer.Serialize(passing, PolyphonyJsonContext.Default.PrCheckEvidenceFloorResult);
+
+        json.ShouldContain("\"success\":true");
+        json.ShouldContain("\"pr_number\":42");
+        json.ShouldContain("\"commit_count\":3");
+        json.ShouldContain("\"body_length\":128");
+        json.ShouldContain("\"passes_floor\":true");
+        json.ShouldContain("\"violations\":[]");
+        json.ShouldNotContain("\"error_code\"");
+        json.ShouldNotContain("\"error_message\"");
+        AssertNoPascalCase(json, "PrNumber");
+        AssertNoPascalCase(json, "CommitCount");
+        AssertNoPascalCase(json, "BodyLength");
+        AssertNoPascalCase(json, "PassesFloor");
+        AssertNoPascalCase(json, "Violations");
+
+        // Round-trip back through the same source-generated context.
+        var rehydrated = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.PrCheckEvidenceFloorResult)!;
+        rehydrated.Success.ShouldBeTrue();
+        rehydrated.PrNumber.ShouldBe(42);
+        rehydrated.PassesFloor.ShouldBeTrue();
+        rehydrated.Violations.ShouldBeEmpty();
+        rehydrated.ErrorCode.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CheckEvidenceFloorResult_ViolationsAndErrors_SerializeWithStableShape()
+    {
+        // Sad path: both violations + an error envelope can co-exist on
+        // wire (in practice they're mutually exclusive, but the contract
+        // must serialize each cleanly so consumers can pattern-match).
+        var failed = new PrCheckEvidenceFloorResult
+        {
+            Success = false,
+            PrNumber = 9999,
+            CommitCount = 0,
+            BodyLength = 0,
+            PassesFloor = false,
+            Violations = new[] { "no_commits", "empty_body" },
+            ErrorCode = "pr_not_found",
+            ErrorMessage = "PR #9999 not found",
+        };
+
+        var json = JsonSerializer.Serialize(failed, PolyphonyJsonContext.Default.PrCheckEvidenceFloorResult);
+
+        json.ShouldContain("\"violations\":[\"no_commits\",\"empty_body\"]");
+        json.ShouldContain("\"error_code\":\"pr_not_found\"");
+        json.ShouldContain("\"error_message\":\"PR #9999 not found\"");
+        json.ShouldContain("\"passes_floor\":false");
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 

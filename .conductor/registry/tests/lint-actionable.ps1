@@ -9,11 +9,13 @@
     3. Required outputs: satisfied, executor, pr_url, pr_number,
        evidence_branch
     4. Required nodes (both legs): executor_router, ensure_evidence_branch,
-       actionable_agent, open_evidence_pr, evidence_reviewer,
-       revise_loop_gate, merge_evidence_pr, human_satisfaction_gate,
-       workflow_error_gate, workflow_completed, workflow_abandoned
+       actionable_agent, open_evidence_pr, evidence_floor_check,
+       floor_failed_gate, evidence_reviewer, revise_loop_gate,
+       merge_evidence_pr, human_satisfaction_gate, workflow_error_gate,
+       workflow_completed, workflow_abandoned
     5. Phase 6 evidence verbs are wired:
-       branch ensure-evidence-branch, pr open-evidence-pr
+       branch ensure-evidence-branch, pr open-evidence-pr,
+       pr check-evidence-floor
     6. actionable_agent + evidence_reviewer use opus models
     7. Routed agents declare an output: schema (M2)
     8. All route targets reference valid agent names or $end (M4)
@@ -21,6 +23,8 @@
        hardcoded in the YAML)
     10. Phase 6 deferred-wiring TODO markers are present so they
         cannot be silently dropped before the follow-up PRs land
+    11. Phase 6 PR #7 ships the floor — TODO(p6-pr7) marker MUST be
+        absent (its presence indicates the wiring was reverted)
     Exits 0 if clean, 1 if violations found.
 #>
 [CmdletBinding()]
@@ -101,6 +105,8 @@ $requiredNodes = @(
     'ensure_evidence_branch',
     'actionable_agent',
     'open_evidence_pr',
+    'evidence_floor_check',
+    'floor_failed_gate',
     'evidence_reviewer',
     'revise_loop_gate',
     'merge_evidence_pr',
@@ -121,7 +127,8 @@ foreach ($node in $requiredNodes) {
 # ── Check 6: Phase 6 evidence verbs are wired ────────────────────────────
 $evidenceVerbs = @(
     @{ Verb = 'branch ensure-evidence-branch'; Pattern = '"ensure-evidence-branch"' },
-    @{ Verb = 'pr open-evidence-pr';           Pattern = '"open-evidence-pr"' }
+    @{ Verb = 'pr open-evidence-pr';           Pattern = '"open-evidence-pr"' },
+    @{ Verb = 'pr check-evidence-floor';       Pattern = '"check-evidence-floor"' }
 )
 foreach ($entry in $evidenceVerbs) {
     if (-not $content.Contains($entry.Pattern)) {
@@ -217,7 +224,6 @@ foreach ($type in $forbiddenTypes) {
 # ── Check 11: Phase 6 deferred-wiring TODO markers present ───────────────
 $todoMarkers = @(
     @{ Marker = 'TODO(p6-pr5)'; Detail = 'facet-profile composition + per-item guidance (PR #5)' },
-    @{ Marker = 'TODO(p6-pr7)'; Detail = 'evidence floor check (PR #7)' },
     @{ Marker = 'TODO(p6-pr8)'; Detail = 'full evidence_reviewer rubric (PR #8)' }
 )
 foreach ($entry in $todoMarkers) {
@@ -225,6 +231,24 @@ foreach ($entry in $todoMarkers) {
         $violations += [PSCustomObject]@{
             Rule   = 'missing-deferred-wiring-todo'
             Detail = "Missing TODO marker '$($entry.Marker)' — $($entry.Detail). Removing the marker before the follow-up PR lands risks the wiring being silently dropped."
+        }
+    }
+}
+
+# ── Check 11b: Shipped TODOs must be ABSENT ──────────────────────────────
+# When a Phase 6 follow-up PR ships, the corresponding TODO marker must
+# be removed from the YAML — its presence indicates the wiring was
+# reverted or never fully landed. The companion node check above
+# enforces the positive side (the new node is present); this check
+# enforces the negative side (the placeholder marker is gone).
+$shippedTodos = @(
+    @{ Marker = 'TODO(p6-pr7)'; ShippedIn = 'PR #7 (evidence floor check)' }
+)
+foreach ($entry in $shippedTodos) {
+    if ($content.Contains($entry.Marker)) {
+        $violations += [PSCustomObject]@{
+            Rule   = 'shipped-todo-still-present'
+            Detail = "Marker '$($entry.Marker)' is still present but its wiring shipped in $($entry.ShippedIn). Remove the marker so the lint can stay accurate."
         }
     }
 }
@@ -247,5 +271,5 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: actionable.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, $($requiredNodes.Count) nodes, evidence verbs wired, deferred-wiring TODOs present)" -ForegroundColor Green
+Write-Host "PASS: actionable.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, $($requiredNodes.Count) nodes, evidence verbs wired, deferred-wiring TODOs present, shipped TODOs removed)" -ForegroundColor Green
 exit 0

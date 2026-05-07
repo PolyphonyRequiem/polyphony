@@ -120,6 +120,9 @@ Edges enter the dependency graph through three distinct sources. Each source has
 | **Evidence PR** | Promotes an actionable item's evidence into the feature branch. | `evidence/{r}-{i}` → `feature/{r}` |
 | **Feature PR** | Promotes the feature branch into `main`. The "ship it" PR. | `feature/{r}` → `main` |
 | **PR kind** | One of `impl_pr`, `mg_pr`, `plan_pr`, `evidence_pr`, `feature_pr`. The unit on which review/merge policy is configured. | — |
+| **Evidence floor** | The strict, mechanical pre-reviewer bar an evidence PR must clear before any LLM reviewer is invoked: ≥1 commit on the head branch beyond base AND a non-empty PR body (after whitespace trim). Implemented by `polyphony pr check-evidence-floor`. The floor exists to catch "agent crashed before producing anything" misfires; content quality remains the LLM reviewer's exclusive judgment. See **floor check**. |
+| **Floor check** | The actionable workflow node (`evidence_floor_check`) that runs the evidence floor verb between `open_evidence_pr` and `evidence_reviewer`. On violation, routes to `floor_failed_gate` (a human gate offering abort / retry / manual_complete) instead of asking the reviewer to judge an empty PR. |
+| **Mechanical floor** | Synonym for the evidence floor when contrasted with content judgment. Mechanical = "did the agent produce anything at all"; content judgment = "is what they produced any good". Two separable concerns; the floor handles the first deterministically, the LLM reviewer handles the second. |
 
 ## Reviewers, status, and merge policy
 
