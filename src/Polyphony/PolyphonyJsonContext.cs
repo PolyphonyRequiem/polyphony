@@ -68,6 +68,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(PrOpenMergeGroupResult))]
 [JsonSerializable(typeof(PrOpenMgAdoResult))]
 [JsonSerializable(typeof(PrOpenImplResult))]
+[JsonSerializable(typeof(PrOpenEvidenceResult))]
 [JsonSerializable(typeof(PrMergeImplResult))]
 [JsonSerializable(typeof(PrMergeMergeGroupResult))]
 [JsonSerializable(typeof(PrMergeMgAdoResult))]
