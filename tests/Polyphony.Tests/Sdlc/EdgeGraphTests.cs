@@ -242,4 +242,218 @@ public class EdgeGraphTests
             edge.RequiredDisposition.ShouldBe(Disposition.Satisfied);
         }
     }
+
+    // -------- PR #2: conflict detection ---------------------------------
+
+    private static CrossItemEdge Edge(int prereqId, int dependentId, string prereqKind = "k", string dependentKind = "k")
+        => new(
+            PrerequisiteItemId: prereqId,
+            PrerequisiteKind: prereqKind,
+            DependentItemId: dependentId,
+            DependentKind: dependentKind,
+            RequiredDisposition: Disposition.Satisfied,
+            Source: RequirementEdgeSource.Definitional);
+
+    [Fact]
+    public void Build_NoCycles_BaselineEmpty()
+    {
+        // Happy-path parent + child — definitional rules cannot induce
+        // a cycle, so the conflicts list stays empty.
+        var graph = EdgeGraph.Build([
+            Container(100, parentId: 0, "plannable"),
+            Item(200, parentId: 100, "implementable"),
+        ]);
+
+        graph.Conflicts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Build_SelfLoop_DetectsCycle()
+    {
+        var items = new[] { Item(100, parentId: 0, "implementable") };
+        var edges = new[] { Edge(100, 100) };
+
+        var graph = EdgeGraph.BuildFromEdges(items, edges);
+
+        graph.Conflicts.Count.ShouldBe(1);
+        graph.Conflicts[0].Kind.ShouldBe(EdgeConflictKind.Cycle);
+        graph.Conflicts[0].ContributingEdges.ShouldBe(edges);
+        graph.Conflicts[0].Description.ShouldBe("Cycle detected: 100 -> 100");
+    }
+
+    [Fact]
+    public void Build_TwoNodeCycle_Detects()
+    {
+        var items = new[]
+        {
+            Item(100, parentId: 0, "implementable"),
+            Item(200, parentId: 0, "implementable"),
+        };
+        var ab = Edge(100, 200);
+        var ba = Edge(200, 100);
+
+        var graph = EdgeGraph.BuildFromEdges(items, new[] { ab, ba });
+
+        graph.Conflicts.Count.ShouldBe(1);
+        graph.Conflicts[0].Kind.ShouldBe(EdgeConflictKind.Cycle);
+        graph.Conflicts[0].Description.ShouldBe("Cycle detected: 100 -> 200 -> 100");
+        graph.Conflicts[0].ContributingEdges.ShouldBe(new[] { ab, ba });
+    }
+
+    [Fact]
+    public void Build_ThreeNodeCycle_Detects()
+    {
+        var items = new[]
+        {
+            Item(100, parentId: 0, "implementable"),
+            Item(200, parentId: 0, "implementable"),
+            Item(300, parentId: 0, "implementable"),
+        };
+        var ab = Edge(100, 200);
+        var bc = Edge(200, 300);
+        var ca = Edge(300, 100);
+
+        var graph = EdgeGraph.BuildFromEdges(items, new[] { ab, bc, ca });
+
+        graph.Conflicts.Count.ShouldBe(1);
+        graph.Conflicts[0].Kind.ShouldBe(EdgeConflictKind.Cycle);
+        graph.Conflicts[0].Description.ShouldBe("Cycle detected: 100 -> 200 -> 300 -> 100");
+        graph.Conflicts[0].ContributingEdges.ShouldBe(new[] { ab, bc, ca });
+    }
+
+    [Fact]
+    public void Build_MultipleDisjointCycles_DetectsAll()
+    {
+        // A↔B and C↔D — two disjoint two-node cycles.
+        var items = new[]
+        {
+            Item(100, parentId: 0, "implementable"),
+            Item(200, parentId: 0, "implementable"),
+            Item(300, parentId: 0, "implementable"),
+            Item(400, parentId: 0, "implementable"),
+        };
+        var ab = Edge(100, 200);
+        var ba = Edge(200, 100);
+        var cd = Edge(300, 400);
+        var dc = Edge(400, 300);
+
+        var graph = EdgeGraph.BuildFromEdges(items, new[] { ab, ba, cd, dc });
+
+        graph.Conflicts.Count.ShouldBe(2);
+        graph.Conflicts.ShouldAllBe(c => c.Kind == EdgeConflictKind.Cycle);
+        graph.Conflicts[0].Description.ShouldBe("Cycle detected: 100 -> 200 -> 100");
+        graph.Conflicts[1].Description.ShouldBe("Cycle detected: 300 -> 400 -> 300");
+    }
+
+    [Fact]
+    public void Build_DAG_NoCycle()
+    {
+        // 4-item DAG: 100 → 200, 100 → 300, 200 → 400, 300 → 400.
+        var items = new[]
+        {
+            Item(100, parentId: 0, "implementable"),
+            Item(200, parentId: 0, "implementable"),
+            Item(300, parentId: 0, "implementable"),
+            Item(400, parentId: 0, "implementable"),
+        };
+        var edges = new[]
+        {
+            Edge(100, 200),
+            Edge(100, 300),
+            Edge(200, 400),
+            Edge(300, 400),
+        };
+
+        var graph = EdgeGraph.BuildFromEdges(items, edges);
+
+        graph.Conflicts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Build_UnknownPrerequisite_DetectsConflict()
+    {
+        var items = new[] { Item(100, parentId: 0, "implementable") };
+        var edge = Edge(prereqId: 999, dependentId: 100);
+
+        var graph = EdgeGraph.BuildFromEdges(items, new[] { edge });
+
+        graph.Conflicts.Count.ShouldBe(1);
+        graph.Conflicts[0].Kind.ShouldBe(EdgeConflictKind.UnknownItem);
+        graph.Conflicts[0].ContributingEdges.ShouldBe(new[] { edge });
+        graph.Conflicts[0].Description.ShouldBe("Edge references unknown item id 999");
+    }
+
+    [Fact]
+    public void Build_UnknownDependent_DetectsConflict()
+    {
+        var items = new[] { Item(100, parentId: 0, "implementable") };
+        var edge = Edge(prereqId: 100, dependentId: 999);
+
+        var graph = EdgeGraph.BuildFromEdges(items, new[] { edge });
+
+        graph.Conflicts.Count.ShouldBe(1);
+        graph.Conflicts[0].Kind.ShouldBe(EdgeConflictKind.UnknownItem);
+        graph.Conflicts[0].ContributingEdges.ShouldBe(new[] { edge });
+        graph.Conflicts[0].Description.ShouldBe("Edge references unknown item id 999");
+    }
+
+    [Fact]
+    public void Build_DeterministicConflictOrder()
+    {
+        // Mix of unknown-item and cycle conflicts — both passes must
+        // yield identical, reproducible ordering across calls.
+        var items = new[]
+        {
+            Item(100, parentId: 0, "implementable"),
+            Item(200, parentId: 0, "implementable"),
+            Item(300, parentId: 0, "implementable"),
+            Item(400, parentId: 0, "implementable"),
+        };
+        var edges = new[]
+        {
+            Edge(100, 200),
+            Edge(200, 100),       // cycle 100↔200
+            Edge(prereqId: 999, dependentId: 100),  // unknown prereq
+            Edge(300, 400),
+            Edge(400, 300),       // cycle 300↔400
+        };
+
+        var graph1 = EdgeGraph.BuildFromEdges(items, edges);
+        var graph2 = EdgeGraph.BuildFromEdges(items, edges);
+
+        graph1.Conflicts.Count.ShouldBe(graph2.Conflicts.Count);
+        for (var i = 0; i < graph1.Conflicts.Count; i++)
+        {
+            graph1.Conflicts[i].Kind.ShouldBe(graph2.Conflicts[i].Kind);
+            graph1.Conflicts[i].Description.ShouldBe(graph2.Conflicts[i].Description);
+            graph1.Conflicts[i].ContributingEdges.ShouldBe(graph2.Conflicts[i].ContributingEdges);
+        }
+
+        // Spot-check the documented order: unknown-item first, then
+        // cycles in smallest-id-first order.
+        graph1.Conflicts[0].Kind.ShouldBe(EdgeConflictKind.UnknownItem);
+        graph1.Conflicts[1].Kind.ShouldBe(EdgeConflictKind.Cycle);
+        graph1.Conflicts[1].Description.ShouldBe("Cycle detected: 100 -> 200 -> 100");
+        graph1.Conflicts[2].Kind.ShouldBe(EdgeConflictKind.Cycle);
+        graph1.Conflicts[2].Description.ShouldBe("Cycle detected: 300 -> 400 -> 300");
+    }
+
+    [Fact]
+    public void ToWaves_ThrowsWhenConflictsPresent()
+    {
+        var items = new[]
+        {
+            Item(100, parentId: 0, "implementable"),
+            Item(200, parentId: 0, "implementable"),
+        };
+        var graph = EdgeGraph.BuildFromEdges(items, new[]
+        {
+            Edge(100, 200),
+            Edge(200, 100),
+        });
+
+        graph.Conflicts.ShouldNotBeEmpty();
+        var ex = Should.Throw<InvalidOperationException>(() => graph.ToWaves());
+        ex.Message.ShouldContain("conflict");
+    }
 }
