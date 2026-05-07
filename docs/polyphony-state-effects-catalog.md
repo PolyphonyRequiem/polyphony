@@ -142,6 +142,22 @@ introduce new dependencies.
 - **Side effects**: none.
 - **Idempotent**: yes.
 
+### `polyphony plan load-type --work-item <N>`
+- **Purpose**: load type-specific planning context for a work item.
+- **Pre**: work item exists in ADO; `.conductor/work-item-types/`
+  configured for the project.
+- **Post**: emits `{type, definition, decomposition_guidance, template}`
+  on success; `{error}` envelope on failure (e.g. type definition
+  missing, work item not found).
+- **Side effects**: none.
+- **Idempotent**: yes.
+- **Field-name gotcha**: the success field is `type`, NOT `type_name`.
+  Bug #6 (dogfood apex #3043, 2026-05-07) had a workflow reference
+  `type_loader.output.type_name` — render returned the literal string
+  `type:` at lint time, then exploded with strict_undefined at
+  runtime. Pinned by lint check `open-questions-policy-bad-type-field`
+  in `lint-plan-level.ps1` as of this PR.
+
 ---
 
 ## Helper scripts
@@ -194,11 +210,25 @@ introduce new dependencies.
 ## Open questions / gaps
 
 - **`platform_project` drift validation** (manifest reuse): bootstrap
-  helper only validates `root_id` match, not `platform_project`. Filed
-  as follow-up issue.
+  helper only validates `root_id` match, not `platform_project`.
+  Tracked: [#166](https://github.com/PolyphonyRequiem/polyphony/issues/166).
 - **Topology-hash drift on resume**: branch-model.md ADR specifies the
   resume contract (same hash → resume; differing hash + materialized
-  branches → human gate) but no agent currently enforces this. Filed.
+  branches → human gate) but no agent currently enforces this.
+  Tracked: [#167](https://github.com/PolyphonyRequiem/polyphony/issues/167).
+- **CLI exits 0 on unrecognized args**: structural mitigation shipped
+  via the contract test suite in PR #159; the underlying CLI behavior
+  is tracked: [#165](https://github.com/PolyphonyRequiem/polyphony/issues/165).
+- **Jinja template field references go un-checked at lint time**: only
+  surface at runtime via `strict_undefined`. Bug #6 (dogfood apex
+  #3043, 2026-05-07) had `plan-level.yaml` reference
+  `type_loader.output.type_name` when `polyphony plan load-type` emits
+  `type` — slipped past `conductor validate` and PR #157's lint sweep,
+  exploded only when the `open_questions_policy` step actually
+  executed. Cross-checking template field references against verb
+  output schemas would catch this class statically — partially
+  addressable under [#163](https://github.com/PolyphonyRequiem/polyphony/issues/163)
+  (property-based testing) but really wants its own pass.
 - **Wave integration idempotency**: not yet exercised; document after
   first wave-integration smoke.
 - **`apex-wave-dispatch.yaml` and per-lifecycle sub-workflows**: not
@@ -208,9 +238,10 @@ introduce new dependencies.
 
 - Strategy 2 — runtime trace mode for polyphony CLI (per-verb
   side-effect events).
+  Tracked: [#162](https://github.com/PolyphonyRequiem/polyphony/issues/162).
 - Strategy 3 — property-based / state-machine workflow testing.
+  Tracked: [#163](https://github.com/PolyphonyRequiem/polyphony/issues/163).
 - Strategy 4 — formal concurrency model (for_each parallelism, MG
   isolation_scope, run-lock, cross-MG code-dep rebases,
   parent-plan-generation lock).
-
-See GH issues for tracking.
+  Tracked: [#164](https://github.com/PolyphonyRequiem/polyphony/issues/164).

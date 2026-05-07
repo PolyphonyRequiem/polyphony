@@ -585,7 +585,7 @@ agents:
       - "--domain"
       - "open_questions"
       - "--scope"
-      - "type:{{ type_loader.output.type_name }}"
+      - "type:{{ type_loader.output.type }}"
     routes:
       - to: open_questions_counter
 
