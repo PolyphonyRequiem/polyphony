@@ -14,15 +14,15 @@ workflows:
   feature-pr:
     description: "Feature PR lifecycle — review, fix loop, merge (sub-workflow)"
     path: workflows/feature-pr.yaml
-    versions: ["1.0.0", "1.0.1"]
+    versions: ["1.0.0", "1.0.1", "1.1.0", "1.2.0"]
   github-pr:
     description: "GitHub PR lifecycle — review, fix loop, merge (sub-workflow)"
     path: workflows/github-pr.yaml
     versions: ["1.0.0", "1.0.1"]
   ado-pr:
-    description: "ADO PR lifecycle stub — human gate for manual PR management (sub-workflow)"
+    description: "ADO PR lifecycle — poll, human gates, merge with stuck-review escalation (sub-workflow)"
     path: workflows/ado-pr.yaml
-    versions: ["1.0.0", "1.0.1"]
+    versions: ["1.0.0", "1.0.1", "2.0.0"]
   close-out:
     description: "Post-implementation close-out and observation filing (sub-workflow)"
     path: workflows/close-out.yaml
