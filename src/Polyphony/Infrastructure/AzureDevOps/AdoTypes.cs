@@ -588,3 +588,203 @@ public sealed class AdoCreateThreadResponseComment
 /// <param name="ThreadId">Thread ID assigned by ADO.</param>
 /// <param name="CommentId">ID of the (single) top-level comment created inside the thread.</param>
 public sealed record AdoCreateThreadResult(int ThreadId, int CommentId);
+
+// ───────────────────────────────────────────────────────────────────────────
+// List PR comment threads — wire-level + public projection.
+// Used by IAdoClient.ListPullRequestThreadsAsync, which the
+// `pr get-comments-ado` verb consumes to harvest review comment text.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Wire-level envelope for the ADO PR threads list response
+/// (<c>{ "count": N, "value": [...] }</c>). AOT-safe: registered in
+/// <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoThreadListResponse
+{
+    [JsonPropertyName("value")]
+    public AdoThreadRaw[]? Value { get; set; }
+}
+
+/// <summary>
+/// Wire-level shape of a single ADO PR comment thread. Only the fields
+/// consumed by <see cref="IAdoClient.ListPullRequestThreadsAsync"/> are
+/// modelled; ADO's response carries many more (identities, properties,
+/// pullRequestThreadContext.iterationContext) that we ignore today.
+/// </summary>
+public sealed class AdoThreadRaw
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    /// <summary>
+    /// ADO <c>CommentThreadStatus</c> enum value, returned as a string by
+    /// the GET endpoint (<c>active | pending | fixed | wontFix | closed |
+    /// byDesign | unknown</c>). Note ADO accepts an int on POST but only
+    /// returns the string form on GET.
+    /// </summary>
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+
+    [JsonPropertyName("isDeleted")]
+    public bool IsDeleted { get; set; }
+
+    [JsonPropertyName("publishedDate")]
+    public DateTime? PublishedDate { get; set; }
+
+    [JsonPropertyName("lastUpdatedDate")]
+    public DateTime? LastUpdatedDate { get; set; }
+
+    [JsonPropertyName("comments")]
+    public List<AdoCommentRaw>? Comments { get; set; }
+
+    [JsonPropertyName("threadContext")]
+    public AdoThreadContextRaw? ThreadContext { get; set; }
+}
+
+/// <summary>
+/// Wire-level shape of a single comment inside <see cref="AdoThreadRaw"/>.
+/// Only the fields consumed by <see cref="IAdoClient.ListPullRequestThreadsAsync"/>
+/// are modelled.
+/// </summary>
+public sealed class AdoCommentRaw
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("parentCommentId")]
+    public int ParentCommentId { get; set; }
+
+    [JsonPropertyName("author")]
+    public AdoCommentAuthor? Author { get; set; }
+
+    [JsonPropertyName("content")]
+    public string? Content { get; set; }
+
+    [JsonPropertyName("publishedDate")]
+    public DateTime? PublishedDate { get; set; }
+
+    [JsonPropertyName("lastUpdatedDate")]
+    public DateTime? LastUpdatedDate { get; set; }
+
+    /// <summary>
+    /// ADO <c>CommentType</c> enum value, returned as a string by the GET
+    /// endpoint (<c>text | codeChange | system | unknown</c>).
+    /// </summary>
+    [JsonPropertyName("commentType")]
+    public string? CommentType { get; set; }
+
+    [JsonPropertyName("isDeleted")]
+    public bool IsDeleted { get; set; }
+}
+
+/// <summary>
+/// Wire-level shape of <c>thread.author</c>. Different from
+/// <see cref="AdoIdentityRef"/> in that we want to fall back to the unique
+/// name (typically email) when the display name is missing — useful when
+/// the comment author is a service principal.
+/// </summary>
+public sealed class AdoCommentAuthor
+{
+    [JsonPropertyName("displayName")]
+    public string? DisplayName { get; set; }
+
+    [JsonPropertyName("uniqueName")]
+    public string? UniqueName { get; set; }
+}
+
+/// <summary>
+/// Wire-level shape of a thread's code anchor. Threads with no
+/// <c>threadContext</c> are top-level PR comments (no file/line position).
+/// We only consume <c>filePath</c> and the right-side line numbers; the
+/// left-side fields exist for callers that want to flag deletion-only
+/// comments but the verb does not use them today.
+/// </summary>
+public sealed class AdoThreadContextRaw
+{
+    [JsonPropertyName("filePath")]
+    public string? FilePath { get; set; }
+
+    [JsonPropertyName("rightFileStart")]
+    public AdoFilePositionRaw? RightFileStart { get; set; }
+
+    [JsonPropertyName("rightFileEnd")]
+    public AdoFilePositionRaw? RightFileEnd { get; set; }
+}
+
+/// <summary>
+/// Single line/offset position inside <see cref="AdoThreadContextRaw"/>.
+/// </summary>
+public sealed class AdoFilePositionRaw
+{
+    [JsonPropertyName("line")]
+    public int Line { get; set; }
+
+    [JsonPropertyName("offset")]
+    public int Offset { get; set; }
+}
+
+/// <summary>
+/// Public projection of an ADO PR comment thread returned by
+/// <see cref="IAdoClient.ListPullRequestThreadsAsync"/>. The verb consumes
+/// this and flattens it into the per-comment rows of
+/// <see cref="PrGetCommentsAdoResult.Comments"/>; tests assert on the
+/// projection shape (rather than the raw wire shape) so the contract is
+/// stable across ADO API revisions.
+///
+/// <para>The <c>isDeleted</c> threads and <c>system</c>/<c>isDeleted</c>
+/// comments are filtered out before this projection is composed — callers
+/// only see human-authored, non-tombstoned content.</para>
+/// </summary>
+public sealed record AdoPullRequestThread
+{
+    /// <summary>Thread ID assigned by ADO; unique within the PR.</summary>
+    public required int Id { get; init; }
+
+    /// <summary>
+    /// Thread status (lowercased ADO <c>CommentThreadStatus</c> name):
+    /// <c>active | pending | fixed | wontFix | closed | byDesign | unknown</c>.
+    /// </summary>
+    public required string Status { get; init; }
+
+    /// <summary>True when the thread's status is <c>fixed</c>, <c>wontFix</c>, <c>closed</c>, or <c>byDesign</c>.</summary>
+    public required bool IsResolved { get; init; }
+
+    /// <summary>File path the thread is anchored to; null for top-level PR comments.</summary>
+    public string? FilePath { get; init; }
+
+    /// <summary>1-based line on the right (post-change) side; null when the thread has no right-side anchor.</summary>
+    public int? Line { get; init; }
+
+    /// <summary>Comments inside the thread (oldest first), human-authored only.</summary>
+    public required IReadOnlyList<AdoPullRequestComment> Comments { get; init; }
+}
+
+/// <summary>
+/// Public projection of a single comment inside an ADO PR thread. Mirrors
+/// the per-comment fields the verb echoes into
+/// <see cref="AdoPrComment"/> after flattening.
+/// </summary>
+public sealed record AdoPullRequestComment
+{
+    /// <summary>Comment ID (unique within its parent thread).</summary>
+    public required int Id { get; init; }
+
+    /// <summary>Parent comment ID; <c>0</c> for the top-level comment in a thread.</summary>
+    public required int ParentCommentId { get; init; }
+
+    /// <summary>Author display name (falls back to unique name); empty when ADO surfaced neither.</summary>
+    public required string Author { get; init; }
+
+    /// <summary>Comment body (Markdown). Empty when ADO returned null content.</summary>
+    public required string Body { get; init; }
+
+    /// <summary>UTC timestamp the comment was first published.</summary>
+    public DateTime? PublishedAt { get; init; }
+
+    /// <summary>UTC timestamp of the most recent edit; equals <see cref="PublishedAt"/> when never edited.</summary>
+    public DateTime? LastUpdatedAt { get; init; }
+
+    /// <summary>Comment type (lowercased ADO <c>CommentType</c> name): typically <c>text</c>.</summary>
+    public required string CommentType { get; init; }
+}

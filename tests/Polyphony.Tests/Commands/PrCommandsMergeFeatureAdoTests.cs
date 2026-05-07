@@ -790,5 +790,10 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
             int pullRequestId, string commentBody,
             CancellationToken ct = default)
             => throw new NotImplementedException();
-    }
+    
+        public Task<IReadOnlyList<AdoPullRequestThread>?> ListPullRequestThreadsAsync(
+            string organization, string project, string repository,
+            int pullRequestId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+}
 }

@@ -85,10 +85,13 @@ work-item description. If that's too thin, it routes the operator
 toward triage rather than fabricating a remediation plan.
 
 This is deliberate. We chose to ship the parity with this gap
-documented rather than block on a sixth ADO verb. A follow-up
-(`pr get-comments-ado`) is tracked as a separate work item — once it
-lands, the planner's ADO branch can drop its "best-effort" framing and
-match the GitHub branch's fidelity.
+documented rather than block on a sixth ADO verb. The follow-up
+(`pr get-comments-ado`) **shipped** in a later PR — once workflow
+YAMLs (`feature-pr.yaml` remediation_planner, `plan-level.yaml`
+`plan_reviewer_poster_ado` area) are migrated to consume it, the
+planner's ADO branch can drop its "best-effort" framing and match
+the GitHub branch's fidelity. See
+`src/Polyphony/Commands/PrCommands.GetCommentsAdo.cs`.
 
 There is also no multi-reviewer vote aggregation yet on either
 platform — the planner reads the most recent reviewer's verdict. When
@@ -105,8 +108,11 @@ direct ADO analogue.
 
 ## Forward references
 
-- `pr get-comments-ado` (open) — close the comment-text gap noted
-  above.
+- `pr get-comments-ado` **shipped** —
+  `src/Polyphony/Commands/PrCommands.GetCommentsAdo.cs`. Workflow
+  migration to consume it (replacing the "best-effort" framing in
+  `feature-pr.yaml` remediation_planner and `plan-level.yaml`
+  `plan_reviewer_poster_ado` area) is the remaining follow-up.
 - Multi-reviewer vote aggregation (open) — applies to both platforms.
 - The dual-poster pattern is now used in three places: `plan-level.yaml`
   (`plan_reviewer_poster_ado`), `feature-pr.yaml`

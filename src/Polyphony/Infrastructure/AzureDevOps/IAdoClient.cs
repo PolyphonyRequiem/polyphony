@@ -282,4 +282,42 @@ public interface IAdoClient
         int pullRequestId,
         string commentBody,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Harvest the human-authored review comments from an Azure DevOps pull
+    /// request — the read-side counterpart to
+    /// <see cref="CreatePullRequestCommentThreadAsync"/>, and the closing
+    /// piece of ADO PR remediation parity tracked in
+    /// <c>docs/decisions/ado-feature-pr-parity.md</c>.
+    ///
+    /// <para>
+    /// Hits <c>GET /_apis/git/repositories/{repo}/pullRequests/{pr}/threads?api-version=7.1</c>.
+    /// The response is filtered before mapping to the public projection:
+    /// <list type="bullet">
+    ///   <item>Threads with <c>isDeleted == true</c> are dropped entirely.</item>
+    ///   <item>Comments with <c>isDeleted == true</c> are dropped from each
+    ///     thread.</item>
+    ///   <item>Comments with <c>commentType == "system"</c> (auto-generated
+    ///     "branch updated", "policy reset", …) are dropped — the verb
+    ///     surfaces only human-authored content.</item>
+    ///   <item>Threads whose surviving comments list is empty after the
+    ///     above filters are dropped.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para>
+    /// Returns the projected threads in ADO's response order; comments
+    /// inside each thread keep ADO's order (oldest first). Returns
+    /// <c>null</c> when the PR or repository does not exist (HTTP 404)
+    /// so the calling verb can emit <c>pr_not_found</c>. Throws on other
+    /// failures — see <see cref="ListPullRequestsAsync"/> for the failure
+    /// shape.
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<AdoPullRequestThread>?> ListPullRequestThreadsAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        CancellationToken ct = default);
 }

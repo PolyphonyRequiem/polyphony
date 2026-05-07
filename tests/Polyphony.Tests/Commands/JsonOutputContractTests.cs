@@ -1519,5 +1519,158 @@ public sealed class JsonOutputContractTests : CommandTestBase
         }
         return count;
     }
+
+    // =========================================================================
+    // PR get-comments-ado — JSON contract
+    // =========================================================================
+
+    [Fact]
+    public void PrGetCommentsAdoResult_RoundTrip_PreservesSnakeCaseAndOmitsNulls()
+    {
+        // Happy path: error fields stay null and must be omitted from the wire.
+        // Each per-comment row must serialise the full snake-case shape including
+        // the ADO-specific thread_status / comment_type / parent_comment_id fields.
+        var result = new PrGetCommentsAdoResult
+        {
+            PrNumber = 42,
+            RepoSlug = "myorg/myproj/myrepo",
+            PrUrl = "https://dev.azure.com/myorg/myproj/_git/myrepo/pullrequest/42",
+            Count = 1,
+            Comments = new[]
+            {
+                new AdoPrComment
+                {
+                    Id = 7,
+                    ThreadId = 101,
+                    ParentCommentId = 0,
+                    Author = "Reviewer A",
+                    Body = "Consider extracting this",
+                    FilePath = "/src/Foo.cs",
+                    Line = 12,
+                    PublishedAt = new DateTime(2024, 1, 1, 12, 0, 0, DateTimeKind.Utc),
+                    LastUpdatedAt = new DateTime(2024, 1, 2, 12, 0, 0, DateTimeKind.Utc),
+                    IsResolved = false,
+                    IsOutdated = false,
+                    ThreadStatus = "active",
+                    CommentType = "text",
+                },
+            },
+        };
+
+        var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PrGetCommentsAdoResult);
+
+        // Envelope fields — snake_case.
+        json.ShouldContain("\"pr_number\":42");
+        json.ShouldContain("\"repo_slug\":\"myorg/myproj/myrepo\"");
+        json.ShouldContain("\"pr_url\":");
+        json.ShouldContain("\"count\":1");
+        json.ShouldContain("\"comments\":[");
+        // Per-comment fields.
+        json.ShouldContain("\"thread_id\":101");
+        json.ShouldContain("\"parent_comment_id\":0");
+        json.ShouldContain("\"file_path\":\"/src/Foo.cs\"");
+        json.ShouldContain("\"line\":12");
+        json.ShouldContain("\"published_at\":");
+        json.ShouldContain("\"last_updated_at\":");
+        json.ShouldContain("\"is_resolved\":false");
+        json.ShouldContain("\"is_outdated\":false");
+        json.ShouldContain("\"thread_status\":\"active\"");
+        json.ShouldContain("\"comment_type\":\"text\"");
+
+        // Nullable error fields suppressed when null.
+        json.ShouldNotContain("\"error\"");
+        json.ShouldNotContain("\"error_code\"");
+
+        // No PascalCase leakage on any field.
+        AssertNoPascalCase(json, "PrNumber");
+        AssertNoPascalCase(json, "RepoSlug");
+        AssertNoPascalCase(json, "ThreadId");
+        AssertNoPascalCase(json, "ParentCommentId");
+        AssertNoPascalCase(json, "FilePath");
+        AssertNoPascalCase(json, "PublishedAt");
+        AssertNoPascalCase(json, "LastUpdatedAt");
+        AssertNoPascalCase(json, "IsResolved");
+        AssertNoPascalCase(json, "IsOutdated");
+        AssertNoPascalCase(json, "ThreadStatus");
+        AssertNoPascalCase(json, "CommentType");
+
+        // Round-trip.
+        var rehydrated = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.PrGetCommentsAdoResult)!;
+        rehydrated.PrNumber.ShouldBe(42);
+        rehydrated.Count.ShouldBe(1);
+        rehydrated.Comments.Count.ShouldBe(1);
+        rehydrated.Comments[0].Id.ShouldBe(7);
+        rehydrated.Comments[0].ThreadId.ShouldBe(101);
+        rehydrated.Comments[0].FilePath.ShouldBe("/src/Foo.cs");
+        rehydrated.Comments[0].Line.ShouldBe(12);
+        rehydrated.Comments[0].ThreadStatus.ShouldBe("active");
+        rehydrated.Comments[0].CommentType.ShouldBe("text");
+        rehydrated.Error.ShouldBeNull();
+        rehydrated.ErrorCode.ShouldBeNull();
+    }
+
+    [Fact]
+    public void PrGetCommentsAdoResult_ErrorEnvelope_ShipsErrorFields()
+    {
+        // Sad path — the error envelope must serialise both fields so callers
+        // can pattern-match on error_code without re-parsing the message.
+        var result = new PrGetCommentsAdoResult
+        {
+            PrNumber = 999,
+            RepoSlug = "o/p/r",
+            PrUrl = "https://dev.azure.com/o/p/_git/r/pullrequest/999",
+            Count = 0,
+            Comments = Array.Empty<AdoPrComment>(),
+            Error = "PR #999 not found in o/p/r",
+            ErrorCode = "pr_not_found",
+        };
+
+        var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PrGetCommentsAdoResult);
+
+        json.ShouldContain("\"count\":0");
+        json.ShouldContain("\"comments\":[]");
+        json.ShouldContain("\"error\":\"PR #999 not found in o/p/r\"");
+        json.ShouldContain("\"error_code\":\"pr_not_found\"");
+    }
+
+    [Fact]
+    public void PrGetCommentsAdoResult_OptionalFileLine_NullSuppressed()
+    {
+        // Top-level PR comments have no file/line — those nullable fields
+        // must be omitted, matching the WhenWritingNull policy.
+        var result = new PrGetCommentsAdoResult
+        {
+            PrNumber = 1,
+            RepoSlug = "o/p/r",
+            PrUrl = "https://dev.azure.com/o/p/_git/r/pullrequest/1",
+            Count = 1,
+            Comments = new[]
+            {
+                new AdoPrComment
+                {
+                    Id = 1,
+                    ThreadId = 1,
+                    ParentCommentId = 0,
+                    Author = "X",
+                    Body = "top-level",
+                    FilePath = null,
+                    Line = null,
+                    PublishedAt = null,
+                    LastUpdatedAt = null,
+                    IsResolved = false,
+                    IsOutdated = false,
+                    ThreadStatus = "active",
+                    CommentType = "text",
+                },
+            },
+        };
+
+        var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PrGetCommentsAdoResult);
+
+        json.ShouldNotContain("\"file_path\"");
+        json.ShouldNotContain("\"line\"");
+        json.ShouldNotContain("\"published_at\"");
+        json.ShouldNotContain("\"last_updated_at\"");
+    }
 }
 
