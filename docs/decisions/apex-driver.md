@@ -179,16 +179,76 @@ loop over waves, classify each item, spawn worktree, tear down
 worktree, integrate wave, gate on conflicts, close on satisfaction.
 The actual *lifecycle dispatch* — invoking `plan-level.yaml`,
 `actionable.yaml`, `implement-pg.yaml`, `feature-pr.yaml` from inside
-`apex-item-dispatch.yaml` — is **deferred** to a follow-up PR, behind
-a `lifecycle_dispatch_placeholder` step. The MVP exercises the
-dispatch mechanics so the inner wiring is validated before the
-outer-loop semantics are tested with real lifecycle workflows.
+`apex-item-dispatch.yaml` — was deferred to a follow-up PR, behind
+a `lifecycle_dispatch_placeholder` step. **The follow-up has now
+landed; see "Lifecycle dispatch wiring (Phase 7 follow-up)" below.**
 
-Plan-level **renegotiation bubble-up** is also deferred:
-`plan-level.yaml` does not yet declare a `renegotiation_pending`
-output. apex-driver consumes it optimistically with `is defined`
-guards (M3); when plan-level lands the bubble-up wiring,
-apex-driver does not need to change.
+## Lifecycle dispatch wiring (Phase 7 follow-up)
+
+The deferred lifecycle dispatch is now wired. The placeholder
+in `apex-item-dispatch.yaml` is replaced with four typed `workflow:`
+nodes — `plan_level_dispatch`, `actionable_dispatch`,
+`implement_pg_dispatch`, `feature_pr_dispatch` — each fanned to from
+`spawn_worktree` via a `when:` clause matching the lifecycle router's
+`route` field.
+
+**Pattern: branch-on-router-into-sub-workflow.** Conductor does not
+support templated `workflow:` paths. The canonical workaround,
+already proven by `feature-pr.yaml`'s platform router → `pr_lifecycle_github` /
+`pr_lifecycle_ado`, is to enumerate one `type: workflow` node per
+route value, each with explicit `input_mapping`, all converging on a
+common downstream node. apex-item-dispatch follows this pattern
+exactly: four lifecycle nodes (and three terminal nodes —
+`terminal_fast_path`, `terminal_monitoring`, `terminal_blocked`) all
+route to `teardown_worktree`.
+
+**Multi-facet sequencing is implicit, not explicit.** A previous
+design sketch (and the original task description) imagined a
+`facet_sequence: [plan-level, actionable, ...]` array carrying the
+ordered facets to dispatch within one item-dispatch invocation.
+We instead rely on the existing `polyphony state next-ready`
+contract: each `apex-item-dispatch` invocation handles ONE facet,
+and the next worklist rebuild picks up the next facet (if any) in
+its own wave. This keeps the apex-item-dispatch surface area small
+and avoids duplicating dispatch logic that already lives in the
+worklist builder. Trade-off: an item with three facets takes three
+trips through the dispatch loop instead of one — acceptable, since
+each trip is cheap and the worktree spawn/teardown already happens
+per facet anyway.
+
+**Renegotiation bubble-up is now wired end-to-end.**
+
+| Layer | Source | Carrier |
+|---|---|---|
+| Plan-level | `plan-level.yaml` output `renegotiation_pending` | (declared by plan-level; consumed optimistically with `is defined`) |
+| Per item | `apex-item-dispatch.yaml` output map | `plan_level_dispatch.output.renegotiation_pending` |
+| Per wave | `apex-wave-dispatch.yaml` `aggregate_renegotiation` script step | scans `dispatch_items.outputs` and emits `renegotiation_pending` + `renegotiation_items[]` |
+| Per apex | `apex-driver.yaml` `renegotiation_summary` script step | scans `wave_dispatch_loop.outputs` and emits `renegotiation_pending` + summary |
+| Gate | `apex-driver.yaml` `renegotiation_gate` (human_gate) | fires when `renegotiation_pending=true`; consults `policy.renegotiation.auto_decide` |
+
+`policy.renegotiation.auto_decide` is honored only for the default
+`prompt` mode. `auto_restart` and `ignore` are documented MVP stubs
+that currently fall through to `prompt`; full handling (loop
+restart vs continue) is deferred to a future PR.
+
+**implement-pg input mapping is the MVP shape.** `implement-pg.yaml`
+expects `pg_number`, `work_item_ids`, `branch_name`,
+`feature_branch`. apex-item-dispatch synthesizes these from
+`work_item_id` + `apex_id` (one item per "PG", branch name derived
+from apex+item IDs). Richer mappings — multi-item PGs,
+planner-declared branch names — require apex-driver to surface PG
+grouping and are deferred.
+
+**Still deferred after this PR:**
+- End-to-end test of the full dispatch loop with all four lifecycle
+  workflows live (smoke test only — no fixture suite).
+- `auto_restart` / `ignore` renegotiation policy modes (currently
+  treated as `prompt`).
+- Planner-declared executor for actionable items (currently relies
+  on `route-actionable-executor.ps1` heuristics inside
+  `actionable.yaml`).
+- Richer implement-pg input mapping (multi-item PGs,
+  planner-declared branch names).
 
 ## Forward references
 

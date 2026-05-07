@@ -11,7 +11,7 @@
 
     Plus the three companion scripts under .conductor/registry/scripts/.
 
-    Verifies seven structural requirement classes:
+    Verifies eight structural requirement classes:
 
       1. apex-driver.yaml has `name: apex-driver`, `entry_point:
          preflight_sync`, and the four-input contract (apex_id,
@@ -36,6 +36,21 @@
          guards on every cross-leg verb output reference (M3) and
          pipe booleans through `| string | lower` in their workflow
          output map (M7).
+
+      8. Per-item lifecycle dispatch wiring (the "real" — non-placeholder
+         — shape produced by the Phase 7 follow-up):
+           a. apex-item-dispatch declares all four named branches
+              (plan_level_dispatch, actionable_dispatch,
+              implement_pg_dispatch, feature_pr_dispatch).
+           b. apex-item-dispatch references all four lifecycle workflow
+              files via parent-relative paths.
+           c. The renegotiation bubble-up is wired end-to-end:
+              apex-item-dispatch.output references plan_level_dispatch's
+              renegotiation_pending; apex-wave-dispatch.output exposes a
+              wave-aggregated renegotiation_pending; apex-driver.output
+              exposes a top-level renegotiation_pending.
+         Skipped when apex-item-dispatch still carries the original
+         `lifecycle_dispatch_placeholder` step (MVP deferred shape).
 
     Exits 0 if clean, 1 if violations are found.
 #>
@@ -209,6 +224,67 @@ if ($apexContent -notmatch 'is defined') {
 }
 if ($apexContent -notmatch '\|\s*string\s*\|\s*lower') {
     Add-Violation 'missing-bool-coercion' "apex-driver.yaml: boolean output fields must be piped through '| string | lower' (M7)"
+}
+
+# ── Check 8: per-item lifecycle dispatch wiring (non-placeholder shape) ───
+#
+# When apex-item-dispatch.yaml has been migrated off the deferred
+# placeholder, assert that:
+#   a. all four lifecycle dispatch nodes are present by name,
+#   b. all four lifecycle YAML files are referenced via parent-relative
+#      `workflow:` paths,
+#   c. apex-item-dispatch.output bubbles up renegotiation_pending from
+#      plan_level_dispatch, and
+#   d. apex-wave-dispatch.output + apex-driver.output expose a
+#      renegotiation_pending field (wave aggregation + apex-level rollup).
+#
+# Skipped automatically when the placeholder is still present so the
+# MVP synthetic baseline tests (which use the placeholder shape) pass
+# unchanged.
+if (Test-Path $itemYaml) {
+    $itemContentForDispatch = Get-Content $itemYaml -Raw
+    $stillHasPlaceholder = $itemContentForDispatch -match 'lifecycle_dispatch_placeholder'
+
+    if (-not $stillHasPlaceholder) {
+        $expectedDispatchNodes = @(
+            'plan_level_dispatch',
+            'actionable_dispatch',
+            'implement_pg_dispatch',
+            'feature_pr_dispatch'
+        )
+        foreach ($n in $expectedDispatchNodes) {
+            if ($itemContentForDispatch -notmatch "(?m)^\s*-\s+name:\s*$n\s*$") {
+                Add-Violation 'missing-lifecycle-branch' "apex-item-dispatch.yaml: lifecycle dispatch node '$n' not declared. Branch-on-router shape requires one named node per lifecycle (plan_level_dispatch / actionable_dispatch / implement_pg_dispatch / feature_pr_dispatch)."
+            }
+        }
+
+        $expectedLifecycleRefs = @(
+            './plan-level.yaml',
+            './actionable.yaml',
+            './implement-pg.yaml',
+            './feature-pr.yaml'
+        )
+        foreach ($r in $expectedLifecycleRefs) {
+            if (-not $itemContentForDispatch.Contains($r)) {
+                Add-Violation 'missing-lifecycle-workflow-ref' "apex-item-dispatch.yaml: lifecycle workflow '$r' is not referenced via a parent-relative workflow path."
+            }
+        }
+
+        if ($itemContentForDispatch -notmatch 'plan_level_dispatch\.output\.renegotiation_pending') {
+            Add-Violation 'missing-renegotiation-bubble-up' "apex-item-dispatch.yaml: output map must reference 'plan_level_dispatch.output.renegotiation_pending' to bubble up the PR #144 renegotiation signal."
+        }
+
+        if (Test-Path $waveYaml) {
+            $waveContentForReneg = Get-Content $waveYaml -Raw
+            if ($waveContentForReneg -notmatch '(?m)^\s+renegotiation_pending:\s*') {
+                Add-Violation 'missing-renegotiation-bubble-up' "apex-wave-dispatch.yaml: output map must declare a 'renegotiation_pending' field aggregated across the wave's items."
+            }
+        }
+
+        if ($apexContent -notmatch '(?m)^\s+renegotiation_pending:\s*') {
+            Add-Violation 'missing-renegotiation-bubble-up' "apex-driver.yaml: output map must declare a 'renegotiation_pending' field rolled up across the wave dispatch loop."
+        }
+    }
 }
 
 # ── Report ────────────────────────────────────────────────────────────────

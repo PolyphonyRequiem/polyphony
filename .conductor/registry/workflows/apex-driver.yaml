@@ -38,17 +38,24 @@
 #
 #   Q3 — Renegotiation bubble-up is gated by `renegotiation.auto_decide`
 #        in `.conductor/policy.yaml`:
-#          - `prompt`       — surface the renegotiation human gate.
+#          - `prompt`       — surface the renegotiation human gate
+#                             (default — `renegotiation_gate` below).
 #          - `auto_restart` — re-enter the parent's plan-level workflow
 #                             so the parent can re-author. MVP STUB:
 #                             treated identically to `prompt` until the
 #                             auto-restart loop ships in a follow-up.
 #          - `ignore`       — treat the child plan as accepted; continue.
-#        plan-level.yaml does NOT yet emit `renegotiation_pending`
-#        (PR #141 shipped the verbs but not the workflow wiring); the
-#        bubble-up reference here is therefore optimistic and guarded
-#        with `is defined`. When the wiring lands, this workflow does
-#        not need to change.
+#                             MVP STUB: not yet wired (would require a
+#                             policy reader step to short-circuit the
+#                             gate to `override`).
+#        plan-level.yaml DOES emit the four bubble-up outputs as of
+#        PR #144 (`renegotiation_pending`, `renegotiation_request`,
+#        `validate_scope_verdict`, `scope_violation_files`). The
+#        bubble-up is now wired end-to-end:
+#           plan-level → apex-item-dispatch.output.renegotiation_pending
+#           apex-item-dispatch → apex-wave-dispatch.aggregate_renegotiation
+#           apex-wave-dispatch → apex-driver.renegotiation_summary
+#           apex-driver.renegotiation_summary → renegotiation_gate.
 #
 #   Q4 — Resume is pure observable-state re-entry. `intent: resume`
 #        re-runs `worklist build` + `edges check` and lets the
@@ -89,7 +96,7 @@ workflow:
     in topological wave order, with per-item worktree isolation and
     edge-correct wave integration. Replaces the deleted
     polyphony-full.yaml.
-  version: "1.0.0"
+  version: "1.1.0"
   entry_point: preflight_sync
   metadata:
     min_polyphony_version: "1.0.1"
@@ -128,6 +135,25 @@ workflow:
       description: >-
         Work-item source platform. Threaded through to lifecycle
         sub-workflows verbatim; apex-driver itself is platform-agnostic.
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO organization name. Required by feature-pr / plan-level on
+        the ADO leg (platform=ado); ignored on github. Threaded through
+        the wave/item dispatch fan-out so per-item lifecycles see it
+        without each caller having to special-case.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: ADO project name (see `organization`).
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: ADO repository identifier (GUID or name) (see `organization`).
 
 tools:
   - twig
@@ -146,6 +172,9 @@ output:
     {%- else -%}false{%- endif -%}
   preflight_failed: >-
     {%- if terminal_preflight_failed is defined -%}true
+    {%- else -%}false{%- endif -%}
+  renegotiation_pending: >-
+    {%- if renegotiation_summary is defined -%}{{ (renegotiation_summary.output.any_pending | default(false)) | string | lower }}
     {%- else -%}false{%- endif -%}
 
 agents:
@@ -387,6 +416,9 @@ agents:
         wave_index: "{{ wave.wave_index }}"
         wave_items: "{{ wave.items | tojson }}"
         platform: "{{ workflow.input.platform }}"
+        organization: "{{ workflow.input.organization }}"
+        project: "{{ workflow.input.project }}"
+        repository: "{{ workflow.input.repository }}"
     routes:
       - to: wave_loop_summary
 
@@ -412,11 +444,129 @@ agents:
           all_succeeded = ($failed -eq 0);
         } | ConvertTo-Json -Compress
     routes:
-      - to: apex_completion_gate
+      - to: renegotiation_summary
         when: "{{ wave_loop_summary.output.all_succeeded | string | lower == 'true' }}"
       - to: wave_failed_gate
       # M4 catch-all
       - to: wave_failed_gate
+
+  # ── Renegotiation summary ────────────────────────────────────────────────
+  #
+  # Aggregates `renegotiation_pending` across the wave dispatch loop's
+  # outputs. Each wave's apex-wave-dispatch.output.renegotiation_pending
+  # is a "true" | "false" string (per M7). When ANY wave bubbled up
+  # `true`, route to `renegotiation_gate`; otherwise straight on to
+  # `apex_completion_gate`.
+  #
+  # Per M8 there is no `output:` on the for_each group; per-wave outputs
+  # live under `wave_dispatch_loop.outputs.<key>`. We `tojson` the
+  # outputs dict and parse it inside pwsh — same pattern as
+  # apex-wave-dispatch's `aggregate_renegotiation` step.
+  - name: renegotiation_summary
+    type: script
+    description: Aggregate renegotiation_pending across the wave dispatch loop
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $raw = @'
+        {{ wave_dispatch_loop.outputs | tojson }}
+        '@;
+        $items = @();
+        $any = $false;
+        try {
+          $parsed = $raw | ConvertFrom-Json;
+          $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
+                    else { $parsed.PSObject.Properties.Value };
+          foreach ($v in $values) {
+            if ($null -eq $v) { continue }
+            $pending = $false;
+            if ($v.PSObject.Properties.Name -contains 'renegotiation_pending') {
+              $val = "$($v.renegotiation_pending)".ToLowerInvariant();
+              $pending = ($val -eq 'true');
+            }
+            if ($pending) {
+              $any = $true;
+              $items += [ordered]@{
+                wave_index = $v.wave_index;
+                renegotiation_items = $v.renegotiation_items;
+              };
+            }
+          }
+        } catch {
+          $any = $false;
+          $items = @();
+        }
+        [ordered]@{
+          any_pending = $any;
+          waves = ($items | ConvertTo-Json -Compress -Depth 6);
+          wave_count = $items.Count;
+        } | ConvertTo-Json -Compress -Depth 6
+    routes:
+      - to: renegotiation_gate
+        when: "{{ renegotiation_summary.output.any_pending | string | lower == 'true' }}"
+      - to: apex_completion_gate
+      # M4 catch-all
+      - to: apex_completion_gate
+
+  # ── Renegotiation gate ───────────────────────────────────────────────────
+  #
+  # Q3 design pick — surfaces a renegotiation request that bubbled up
+  # from a child plan-level invocation (PR #144). Operator picks:
+  #   - renegotiate: route back to build_worklist so the next loop
+  #     pass picks up the (presumably mutated) tree.
+  #   - override: ignore the renegotiation request and proceed to
+  #     apex completion as if the child plan was accepted.
+  #   - abort: halt the workflow with apex_satisfied=false.
+  #
+  # `policy.renegotiation.auto_decide` defaults to `prompt` (this gate
+  # fires); `auto_restart` is a stub treated identically to `prompt`
+  # until the auto-restart loop ships in a follow-up; `ignore` would
+  # short-circuit to `override` but is not yet wired (would require a
+  # policy reader step).
+  - name: renegotiation_gate
+    type: human_gate
+    description: Child plan-level invocation requested renegotiation — operator decides
+    prompt: |
+      ## 📝 Renegotiation requested
+
+      One or more child planner invocations under apex
+      **#{{ workflow.input.apex_id }}** completed but flagged that the
+      assigned scope is unworkable as-is. Per
+      `.conductor/policy.yaml > renegotiation.auto_decide` (default
+      `prompt`) the operator decides next.
+
+      ### Waves with renegotiation requests
+
+      ```
+      {{ renegotiation_summary.output.waves }}
+      ```
+
+      ### Wave summary
+
+      - Total waves: **{{ wave_loop_summary.output.total_waves }}**
+      - Failed waves: **{{ wave_loop_summary.output.failed_waves }}**
+
+      ### Options
+
+      - **Renegotiate** — re-enter the dispatch loop. Items are
+        re-evaluated against the (presumably edited) tree. The
+        operator should mutate the tree in ADO before choosing this.
+      - **Override** — accept the child plans as-is and proceed to
+        apex completion. Use when the renegotiation request is
+        advisory rather than blocking.
+      - **Abort** — halt with `apex_satisfied=false`.
+    options:
+      - label: "🔁 Renegotiate — re-enter the dispatch loop"
+        value: renegotiate
+        route: build_worklist
+      - label: "✅ Override — accept the child plans, proceed to completion"
+        value: override
+        route: apex_completion_gate
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_apex_abandoned
 
   # ── Wave failed gate ─────────────────────────────────────────────────────
   #

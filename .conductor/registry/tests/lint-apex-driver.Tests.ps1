@@ -287,5 +287,163 @@ agents:
             $LASTEXITCODE | Should -Be 1
             ($output -join "`n") | Should -Match 'missing-bool-coercion'
         }
+
+        # ── Phase 7 follow-up — per-item lifecycle dispatch wiring ─────
+        # These tests live inside this Context (rather than a sibling)
+        # because they reuse the synthetic temp tree set up in the
+        # outer BeforeAll / BeforeEach. The dispatch-wiring lint check
+        # only fires when the placeholder is removed, so each test
+        # crafts a non-placeholder shape with one specific defect.
+
+        It 'Fails when the dispatch shape lacks a named lifecycle branch (Phase 7 follow-up)' {
+            $stripped = $script:ValidItemYaml -replace 'lifecycle_dispatch_placeholder', 'plan_level_dispatch'
+            $stripped = $stripped + @"
+
+  - name: actionable_dispatch
+    type: workflow
+    workflow: ./actionable.yaml
+    routes:
+      - to: `$end
+  - name: implement_pg_dispatch
+    type: workflow
+    workflow: ./implement-pg.yaml
+    routes:
+      - to: `$end
+"@
+            $stripped | Out-File -FilePath (Join-Path $script:TempWorkflows 'apex-item-dispatch.yaml') -Encoding utf8
+            $lint = Join-Path $script:TempTests 'lint-apex-driver.ps1'
+            $output = pwsh -NoProfile -File $lint 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'missing-lifecycle-branch'
+        }
+
+        It 'Fails when a lifecycle workflow file is not referenced (Phase 7 follow-up)' {
+            $renamed = $script:ValidItemYaml -replace 'lifecycle_dispatch_placeholder', 'plan_level_dispatch'
+            $renamed = $renamed + @"
+
+  - name: actionable_dispatch
+    type: script
+    command: pwsh
+    args: ["-NoProfile", "-Command", "Write-Host"]
+    routes:
+      - to: `$end
+  - name: implement_pg_dispatch
+    type: script
+    command: pwsh
+    args: ["-NoProfile", "-Command", "Write-Host"]
+    routes:
+      - to: `$end
+  - name: feature_pr_dispatch
+    type: script
+    command: pwsh
+    args: ["-NoProfile", "-Command", "Write-Host"]
+    routes:
+      - to: `$end
+"@
+            $renamed | Out-File -FilePath (Join-Path $script:TempWorkflows 'apex-item-dispatch.yaml') -Encoding utf8
+            $lint = Join-Path $script:TempTests 'lint-apex-driver.ps1'
+            $output = pwsh -NoProfile -File $lint 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'missing-lifecycle-workflow-ref'
+        }
+
+        It 'Fails when renegotiation bubble-up is not wired (Phase 7 follow-up)' {
+            $bare = @'
+workflow:
+  name: apex-item-dispatch
+  entry_point: classify_lifecycle
+  metadata:
+    min_polyphony_version: "1.0.1"
+  limits:
+    max_iterations: 50
+  input:
+    apex_id:
+      type: number
+    work_item_id:
+      type: number
+
+output:
+  ok: "{% if classify_lifecycle is defined %}true{% else %}false{% endif %}"
+  flag: "{{ x | string | lower }}"
+
+agents:
+  - name: classify_lifecycle
+    type: script
+    command: pwsh
+    args: ["-NoProfile", "-File", "lifecycle-router.ps1"]
+    routes:
+      - to: plan_level_dispatch
+  - name: plan_level_dispatch
+    type: workflow
+    workflow: ./plan-level.yaml
+    routes:
+      - to: $end
+  - name: actionable_dispatch
+    type: workflow
+    workflow: ./actionable.yaml
+    routes:
+      - to: $end
+  - name: implement_pg_dispatch
+    type: workflow
+    workflow: ./implement-pg.yaml
+    routes:
+      - to: $end
+  - name: feature_pr_dispatch
+    type: workflow
+    workflow: ./feature-pr.yaml
+    routes:
+      - to: $end
+'@
+            $bare | Out-File -FilePath (Join-Path $script:TempWorkflows 'apex-item-dispatch.yaml') -Encoding utf8
+            $lint = Join-Path $script:TempTests 'lint-apex-driver.ps1'
+            $output = pwsh -NoProfile -File $lint 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'missing-renegotiation-bubble-up'
+        }
+    }
+
+    Context 'Per-item lifecycle dispatch wiring (Phase 7 follow-up — real YAMLs)' {
+
+        It 'Real apex-item-dispatch.yaml has all four lifecycle dispatch nodes by name' {
+            $itemContent = Get-Content $script:ItemYaml -Raw
+            foreach ($n in @('plan_level_dispatch', 'actionable_dispatch', 'implement_pg_dispatch', 'feature_pr_dispatch')) {
+                $itemContent | Should -Match "(?m)^\s*-\s+name:\s*$n\s*$"
+            }
+        }
+
+        It 'Real apex-item-dispatch.yaml references all four lifecycle workflow files' {
+            $itemContent = Get-Content $script:ItemYaml -Raw
+            foreach ($r in @('./plan-level.yaml', './actionable.yaml', './implement-pg.yaml', './feature-pr.yaml')) {
+                $itemContent.Contains($r) | Should -BeTrue -Because "Expected '$r' to be referenced from apex-item-dispatch.yaml"
+            }
+        }
+
+        It 'Real apex-item-dispatch.yaml output map bubbles up plan_level_dispatch renegotiation_pending' {
+            $itemContent = Get-Content $script:ItemYaml -Raw
+            $itemContent | Should -Match 'plan_level_dispatch\.output\.renegotiation_pending'
+        }
+
+        It 'Real apex-wave-dispatch.yaml output map declares wave-aggregated renegotiation_pending' {
+            $waveContent = Get-Content $script:WaveYaml -Raw
+            $waveContent | Should -Match '(?m)^\s+renegotiation_pending:\s*'
+        }
+
+        It 'Real apex-driver.yaml output map declares apex-level renegotiation_pending rollup' {
+            $apexContent = Get-Content $script:ApexYaml -Raw
+            $apexContent | Should -Match '(?m)^\s+renegotiation_pending:\s*'
+        }
+
+        It 'Real apex-driver.yaml has a renegotiation_gate human gate and renegotiation_summary script' {
+            $apexContent = Get-Content $script:ApexYaml -Raw
+            $apexContent | Should -Match '(?m)^\s*-\s+name:\s*renegotiation_gate\s*$'
+            $apexContent | Should -Match '(?m)^\s*-\s+name:\s*renegotiation_summary\s*$'
+        }
+
+        It 'Real apex-item-dispatch.yaml routes from spawn_worktree to all four lifecycle nodes' {
+            $itemContent = Get-Content $script:ItemYaml -Raw
+            foreach ($n in @('plan_level_dispatch', 'actionable_dispatch', 'implement_pg_dispatch', 'feature_pr_dispatch')) {
+                $itemContent | Should -Match "to:\s*$n"
+            }
+        }
     }
 }

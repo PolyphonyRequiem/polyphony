@@ -8,42 +8,81 @@
 #   2. worktree-manager.ps1 spawn — create a per-item worktree so the
 #      lifecycle dispatch can run in parallel with siblings without
 #      racing branch checkouts.
-#   3. Lifecycle dispatch (DEFERRED — see workflow header).
+#   3. Lifecycle dispatch — branch-on-router into the classified
+#      sub-workflow (this file's reason for existing).
 #   4. worktree-manager.ps1 teardown — clean up the worktree.
 #
 # Per-item isolation is the thing that lets apex-wave-dispatch run with
 # max_concurrent: 3. Without per-item worktrees, three concurrent
 # lifecycle dispatches would race on the same working tree.
 #
-# DEFERRED (DO NOT add in this PR):
-#   * Lifecycle sub-workflow invocation (steps between spawn and
-#     teardown). The MVP exercises the classifier + worktree lifecycle
-#     end-to-end so the inner mechanics are battle-tested before
-#     real lifecycle dispatch is wired up. A follow-up PR adds:
-#       - plan-level invocation when lifecycle == 'plan-level'
-#       - actionable invocation when lifecycle == 'actionable'
-#       - implement-pg invocation when lifecycle == 'implement-pg'
-#       - feature-pr invocation when lifecycle == 'feature-pr'
-#       - polyphony state advance when lifecycle == 'fast-path'
+# ── Branch-on-router pattern ─────────────────────────────────────────
 #
-# Conductor mechanics gotchas honored:
+# Each lifecycle gets its own `type: workflow` agent node
+# (`plan_level_dispatch`, `actionable_dispatch`, `implement_pg_dispatch`,
+# `feature_pr_dispatch`). The classifier emits a `lifecycle_workflow`
+# string and the routes from `spawn_worktree` (and the catch-all branch
+# from classify) fan into the right node based on that value. The
+# pattern mirrors `feature-pr.yaml`'s `pr_platform_router` →
+# `pr_lifecycle_github` / `pr_lifecycle_ado` split — proven, lintable,
+# and self-documenting in the YAML topology.
+#
+# Conductor does NOT support dynamic templated `workflow:` paths
+# (`workflow: "./{{ classify.output.workflow }}.yaml"`), so the
+# branch-on-router pattern is the canonical mechanism for "invoke
+# sub-workflow X or Y based on a router output". See
+# `.github/skills/polyphony-workflow-author/SKILL.md` ("Branch-on-router
+# into sub-workflow") for the canonical write-up.
+#
+# ── Multi-facet handling (Q2 design pick) ────────────────────────────
+#
+# The `facet_sequence: [actionable, implementable]` planner declaration
+# is honored implicitly through `polyphony state next-ready`'s ordered
+# requirement-kind dispositions, NOT through this workflow re-invoking
+# itself. If an item has both an actionable and an implementable facet,
+# the action_satisfied requirement gates the implementation_merged
+# requirement; the classifier returns whichever is currently
+# dispatchable. Subsequent waves of the apex-driver outer loop pick up
+# the next facet once the previous one is satisfied. Each invocation of
+# apex-item-dispatch therefore dispatches exactly ONE lifecycle.
+#
+# ── Renegotiation bubble-up ──────────────────────────────────────────
+#
+# Plan-level invocations may produce `renegotiation_pending` along with
+# the supporting `renegotiation_request`, `validate_scope_verdict`, and
+# `scope_violation_files` outputs (PR #144). Those are bubbled up
+# verbatim to apex-wave-dispatch (which aggregates across the wave) and
+# ultimately to apex-driver's renegotiation gate. M3 guards keep the
+# references safe on every leg the plan-level dispatch did not run.
+#
+# ── Conductor mechanics gotchas honored ──────────────────────────────
 #   M3  StrictUndefined `is defined` guards on every cross-leg output.
 #   M4  Explicit catch-all `to:` last on every routing block.
 #   M7  Booleans piped through `| string | lower`.
+#   M8  Sub-workflow paths are parent-relative (`./plan-level.yaml`).
+#
+# ── Out of scope (DO NOT add in this PR) ─────────────────────────────
+#   * E2E execution tests (separate PR p7-apex-driver-e2e).
+#   * Auto-restart on renegotiation (currently prompt-equivalent).
+#   * Per-MG worktree serialization (currently per-item only).
 
 workflow:
   name: apex-item-dispatch
   description: >-
     Dispatches a single work item: classify lifecycle, spawn per-item
-    worktree, dispatch into lifecycle sub-workflow (DEFERRED in MVP),
-    tear down worktree. Inner sub-workflow of apex-wave-dispatch.
-  version: "1.0.0"
+    worktree, branch-on-router into the classified lifecycle
+    sub-workflow (plan-level / actionable / implement-pg / feature-pr /
+    fast-path), tear down worktree. Inner sub-workflow of
+    apex-wave-dispatch.
+  version: "1.1.0"
   entry_point: classify_lifecycle
   metadata:
     min_polyphony_version: "1.0.1"
 
   limits:
-    # Shallow workflow — classify, spawn, (lifecycle deferred), teardown.
+    # Five branch nodes plus a teardown plus terminals. Sub-workflow
+    # invocations count as one iteration each — the actual recursion
+    # happens inside the lifecycle workflow's own limits.
     max_iterations: 50
 
   input:
@@ -57,7 +96,33 @@ workflow:
       type: string
       required: false
       default: ado
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: ADO organization (threaded into platform-aware lifecycles).
+    project:
+      type: string
+      required: false
+      default: ""
+      description: ADO project (threaded into platform-aware lifecycles).
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: ADO repository GUID/name (threaded into platform-aware lifecycles).
 
+# ── Workflow output ──────────────────────────────────────────────────
+#
+# Per M3 every cross-leg verb output is `is defined`-guarded — only
+# ONE of the four lifecycle nodes runs in any given execution; the
+# other three remain undefined. Per M7 booleans are piped through
+# `| string | lower` so apex-wave-dispatch (and ultimately apex-driver)
+# receives a real bool, not capital "True"/"False".
+#
+# `lifecycle_workflow` echoes the classifier's verdict — useful for
+# the wave summary and for apex-driver's renegotiation gate prompt
+# (so the operator can see which lifecycle bubbled up the signal).
 output:
   work_item_id: "{{ workflow.input.work_item_id }}"
   apex_id: "{{ workflow.input.apex_id }}"
@@ -69,6 +134,32 @@ output:
     {%- else -%}false{%- endif -%}
   fast_pathed: >-
     {%- if terminal_fast_path is defined -%}true
+    {%- else -%}false{%- endif -%}
+  # ── Renegotiation bubble-up (PR #144 — plan-level outputs) ──
+  # Only plan-level emits these; the other lifecycles leave them
+  # undefined. The `is defined` guards collapse to safe defaults.
+  renegotiation_pending: >-
+    {%- if plan_level_dispatch is defined -%}{{ (plan_level_dispatch.output.renegotiation_pending | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  renegotiation_request: >-
+    {%- if plan_level_dispatch is defined -%}{{ plan_level_dispatch.output.renegotiation_request | default('') }}
+    {%- else -%}{%- endif -%}
+  validate_scope_verdict: >-
+    {%- if plan_level_dispatch is defined -%}{{ plan_level_dispatch.output.validate_scope_verdict | default('') }}
+    {%- else -%}{%- endif -%}
+  scope_violation_files: >-
+    {%- if plan_level_dispatch is defined -%}{{ plan_level_dispatch.output.scope_violation_files | default('[]') }}
+    {%- else -%}[]{%- endif -%}
+  # Lifecycle-specific outcome surfaces (only the matching leg's value
+  # is meaningful; others collapse to safe defaults via M3 guards).
+  actionable_satisfied: >-
+    {%- if actionable_dispatch is defined -%}{{ (actionable_dispatch.output.satisfied | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  implement_pg_merged: >-
+    {%- if implement_pg_dispatch is defined -%}{{ (implement_pg_dispatch.output.merged | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  feature_pr_merged: >-
+    {%- if feature_pr_dispatch is defined -%}{{ (feature_pr_dispatch.output.merged | default(false)) | string | lower }}
     {%- else -%}false{%- endif -%}
 
 agents:
@@ -90,6 +181,9 @@ agents:
       - "-ApexId"
       - "{{ workflow.input.apex_id }}"
     routes:
+      # Fast-path / monitoring / blocked / error short-circuits BEFORE
+      # spawning a worktree — these legs are pure observable-state
+      # transitions with no per-item working-tree need.
       - to: terminal_fast_path
         when: "{{ classify_lifecycle.output.lifecycle_workflow == 'fast-path' }}"
       - to: terminal_monitoring
@@ -122,34 +216,112 @@ agents:
       - "-BaseBranch"
       - "feature/apex-{{ workflow.input.apex_id }}"
     routes:
-      - to: lifecycle_dispatch_placeholder
-        when: "{{ spawn_worktree.output.success | string | lower == 'true' }}"
+      # Branch-on-router: dispatch into the lifecycle picked by classify_lifecycle.
+      # Each lifecycle has an explicit `when:` clause, plus an M4 catch-all
+      # last that funnels unknown classifications to the spawn-error terminal.
+      - to: plan_level_dispatch
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'plan-level' }}"
+      - to: actionable_dispatch
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'actionable' }}"
+      - to: implement_pg_dispatch
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'implement-pg' }}"
+      - to: feature_pr_dispatch
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'feature-pr' }}"
       - to: terminal_spawn_error
       # M4 catch-all
       - to: terminal_spawn_error
 
-  # ── Lifecycle dispatch placeholder ───────────────────────────────────────
+  # ── Lifecycle dispatch — plan-level ──────────────────────────────────────
   #
-  # The lifecycle sub-workflow (plan-level / actionable / implement-pg /
-  # feature-pr) is invoked here in the follow-up PR. For the MVP we
-  # emit a deterministic envelope so the integration step still has a
-  # branch to consider and the workflow exercises the full
-  # classify → spawn → teardown lifecycle.
-  - name: lifecycle_dispatch_placeholder
-    type: script
-    description: Lifecycle dispatch placeholder (deferred — see workflow header)
-    command: pwsh
-    args:
-      - "-NoProfile"
-      - "-Command"
-      - >-
-        [ordered]@{
-          work_item_id = {{ workflow.input.work_item_id }};
-          lifecycle_workflow = '{{ classify_lifecycle.output.lifecycle_workflow }}';
-          dispatched = $false;
-          deferred = $true;
-          deferred_reason = 'apex-driver MVP — lifecycle invocation lands in a follow-up PR';
-        } | ConvertTo-Json -Compress
+  # Recursive planning core. Inputs are the minimum stable shape from
+  # PR #136 / #141 / #144: work_item_id required; intent defaults to
+  # `resume` so re-entry hits the existing plan PR; child_scope_globs
+  # left empty (apex-driver does not yet derive per-child scope —
+  # tracked separately).
+  #
+  # On completion, this node bubbles up the renegotiation_* and
+  # validate_scope_* outputs that PR #144 added to plan-level.yaml.
+  - name: plan_level_dispatch
+    type: workflow
+    description: Recursive planning lifecycle (plan-level.yaml)
+    workflow: ./plan-level.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      intent: "resume"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: teardown_worktree
+
+  # ── Lifecycle dispatch — actionable ──────────────────────────────────────
+  #
+  # Single-item actionable facet lifecycle. `executor` defaults to
+  # `polyphony` per actionable.yaml's own default; the apex-driver does
+  # not currently override it (a future PR could thread an explicit
+  # planner-declared executor through `polyphony state next-ready`).
+  - name: actionable_dispatch
+    type: workflow
+    description: Actionable facet lifecycle (actionable.yaml)
+    workflow: ./actionable.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      apex_id: "{{ workflow.input.apex_id }}"
+      executor: "polyphony"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: teardown_worktree
+
+  # ── Lifecycle dispatch — implement-pg ────────────────────────────────────
+  #
+  # Single PG implementation lifecycle. The apex-driver's per-item
+  # dispatch model treats each work item as its own PG container —
+  # `pg_number` = work_item_id, `work_item_ids` = [work_item_id],
+  # `branch_name` = feature/apex-{apex_id}-pg-{work_item_id} (sits
+  # alongside the per-item worktree branch convention). The
+  # `feature_branch` is the apex's feature branch; implement-pg's
+  # internal `pg_router` detects existing state on re-entry.
+  #
+  # NOTE: This input mapping is the MVP shape for the apex-driver →
+  # implement-pg bridge. A richer mapping (multiple work_item_ids per
+  # PG, planner-declared branch names) requires the apex-driver to
+  # surface PG grouping from the worklist build, which is a follow-up.
+  - name: implement_pg_dispatch
+    type: workflow
+    description: Single-PG implementation lifecycle (implement-pg.yaml)
+    workflow: ./implement-pg.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      pg_number: "{{ workflow.input.work_item_id }}"
+      work_item_ids: "[{{ workflow.input.work_item_id }}]"
+      branch_name: "feature/apex-{{ workflow.input.apex_id }}-pg-{{ workflow.input.work_item_id }}"
+      feature_branch: "feature/apex-{{ workflow.input.apex_id }}"
+      platform: "{{ workflow.input.platform }}"
+    routes:
+      - to: teardown_worktree
+
+  # ── Lifecycle dispatch — feature-pr ──────────────────────────────────────
+  #
+  # Apex-root implementation lifecycle: the classifier returns
+  # `feature-pr` when the work item is the apex root and
+  # implementation_merged is the next ready requirement. Merges
+  # the apex feature branch into target (default `main`).
+  - name: feature_pr_dispatch
+    type: workflow
+    description: Feature PR lifecycle (feature-pr.yaml) — apex root only
+    workflow: ./feature-pr.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      feature_branch: "feature/apex-{{ workflow.input.apex_id }}"
+      target_branch: "main"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
     routes:
       - to: teardown_worktree
 
@@ -174,7 +346,7 @@ agents:
   # ── Terminals ────────────────────────────────────────────────────────────
   - name: terminal_dispatched
     type: script
-    description: Terminal — item dispatched (or placeholder ran in MVP)
+    description: Terminal — item dispatched into its lifecycle sub-workflow
     command: pwsh
     args:
       - "-NoProfile"
