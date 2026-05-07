@@ -585,6 +585,71 @@ public sealed class AdoClient : IAdoClient
             ErrorBody: null);
     }
 
+    /// <inheritdoc />
+    public async Task<AdoCreateThreadResult?> CreatePullRequestCommentThreadAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string commentBody,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(organization);
+        ArgumentException.ThrowIfNullOrEmpty(project);
+        ArgumentException.ThrowIfNullOrEmpty(repository);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
+        ArgumentException.ThrowIfNullOrEmpty(commentBody);
+
+        var pat = ResolvePatOrThrow();
+        var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                  $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                  $"/threads?api-version=7.1";
+
+        // Serialize the body once; HttpContent is single-use, so a fresh
+        // StringContent is built per attempt by the request factory below.
+        var body = new AdoCreateThreadRequest
+        {
+            Comments = new List<AdoCreateThreadComment>
+            {
+                new()
+                {
+                    ParentCommentId = 0,
+                    Content = commentBody,
+                    CommentType = 1,
+                },
+            },
+            Status = 4,
+        };
+        var bodyJson = JsonSerializer.Serialize(
+            body, PolyphonyJsonContext.Default.AdoCreateThreadRequest);
+
+        using var response = await SendWithRetryAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(bodyJson, Encoding.UTF8, "application/json"),
+            };
+            AddAuthHeaders(req, pat);
+            return req;
+        }, ct).ConfigureAwait(false);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            // PR or repo does not exist — return null so the verb emits
+            // pr_not_found rather than ado_failed.
+            return null;
+        }
+        await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+
+        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        var parsed = await JsonSerializer.DeserializeAsync(
+            stream, PolyphonyJsonContext.Default.AdoCreateThreadResponse, ct).ConfigureAwait(false);
+        var firstComment = parsed?.Comments is { Count: > 0 } cs ? cs[0] : null;
+        return new AdoCreateThreadResult(
+            ThreadId: parsed?.Id ?? 0,
+            CommentId: firstComment?.Id ?? 0);
+    }
+
     private static async Task<string?> ReadBodyTruncatedAsync(HttpResponseMessage response, CancellationToken ct)
     {
         try

@@ -495,3 +495,96 @@ internal static class AdoMergeStatus
         _ => "UNKNOWN",
     };
 }
+
+/// <summary>
+/// Wire-level body for
+/// <c>POST /_apis/git/repositories/{repo}/pullRequests/{pr}/threads</c>.
+/// AOT-safe: registered in <see cref="PolyphonyJsonContext"/>.
+///
+/// <para>
+/// A "comment thread" in ADO bundles one or more comments with a thread-level
+/// <c>status</c>. The advisory <c>post-comment-ado</c> verb posts a single
+/// top-level comment in a closed thread (status: 4) — see
+/// <see cref="AdoCreateThreadComment"/> for the per-comment fields.
+/// </para>
+/// </summary>
+public sealed class AdoCreateThreadRequest
+{
+    /// <summary>
+    /// Comments inside this thread. The advisory verb sends a single entry
+    /// (one top-level text comment); ADO permits multiple but we don't use
+    /// that shape.
+    /// </summary>
+    [JsonPropertyName("comments")]
+    public List<AdoCreateThreadComment> Comments { get; set; } = new();
+
+    /// <summary>
+    /// Thread-level status (ADO <c>CommentThreadStatus</c> enum):
+    /// <c>1</c> active, <c>2</c> fixed, <c>3</c> wontFix, <c>4</c> closed,
+    /// <c>5</c> byDesign, <c>6</c> pending. The advisory verb pins this to
+    /// <c>4</c> (closed) — no follow-up reply is expected.
+    /// </summary>
+    [JsonPropertyName("status")]
+    public int Status { get; set; } = 4;
+}
+
+/// <summary>
+/// Single comment entry inside <see cref="AdoCreateThreadRequest"/>.
+/// </summary>
+public sealed class AdoCreateThreadComment
+{
+    /// <summary>
+    /// Parent comment ID for replies; <c>0</c> for a top-level comment in
+    /// a fresh thread.
+    /// </summary>
+    [JsonPropertyName("parentCommentId")]
+    public int ParentCommentId { get; set; }
+
+    /// <summary>The comment body (Markdown when commentType: 1).</summary>
+    [JsonPropertyName("content")]
+    public string Content { get; set; } = "";
+
+    /// <summary>
+    /// ADO <c>CommentType</c> enum: <c>1</c> text, <c>2</c> codeChange,
+    /// <c>3</c> system. Pinned to <c>1</c> for advisory comments.
+    /// </summary>
+    [JsonPropertyName("commentType")]
+    public int CommentType { get; set; } = 1;
+}
+
+/// <summary>
+/// Wire-level shape of the ADO <c>POST .../threads</c> response. Only the
+/// thread ID and the inner comments' IDs are read; everything else is
+/// ignored. AOT-safe: registered in <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoCreateThreadResponse
+{
+    /// <summary>The thread ID assigned by ADO.</summary>
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    /// <summary>The created comments inside the thread (we expect exactly one).</summary>
+    [JsonPropertyName("comments")]
+    public List<AdoCreateThreadResponseComment>? Comments { get; set; }
+}
+
+/// <summary>
+/// Single comment entry inside <see cref="AdoCreateThreadResponse"/>; only
+/// the ID is read.
+/// </summary>
+public sealed class AdoCreateThreadResponseComment
+{
+    /// <summary>The comment ID assigned by ADO.</summary>
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+}
+
+/// <summary>
+/// Public DTO returned to the verb by
+/// <see cref="IAdoClient.CreatePullRequestCommentThreadAsync"/> on success.
+/// Carries the IDs the verb echoes into its JSON envelope so callers can
+/// link to the posted comment later.
+/// </summary>
+/// <param name="ThreadId">Thread ID assigned by ADO.</param>
+/// <param name="CommentId">ID of the (single) top-level comment created inside the thread.</param>
+public sealed record AdoCreateThreadResult(int ThreadId, int CommentId);

@@ -524,5 +524,11 @@ public sealed class PrCommandsOpenPlanAdoTests : CommandTestBase
             int pullRequestId, string lastMergeSourceCommitSha,
             CancellationToken ct = default)
             => throw new NotImplementedException();
+
+        public Task<AdoCreateThreadResult?> CreatePullRequestCommentThreadAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string commentBody,
+            CancellationToken ct = default)
+            => throw new NotImplementedException();
     }
 }
