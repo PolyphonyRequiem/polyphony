@@ -21,6 +21,11 @@
         outputs at workflow scope (renegotiation_pending,
         renegotiation_request, validate_scope_verdict,
         scope_violation_files).
+    12. Stuck-review timeout MVP — pending_poll_counter exists, both
+        poll_status and poll_status_ado route their 'pending' case
+        through it, stuck_review_gate exposes continue_waiting /
+        override_approved / abort options, stuck_review_reset and
+        stuck_review_override_router both exist.
     Exits 0 if clean, 1 if violations found.
 #>
 [CmdletBinding()]
@@ -240,6 +245,75 @@ foreach ($b in $bubbleKeys) {
             Rule   = $b.Rule
             Detail = "Workflow output map does not export '$($b.Key)' (Phase 3 P8c bubble-up)"
         }
+    }
+}
+
+# ── Check 18: Stuck-review timeout MVP — pending_poll_counter exists ─────
+if ($content -notmatch 'name:\s*pending_poll_counter\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-pending-poll-counter'
+        Detail = "No pending_poll_counter script node found (stuck-review timeout MVP)"
+    }
+}
+
+# ── Check 19: poll_status routes 'pending' through pending_poll_counter ─
+# Both poll_status and poll_status_ado must redirect their 'pending' case
+# to pending_poll_counter rather than directly to pending_review_gate.
+if ($content -notmatch "to:\s*pending_poll_counter[\s\S]{0,200}?poll_status\.output\.state\s*==\s*'pending'") {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-poll-status-pending-route'
+        Detail = "poll_status does not route 'pending' through pending_poll_counter"
+    }
+}
+if ($content -notmatch "to:\s*pending_poll_counter[\s\S]{0,200}?poll_status_ado\.output\.state\s*==\s*'pending'") {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-poll-status-ado-pending-route'
+        Detail = "poll_status_ado does not route 'pending' through pending_poll_counter"
+    }
+}
+
+# ── Check 20: pending_poll_counter routes to stuck_review_gate on cap ───
+if ($content -notmatch "pending_poll_counter\.output\.cap_reached\s*==\s*true") {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-pending-poll-cap-route'
+        Detail = "pending_poll_counter does not route on cap_reached==true"
+    }
+}
+
+# ── Check 21: stuck_review_gate exists with all three required options ──
+if ($content -notmatch 'name:\s*stuck_review_gate\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-stuck-review-gate'
+        Detail = "No stuck_review_gate human_gate found (stuck-review timeout MVP)"
+    }
+}
+$stuckOptions = @('continue_waiting', 'override_approved', 'abort')
+foreach ($opt in $stuckOptions) {
+    # Locate the stuck_review_gate block then check option presence.
+    $gateBlock = ''
+    $m = [regex]::Match($content, '(?s)- name: stuck_review_gate\b.*?(?=\n  - name: |\Z)')
+    if ($m.Success) { $gateBlock = $m.Value }
+    if ($gateBlock -notmatch "value:\s*$opt\b") {
+        $violations += [PSCustomObject]@{
+            Rule   = 'missing-stuck-review-option'
+            Detail = "stuck_review_gate missing option value: '$opt'"
+        }
+    }
+}
+
+# ── Check 22: stuck_review_reset script exists ──────────────────────────
+if ($content -notmatch 'name:\s*stuck_review_reset\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-stuck-review-reset'
+        Detail = "No stuck_review_reset script node found (stuck-review timeout MVP)"
+    }
+}
+
+# ── Check 23: stuck_review_override_router routes per platform ──────────
+if ($content -notmatch 'name:\s*stuck_review_override_router\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-stuck-review-override-router'
+        Detail = "No stuck_review_override_router script node found (stuck-review timeout MVP)"
     }
 }
 

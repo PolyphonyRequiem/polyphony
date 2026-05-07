@@ -144,6 +144,10 @@ Edges enter the dependency graph through three distinct sources. Each source has
 | `warning` | Workflow merges automatically but emits a warning event with open concerns; humans can intervene asynchronously. |
 | `policy_aware_blocked` | Workflow merges only when aggregated status is `approved` AND configured policy guards pass (e.g., CI green, no unresolved threads, required-reviewer set satisfied). |
 | **Review policy** | The combination of `{required_reviewers, agent_reviewers, merge_mode}` resolved per `(scope, pr_kind)` by `polyphony policy resolve`. |
+| **Stuck review** | The condition where a pending-review polling loop has cycled too many times without the reviewer producing a verdict. Operationally: the **poll count** has reached the **poll cap**. Surfaces a **stuck-review gate** for operator decision rather than continuing to loop indefinitely. |
+| **Poll cap** | The hard limit on how many pending-state poll iterations a workflow will tolerate before escalating to a stuck-review gate. MVP value: hard-coded 60 in `plan-level.yaml` and `ado-pr.yaml`; will eventually be policy-resolved per PR kind (see `docs/decisions/stuck-review-timeout.md`). |
+| **Poll count** | The current iteration count for a single PR's pending-review loop. Tracked per-PR in a `$TMPDIR` counter file; resets to zero when the operator chooses `continue_waiting` at the stuck-review gate. |
+| **Stuck-review gate** | The `human_gate` (`stuck_review_gate` in plan-level, `ado_stuck_review_gate` in ado-pr) that fires when poll count reaches poll cap. Three options: `continue_waiting` (reset the counter and return to the regular pending gate), `override_approved` (bypass review and route to the merger), `abort` (`$end` the workflow). |
 
 ## Configuration vs guidance
 
