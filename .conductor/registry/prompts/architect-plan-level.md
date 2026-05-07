@@ -12,51 +12,23 @@
    ───────────────────────────────────────────────────────────────────── #}
 {% set last = context.history[-1] if context.history|length > 0 else "" %}
 
-{% if last == "plan_approval"
-      and plan_approval is defined
-      and plan_approval.output is defined
-      and plan_approval.output.selected == "revise"
-      and plan_approval.output.revision_feedback is defined
-      and plan_approval.output.revision_feedback %}
-## ⚠️ You Are Being Re-Invoked After Final-Approval Revision
+{% if last == "revise_counter"
+      and revise_counter is defined
+      and revise_counter.output is defined %}
+{% set revision_number = revise_counter.output.iteration %}
+{% set max_revisions = revise_counter.output.max_revisions %}
+{% set is_last_revision = revise_counter.output.cap_reached %}
+## 🔁 You Are Being Re-Invoked After Reviewer Feedback — Revision {{ revision_number }} of {{ max_revisions }}
 
-The user reviewed the approved plan and asked for revisions before seeding.
-Their feedback is authoritative. Your job this iteration is to **refine the
-prior plan**, not regenerate it.
-
-1. **Address every point** in the revision feedback below.
-2. **Preserve unaffected sections** of the prior plan.
-3. **Emit `open_questions: []`** unless the feedback genuinely requires new
-   user input — re-asking already-answered questions will loop the workflow.
-
-### User's revision feedback
-{{ plan_approval.output.revision_feedback }}
-
-{% if architect is defined and architect.output is defined and architect.output.plan is defined %}
-### Prior plan (refine, do not discard)
-```markdown
-{{ architect.output.plan }}
-```
-{% endif %}
-
----
-
-{% elif last == "review_router"
-        and review_group is defined
-        and review_group.outputs is defined %}
-{% set revision_number = context.history | select('equalto', 'review_router') | list | length %}
-{% set is_last_revision = revision_number >= 5 %}
-## 🔁 You Are Being Re-Invoked After Review — Revision {{ revision_number }} of 5
-
-The reviewers scored your prior plan below the approval threshold. **There is
-a hard cap of 5 revisions** — after revision 5, routing proceeds to the human
-plan_approval gate regardless of remaining issues.{% if is_last_revision %} **This
-is your last revision before the cap fires.**{% endif %}
+A reviewer requested changes on the plan PR. **There is a hard cap of {{ max_revisions }}
+revisions** — after the cap, routing proceeds to the human revise_cap_gate
+regardless of remaining issues.{% if is_last_revision %} **This is your last
+revision before the cap fires.**{% endif %}
 
 ### Revision rules (read carefully — violating these regresses scores)
 
-1. **Surgical only.** Address ONLY the blocking issues called out below. Do
-   NOT make stylistic changes, restructure unaffected sections, rewrite prose
+1. **Surgical only.** Address ONLY the issues the reviewer flagged. Do NOT
+   make stylistic changes, restructure unaffected sections, rewrite prose
    that wasn't flagged, or act on suggestions that are nice-to-have rather
    than blocking. Sweeping rewrites have empirically REGRESSED scores by
    breaking previously-good sections.
@@ -66,28 +38,21 @@ is your last revision before the cap fires.**{% endif %}
    answered questions or raising new ones at this stage will loop the
    workflow needlessly.
 4. **Acknowledge what changed.** In the `summary` output field, briefly note
-   which blocking issues you addressed and where (e.g. "Addressed reviewer
+   which reviewer concerns you addressed and where (e.g. "Addressed reviewer
    concern about retry semantics in §Proposed Design").
 
-{% if review_router is defined and review_router.output is defined and review_router.output.combined_feedback is defined and review_router.output.combined_feedback %}
-### Blocking issues to address ({{ review_router.output.blocking_issue_count }} total)
+### How to read the reviewer feedback
 
-{{ review_router.output.combined_feedback }}
+The reviewer left their comments on the plan PR itself, not in this prompt.
+Use the gh / az CLI from your toolset to fetch them:
 
-> The list above is pre-filtered to *blocking* issues only. Suggestions and
-> nice-to-haves from the reviewers are deliberately omitted — do not act on
-> them this iteration.
-{% else %}
-{% if review_group.outputs.technical_reviewer is defined %}
-### Technical review (score: {{ review_group.outputs.technical_reviewer.score }})
-{{ review_group.outputs.technical_reviewer.feedback }}
+{% if state_detector is defined and state_detector.output is defined and state_detector.output.pr_url is defined and state_detector.output.pr_url %}
+- **Plan PR:** {{ state_detector.output.pr_url }}
 {% endif %}
+- For GitHub: `gh pr view <pr_url> --json reviews,comments`
+- For ADO: `polyphony pr get-comments-ado --pr-url <pr_url>`
 
-{% if review_group.outputs.readability_reviewer is defined %}
-### Readability review (score: {{ review_group.outputs.readability_reviewer.score }})
-{{ review_group.outputs.readability_reviewer.feedback }}
-{% endif %}
-{% endif %}
+Read every blocking comment and address each one in your revised plan.
 
 {% if architect is defined and architect.output is defined and architect.output.plan is defined %}
 ### Prior plan (refine surgically, do not regenerate)

@@ -6,7 +6,7 @@ Describe 'lint-conductor-validate.ps1' {
 
     BeforeEach {
         $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-conductor-validate-test-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-        $script:WorkflowsDir = Join-Path $script:TempRoot 'workflows'
+        $script:WorkflowsDir = Join-Path $script:TempRoot '.conductor' 'registry' 'workflows'
         $script:TestsDir = Join-Path $script:TempRoot 'tests'
         $script:MockBinDir = Join-Path $script:TempRoot 'mockbin'
         New-Item $script:WorkflowsDir -ItemType Directory -Force | Out-Null
@@ -114,18 +114,18 @@ exit 0
 
     Context 'Edge cases' {
 
-        It 'Handles no YAML files in directory gracefully' {
-            # workflows/ exists but has no .yaml files
+        It 'Fails (exit 1) when workflows directory exists but is empty' {
+            # Empty workflows dir is a regression — silent SKIP would mask real bugs.
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-conductor-validate.ps1') 2>&1
-            $LASTEXITCODE | Should -Be 0
-            ($output | Out-String) | Should -Match 'SKIP'
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'FAIL.*No \.yaml files'
         }
 
-        It 'Handles missing workflows/ directory gracefully' {
+        It 'Fails (exit 1) when workflows directory is missing entirely' {
             Remove-Item $script:WorkflowsDir -Recurse -Force
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-conductor-validate.ps1') 2>&1
-            $LASTEXITCODE | Should -Be 0
-            ($output | Out-String) | Should -Match 'SKIP'
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'FAIL.*directory not found'
         }
     }
 }

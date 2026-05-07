@@ -2074,13 +2074,24 @@ agents:
 # depth+1. Conductor schema requires for_each at the workflow root, not
 # nested under agents.
 for_each:
+  # ── Plan children group ────────────────────────────────────────────────
+  #
+  # Self-recursion: invokes plan-level.yaml for each plannable child with
+  # depth+1.
+  #
+  # Conductor schema: for_each lives at workflow root, with fields
+  # `source` (BARE dotted path, not a Jinja expression), `as` (loop var
+  # name), and `agent` (inline AgentDef). The legacy field names
+  # `items`/`item_var`/`workflow` are no longer accepted.
   - name: plan_children_group
+    type: for_each
     description: Recursively plan each plannable child
-    items: "{{ child_router.output.plannable_children }}"
-    item_var: child
+    source: child_router.output.plannable_children
+    as: child
     max_concurrent: 1
     failure_mode: continue_on_error
-    workflow:
+    agent:
+      name: plan_one_child
       type: workflow
       workflow: ./plan-level.yaml
       max_depth: 6
