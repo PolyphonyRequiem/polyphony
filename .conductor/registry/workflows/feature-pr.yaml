@@ -18,13 +18,14 @@
 workflow:
   name: feature-pr
   description: >-
-    Feature PR lifecycle. Creates a feature PR via script, delegates to the
-    platform-specific PR sub-workflow (github-pr.yaml or ado-pr.yaml) for
-    review/fix/merge, and runs remediation cycles (capped at 3) when the
-    sub-workflow fails to merge. After each remediation, re-requests review
-    via feature_pr_updater. Escalates to human gate after cap is exceeded.
-  version: "1.0.1"
-  entry_point: feature_pr_creator
+    Feature PR lifecycle. Routes to a platform-specific creator
+    (feature_pr_creator_github | feature_pr_creator_ado) and lifecycle
+    sub-workflow (github-pr.yaml | ado-pr.yaml) based on the platform
+    input. Runs remediation cycles (capped at 3) when the sub-workflow
+    fails to merge. After each remediation, re-requests review via
+    feature_pr_updater. Escalates to human gate after cap is exceeded.
+  version: "1.1.0"
+  entry_point: pr_platform_router
   metadata:
     min_polyphony_version: "1.0.1"
 
@@ -49,6 +50,30 @@ workflow:
       required: false
       default: github
       description: "PR platform: github | ado"
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO organization name (e.g. `contoso`). Required when
+        platform=ado; ignored when platform=github. When platform=ado
+        and this is blank, pr_platform_router routes to
+        feature_pr_inputs_missing_gate before invoking any ADO verb.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO project name. Required when platform=ado; ignored when
+        platform=github.
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        ADO repository identifier — GUID or name; both accepted by
+        `pr create-feature-ado` / `pr merge-feature-ado`. Required when
+        platform=ado; ignored when platform=github.
     plan_path:
       type: string
       required: false
@@ -73,22 +98,76 @@ output:
     {%- elif pr_lifecycle_ado is defined %}{{ (pr_lifecycle_ado.output.merged | default(false)) | string | lower }}
     {%- elif remediation_abort is defined %}{{ (remediation_abort.output.merged | default(false)) | string | lower }}
     {%- else %}false{% endif %}
-  pr_url: "{% if feature_pr_creator is defined %}{{ feature_pr_creator.output.pr_url | default('') }}{% else %}{% endif %}"
+  pr_url: >-
+    {%- if feature_pr_creator_ado is defined -%}{{ feature_pr_creator_ado.output.pr_url | default('') }}
+    {%- elif feature_pr_creator_github is defined -%}{{ feature_pr_creator_github.output.pr_url | default('') }}
+    {%- else -%}{% endif -%}
+  pr_number: >-
+    {%- if feature_pr_creator_ado is defined -%}{{ feature_pr_creator_ado.output.pr_number | default(0) }}
+    {%- elif feature_pr_creator_github is defined -%}{{ feature_pr_creator_github.output.pr_number | default(0) }}
+    {%- else -%}0{% endif -%}
 
 agents:
-  # ── Feature PR creator ──────────────────────────────────────────────────
+  # ── PR platform router ──────────────────────────────────────────────────
   #
-  # Creates the feature PR from the feature branch to the target branch.
-  # Uses feature-pr-creator.ps1 script which calls gh pr create and
-  # captures the PR number for downstream review and merge steps.
-  # If an open PR already exists for the same head/base pair, reuses it.
+  # Routes to the platform-specific feature-PR creator based on the
+  # platform input AND, for ADO, the presence of all three connection
+  # inputs (organization, project, repository).
+  #
+  # Mirrors the pattern in implement-mg.yaml's pr_platform_router (PR #118).
+  # The router fires BEFORE the creator so ADO can use its own creator
+  # verb (`pr create-feature-ado`) rather than the GitHub-only
+  # `pr create-feature-pr`.
+  #
+  # Emits `{ platform, ado_inputs_ready: bool, missing: '<csv>' }` so the
+  # inputs-missing gate's prompt can reference the missing field list per M3.
   #
   # Invariants:
-  #   Pre:  Feature branch exists with all PG work merged.
-  #   Post: Feature PR is created; output.pr_number is set.
-  - name: feature_pr_creator
+  #   Pre:  platform input is 'github' or 'ado'.
+  #   Post: Routes to feature_pr_creator_github (github),
+  #         feature_pr_creator_ado (ado + inputs ready), or
+  #         feature_pr_inputs_missing_gate (ado + missing).
+  - name: pr_platform_router
     type: script
-    description: Create feature PR from feature branch to target branch
+    description: Route to platform-specific feature-PR creator based on platform + ADO connection inputs
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $platform = '{{ workflow.input.platform }}';
+        $org = '{{ workflow.input.organization }}';
+        $proj = '{{ workflow.input.project }}';
+        $repo = '{{ workflow.input.repository }}';
+        $missing = @();
+        if ([string]::IsNullOrWhiteSpace($org)) { $missing += 'organization' };
+        if ([string]::IsNullOrWhiteSpace($proj)) { $missing += 'project' };
+        if ([string]::IsNullOrWhiteSpace($repo)) { $missing += 'repository' };
+        $ready = ($missing.Count -eq 0);
+        @{ platform = $platform; ado_inputs_ready = $ready; missing = ($missing -join ',') } | ConvertTo-Json -Compress
+    routes:
+      - to: feature_pr_creator_github
+        when: "{{ pr_platform_router.output.platform == 'github' }}"
+      - to: feature_pr_creator_ado
+        when: "{{ pr_platform_router.output.platform == 'ado' and pr_platform_router.output.ado_inputs_ready == true }}"
+      - to: feature_pr_inputs_missing_gate
+        when: "{{ pr_platform_router.output.platform == 'ado' and pr_platform_router.output.ado_inputs_ready == false }}"
+      # Catch-all per M4: unknown platform value fails safely to $end
+      # rather than raising `No matching route found` mid-run.
+      - to: $end
+
+  # ── Feature PR creator (GitHub) ─────────────────────────────────────────
+  #
+  # GitHub leg. Creates the feature PR from the feature branch to the
+  # target branch via `polyphony pr create-feature-pr`. If an open PR
+  # already exists for the same head/base pair, reuses it (idempotent).
+  #
+  # Invariants:
+  #   Pre:  Platform == 'github'; feature branch exists with all PG work merged.
+  #   Post: GitHub feature PR exists; output.pr_number and output.pr_url set.
+  - name: feature_pr_creator_github
+    type: script
+    description: Create (or reuse) GitHub feature PR via `pr create-feature-pr`
     command: polyphony
     args:
       - "pr"
@@ -100,34 +179,125 @@ agents:
       - "--target-branch"
       - "{{ workflow.input.target_branch }}"
     routes:
-      - to: pr_platform_router
+      - to: pr_lifecycle_github
 
-  # ── PR platform router ──────────────────────────────────────────────────
+  # ── Feature PR creator (ADO) ────────────────────────────────────────────
   #
-  # Routes to the platform-specific PR lifecycle sub-workflow based on the
-  # platform input. Driven exclusively by the workflow's platform field.
+  # ADO leg. Creates the feature PR via `polyphony pr create-feature-ado`.
+  # Reuses an existing OPEN PR for the same head/base pair (idempotent).
+  #
+  # Routing-style verb: always exits 0; success/failure determined by
+  # `output.error_code`. On any error_code, route to
+  # feature_pr_creator_failed_gate_ado so the operator can inspect and
+  # retry (create is idempotent) or abort.
   #
   # Invariants:
-  #   Pre:  feature_pr_creator has created a PR; platform is 'github' or 'ado'.
-  #   Post: Routes to github-pr.yaml or ado-pr.yaml sub-workflow.
-  - name: pr_platform_router
+  #   Pre:  Platform == 'ado'; ado_inputs_ready == true; feature branch
+  #         exists on the remote.
+  #   Post: ADO feature PR exists; output.pr_number and output.pr_url set.
+  - name: feature_pr_creator_ado
     type: script
-    description: Route to platform-specific PR lifecycle based on platform config
-    command: pwsh
+    description: Create (or reuse) ADO feature PR via `pr create-feature-ado`
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-Command"
-      - >-
-        @{ platform = '{{ workflow.input.platform }}' } | ConvertTo-Json
+      - "pr"
+      - "create-feature-ado"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
+      - "--root-id"
+      - "{{ workflow.input.work_item_id }}"
+      - "--target-branch"
+      - "{{ workflow.input.target_branch }}"
     routes:
-      - to: pr_lifecycle_github
-        when: "{{ pr_platform_router.output.platform == 'github' }}"
+      - to: feature_pr_creator_failed_gate_ado
+        when: "{{ feature_pr_creator_ado.output.error_code is defined and feature_pr_creator_ado.output.error_code != '' }}"
       - to: pr_lifecycle_ado
-        when: "{{ pr_platform_router.output.platform == 'ado' }}"
-      # Catch-all: unknown platform -> $end (no merge). Surfaces as
-      # merged=false in the workflow output rather than throwing
-      # "no matching route" mid-run (per conductor-mechanics M4).
-      - to: $end
+        when: "{{ feature_pr_creator_ado.output.error_code is not defined or feature_pr_creator_ado.output.error_code == '' }}"
+      # Catch-all per M4: missing/malformed error_code -> failed gate.
+      - to: feature_pr_creator_failed_gate_ado
+
+  # ── ADO connection-inputs missing gate ─────────────────────────────────
+  #
+  # Fires when platform=ado but one or more of organization, project,
+  # repository was blank. Surfaces a clear remediation path (re-invoke
+  # the workflow with the missing inputs) without burning an ADO API
+  # call that would just return invalid_argument.
+  #
+  # Per M3, only this gate's prompt references
+  # `pr_platform_router.output.missing` — the router IS defined when we
+  # reach this gate (route precondition).
+  #
+  # Invariants:
+  #   Pre:  platform == 'ado' AND ado_inputs_ready == false.
+  #   Post: Operator informed; workflow exits without invoking any ADO verb.
+  - name: feature_pr_inputs_missing_gate
+    type: human_gate
+    description: ADO connection inputs are missing — workflow cannot proceed
+    prompt: |
+      ## ADO connection inputs missing
+
+      `platform=ado` was selected but the following required inputs are
+      blank: **{{ pr_platform_router.output.missing }}**
+
+      `polyphony pr create-feature-ado` and `pr merge-feature-ado` require
+      all three of `--organization`, `--project`, and `--repository`.
+      Re-invoke the workflow chain with those inputs supplied (typically
+      threaded from `polyphony-full.yaml`'s inputs).
+
+      Feature branch:
+      `{{ workflow.input.feature_branch }}`
+    options:
+      - label: "🛑 Abort (will re-invoke with inputs)"
+        value: abort
+        route: $end
+
+  # ── ADO feature-PR creator failure gate ────────────────────────────────
+  #
+  # Fires when `feature_pr_creator_ado` returned a non-empty error_code.
+  # Operator can:
+  # - **Retry** — route back to `feature_pr_creator_ado`. Create is
+  #   idempotent (reuses existing OPEN PR for same head/base).
+  # - **Abort** — exit without running the lifecycle. No PR exists (or
+  #   the existing one was not surfaced).
+  #
+  # Per M3 (StrictUndefined), references to the creator's output are
+  # guarded with `is defined`.
+  #
+  # Invariants:
+  #   Pre:  feature_pr_creator_ado has been invoked and returned an error.
+  #   Post: Operator has retried (route to feature_pr_creator_ado) or aborted ($end).
+  - name: feature_pr_creator_failed_gate_ado
+    type: human_gate
+    description: ADO feature-PR creation failed — operator decides retry or abort
+    prompt: |
+      ## ADO feature-PR creation failed
+
+      Feature branch: `{{ workflow.input.feature_branch }}` →
+      `{{ workflow.input.target_branch }}`
+
+      {% if feature_pr_creator_ado is defined and feature_pr_creator_ado.output.error_code is defined and feature_pr_creator_ado.output.error_code != '' -%}
+      **Error code:** `{{ feature_pr_creator_ado.output.error_code }}`
+      **Detail:** {{ feature_pr_creator_ado.output.error | default('(no detail)') }}
+      {%- else -%}
+      **Detail:** Routed to gate without an explicit error code.
+      {%- endif %}
+
+      **Retry** is safe: `pr create-feature-ado` reuses an existing OPEN
+      PR for the same head/base.
+
+      **Abort** exits without invoking the lifecycle — no PR will be
+      surfaced for review.
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: feature_pr_creator_ado
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
 
   # ── GitHub PR lifecycle sub-workflow ─────────────────────────────────────
   #
@@ -144,7 +314,7 @@ agents:
     description: GitHub PR lifecycle — review, fix loop, merge
     workflow: ./github-pr.yaml
     input_mapping:
-      pr_number: "{{ feature_pr_creator.output.pr_number }}"
+      pr_number: "{{ feature_pr_creator_github.output.pr_number }}"
       branch_name: "{{ workflow.input.feature_branch }}"
       target_branch: "{{ workflow.input.target_branch }}"
       review_policy: "auto"
@@ -159,30 +329,75 @@ agents:
 
   # ── ADO PR lifecycle sub-workflow ────────────────────────────────────────
   #
-  # Invokes ado-pr.yaml for the ADO PR lifecycle (stub with human gate).
-  # Returns after the human has managed the PR manually. On merged=true
-  # routes to $end; on merged=false routes to remediation cycle.
+  # Invokes ado-pr.yaml for the ADO PR lifecycle (poll → merge with
+  # human gates for non-approved states). Threads ADO connection inputs
+  # plus pr_number from feature_pr_creator_ado.
+  #
+  # ADO remediation is NOT yet wired — the planner/seeder/updater chain
+  # uses GitHub-only `gh` calls. On merged=false, route to a clear
+  # "remediation not supported on ADO" emitter that exits with
+  # merged=false rather than entering the GitHub remediation cycle.
   #
   # Invariants:
-  #   Pre:  pr_platform_router.output.platform == 'ado'; feature PR exists.
-  #   Post: PR is managed (manually) and result returned.
+  #   Pre:  pr_platform_router.output.platform == 'ado'; ADO PR exists.
+  #   Post: PR is reviewed (natively in ADO) and merged — or operator
+  #         exited with merged=false.
   - name: pr_lifecycle_ado
     type: workflow
-    description: ADO PR lifecycle stub — human gate for manual PR management
+    description: ADO PR lifecycle — poll, human gates, merge
     workflow: ./ado-pr.yaml
     input_mapping:
-      pr_number: "{{ feature_pr_creator.output.pr_number }}"
+      pr_number: "{{ feature_pr_creator_ado.output.pr_number }}"
       branch_name: "{{ workflow.input.feature_branch }}"
       target_branch: "{{ workflow.input.target_branch }}"
       review_policy: "manual"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
+      root_id: "{{ workflow.input.work_item_id }}"
     routes:
       - to: $end
         when: "{{ pr_lifecycle_ado.output.merged == true }}"
-      - to: remediation_counter
+      # ADO remediation cycle is not yet wired — short-circuit to a
+      # clean "not supported" emitter rather than entering the
+      # GitHub-only remediation chain (planner/seeder/updater all use
+      # `gh` directly).
+      - to: ado_remediation_not_supported_emitter
         when: "{{ pr_lifecycle_ado.output.merged == false }}"
-      # Catch-all: undefined/missing 'merged' -> remediation cycle
-      # (treats ambiguous outcomes as 'not merged') per M4.
-      - to: remediation_counter
+      # Catch-all: undefined/missing 'merged' -> ado-not-supported.
+      - to: ado_remediation_not_supported_emitter
+
+  # ── ADO remediation-not-supported emitter ──────────────────────────────
+  #
+  # Terminal node when an ADO feature PR fails to merge. The remediation
+  # chain (planner/seeder/updater) is GitHub-only and cannot run on ADO
+  # without `pr post-comment-ado` / `pr request-review-ado` verbs that
+  # don't exist yet. Operator must remediate manually in ADO and re-invoke
+  # the workflow.
+  #
+  # Emits merged=false so the parent (polyphony-full.yaml) sees a clean
+  # "not merged" outcome and routes to its own feature_pr_failed_gate
+  # for operator escalation.
+  #
+  # Invariants:
+  #   Pre:  pr_lifecycle_ado returned merged=false.
+  #   Post: Workflow output.merged is false; exits.
+  - name: ado_remediation_not_supported_emitter
+    type: script
+    description: Emit merged=false — ADO remediation cycle not yet wired
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          merged = $false;
+          pr_url = '';
+          reason = 'ado_remediation_not_supported';
+          detail = 'ADO PR did not merge. The remediation chain (planner/seeder/updater) is GitHub-only and cannot run on ADO without `pr post-comment-ado` and `pr request-review-ado` verbs which do not exist yet. Remediate manually in ADO and re-invoke the workflow.'
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
 
   # ── Remediation cycle counter ───────────────────────────────────────────
   #
@@ -245,7 +460,7 @@ agents:
       | Field | Value |
       |-------|-------|
       | Work Item | `{{ workflow.input.work_item_id }}` |
-      | PR Number | `{{ feature_pr_creator.output.pr_number }}` |
+      | PR Number | `{{ feature_pr_creator_github.output.pr_number }}` |
       | Feature Branch | `{{ workflow.input.feature_branch }}` |
       | Target Branch | `{{ workflow.input.target_branch }}` |
       | Remediation Cycles | {{ remediation_counter.output.iteration }} |
@@ -326,14 +541,14 @@ agents:
       ## Context
 
       - **Work item:** {{ workflow.input.work_item_id }}
-      - **PR number:** {{ feature_pr_creator.output.pr_number }}
+      - **PR number:** {{ feature_pr_creator_github.output.pr_number }}
       - **Remediation cycle:** {{ remediation_counter.output.iteration }}
       - **Original plan:** {{ workflow.input.plan_path }}
 
       ## Instructions
 
-      1. **Read the PR review feedback** — Use `gh pr view {{ feature_pr_creator.output.pr_number }}`
-         and `gh api repos/{owner}/{repo}/pulls/{{ feature_pr_creator.output.pr_number }}/reviews`
+      1. **Read the PR review feedback** — Use `gh pr view {{ feature_pr_creator_github.output.pr_number }}`
+         and `gh api repos/{owner}/{repo}/pulls/{{ feature_pr_creator_github.output.pr_number }}/reviews`
          to fetch all review comments and requested changes.
       2. **Read the original plan** (if available) to understand context
       3. **Analyze each review issue** to determine scope of work needed
@@ -515,7 +730,7 @@ agents:
       ## Context
 
       - **Work item:** {{ workflow.input.work_item_id }}
-      - **PR number:** {{ feature_pr_creator.output.pr_number }}
+      - **PR number:** {{ feature_pr_creator_github.output.pr_number }}
       - **Feature branch:** {{ workflow.input.feature_branch }}
       - **Target branch:** {{ workflow.input.target_branch }}
       - **Remediation cycle:** {{ remediation_counter.output.iteration }}
@@ -525,14 +740,14 @@ agents:
 
       1. **Add a PR comment** summarizing the remediation work:
          ```
-         gh pr comment {{ feature_pr_creator.output.pr_number }} \
+         gh pr comment {{ feature_pr_creator_github.output.pr_number }} \
            --body "## Remediation Cycle {{ remediation_counter.output.iteration }} Complete\n\nRemediation changes have been implemented and merged into the feature branch. Please re-review.\n\nAddendum plan: {{ remediation_planner.output.addendum_plan_path }}"
          ```
 
       2. **Re-request review** using the GitHub API. Fetch the most recent
          reviewer and re-request their review:
          ```
-         gh api repos/{owner}/{repo}/pulls/{{ feature_pr_creator.output.pr_number }}/requested_reviewers \
+         gh api repos/{owner}/{repo}/pulls/{{ feature_pr_creator_github.output.pr_number }}/requested_reviewers \
            --method POST \
            -f "reviewers[]={reviewer_login}"
          ```
@@ -541,7 +756,7 @@ agents:
 
       3. **Mark the PR as ready for review** (in case it was in draft):
          ```
-         gh pr ready {{ feature_pr_creator.output.pr_number }}
+         gh pr ready {{ feature_pr_creator_github.output.pr_number }}
          ```
 
       ## Output
@@ -549,7 +764,7 @@ agents:
       Return a JSON object:
       ```json
       {
-        "pr_number": {{ feature_pr_creator.output.pr_number }},
+        "pr_number": {{ feature_pr_creator_github.output.pr_number }},
         "review_requested": true,
         "comment_posted": true,
         "remediation_cycle": {{ remediation_counter.output.iteration }}
