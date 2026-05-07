@@ -2,269 +2,540 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Configuration;
+using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
+using Twig.Domain.Aggregates;
 
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony plan status</c> — operator-facing read-only snapshot of the
-/// plan-PR ledger across the run hierarchy. Reads
-/// <c>.polyphony/run.yaml</c> and aggregates the
-/// <see cref="RunManifest.MergedPlanPrs"/> entries per item, surfacing the
-/// current generation, merged-PR count, and the most recent merged PR.
+/// <c>polyphony plan status</c> — operator-facing tree-walked snapshot of
+/// the plan-PR state of every plannable item under a run root.
 ///
-/// <para>This is a pure inspection verb: no manifest mutations, no platform
-/// calls, no git mutations beyond <c>rev-parse --show-toplevel</c> for the
-/// default manifest-path discovery. Always exits 0; consumers branch on the
-/// JSON payload's <c>error</c> field.</para>
+/// <para>Walks the in-scope subtree from <c>--root</c> (the same BFS the
+/// worklist build verb uses), classifies each item's plannable facet from
+/// the loaded <see cref="ProcessConfig"/>, and queries <c>gh</c> per
+/// plan branch (<c>plan/{root}</c> or <c>plan/{root}-{item}</c>) to
+/// derive the <see cref="PlanStatusItem.PlanStatus"/> enum value:
+/// <c>needed</c> | <c>open</c> | <c>merged</c> | <c>abandoned</c> |
+/// <c>n/a</c>. Plan generation is enriched from the run manifest's
+/// <see cref="RunManifest.PlanGenerations"/> map when the manifest is
+/// available; manifest absence is non-fatal — the verb still walks and
+/// reports on the tree, leaving generation null.</para>
+///
+/// <para>Pure inspection verb: read-only against twig and the manifest;
+/// no mutation, no platform writes. Routing-style envelope: ALWAYS
+/// exits 0; consumers branch on <see cref="PlanStatusResult.ErrorCode"/>.</para>
+///
+/// <para><b>Phase 3 P10.</b> Supersedes the P9 manifest-only ledger
+/// reader — that earlier shape only knew about merged plan PRs and
+/// could not surface "needed" or "open with revisions requested" rows,
+/// which the operator-facing dashboard requires.</para>
 /// </summary>
 public sealed partial class PlanCommands
 {
     /// <summary>
-    /// Snapshot the plan-PR ledger for the given run root.
+    /// Snapshot the plan-PR state of every plannable item under a run root.
     /// </summary>
-    /// <param name="rootId">Run-root work-item id (positive). MUST match
-    /// the manifest's <see cref="RunManifest.RootId"/>; mismatch is an
-    /// error so an operator never accidentally inspects the wrong run.</param>
-    /// <param name="manifestPath">Override the manifest path. Defaults to
-    /// discovering the repo root via <c>git rev-parse --show-toplevel</c>
-    /// and appending <see cref="RunManifestStore.DefaultRelativePath"/>.</param>
-    /// <param name="json">Emit machine-readable JSON instead of the human
-    /// indented summary. The JSON shape is <see cref="PlanStatusResult"/>.</param>
+    /// <param name="root">Run-root work-item id (positive).</param>
+    /// <param name="manifest">Path to the run manifest. When omitted,
+    /// defaults to <see cref="RunManifestStore.DefaultRelativePath"/>
+    /// resolved relative to the current working directory; the manifest
+    /// is optional — if it is absent <see cref="PlanStatusItem.PlanGeneration"/>
+    /// is left null and the rest of the snapshot still renders.</param>
+    /// <param name="repo">Optional <c>owner/repo</c> slug. When omitted the
+    /// slug is derived from <c>git remote get-url origin</c>; an unresolvable
+    /// slug surfaces as <c>no_repo_slug</c>.</param>
+    /// <param name="includeNa">When true, items with no plannable facet are
+    /// included in the items array (still tagged <c>plan_status="n/a"</c>).
+    /// Default false — operators usually want only the actionable rows; the
+    /// summary counters always include n/a items so total scope is visible.</param>
+    /// <param name="json">Emit the machine-readable JSON envelope instead of the
+    /// human-readable table.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("status")]
     public async Task<int> Status(
-        int rootId,
-        string manifestPath = "",
+        int root,
+        string manifest = "",
+        string repo = "",
+        bool includeNa = false,
         bool json = false,
         CancellationToken ct = default)
     {
-        if (rootId <= 0)
+        if (root <= 0)
         {
-            EmitStatus(new PlanStatusResult
-            {
-                RootId = rootId,
-                ManifestPath = manifestPath,
-                Error = $"--root-id must be positive (got {rootId})",
-            }, json);
+            EmitStatus(ErrorResult(root, "invalid_argument", $"--root must be positive (got {root})"), json, includeNa);
             return ExitCodes.Success;
         }
 
-        // Resolve manifest path: explicit override wins; else discover from git toplevel.
-        var resolvedPath = manifestPath;
-        if (string.IsNullOrEmpty(resolvedPath))
+        // ── 1. Walk the subtree. ────────────────────────────────────────
+        List<WalkedPlanItem> walked;
+        try
         {
-            string? topLevel;
+            walked = await WalkPlanSubtreeAsync(root, ct).ConfigureAwait(false);
+        }
+        catch (PlanStatusFailure ex)
+        {
+            EmitStatus(ErrorResult(root, ex.Code, ex.Message), json, includeNa);
+            return ExitCodes.Success;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            EmitStatus(ErrorResult(root, "cache_error", ex.Message), json, includeNa);
+            return ExitCodes.Success;
+        }
+
+        // ── 2. Optional manifest enrichment for plan_generation. ───────
+        // Manifest is OPTIONAL on this verb — absence leaves PlanGeneration
+        // null. Explicit --manifest path that points at a missing/invalid
+        // file is still an error, because the operator was specific.
+        var manifestExplicit = !string.IsNullOrEmpty(manifest);
+        var manifestPath = manifestExplicit ? manifest : RunManifestStore.DefaultRelativePath;
+        RunManifest? loadedManifest = null;
+        if (manifestExplicit || File.Exists(manifestPath))
+        {
             try
             {
-                topLevel = await git.GetTopLevelAsync(ct).ConfigureAwait(false);
+                loadedManifest = RunManifestStore.LoadOrThrow(manifestPath);
+            }
+            catch (FileNotFoundException ex)
+            {
+                EmitStatus(ErrorResult(root, "manifest_not_found", ex.Message), json, includeNa);
+                return ExitCodes.Success;
             }
             catch (Exception ex)
             {
-                EmitStatus(new PlanStatusResult
-                {
-                    RootId = rootId,
-                    ManifestPath = "",
-                    Error = $"Could not resolve repo root via git rev-parse --show-toplevel: {ex.Message}",
-                }, json);
+                EmitStatus(ErrorResult(root, "manifest_invalid", ex.Message), json, includeNa);
                 return ExitCodes.Success;
             }
-            if (string.IsNullOrEmpty(topLevel))
+
+            if (loadedManifest.RootId != root)
             {
-                EmitStatus(new PlanStatusResult
-                {
-                    RootId = rootId,
-                    ManifestPath = "",
-                    Error = "Could not resolve repo root via git rev-parse --show-toplevel (not a git repository?)",
-                }, json);
+                EmitStatus(
+                    ErrorResult(root, "root_id_mismatch",
+                        $"Manifest root_id {loadedManifest.RootId} does not match --root {root}"),
+                    json, includeNa);
                 return ExitCodes.Success;
             }
-            resolvedPath = Path.Combine(topLevel, RunManifestStore.DefaultRelativePath);
         }
 
-        // Load manifest. RunManifestStore throws on missing/malformed/invalid;
-        // we catch everything and route via the error field.
-        RunManifest manifest;
-        try
+        // ── 3. Determine which items have plannable facets. ────────────
+        // Items without the plannable facet stay in the walked list (so
+        // summary.total_items reflects the full tree) but get tagged "n/a".
+        var classified = ClassifyPlannable(walked);
+
+        // ── 4. Resolve repo slug only if at least one item is plannable. ─
+        // Otherwise we'd surface a spurious no_repo_slug error on a tree
+        // composed entirely of leaf tasks.
+        var anyPlannable = classified.Any(c => c.IsPlannable);
+        string slug = "";
+        if (anyPlannable)
         {
-            manifest = RunManifestStore.LoadOrThrow(resolvedPath);
-        }
-        catch (Exception ex)
-        {
-            EmitStatus(new PlanStatusResult
+            slug = !string.IsNullOrWhiteSpace(repo)
+                ? repo.Trim()
+                : await TryResolveSlugAsync(ct).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(slug))
             {
-                RootId = rootId,
-                ManifestPath = resolvedPath,
-                Error = ex.Message,
-            }, json);
-            return ExitCodes.Success;
-        }
-
-        if (manifest.RootId != rootId)
-        {
-            EmitStatus(new PlanStatusResult
-            {
-                RootId = rootId,
-                ManifestPath = resolvedPath,
-                Error = $"Manifest root_id {manifest.RootId} does not match --root-id {rootId}",
-            }, json);
-            return ExitCodes.Success;
-        }
-
-        var items = AggregateLedger(manifest, rootId);
-
-        EmitStatus(new PlanStatusResult
-        {
-            RootId = rootId,
-            ManifestPath = resolvedPath,
-            Items = items,
-        }, json);
-        return ExitCodes.Success;
-    }
-
-    /// <summary>
-    /// Groups <see cref="RunManifest.MergedPlanPrs"/> by item key, resolves
-    /// each key to a numeric work-item id (root key → <paramref name="rootId"/>;
-    /// numeric keys → parsed int), and produces the per-item summary rows
-    /// sorted by item id ascending.
-    /// </summary>
-    private static IReadOnlyList<PlanStatusItem> AggregateLedger(RunManifest manifest, int rootId)
-    {
-        if (manifest.MergedPlanPrs.Count == 0) return Array.Empty<PlanStatusItem>();
-
-        var grouped = new Dictionary<string, List<MergedPlanPrEntry>>(StringComparer.Ordinal);
-        foreach (var entry in manifest.MergedPlanPrs)
-        {
-            if (!grouped.TryGetValue(entry.ItemKey, out var bucket))
-            {
-                bucket = new List<MergedPlanPrEntry>();
-                grouped[entry.ItemKey] = bucket;
+                EmitStatus(
+                    ErrorResult(root, "no_repo_slug",
+                        "Could not resolve owner/repo slug from origin remote — pass --repo explicitly."),
+                    json, includeNa);
+                return ExitCodes.Success;
             }
-            bucket.Add(entry);
         }
 
-        var items = new List<PlanStatusItem>(grouped.Count);
-        foreach (var (itemKey, entries) in grouped)
+        // ── 5. Per-item PR enumeration via gh. ─────────────────────────
+        var items = new List<PlanStatusItem>(classified.Count);
+        foreach (var c in classified)
         {
-            // "root" → root id; otherwise parse numeric. Skip silently on a
-            // malformed key — the ledger validator already rejects garbage,
-            // but a defensive skip keeps the verb non-fatal under future
-            // schema additions.
-            int itemId;
-            if (string.Equals(itemKey, "root", StringComparison.Ordinal))
+            ct.ThrowIfCancellationRequested();
+
+            if (!c.IsPlannable)
             {
-                itemId = rootId;
-            }
-            else if (!int.TryParse(itemKey, NumberStyles.Integer, CultureInfo.InvariantCulture, out itemId))
-            {
+                items.Add(new PlanStatusItem
+                {
+                    ItemId = c.Walked.Item.Id,
+                    Title = c.Walked.Item.Title ?? "",
+                    PlanStatus = "n/a",
+                });
                 continue;
             }
 
-            // Most recent by RecordedAt (then PrNumber as a tiebreaker).
-            var latest = entries
-                .OrderByDescending(e => e.RecordedAt)
-                .ThenByDescending(e => e.PrNumber)
-                .First();
+            var headBranch = c.Walked.Item.Id == root
+                ? $"plan/{root}"
+                : $"plan/{root}-{c.Walked.Item.Id}";
 
-            // Current generation: prefer the manifest's PlanGenerations map
-            // (the source of truth), falling back to the latest ledger entry's
-            // CurrentGeneration so the output remains useful even if the map
-            // and ledger have diverged for some reason.
-            var currentGeneration = manifest.PlanGenerations.TryGetValue(itemKey, out var mapGen)
-                ? mapGen
-                : latest.CurrentGeneration;
+            PlanPrSnapshot snapshot;
+            try
+            {
+                snapshot = await ResolvePlanPrAsync(slug, headBranch, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                EmitStatus(
+                    ErrorResult(root, "gh_failed",
+                        $"gh PR enumeration failed for branch '{headBranch}' (item {c.Walked.Item.Id}): {ex.Message}"),
+                    json, includeNa);
+                return ExitCodes.Success;
+            }
+
+            var generation = snapshot.Status switch
+            {
+                "open" or "merged" or "abandoned" => LookupGeneration(loadedManifest, root, c.Walked.Item.Id),
+                _ => (int?)null,
+            };
 
             items.Add(new PlanStatusItem
             {
-                ItemId = itemId,
-                CurrentGeneration = currentGeneration,
-                MergedPrCount = entries.Count,
-                LatestPrUrl = BuildPrUrl(manifest.PlatformProject, latest.PrNumber),
-                LatestMergedAt = latest.RecordedAt,
+                ItemId = c.Walked.Item.Id,
+                Title = c.Walked.Item.Title ?? "",
+                PlanStatus = snapshot.Status,
+                PlanPrNumber = snapshot.PrNumber,
+                PlanPrUrl = snapshot.Url,
+                PlanGeneration = generation,
+                PendingRevisions = snapshot.PendingRevisions,
             });
         }
 
         items.Sort((a, b) => a.ItemId.CompareTo(b.ItemId));
-        return items;
+        var summary = BuildSummary(items);
+
+        EmitStatus(new PlanStatusResult
+        {
+            Success = true,
+            RootId = root,
+            Items = items,
+            Summary = summary,
+        }, json, includeNa);
+        return ExitCodes.Success;
     }
+
+    // ─── BFS walk ──────────────────────────────────────────────────────
+
+    private async Task<List<WalkedPlanItem>> WalkPlanSubtreeAsync(int rootId, CancellationToken ct)
+    {
+        var rootItem = await repository.GetByIdAsync(rootId, ct).ConfigureAwait(false);
+        if (rootItem is null)
+        {
+            throw new PlanStatusFailure("root_not_found", $"Run root {rootId} not found in twig cache.");
+        }
+
+        var walked = new List<WalkedPlanItem> { new(rootItem) };
+        var seen = new HashSet<int> { rootId };
+        var current = new List<int> { rootId };
+
+        while (current.Count > 0)
+        {
+            var next = new List<int>();
+            foreach (var parentId in current)
+            {
+                ct.ThrowIfCancellationRequested();
+                var children = await repository.GetChildrenAsync(parentId, ct).ConfigureAwait(false);
+                foreach (var child in children.OrderBy(c => c.Id))
+                {
+                    if (!seen.Add(child.Id)) continue;
+                    walked.Add(new WalkedPlanItem(child));
+                    next.Add(child.Id);
+                }
+            }
+            current = next;
+        }
+
+        return walked;
+    }
+
+    // ─── Facet classification ─────────────────────────────────────────
+
+    private List<ClassifiedPlanItem> ClassifyPlannable(IReadOnlyList<WalkedPlanItem> walked)
+    {
+        var classified = new List<ClassifiedPlanItem>(walked.Count);
+        foreach (var w in walked)
+        {
+            var typeName = w.Item.Type.Value ?? "";
+            if (string.IsNullOrEmpty(typeName) || !processConfig.Types.TryGetValue(typeName, out var typeConfig))
+            {
+                throw new PlanStatusFailure(
+                    "type_unknown",
+                    $"Type '{typeName}' (item {w.Item.Id}) not found in process config.");
+            }
+
+            var isPlannable = Array.Exists(typeConfig.Facets,
+                f => string.Equals(f, "plannable", StringComparison.OrdinalIgnoreCase));
+            classified.Add(new ClassifiedPlanItem(w, isPlannable));
+        }
+        return classified;
+    }
+
+    // ─── PR resolution via gh ─────────────────────────────────────────
 
     /// <summary>
-    /// Builds a best-effort PR URL from the manifest's
-    /// <see cref="RunManifest.PlatformProject"/> and a PR number. Currently
-    /// supports the GitHub form (<c>github.com/owner/repo</c>) and falls
-    /// through to <c>null</c> for other platforms (e.g. Azure DevOps),
-    /// where the platform_project shape doesn't carry enough information
-    /// to build a deep link.
+    /// Three-pass enumeration: open → merged → closed. The cheapest
+    /// "any open?" check fires first because it is the most operator-
+    /// relevant outcome; we only fall through to merged / closed when the
+    /// branch has no open PR. When an open PR exists, follows up with a
+    /// single <see cref="IGhClient.GetPullRequestPollDataAsync"/> to read
+    /// the review decision so the caller can populate
+    /// <see cref="PlanStatusItem.PendingRevisions"/>.
     /// </summary>
-    private static string? BuildPrUrl(string platformProject, int prNumber)
+    private async Task<PlanPrSnapshot> ResolvePlanPrAsync(
+        string slug, string headBranch, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(platformProject) || prNumber <= 0) return null;
-        if (platformProject.StartsWith("github.com/", StringComparison.Ordinal))
+        // Open?
+        var open = await gh.ListPullRequestsAsync(
+            slug,
+            new PrListFilters(Head: headBranch, State: "open", Limit: 1),
+            ct).ConfigureAwait(false);
+        if (open.Count > 0)
         {
-            return $"https://{platformProject}/pull/{prNumber.ToString(CultureInfo.InvariantCulture)}";
+            var pr = open[0];
+            bool? pending = null;
+            try
+            {
+                var poll = await gh.GetPullRequestPollDataAsync(slug, pr.Number, ct).ConfigureAwait(false);
+                if (poll is not null)
+                {
+                    pending = string.Equals(poll.ReviewDecision, "CHANGES_REQUESTED", StringComparison.Ordinal);
+                }
+            }
+            catch
+            {
+                // Pending-revisions enrichment is best-effort — if poll fails,
+                // we still surface "open" with a null pending flag rather than
+                // killing the whole snapshot for a single transient gh blip.
+                pending = null;
+            }
+
+            return new PlanPrSnapshot(
+                Status: "open",
+                PrNumber: pr.Number,
+                Url: pr.Url ?? BuildPrUrl(slug, pr.Number),
+                PendingRevisions: pending);
         }
-        return null;
+
+        // Merged?
+        var merged = await gh.ListPullRequestsAsync(
+            slug,
+            new PrListFilters(Head: headBranch, State: "merged", Limit: 1),
+            ct).ConfigureAwait(false);
+        if (merged.Count > 0)
+        {
+            var pr = merged[0];
+            return new PlanPrSnapshot(
+                Status: "merged",
+                PrNumber: pr.Number,
+                Url: pr.Url ?? BuildPrUrl(slug, pr.Number),
+                PendingRevisions: null);
+        }
+
+        // Abandoned (closed without merge)?
+        var closed = await gh.ListPullRequestsAsync(
+            slug,
+            new PrListFilters(Head: headBranch, State: "closed", Limit: 1),
+            ct).ConfigureAwait(false);
+        if (closed.Count > 0)
+        {
+            var pr = closed[0];
+            return new PlanPrSnapshot(
+                Status: "abandoned",
+                PrNumber: pr.Number,
+                Url: pr.Url ?? BuildPrUrl(slug, pr.Number),
+                PendingRevisions: null);
+        }
+
+        return new PlanPrSnapshot("needed", null, null, null);
     }
 
-    private static void EmitStatus(PlanStatusResult result, bool json)
+    private static string BuildPrUrl(string slug, int prNumber)
+        => $"https://github.com/{slug}/pull/{prNumber.ToString(CultureInfo.InvariantCulture)}";
+
+    // ─── Manifest enrichment ──────────────────────────────────────────
+
+    private static int? LookupGeneration(RunManifest? manifest, int rootId, int itemId)
     {
+        if (manifest is null) return null;
+        var key = itemId == rootId ? "root" : itemId.ToString(CultureInfo.InvariantCulture);
+        return manifest.PlanGenerations.TryGetValue(key, out var gen) ? gen : (int?)null;
+    }
+
+    // ─── Summary ──────────────────────────────────────────────────────
+
+    private static PlanStatusSummary BuildSummary(IReadOnlyList<PlanStatusItem> items)
+    {
+        var s = new
+        {
+            Total = items.Count,
+            Needed = 0,
+            Open = 0,
+            Merged = 0,
+            Abandoned = 0,
+            Na = 0,
+            Pending = 0,
+        };
+        var needed = 0;
+        var open = 0;
+        var merged = 0;
+        var abandoned = 0;
+        var na = 0;
+        var pending = 0;
+        foreach (var item in items)
+        {
+            switch (item.PlanStatus)
+            {
+                case "needed": needed++; break;
+                case "open":
+                    open++;
+                    if (item.PendingRevisions == true) pending++;
+                    break;
+                case "merged": merged++; break;
+                case "abandoned": abandoned++; break;
+                case "n/a": na++; break;
+            }
+        }
+        return new PlanStatusSummary
+        {
+            TotalItems = s.Total,
+            PlanNeeded = needed,
+            PlanOpen = open,
+            PlanMerged = merged,
+            PlanAbandoned = abandoned,
+            PlanNa = na,
+            PendingRevisions = pending,
+        };
+    }
+
+    // ─── Emission ─────────────────────────────────────────────────────
+
+    private static PlanStatusResult ErrorResult(int rootId, string code, string message)
+        => new()
+        {
+            Success = false,
+            RootId = rootId,
+            Items = Array.Empty<PlanStatusItem>(),
+            Summary = PlanStatusSummary.Empty,
+            ErrorCode = code,
+            ErrorMessage = message,
+        };
+
+    private static void EmitStatus(PlanStatusResult result, bool json, bool includeNa)
+    {
+        // Apply --include-na filter at the emit boundary so the in-flight
+        // count stays available for the summary.
+        var emitted = includeNa
+            ? result
+            : result with
+            {
+                Items = result.Items
+                    .Where(i => !string.Equals(i.PlanStatus, "n/a", StringComparison.Ordinal))
+                    .ToArray(),
+            };
+
         if (json)
         {
             Console.WriteLine(JsonSerializer.Serialize(
-                result, PolyphonyJsonContext.Default.PlanStatusResult));
+                emitted, PolyphonyJsonContext.Default.PlanStatusResult));
             return;
         }
 
-        Console.WriteLine(RenderHuman(result));
+        Console.WriteLine(RenderHumanStatus(emitted));
     }
 
     /// <summary>
-    /// Renders the human-readable form. Layout:
+    /// Human-readable table. Layout:
     /// <code>
-    /// plan status: root=100  manifest=/abs/path
-    ///   item 100  generation=2  merged_prs=2  latest=#42 https://...  at=2026-01-02T03:04:05Z
-    ///   item 250  generation=1  merged_prs=1  latest=#43 https://...  at=2026-01-02T03:05:00Z
+    /// plan status: root=100  items=4  needed=1 open=1 merged=1 abandoned=0 n/a=1  pending_revisions=0
+    ///   ITEM    STATUS      PR    GENERATION  TITLE
+    ///   100     merged      #142  1           Apex epic
+    ///   1101    open*       #145  2           Sub-issue A          (* = changes requested)
+    ///   1102    n/a         -     -           Sub-issue B (no plan facet)
+    ///   1103    needed      -     -           Sub-issue C (planning needed but not started)
     /// </code>
-    /// Errors render as a single line prefixed with <c>error:</c>.
+    /// On error, body is replaced with a single error line.
     /// </summary>
-    private static string RenderHuman(PlanStatusResult result)
+    private static string RenderHumanStatus(PlanStatusResult result)
     {
         var sb = new StringBuilder();
         sb.Append("plan status: root=").Append(result.RootId.ToString(CultureInfo.InvariantCulture));
-        if (!string.IsNullOrEmpty(result.ManifestPath))
-        {
-            sb.Append("  manifest=").Append(result.ManifestPath);
-        }
-        sb.AppendLine();
 
-        if (result.Error is not null)
+        if (result.ErrorCode is not null)
         {
-            sb.Append("  error: ").AppendLine(result.Error);
-            return sb.ToString().TrimEnd();
+            sb.AppendLine();
+            sb.Append("  error: ").Append(result.ErrorMessage ?? "(no message)")
+              .Append(" (").Append(result.ErrorCode).Append(')');
+            return sb.ToString();
         }
+
+        var s = result.Summary;
+        sb.Append("  items=").Append(s.TotalItems.ToString(CultureInfo.InvariantCulture));
+        sb.Append("  needed=").Append(s.PlanNeeded.ToString(CultureInfo.InvariantCulture));
+        sb.Append(" open=").Append(s.PlanOpen.ToString(CultureInfo.InvariantCulture));
+        sb.Append(" merged=").Append(s.PlanMerged.ToString(CultureInfo.InvariantCulture));
+        sb.Append(" abandoned=").Append(s.PlanAbandoned.ToString(CultureInfo.InvariantCulture));
+        sb.Append(" n/a=").Append(s.PlanNa.ToString(CultureInfo.InvariantCulture));
+        sb.Append("  pending_revisions=").Append(s.PendingRevisions.ToString(CultureInfo.InvariantCulture));
+        sb.AppendLine();
 
         if (result.Items.Count == 0)
         {
-            sb.AppendLine("  (no merged plan PRs yet)");
-            return sb.ToString().TrimEnd();
+            sb.Append("  (no items to report — pass --include-na to see n/a rows)");
+            return sb.ToString();
         }
 
+        // Column widths: stable for the operator's eye, no fancy auto-fit.
+        sb.AppendLine("  ITEM      STATUS       PR     GEN  TITLE");
         foreach (var item in result.Items)
         {
-            sb.Append("  item ").Append(item.ItemId.ToString(CultureInfo.InvariantCulture));
-            sb.Append("  generation=").Append(item.CurrentGeneration.ToString(CultureInfo.InvariantCulture));
-            sb.Append("  merged_prs=").Append(item.MergedPrCount.ToString(CultureInfo.InvariantCulture));
-            if (item.LatestPrUrl is not null)
-            {
-                sb.Append("  latest=").Append(item.LatestPrUrl);
-            }
-            if (item.LatestMergedAt is { } merged)
-            {
-                sb.Append("  at=").Append(merged.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
-            }
+            var statusCell = item.PendingRevisions == true ? item.PlanStatus + "*" : item.PlanStatus;
+            sb.Append("  ");
+            sb.Append(item.ItemId.ToString(CultureInfo.InvariantCulture).PadRight(9));
+            sb.Append(' ');
+            sb.Append(statusCell.PadRight(12));
+            sb.Append(' ');
+            sb.Append((item.PlanPrNumber.HasValue
+                ? "#" + item.PlanPrNumber.Value.ToString(CultureInfo.InvariantCulture)
+                : "-").PadRight(6));
+            sb.Append(' ');
+            sb.Append((item.PlanGeneration.HasValue
+                ? item.PlanGeneration.Value.ToString(CultureInfo.InvariantCulture)
+                : "-").PadRight(4));
+            sb.Append(' ');
+            sb.Append(item.Title);
             sb.AppendLine();
         }
 
-        return sb.ToString().TrimEnd();
+        if (result.Items.Any(i => i.PendingRevisions == true))
+        {
+            sb.Append("  (* = changes requested — open plan PR has unresolved review feedback)");
+        }
+        else
+        {
+            // Trim trailing newline produced by the last row.
+            while (sb.Length > 0 && (sb[^1] == '\n' || sb[^1] == '\r'))
+            {
+                sb.Length--;
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    // ─── Internal carrier types ───────────────────────────────────────
+
+    private sealed record WalkedPlanItem(WorkItem Item);
+
+    private sealed record ClassifiedPlanItem(WalkedPlanItem Walked, bool IsPlannable);
+
+    private sealed record PlanPrSnapshot(string Status, int? PrNumber, string? Url, bool? PendingRevisions);
+
+    /// <summary>
+    /// Internal control-flow exception used to short-circuit the BFS walk
+    /// or facet classification when the verb cannot continue. Carries the
+    /// routing-style error code the verb surfaces in its envelope.
+    /// </summary>
+    private sealed class PlanStatusFailure(string code, string message) : Exception(message)
+    {
+        public string Code { get; } = code;
     }
 }
