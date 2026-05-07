@@ -101,9 +101,9 @@ Describe 'apex-driver.yaml :: init_manifest agent exists and runs before build_w
         $argsText | Should -Match '\-Organization'
         $argsText | Should -Match '\-Project'
     }
-    It 'init_manifest routes to build_worklist on success' {
+    It 'init_manifest routes to declare_root on success' {
         $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'init_manifest' }
-        $successRoute = $agent.routes | Where-Object { $_.to -eq 'build_worklist' -and $_.when -match 'success' }
+        $successRoute = $agent.routes | Where-Object { $_.to -eq 'declare_root' -and $_.when -match 'success' }
         $successRoute | Should -Not -BeNullOrEmpty
     }
     It 'init_manifest routes to preflight_failure_gate as fallback' {
@@ -119,6 +119,47 @@ Describe 'apex-driver.yaml :: init_manifest agent exists and runs before build_w
     }
     It 'manifest-bootstrap.ps1 helper script exists on disk' {
         Test-Path (Join-Path $script:ScriptsDir 'manifest-bootstrap.ps1') | Should -BeTrue
+    }
+}
+
+Describe 'apex-driver.yaml :: declare_root agent stamps polyphony:root before build_worklist' {
+    # Per docs/polyphony-tags.md §"Workflow integration":
+    #   "Entry: tree-walker receives root_id as input. Calls
+    #    `polyphony root declare {root_id}` (idempotent) to stamp the root tag."
+    #
+    # If this agent is missing, every descendant's `polyphony root resolve`
+    # call returns fallback_required=true and the descent gate fires.
+    It 'declare_root agent is present' {
+        $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'declare_root' }
+        $agent | Should -Not -BeNullOrEmpty
+    }
+    It 'declare_root invokes polyphony root declare with --work-item' {
+        (Get-AgentCommand $script:ApexYaml 'declare_root') | Should -Be 'polyphony'
+        $args = Get-AgentArgs $script:ApexYaml 'declare_root'
+        $argsText = $args -join ' '
+        $argsText | Should -Match '^root declare'
+        $argsText | Should -Match '\-\-work-item'
+    }
+    It 'declare_root threads apex_id from workflow input' {
+        $args = Get-AgentArgs $script:ApexYaml 'declare_root'
+        ($args -join ' ') | Should -Match 'workflow\.input\.apex_id'
+    }
+    It 'declare_root routes to build_worklist on success' {
+        $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'declare_root' }
+        $successRoute = $agent.routes | Where-Object { $_.to -eq 'build_worklist' }
+        $successRoute | Should -Not -BeNullOrEmpty
+    }
+    It 'declare_root routes envelope errors to preflight_failure_gate' {
+        $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'declare_root' }
+        $failureRoute = $agent.routes | Where-Object {
+            $_.to -eq 'preflight_failure_gate' -and $_.when -match 'declare_root\.output\.error'
+        }
+        $failureRoute | Should -Not -BeNullOrEmpty
+    }
+    It 'init_manifest routes to declare_root (declare_root is reachable)' {
+        $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'init_manifest' }
+        $successRoute = $agent.routes | Where-Object { $_.to -eq 'declare_root' }
+        $successRoute | Should -Not -BeNullOrEmpty
     }
 }
 
