@@ -109,6 +109,74 @@ public sealed class PolyphonyServiceRegistrationTests
         typeNames.ShouldContain("TwigPaths");
     }
 
+    /// <summary>
+    /// Asserts every CLI command class registered in <c>Program.cs</c> has all
+    /// of its constructor dependencies registered in
+    /// <see cref="PolyphonyServiceRegistration"/>. This catches the
+    /// regression class where one command class declares a constructor
+    /// dependency on another (e.g. <c>RootCommands</c> depends on
+    /// <c>ScopeCommands</c>) but the dependency is not registered. Without
+    /// this test the failure mode is silent: ConsoleAppFramework constructs
+    /// the command with a null parameter and the verb NREs at first use
+    /// (see commit history for the <c>polyphony root declare</c> NPE).
+    ///
+    /// Reflection-based on purpose — does not trigger DI resolution, so it
+    /// runs without a live twig workspace, ADO connectivity, or a process
+    /// config file.
+    /// </summary>
+    [Theory]
+    [InlineData(typeof(Polyphony.Commands.ValidateCommand))]
+    [InlineData(typeof(Polyphony.Commands.ValidateConfigCommand))]
+    [InlineData(typeof(Polyphony.Commands.HierarchyCommand))]
+    [InlineData(typeof(Polyphony.Commands.HealthCommand))]
+    [InlineData(typeof(Polyphony.Commands.PlanCommands))]
+    [InlineData(typeof(Polyphony.Commands.PolicyCommands))]
+    [InlineData(typeof(Polyphony.Commands.GuidanceCommands))]
+    [InlineData(typeof(Polyphony.Commands.BranchCommands))]
+    [InlineData(typeof(Polyphony.Commands.StateCommands))]
+    [InlineData(typeof(Polyphony.Commands.PrCommands))]
+    [InlineData(typeof(Polyphony.Commands.ScopeCommands))]
+    [InlineData(typeof(Polyphony.Commands.RootCommands))]
+    [InlineData(typeof(Polyphony.Commands.RequirementsCommands))]
+    [InlineData(typeof(Polyphony.Commands.MgCommands))]
+    [InlineData(typeof(Polyphony.Commands.ManifestCommands))]
+    [InlineData(typeof(Polyphony.Commands.LockCommands))]
+    [InlineData(typeof(Polyphony.Commands.WorktreeCommands))]
+    [InlineData(typeof(Polyphony.Commands.WorklistCommands))]
+    [InlineData(typeof(Polyphony.Commands.EdgesCommands))]
+    [InlineData(typeof(Polyphony.Commands.AgentCommands))]
+    public void Command_ConstructorDependenciesAreRegistered(Type commandType)
+    {
+        // Arrange — production registration ONLY; do not register the command
+        // itself, because we are asserting that AddPolyphonyServices alone
+        // covers every dep a command's constructor needs.
+        var services = new ServiceCollection();
+        services.AddPolyphonyServices("nonexistent-config.yaml", twigDir: null);
+
+        var registeredTypes = services.Select(d => d.ServiceType).ToHashSet();
+        var ctor = commandType.GetConstructors()
+            .Where(c => c.IsPublic)
+            .OrderByDescending(c => c.GetParameters().Length)
+            .First();
+
+        // Act + Assert — every constructor parameter type must resolve from
+        // the production container. Params with explicit defaults
+        // (e.g. `IFoo? foo = null`) are skipped because the constructor
+        // tolerates a missing registration; they are not the bug class
+        // we are guarding against.
+        foreach (var param in ctor.GetParameters())
+        {
+            if (param.HasDefaultValue) continue;
+
+            registeredTypes.ShouldContain(
+                param.ParameterType,
+                $"{commandType.Name} constructor param '{param.Name}' of type " +
+                $"{param.ParameterType.Name} is not registered by " +
+                $"PolyphonyServiceRegistration. ConsoleAppFramework will " +
+                $"resolve it as null and the verb will NRE at first use.");
+        }
+    }
+
     private static string? FindProcessConfigPath()
     {
         var twig2Root = TestHelpers.FindRepoRoot("twig2");
