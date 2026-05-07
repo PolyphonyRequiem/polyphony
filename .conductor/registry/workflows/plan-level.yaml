@@ -1088,7 +1088,10 @@ agents:
         when: "{{ poll_status.output.state == 'approved' }}"
       - to: revise_counter
         when: "{{ poll_status.output.state == 'changes_requested' }}"
-      - to: pending_review_gate
+      # Stuck-review timeout MVP — pending re-entries flow through
+      # pending_poll_counter so we can surface stuck_review_gate after
+      # POLL_CAP polls instead of looping into pending_review_gate forever.
+      - to: pending_poll_counter
         when: "{{ poll_status.output.state == 'pending' }}"
       - to: seeder
         when: "{{ poll_status.output.state == 'merged' }}"
@@ -1167,6 +1170,50 @@ agents:
     routes:
       - to: architect
 
+  # ── Pending poll counter (stuck-review timeout MVP) ───────────────────
+  #
+  # Increments each time poll_status / poll_status_ado returns 'pending'.
+  # Counter file is keyed by work_item_id so it persists across the
+  # poll → pending_review_gate → continue → re-poll loop. When the count
+  # reaches POLL_CAP, routes to stuck_review_gate so the operator can
+  # decide whether to keep waiting, override-approve, or abort. Below
+  # the cap, routes to the existing pending_review_gate (unchanged
+  # operator UX for the common case).
+  #
+  # POLL_CAP is hard-coded to 60 at MVP. With human-driven re-polls
+  # this represents 60 deliberate "is it ready yet?" clicks before the
+  # workflow surfaces the stuck-review escalation.
+  #
+  # TODO(stuck-review-policy): elevate to policy.yaml > timeouts:
+  #   { review_pending: { by_pr_kind: { plan: 60, feature: 60, ... } } }
+  # when the policy schema lands. See docs/decisions/stuck-review-timeout.md.
+  #
+  # Invariants:
+  #   Pre:  poll_status (or poll_status_ado) returned state == 'pending'.
+  #   Post: output.count is the current poll count (1-based);
+  #         output.cap_reached indicates whether the cap was hit.
+  - name: pending_poll_counter
+    type: script
+    description: Track pending-review poll count (cap 60 — stuck-review timeout MVP)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-plan-pending-poll-{{ workflow.input.work_item_id }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        $cap = 60
+        @{ count = $count; cap = $cap; cap_reached = ($count -ge $cap) } | ConvertTo-Json
+    routes:
+      - to: stuck_review_gate
+        when: "{{ pending_poll_counter.output.cap_reached == true }}"
+      - to: pending_review_gate
+
   # ── Pending-review gate (in-workflow human checkpoint) ────────────────
   #
   # When poll_status returns 'pending' we surface a gate with the PR URL
@@ -1204,6 +1251,105 @@ agents:
       - label: "🛑 Abort"
         value: abort
         route: $end
+
+  # ── Stuck-review gate (poll-cap escalation) ───────────────────────────
+  #
+  # Fires when pending_poll_counter hits POLL_CAP (60). The reviewer has
+  # gone silent — surface that fact rather than letting the operator
+  # keep clicking "Continue" on pending_review_gate forever.
+  #
+  # Three operator options (per task spec):
+  #   continue_waiting  → reset the counter, return to pending_review_gate.
+  #                       Gives the operator another full cap budget.
+  #   override_approved → bypass review, route to the platform-appropriate
+  #                       merger via stuck_review_override_router.
+  #   abort             → exit the workflow.
+  #
+  # TODO(stuck-review-policy): elevate to policy.yaml > timeouts: when
+  # the policy schema lands. See docs/decisions/stuck-review-timeout.md.
+  #
+  # P6 qualification: this is a genuine multi-option decision (wait /
+  # override / abort) that requires the operator to know whether the
+  # silence is recoverable — not a routine checkpoint.
+  - name: stuck_review_gate
+    type: human_gate
+    description: PR review pending past poll cap — operator decides wait, override, or abort.
+    prompt: |
+      ## ⏰ Stuck Review — Poll Cap Reached for Work Item {{ workflow.input.work_item_id }}
+
+      The plan PR has been awaiting reviewer action for
+      **{{ pending_poll_counter.output.count }}** polls
+      (cap: **{{ pending_poll_counter.output.cap }}**).
+
+      The reviewer may be unavailable or unblocked but silent. You can
+      keep waiting (the counter resets), bypass review and merge anyway,
+      or abort.
+
+      - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url) }}
+      - **Branch:** `{{ ensure_plan_branch.output.branch if ensure_plan_branch.output.branch is defined else state_detector.output.plan_branch }}`
+
+      ---
+
+      Choose an action:
+      - **Continue waiting** — reset the poll counter and return to the pending-review gate
+      - **Override approved** — treat the PR as approved and proceed to merge
+      - **Abort** — stop planning this branch
+    options:
+      - label: "⏳ Continue waiting"
+        value: continue_waiting
+        route: stuck_review_reset
+      - label: "✅ Override approved"
+        value: override_approved
+        route: stuck_review_override_router
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Stuck-review reset ────────────────────────────────────────────────
+  #
+  # Zeros the poll counter file when the operator chose "Continue waiting"
+  # at stuck_review_gate, then routes back to pending_review_gate so the
+  # operator gets the regular pending UX again with a fresh cap budget.
+  - name: stuck_review_reset
+    type: script
+    description: Reset pending-poll counter after stuck-review continue-waiting choice
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-plan-pending-poll-{{ workflow.input.work_item_id }}"
+        Set-Content $counterFile 0
+        @{ count = 0; reset = $true } | ConvertTo-Json
+    routes:
+      - to: pending_review_gate
+
+  # ── Stuck-review override router ──────────────────────────────────────
+  #
+  # When the operator picks "Override approved" at stuck_review_gate, we
+  # need to route to the platform-appropriate merger (merge_plan_pr for
+  # github, merge_plan_pr_ado for ado). This script-step echoes the
+  # platform input so the route conditions can branch on it without
+  # depending on whether poll_status or poll_status_ado was the last
+  # poller.
+  - name: stuck_review_override_router
+    type: script
+    description: Route stuck-review override to the platform-appropriate plan PR merger
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $platform = '{{ workflow.input.platform }}'
+        if ([string]::IsNullOrWhiteSpace($platform)) { $platform = 'ado' }
+        @{ platform = $platform } | ConvertTo-Json -Compress
+    routes:
+      - to: merge_plan_pr_ado
+        when: "{{ stuck_review_override_router.output.platform == 'ado' }}"
+      - to: merge_plan_pr
+        when: "{{ stuck_review_override_router.output.platform == 'github' }}"
+      # Catch-all per M4: default to ADO since plan-level defaults platform to 'ado'.
+      - to: merge_plan_pr_ado
 
   # ── Revise counter ────────────────────────────────────────────────────
   #
@@ -1783,7 +1929,8 @@ agents:
         when: "{{ poll_status_ado.output.state == 'approved' }}"
       - to: revise_counter
         when: "{{ poll_status_ado.output.state == 'changes_requested' }}"
-      - to: pending_review_gate
+      # Stuck-review timeout MVP — see poll_status counterpart.
+      - to: pending_poll_counter
         when: "{{ poll_status_ado.output.state == 'pending' }}"
       - to: seeder
         when: "{{ poll_status_ado.output.state == 'merged' }}"

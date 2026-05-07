@@ -293,6 +293,36 @@ The `platform` input (default: `github`) on `implement-pg.yaml` and `feature-pr.
 controls which sub-workflow is selected. Platform selection is driven by
 `process-config.yaml` — not hardcoded in workflow routing.
 
+## Stuck-Review Safety (Pending-Review Timeout)
+
+Two PR-lifecycle workflows host re-entrant pending-review polling loops:
+
+- **`plan-level.yaml`** — polls plan-PR review status (github / ADO legs);
+  on `state == 'pending'` it waits at `pending_review_gate` and re-polls.
+- **`ado-pr.yaml`** — polls ADO PR status; on `pending` it waits at
+  `ado_pr_pending_gate` and re-polls.
+
+Without a cap, a silent reviewer can leave the workflow looping indefinitely
+with no escalation surface beyond "abort". The MVP guards both loops with a
+**poll-cap counter** that escalates to a **stuck-review gate** when the cap
+is reached.
+
+| Concept | Where it lives |
+|---|---|
+| Poll-cap value | Hard-coded **60** in both YAMLs. Greppable via `cap = 60`. |
+| Counter file | `$TMPDIR\conductor-plan-pending-poll-{work_item_id}` (plan-level), `$TMPDIR\conductor-ado-pr-pending-poll-{pr_number}` (ado-pr). Same idiom as existing `revise_counter` / `review_counter`. |
+| Counter agent | `pending_poll_counter` (plan-level), `ado_pending_poll_counter` (ado-pr). |
+| Escalation gate | `stuck_review_gate` (plan-level), `ado_stuck_review_gate` (ado-pr). Three options: `continue_waiting` (reset counter and resume regular polling), `override_approved` (treat as approved and route to merger), `abort` (`$end`). |
+| Reset on continue | `stuck_review_reset` zeros the counter so the operator gets a fresh budget after choosing `continue_waiting`. |
+| ADR | [`docs/decisions/stuck-review-timeout.md`](../../../docs/decisions/stuck-review-timeout.md) — explains why the cap is hard-coded and sketches the future policy-resolved schema. |
+
+**Out-of-scope by design** for this safety mechanism:
+
+- `github-pr.yaml` — uses an LLM reviewer that returns approved /
+  changes_requested directly; no `pending` state, no loop to cap.
+- `feature-pr.yaml` — delegates to `pr_lifecycle_*` sub-workflows.
+- `actionable.yaml` — uses an LLM evidence reviewer; no polling.
+
 ## Versioning
 
 The polyphony CLI binary and the workflow registry **ship bundled** —

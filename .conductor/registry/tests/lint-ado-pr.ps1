@@ -9,6 +9,11 @@
        always have an exit path per P6)
     3. Entry point references a valid agent name
     4. Workflow name is 'ado-pr'
+    5. Stuck-review timeout MVP — ado_pending_poll_counter exists,
+       ado_pr_status_check routes 'pending' through it, the counter
+       routes to ado_stuck_review_gate on cap_reached, the gate exposes
+       continue_waiting / override_approved / abort, and
+       ado_stuck_review_reset exists.
 
     NOTE: Earlier stub revisions of ado-pr.yaml emitted an
     'ADO_PR_NOT_IMPLEMENTED' sentinel and required a 'merged' gate option;
@@ -99,6 +104,58 @@ if ($content -notmatch 'name:\s*ado-pr') {
     $violations += [PSCustomObject]@{
         Rule   = 'wrong-workflow-name'
         Detail = "Workflow name should be 'ado-pr'"
+    }
+}
+
+# ── Check 7: Stuck-review timeout MVP — ado_pending_poll_counter exists ─
+if ($content -notmatch 'name:\s*ado_pending_poll_counter\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-pending-poll-counter'
+        Detail = "No ado_pending_poll_counter script node found (stuck-review timeout MVP)"
+    }
+}
+
+# ── Check 8: ado_pr_status_check routes 'pending' through the counter ───
+if ($content -notmatch "to:\s*ado_pending_poll_counter[\s\S]{0,200}?ado_pr_status_check\.output\.state\s*==\s*'pending'") {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-pending-route'
+        Detail = "ado_pr_status_check does not route 'pending' through ado_pending_poll_counter"
+    }
+}
+
+# ── Check 9: counter routes to stuck-review gate on cap_reached ─────────
+if ($content -notmatch "ado_pending_poll_counter\.output\.cap_reached\s*==\s*true") {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-cap-reached-route'
+        Detail = "ado_pending_poll_counter does not route on cap_reached==true"
+    }
+}
+
+# ── Check 10: ado_stuck_review_gate exists with all three options ───────
+if ($content -notmatch 'name:\s*ado_stuck_review_gate\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-stuck-review-gate'
+        Detail = "No ado_stuck_review_gate human_gate found (stuck-review timeout MVP)"
+    }
+}
+$stuckOptions = @('continue_waiting', 'override_approved', 'abort')
+foreach ($opt in $stuckOptions) {
+    $gateBlock = ''
+    $m = [regex]::Match($content, '(?s)- name: ado_stuck_review_gate\b.*?(?=\n  - name: |\Z)')
+    if ($m.Success) { $gateBlock = $m.Value }
+    if ($gateBlock -notmatch "value:\s*$opt\b") {
+        $violations += [PSCustomObject]@{
+            Rule   = 'missing-stuck-review-option'
+            Detail = "ado_stuck_review_gate missing option value: '$opt'"
+        }
+    }
+}
+
+# ── Check 11: ado_stuck_review_reset script exists ──────────────────────
+if ($content -notmatch 'name:\s*ado_stuck_review_reset\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-stuck-review-reset'
+        Detail = "No ado_stuck_review_reset script node found (stuck-review timeout MVP)"
     }
 }
 

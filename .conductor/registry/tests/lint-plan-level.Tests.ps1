@@ -263,6 +263,52 @@ agents:
         when: "{{ poll_status.output.state == 'approved' and workflow.input.child_scope_globs != '' }}"
       - to: merge_plan_pr
         when: "{{ poll_status.output.state == 'approved' }}"
+      - to: pending_poll_counter
+        when: "{{ poll_status.output.state == 'pending' }}"
+  - name: poll_status_ado
+    type: script
+    command: polyphony
+    args:
+      - "pr"
+      - "poll-status-ado"
+    routes:
+      - to: pending_poll_counter
+        when: "{{ poll_status_ado.output.state == 'pending' }}"
+  - name: pending_poll_counter
+    type: script
+    command: pwsh
+    args:
+      - "-Command"
+      - "echo {}"
+    routes:
+      - to: stuck_review_gate
+        when: "{{ pending_poll_counter.output.cap_reached == true }}"
+      - to: merge_plan_pr
+  - name: stuck_review_gate
+    type: human_gate
+    prompt: "stuck review"
+    options:
+      - label: "Continue"
+        value: continue_waiting
+        route: stuck_review_reset
+      - label: "Override"
+        value: override_approved
+        route: stuck_review_override_router
+      - label: "Abort"
+        value: abort
+        route: `$end
+  - name: stuck_review_reset
+    type: script
+    command: pwsh
+    args: ["-Command", "echo {}"]
+    routes:
+      - to: merge_plan_pr
+  - name: stuck_review_override_router
+    type: script
+    command: pwsh
+    args: ["-Command", "echo {}"]
+    routes:
+      - to: merge_plan_pr
   - name: validate_scope
     type: script
     command: polyphony
@@ -658,6 +704,75 @@ agents:
             $joined | Should -Match 'missing-output-renegotiation-request'
             $joined | Should -Match 'missing-output-validate-scope-verdict'
             $joined | Should -Match 'missing-output-scope-violation-files'
+        }
+    }
+
+    Context 'Stuck-review timeout MVP' {
+
+        BeforeEach {
+            $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-plan-level-stuck-test-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+            $script:WorkflowsDir = Join-Path $script:TempRoot 'workflows'
+            $script:TestsDir = Join-Path $script:TempRoot 'tests'
+            $script:RealYaml = Join-Path $PSScriptRoot '..' 'workflows' 'plan-level.yaml'
+            New-Item $script:WorkflowsDir -ItemType Directory -Force | Out-Null
+            New-Item $script:TestsDir -ItemType Directory -Force | Out-Null
+            Copy-Item $script:LintScript (Join-Path $script:TestsDir 'lint-plan-level.ps1')
+        }
+
+        AfterEach {
+            Remove-Item $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Real plan-level.yaml carries the pending_poll_counter step' {
+            (Get-Content $script:RealYaml -Raw) | Should -Match 'name:\s*pending_poll_counter'
+        }
+
+        It 'Real plan-level.yaml has stuck_review_gate with all three required options' {
+            $content = Get-Content $script:RealYaml -Raw
+            $content | Should -Match 'name:\s*stuck_review_gate'
+            $m = [regex]::Match($content, '(?s)- name: stuck_review_gate\b.*?(?=\n  - name: |\Z)')
+            $m.Success | Should -BeTrue
+            $m.Value | Should -Match 'value:\s*continue_waiting'
+            $m.Value | Should -Match 'value:\s*override_approved'
+            $m.Value | Should -Match 'value:\s*abort'
+        }
+
+        It 'Real plan-level.yaml has stuck_review_reset and stuck_review_override_router' {
+            $content = Get-Content $script:RealYaml -Raw
+            $content | Should -Match 'name:\s*stuck_review_reset'
+            $content | Should -Match 'name:\s*stuck_review_override_router'
+        }
+
+        It 'Real plan-level.yaml routes both poll_status legs to the counter on pending' {
+            $content = Get-Content $script:RealYaml -Raw
+            # poll_status leg
+            $content | Should -Match "to:\s*pending_poll_counter[\s\S]{0,200}?poll_status\.output\.state\s*==\s*'pending'"
+            # poll_status_ado leg
+            $content | Should -Match "to:\s*pending_poll_counter[\s\S]{0,200}?poll_status_ado\.output\.state\s*==\s*'pending'"
+        }
+
+        It 'Real plan-level.yaml routes from pending_poll_counter to stuck_review_gate on cap_reached' {
+            (Get-Content $script:RealYaml -Raw) | Should -Match 'pending_poll_counter\.output\.cap_reached\s*==\s*true'
+        }
+
+        It 'Lint fails when pending_poll_counter is removed from plan-level.yaml' {
+            $content = Get-Content $script:RealYaml -Raw
+            $stripped = $content -replace '(?s)\n\s*# ── Pending poll counter.*?(?=\n  # ── Pending-review gate)', "`n"
+            Set-Content (Join-Path $script:WorkflowsDir 'plan-level.yaml') $stripped
+            $lintScript = Join-Path $script:TestsDir 'lint-plan-level.ps1'
+            $output = pwsh -NoProfile -File $lintScript 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'missing-pending-poll-counter'
+        }
+
+        It 'Lint fails when stuck_review_gate is missing the override_approved option' {
+            $content = Get-Content $script:RealYaml -Raw
+            $mutated = $content -replace '(?s)(- label: "✅ Override approved"\s*\r?\n\s*value:\s*override_approved\s*\r?\n\s*route:\s*stuck_review_override_router\s*\r?\n)', ''
+            Set-Content (Join-Path $script:WorkflowsDir 'plan-level.yaml') $mutated
+            $lintScript = Join-Path $script:TestsDir 'lint-plan-level.ps1'
+            $output = pwsh -NoProfile -File $lintScript 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match "missing-stuck-review-option"
         }
     }
 }

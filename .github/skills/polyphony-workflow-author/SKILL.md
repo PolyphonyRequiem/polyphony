@@ -294,6 +294,72 @@ not `Doing`).
 
 ---
 
+## Capping a re-entrant poll loop (poll-cap pattern)
+
+When a workflow polls an external state and re-enters on `state == 'pending'`,
+add a hard cap so a silent reviewer / dead status feed can't trap the loop
+forever. The pattern is three agents sitting between the poll step and the
+existing pending gate:
+
+```
+poll_status (script) ──pending──▶ pending_poll_counter (script)
+                                    │
+                                    ├──cap_reached──▶ stuck_review_gate (human_gate)
+                                    │                   │
+                                    │                   ├─continue_waiting─▶ stuck_review_reset (script) ──▶ pending_review_gate
+                                    │                   ├─override_approved─▶ <merger>
+                                    │                   └─abort──────────────▶ $end
+                                    │
+                                    └─(catch-all)─▶ pending_review_gate
+```
+
+**Counter step.** Mirror the existing `revise_counter` (`plan-level.yaml`)
+and `review_counter` (`github-pr.yaml`) idiom: a pwsh script that maintains
+a counter file under `$env:TMP` keyed by a stable per-PR identifier (so
+parallel PR loops don't clobber each other). Emit
+`{ count, cap, cap_reached }` so routing can branch on `cap_reached == true`.
+
+**Gate options.** Per `polyphony-workflow-author` conventions and
+`conductor-design` P6 (genuine multi-option human gate), the stuck-review
+gate must offer three options with semantically meaningful values, not
+binary continue/abort:
+
+- `continue_waiting` — reset the counter file to zero and route back to
+  the regular pending gate. The operator chose to keep waiting; give them
+  another full budget.
+- `override_approved` — the operator has out-of-band confirmation the PR
+  is good. Route to the merger directly. (If the workflow has multiple
+  platform-specific mergers — e.g. `merge_plan_pr` vs
+  `merge_plan_pr_ado` — interpose a small router script that selects on
+  `workflow.input.platform`. See `stuck_review_override_router` in
+  `plan-level.yaml`.)
+- `abort` — `$end`. The PR is abandoned; the operator will clean up by
+  hand.
+
+**Catch-all is mandatory.** Per `conductor-mechanics` M4, the counter's
+routes block needs an unconditional final route (the bare `to:
+pending_review_gate` line) so non-`cap_reached` polls reach the regular
+gate. Forgetting it makes the counter a dead end.
+
+**Mark the cap site.** The MVP hard-codes the cap at 60. Annotate every
+call site:
+
+```yaml
+# TODO(stuck-review-policy): elevate to policy.yaml > timeouts:
+#   { review_pending: { by_pr_kind: { plan: 60, feature: 60, ... } } }
+# when the policy schema lands. See docs/decisions/stuck-review-timeout.md.
+```
+
+so a future grep-and-promote pass finds every place to wire in
+`polyphony policy resolve --domain timeouts`.
+
+**Lint coverage.** Loop-cap structure is invariant — capture it in the
+per-workflow lint (`lint-plan-level.ps1` checks 18-23,
+`lint-ado-pr.ps1` checks 7-11) and add Pester mutation tests that strip
+the counter / a gate option to confirm the lint catches the regression.
+
+---
+
 ## The canonical helper scripts
 
 If you're about to write a new helper script, first check whether one of these is
