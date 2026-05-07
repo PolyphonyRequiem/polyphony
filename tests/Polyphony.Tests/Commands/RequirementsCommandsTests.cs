@@ -88,7 +88,7 @@ public sealed class RequirementsCommandsTests : CommandTestBase
     }
 
     [Fact]
-    public async Task Derive_ImplementableLeaf_EmitsImplementationMergedOnly()
+    public async Task Derive_ImplementableLeaf_EmitsImplementationMergedAndTerminal()
     {
         var task = new WorkItemBuilder()
             .WithId(102).WithType("Task").WithTitle("Code change").WithState("To Do").Build();
@@ -102,9 +102,12 @@ public sealed class RequirementsCommandsTests : CommandTestBase
         result.ShouldNotBeNull();
         result.WorkItemType.ShouldBe("Task");
         result.RequirementSet.ShouldNotBeNull();
-        result.RequirementSet!.Items.Count.ShouldBe(1);
-        result.RequirementSet.Items[0].Kind.ShouldBe(RequirementKind.ImplementationMerged);
-        result.RequirementSet.Items[0].Disposition.ShouldBe(Disposition.Needed);
+        result.RequirementSet!.Items.Count.ShouldBe(2);
+        var kinds = result.RequirementSet.Items.Select(r => r.Kind).ToArray();
+        kinds.ShouldContain(RequirementKind.ImplementationMerged);
+        kinds.ShouldContain(RequirementKind.ItemSatisfied);
+        var impl = result.RequirementSet.Items.First(r => r.Kind == RequirementKind.ImplementationMerged);
+        impl.Disposition.ShouldBe(Disposition.Needed);
     }
 
     [Fact]

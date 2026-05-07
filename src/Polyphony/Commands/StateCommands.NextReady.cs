@@ -137,6 +137,17 @@ public sealed partial class StateCommands
     private static string ClassifyStatus(RequirementSet set)
     {
         if (set.Items.Count == 0) return "empty";
+
+        // Pure-container case: only the synthetic terminal exists, and it is
+        // still Needed (cross-item rollup from children is not in scope yet).
+        // Surface as "empty" — the item has no own-work to drive forward.
+        if (set.Items.Count == 1
+            && string.Equals(set.Items[0].Kind, RequirementKind.ItemSatisfied, StringComparison.Ordinal)
+            && set.Items[0].Disposition == Disposition.Needed)
+        {
+            return "empty";
+        }
+
         var hasReady = false;
         var hasFulfilling = false;
         var allSatisfied = true;

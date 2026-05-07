@@ -139,8 +139,13 @@ public sealed class StateNextReadyTests : CommandTestBase
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
+        // Status is still "empty" — no own-work to drive forward — but the
+        // synthetic terminal is now visible in the requirement set, awaiting
+        // cross-item rollup from children (out of scope for PR #1).
         result.Status.ShouldBe("empty");
-        result.Requirements.ShouldBeEmpty();
+        result.Requirements.Count.ShouldBe(1);
+        result.Requirements[0].Kind.ShouldBe(RequirementKind.ItemSatisfied);
+        result.Requirements[0].Disposition.ShouldBe(Disposition.Needed);
         result.Next.ShouldBeEmpty();
     }
 

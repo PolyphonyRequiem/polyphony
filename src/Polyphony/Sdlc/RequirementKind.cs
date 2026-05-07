@@ -36,6 +36,17 @@ namespace Polyphony.Sdlc;
 ///   polyphony-executed action has been promoted to the feature branch.
 ///   Only emitted when executor=polyphony.</description></item>
 /// </list>
+/// <para>Terminal (always emitted):</para>
+/// <list type="bullet">
+///   <item><description><c>item_satisfied</c>: the item is fully complete,
+///   including any children. Acts as the unambiguous target for cross-item
+///   rollup edges (child <c>item_satisfied</c> → parent <c>item_satisfied</c>).
+///   Within an item, every "leaf" requirement (one with no outgoing
+///   within-item edges) connects to <c>item_satisfied</c>. For a pure
+///   organizational container (empty facet set + decomposable=true),
+///   <c>item_satisfied</c> is the only requirement and is satisfied purely
+///   by cross-item rollup from its children.</description></item>
+/// </list>
 /// </remarks>
 public static class RequirementKind
 {
@@ -46,11 +57,13 @@ public static class RequirementKind
     public const string ImplementationMerged = "implementation_merged";
     public const string ActionSatisfied = "action_satisfied";
     public const string EvidenceAccepted = "evidence_accepted";
+    public const string ItemSatisfied = "item_satisfied";
 
     /// <summary>
     /// Returns true if <paramref name="value"/> is one of the canonical requirement kind strings.
     /// </summary>
     public static bool IsValid(string? value) => value is
         PlanAuthored or PlanReviewed or PlanPromoted or ChildrenSeeded or
-        ImplementationMerged or ActionSatisfied or EvidenceAccepted;
+        ImplementationMerged or ActionSatisfied or EvidenceAccepted or
+        ItemSatisfied;
 }
