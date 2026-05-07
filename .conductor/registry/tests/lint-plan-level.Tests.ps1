@@ -775,4 +775,39 @@ agents:
             ($output -join "`n") | Should -Match "missing-stuck-review-option"
         }
     }
+
+    Context 'open_questions_policy --scope type field (regression: dogfood apex #3043, 2026-05-07)' {
+
+        BeforeEach {
+            $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-plan-level-typescope-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+            $script:WorkflowsDir = Join-Path $script:TempRoot 'workflows'
+            $script:TestsDir = Join-Path $script:TempRoot 'tests'
+            $script:RealYaml = Join-Path $PSScriptRoot '..' 'workflows' 'plan-level.yaml'
+            New-Item $script:WorkflowsDir -ItemType Directory -Force | Out-Null
+            New-Item $script:TestsDir -ItemType Directory -Force | Out-Null
+            Copy-Item $script:LintScript (Join-Path $script:TestsDir 'lint-plan-level.ps1')
+        }
+
+        AfterEach {
+            Remove-Item $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Real plan-level.yaml uses type_loader.output.type (canonical field) for the policy scope' {
+            (Get-Content $script:RealYaml -Raw) | Should -Match 'type:\{\{\s*type_loader\.output\.type\s*\}\}'
+        }
+
+        It 'Real plan-level.yaml does NOT reference the bogus type_loader.output.type_name field' {
+            (Get-Content $script:RealYaml -Raw) | Should -Not -Match 'type_loader\.output\.type_name'
+        }
+
+        It 'Lint fails when open_questions_policy regresses to type_loader.output.type_name' {
+            $content = Get-Content $script:RealYaml -Raw
+            $mutated = $content -replace 'type:\{\{\s*type_loader\.output\.type\s*\}\}', 'type:{{ type_loader.output.type_name }}'
+            Set-Content (Join-Path $script:WorkflowsDir 'plan-level.yaml') $mutated
+            $lintScript = Join-Path $script:TestsDir 'lint-plan-level.ps1'
+            $output = pwsh -NoProfile -File $lintScript 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'open-questions-policy-bad-type-field'
+        }
+    }
 }

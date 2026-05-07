@@ -317,6 +317,24 @@ if ($content -notmatch 'name:\s*stuck_review_override_router\b') {
     }
 }
 
+# ── Check 24: open_questions_policy --scope arg uses canonical type_loader output ──
+# `polyphony plan load-type` emits {"type": "..."} — historically a typo
+# read `type_loader.output.type_name` here, which silently rendered as the
+# string "type:" at lint time and then exploded with strict_undefined at
+# runtime ("'dict object' has no attribute 'type_name'"). Pin the field
+# name so the typo can never come back. We do NOT require the --scope
+# arg to be present at all — the verb falls back to the default scope
+# when omitted, which is valid; we only block the typo when present.
+$policyBlock = ''
+$m = [regex]::Match($content, '(?s)- name: open_questions_policy\b.*?(?=\n  - name: |\Z)')
+if ($m.Success) { $policyBlock = $m.Value }
+if ($policyBlock -match 'type_loader\.output\.type_name\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'open-questions-policy-bad-type-field'
+        Detail = "open_questions_policy --scope references type_loader.output.type_name; the verb emits 'type', not 'type_name' (caused dogfood failure on apex #3043, 2026-05-07)"
+    }
+}
+
 # ── Report ───────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "`n❌ plan-level.yaml open_questions policy lint FAILED ($($violations.Count) violations):`n" -ForegroundColor Red
