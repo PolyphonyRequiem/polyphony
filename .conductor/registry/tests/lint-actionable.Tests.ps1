@@ -104,7 +104,6 @@ agents:
         type: string
     prompt: "Do the work"
     routes:
-      # TODO(p6-pr7): insert evidence_floor_check between agent and PR open.
       - to: open_evidence_pr
 
   - name: open_evidence_pr
@@ -114,7 +113,32 @@ agents:
     routes:
       - to: workflow_error_gate
         when: "{{ open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' }}"
+      - to: evidence_floor_check
+
+  - name: evidence_floor_check
+    type: script
+    command: polyphony
+    args: ["pr", "check-evidence-floor", "1"]
+    routes:
+      - to: workflow_error_gate
+        when: "{{ evidence_floor_check.output.error_code is defined and evidence_floor_check.output.error_code != null }}"
+      - to: floor_failed_gate
+        when: "{{ evidence_floor_check.output.passes_floor == false }}"
       - to: evidence_reviewer
+
+  - name: floor_failed_gate
+    type: human_gate
+    prompt: "Floor failed"
+    options:
+      - label: "Abort"
+        value: abort
+        route: workflow_abandoned
+      - label: "Retry"
+        value: retry
+        route: actionable_agent
+      - label: "Manual complete"
+        value: manual_complete
+        route: workflow_completed
 
   # TODO(p6-pr8): replace this stub with the full evidence-judgment rubric.
   - name: evidence_reviewer
@@ -351,6 +375,41 @@ agents:
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-deferred-wiring-todo'
+        }
+
+        It 'Fails when the shipped TODO(p6-pr7) marker is still present' {
+            # Phase 6 PR #7 ships the floor — the marker must be ABSENT
+            # from production YAML now. Re-introducing it is the
+            # symptom of a botched revert / merge.
+            $yaml = ($script:ValidYaml) -replace '(?ms)(- name: evidence_floor_check)', "      # TODO(p6-pr7): insert evidence_floor_check`n`$1"
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'shipped-todo-still-present'
+        }
+
+        It 'Fails when evidence_floor_check node is missing (PR #7 wiring reverted)' {
+            $yaml = ($script:ValidYaml) -replace 'name: evidence_floor_check', 'name: evidence_floor_disabled'
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-node.*evidence_floor_check'
+        }
+
+        It 'Fails when floor_failed_gate node is missing (PR #7 gate reverted)' {
+            $yaml = ($script:ValidYaml) -replace 'name: floor_failed_gate', 'name: floor_failed_disabled'
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-node.*floor_failed_gate'
+        }
+
+        It 'Fails when check-evidence-floor verb is not invoked' {
+            $yaml = ($script:ValidYaml) -replace '"check-evidence-floor"', '"check-something-else"'
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-evidence-verb'
         }
     }
 }

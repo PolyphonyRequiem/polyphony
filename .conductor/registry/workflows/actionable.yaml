@@ -42,8 +42,6 @@
 #   - PR #5: per-item guidance injection (consumes PR #6's
 #            `polyphony guidance extract` data — verb already shipped
 #            in commit 32a3c2e)
-#   - PR #7: evidence floor check (≥1 commit + non-empty PR body)
-#            between actionable_agent and evidence_reviewer
 #   - PR #8: full evidence_reviewer rubric (currently a placeholder
 #            that approves unless the agent emits an explicit `block`)
 #   - Out of scope: wiring this workflow as a subworkflow of
@@ -331,11 +329,6 @@ agents:
       {% if evidence_reviewer is defined %}{{ evidence_reviewer.output.comment }}{% endif %}
       {% endif %}
     routes:
-      # TODO(p6-pr7): insert evidence_floor_check (script — verifies
-      # ≥1 commit on the evidence branch and a non-empty PR body)
-      # between this step and open_evidence_pr. The floor catches
-      # agent-crashed-before-producing-anything misfires; the reviewer
-      # remains the judgment gate.
       - to: open_evidence_pr
 
   # ── Evidence PR open (polyphony leg) ────────────────────────────────────
@@ -370,7 +363,121 @@ agents:
     routes:
       - to: workflow_error_gate
         when: "{{ open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' }}"
+      - to: evidence_floor_check
+
+  # ── Evidence floor check (polyphony leg) ────────────────────────────────
+  #
+  # Phase 6 PR #7 — strict mechanical pre-reviewer gate. Verifies the
+  # newly-opened evidence PR has at least one commit on its head branch
+  # AND a non-empty PR body (after trim) before the evidence_reviewer is
+  # asked to judge anything. Catches "agent crashed before producing
+  # anything" misfires more cheaply and more honestly than letting the
+  # LLM reviewer waste a turn on an empty PR.
+  #
+  # Per the Phase 6 design sketch (pick #6), the floor is STRICTLY
+  # mechanical — content judgment remains the reviewer's exclusive
+  # province. Do not extend with content-quality checks here.
+  #
+  # Routing (per the verb's routing-style envelope contract):
+  #   - error_code populated (pr_not_found / gh_failed) → workflow_error_gate
+  #   - passes_floor == false                          → floor_failed_gate
+  #   - passes_floor == true                           → evidence_reviewer
+  #
+  # The error_code branch fires before the floor branch because a
+  # transport failure means the floor was not actually evaluated — the
+  # error gate's retry path lets the operator re-run after fixing the
+  # underlying gh / network issue.
+  #
+  # Invariants:
+  #   Pre:  open_evidence_pr.output.pr_number > 0.
+  #   Post: Either floor passed (continue to evidence_reviewer) or
+  #         operator decided abort/retry/manual_complete at floor_failed_gate.
+  - name: evidence_floor_check
+    type: script
+    description: Mechanical floor check — ≥1 commit on head + non-empty PR body
+    command: polyphony
+    args:
+      - "pr"
+      - "check-evidence-floor"
+      - "{{ open_evidence_pr.output.pr_number }}"
+    routes:
+      - to: workflow_error_gate
+        when: "{{ evidence_floor_check.output.error_code is defined and evidence_floor_check.output.error_code != null }}"
+      - to: floor_failed_gate
+        when: "{{ evidence_floor_check.output.passes_floor == false }}"
       - to: evidence_reviewer
+
+  # ── Floor-failed gate (polyphony leg) ───────────────────────────────────
+  #
+  # Fires when the mechanical floor caught a misfire (agent crashed and
+  # produced nothing — no commits, empty body, or both). Per the design
+  # sketch this is intentionally a HUMAN gate, not an automatic abort:
+  # the operator picks the recovery shape because "agent produced
+  # nothing" can mean very different things (transient infra failure
+  # → retry; agent fundamentally couldn't do the work → abort; operator
+  # already handled the work out-of-band → manual_complete).
+  #
+  # The retry route re-enters at actionable_agent (NOT executor_router)
+  # because both upstream verbs (ensure_evidence_branch, open_evidence_pr)
+  # are idempotent and re-running them would be wasted work — the
+  # mostly-likely failure is the agent itself.
+  #
+  # Invariants:
+  #   Pre:  evidence_floor_check.output.passes_floor == false.
+  #   Post: Operator chose abort (workflow_abandoned), retry (re-enter
+  #         actionable_agent), or manual_complete (workflow_completed —
+  #         operator asserts the work is satisfied out-of-band).
+  - name: floor_failed_gate
+    type: human_gate
+    description: Evidence PR failed the mechanical floor — operator decides
+    prompt: |
+      ## ⚠️ Evidence PR #{{ evidence_floor_check.output.pr_number }} failed the mechanical floor
+
+      The actionable agent likely crashed or produced nothing. The
+      evidence reviewer is NOT being invoked because there is nothing
+      to review (running it would waste a turn and produce a
+      misleading "block" decision).
+
+      ### Floor read
+
+      - **commit count:** {{ evidence_floor_check.output.commit_count }}
+      - **body length (after trim):** {{ evidence_floor_check.output.body_length }}
+
+      ### Violations
+
+      {% for v in evidence_floor_check.output.violations -%}
+      - `{{ v }}`
+      {% endfor %}
+
+      ### Evidence PR
+
+      {{ open_evidence_pr.output.pr_url }}
+
+      ---
+
+      Choose an action:
+
+      - **Abort** — terminate the workflow without satisfying the
+        item. The PR remains open for human follow-up. Use this when
+        the agent has fundamentally failed and a retry will not help.
+      - **Retry (re-enter agent)** — re-invoke `actionable_agent`.
+        The branch and PR are reused (both verbs are idempotent);
+        only the agent re-runs. Use this for transient infra failures
+        or when you can give the agent better context for a retry.
+      - **Manual complete** — assert that you have handled the work
+        out-of-band. Routes to `workflow_completed` exactly as if the
+        evidence reviewer had approved. Use this when you've already
+        done the work yourself and just need the workflow to exit.
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: workflow_abandoned
+      - label: "🔄 Retry (re-enter agent)"
+        value: retry
+        route: actionable_agent
+      - label: "✅ Manual complete"
+        value: manual_complete
+        route: workflow_completed
 
   # ── Evidence reviewer (polyphony leg) ───────────────────────────────────
   #
@@ -624,6 +731,9 @@ agents:
       {%- elif open_evidence_pr is defined and open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' -%}
       **Stage:** open_evidence_pr
       **Detail:** {{ open_evidence_pr.output.error }}
+      {%- elif evidence_floor_check is defined and evidence_floor_check.output.error_code is defined and evidence_floor_check.output.error_code != null -%}
+      **Stage:** evidence_floor_check
+      **Detail:** [{{ evidence_floor_check.output.error_code }}] {{ evidence_floor_check.output.error_message }}
       {%- elif evidence_reviewer is defined and evidence_reviewer.output.decision == 'block' -%}
       **Stage:** evidence_reviewer
       **Detail:** {{ evidence_reviewer.output.comment }}

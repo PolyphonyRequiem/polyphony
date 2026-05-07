@@ -146,3 +146,44 @@ public sealed record GhPullRequestChangedFile(
     string Path,
     int Additions,
     int Deletions);
+
+/// <summary>
+/// Discriminator for <see cref="GhEvidenceFloorRead"/>. Lets the
+/// Phase 6 evidence-floor verb distinguish "PR genuinely missing" (a
+/// 404) from "gh failed for some other reason" — the two map to
+/// distinct error codes (<c>pr_not_found</c> vs <c>gh_failed</c>) in
+/// the verb's routing-style envelope.
+/// </summary>
+public enum GhEvidenceFloorOutcome
+{
+    /// <summary>gh returned a parseable JSON payload — <see cref="GhEvidenceFloorRead.CommitCount"/>
+    /// and <see cref="GhEvidenceFloorRead.Body"/> are populated.</summary>
+    Found,
+
+    /// <summary>gh exited non-zero with a stderr that looks like a 404
+    /// ("could not resolve" / "no pull requests found").</summary>
+    PrNotFound,
+
+    /// <summary>gh failed for any other reason (auth missing,
+    /// timeout-exhausted, malformed JSON, network error). The verb
+    /// surfaces <see cref="GhEvidenceFloorRead.Detail"/> in its
+    /// error_message envelope.</summary>
+    GhFailed,
+}
+
+/// <summary>
+/// Result of <see cref="IGhClient.GetPullRequestEvidenceFloorAsync"/>.
+/// Always non-null — failure modes are conveyed via
+/// <see cref="Outcome"/> rather than null sentinels because the caller
+/// (a routing-style verb) needs to distinguish "not found" from
+/// "transport error" deterministically.
+/// </summary>
+/// <param name="Outcome">Discriminator (see <see cref="GhEvidenceFloorOutcome"/>).</param>
+/// <param name="CommitCount">Number of commits on the PR's head branch beyond base. Zero when not <see cref="GhEvidenceFloorOutcome.Found"/>.</param>
+/// <param name="Body">Raw PR body (untrimmed). Empty when not <see cref="GhEvidenceFloorOutcome.Found"/>.</param>
+/// <param name="Detail">Human-readable diagnostic detail (typically gh stderr trimmed). Null when <see cref="GhEvidenceFloorOutcome.Found"/>.</param>
+public sealed record GhEvidenceFloorRead(
+    GhEvidenceFloorOutcome Outcome,
+    int CommitCount,
+    string Body,
+    string? Detail);

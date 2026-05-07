@@ -135,6 +135,26 @@ public interface IGhClient
         CancellationToken ct = default);
 
     /// <summary>
+    /// <c>gh pr view {prNumber} --repo {repoSlug} --json commits,body</c>
+    /// — read just the fields the Phase 6 evidence floor needs (commit
+    /// count + raw body for trim-and-measure). Returns a discriminated
+    /// outcome so the caller can distinguish "PR genuinely missing"
+    /// (<c>404</c> / "could not resolve") from "gh failed for some
+    /// other reason" — the verb maps the two to distinct error codes
+    /// (<c>pr_not_found</c> vs <c>gh_failed</c>) in its routing
+    /// envelope. Subject to the standard retry-on-timeout policy
+    /// (<see cref="GhClientPolicy"/>); when every attempt timed out the
+    /// outcome is <see cref="GhEvidenceFloorOutcome.GhFailed"/> with a
+    /// "timed out" detail rather than a thrown exception, because the
+    /// caller is a routing-style verb that already reports timeouts as
+    /// a routable outcome.
+    /// </summary>
+    Task<GhEvidenceFloorRead> GetPullRequestEvidenceFloorAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// <c>gh pr view {prNumber} --repo {repoSlug} --json files</c>.
     /// Returns the list of files changed by the PR. Used by
     /// <c>polyphony pr validate-plan-diff</c> and the merge-time guard in

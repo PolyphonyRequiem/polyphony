@@ -6,10 +6,11 @@ description: >-
   of a single work item by either driving polyphony to produce evidence
   or routing to a human-only satisfaction gate. Covers the executor
   router, the polyphony leg (evidence branch + agent + evidence PR +
-  reviewer + merge), the human leg (satisfaction gate only), and which
-  Phase 6 wiring is intentionally deferred to PRs #5/#7/#8. Companion
-  to the ADR at `docs/decisions/actionable-executor-split.md` and the
-  glossary "Workflows" section.
+  floor check + reviewer + merge), the human leg (satisfaction gate
+  only), and which Phase 6 wiring is intentionally deferred to PRs
+  #5/#8. Companion to the ADR at
+  `docs/decisions/actionable-executor-split.md` and the glossary
+  "Workflows" section.
 user-invokable: false
 ---
 
@@ -42,6 +43,14 @@ If you are deciding whether to ship one workflow or two, read the ADR.
               │                                  │
         open_evidence_pr                         │
               │                                  │
+        evidence_floor_check (script)            │
+         ├─pass──────> evidence_reviewer         │
+         ├─violation─> floor_failed_gate         │
+         │             ├─abort──> workflow_abandoned
+         │             ├─retry──> actionable_agent
+         │             └─manual_complete──> workflow_completed
+         └─gh_failed─> workflow_error_gate       │
+                                                 │
         evidence_reviewer (LLM, opus-4.7)        │
          ├─approve──> merge_evidence_pr ─┐       │
          ├─request_changes─> revise_loop_gate    │
@@ -87,19 +96,48 @@ doesn't crash StrictUndefined evaluation.
 
 ## Phase 6 deferred wiring
 
-Three `TODO(p6-prN)` markers are intentional placeholders that
+Two `TODO(p6-prN)` markers are intentional placeholders that
 `lint-actionable.ps1` enforces — removing them before the follow-up
 PR lands is a CI failure:
 
 | Marker          | Lands in | What it gates                                        |
 |-----------------|----------|------------------------------------------------------|
 | `TODO(p6-pr5)`  | PR #5    | Facet-profile composition + per-item guidance addendum on `actionable_agent`. |
-| `TODO(p6-pr7)`  | PR #7    | Evidence floor check between agent and `open_evidence_pr`. |
 | `TODO(p6-pr8)`  | PR #8    | Full evidence-judgment rubric for `evidence_reviewer` (currently a stub). |
 
 When you remove a marker as part of its follow-up PR, also remove the
 corresponding entry from `lint-actionable.ps1` — or the lint will
-flag the now-stale check.
+flag the now-stale check. The lint also enforces the inverse: shipped
+TODO markers (e.g. `TODO(p6-pr7)` after PR #7 landed) MUST be absent
+from the YAML; their reappearance signals a botched revert.
+
+## Evidence floor check (Phase 6 PR #7)
+
+`evidence_floor_check` is a **strict mechanical** pre-reviewer bar
+between `open_evidence_pr` and `evidence_reviewer`. It exists to
+catch "the agent crashed before producing anything" misfires before
+the LLM reviewer is asked to judge an empty PR. Two violations,
+listed in declaration order:
+
+| Violation     | Trigger                                                         |
+|---------------|-----------------------------------------------------------------|
+| `no_commits`  | `commit_count < min_commits` (default 1) on the head branch.    |
+| `empty_body`  | PR body is empty or whitespace-only after `.Trim()`.            |
+
+The verb is **routing-style** — always exits 0; outcomes are
+conveyed via the JSON envelope:
+
+- **Pass:** `success=true, passes_floor=true, violations=[]` → route
+  to `evidence_reviewer`.
+- **Violation:** `success=true, passes_floor=false, violations=[...]`
+  → route to `floor_failed_gate` (human gate offering
+  `abort` / `retry` / `manual_complete`).
+- **Transport failure:** `success=false, error_code=...`
+  (`pr_not_found` or `gh_failed`) → route to `workflow_error_gate`.
+
+Per Phase 6 design sketch pick #6, the floor is mechanical only. **Do
+not extend `check-evidence-floor` with content-quality checks** —
+that judgment belongs to the LLM reviewer alone.
 
 ## Verbs the workflow shells out to
 
@@ -108,6 +146,9 @@ flag the now-stale check.
 - `polyphony pr open-evidence-pr <workItem> [--apex-id N] [--head X] [--base-branch Y] [--title T] [--body B]`
   — emits `{ pr_number, pr_url, title, head_branch, base_branch, work_item_id, apex_id, created, error? }`.
   GH-only today; ADO sibling deferred per Phase 6 wave-0 pattern.
+- `polyphony pr check-evidence-floor <prNumber> [--repo owner/repo] [--min-commits N]`
+  — emits `{ success, pr_number, commit_count, body_length, passes_floor, violations[], error_code?, error_message? }`.
+  Always exits 0 (routing-style envelope); GH-only.
 - Inline `gh pr merge --squash --auto --delete-branch` in
   `merge_evidence_pr` (no `polyphony pr merge-evidence-pr` verb yet).
 

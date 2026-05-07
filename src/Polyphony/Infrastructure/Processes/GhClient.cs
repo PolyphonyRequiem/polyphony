@@ -275,6 +275,75 @@ public sealed class GhClient : IGhClient
         return result.Succeeded ? ParsePrFiles(result.Stdout) : null;
     }
 
+    public async Task<GhEvidenceFloorRead> GetPullRequestEvidenceFloorAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoSlug);
+        if (prNumber <= 0) throw new ArgumentOutOfRangeException(nameof(prNumber), "PR number must be positive.");
+
+        string[] args =
+        [
+            "pr", "view", prNumber.ToString(),
+            "--repo", repoSlug,
+            "--json", "commits,body",
+        ];
+
+        // Routing-style verb: every failure becomes a discriminated outcome,
+        // not a thrown exception. Caller cancellation still propagates.
+        ProcessResult result;
+        try
+        {
+            result = await RunWithRetryAsync(args, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (ExternalToolTimeoutException ex)
+        {
+            return new GhEvidenceFloorRead(
+                GhEvidenceFloorOutcome.GhFailed,
+                CommitCount: 0,
+                Body: string.Empty,
+                Detail: $"gh pr view timed out after {ex.Attempts} attempt(s)");
+        }
+
+        if (result.Succeeded)
+        {
+            var parsed = ParseEvidenceFloor(result.Stdout);
+            return parsed
+                ?? new GhEvidenceFloorRead(
+                    GhEvidenceFloorOutcome.GhFailed,
+                    CommitCount: 0,
+                    Body: string.Empty,
+                    Detail: "gh pr view returned a non-JSON or malformed payload");
+        }
+
+        // gh exit non-zero — classify "PR not found" vs everything else by
+        // sniffing stderr. gh emits one of: "could not resolve to a
+        // PullRequest", "GraphQL: Could not resolve to a PullRequest",
+        // "no pull requests found" (the last is for `pr list`, included
+        // for paranoia), or an HTTP 404 line. Anything else falls through
+        // to GhFailed with the verbatim stderr as detail.
+        var stderr = (result.Stderr ?? string.Empty).Trim();
+        if (LooksLikePrNotFound(stderr))
+        {
+            return new GhEvidenceFloorRead(
+                GhEvidenceFloorOutcome.PrNotFound,
+                CommitCount: 0,
+                Body: string.Empty,
+                Detail: stderr);
+        }
+
+        return new GhEvidenceFloorRead(
+            GhEvidenceFloorOutcome.GhFailed,
+            CommitCount: 0,
+            Body: string.Empty,
+            Detail: string.IsNullOrEmpty(stderr) ? $"gh pr view exited with code {result.ExitCode}" : stderr);
+    }
+
     public async Task<string?> GetPullRequestDiffAsync(
         string repoSlug,
         int prNumber,
@@ -481,6 +550,20 @@ public sealed class GhClient : IGhClient
         //   "the pull request is not mergeable: pull request is already merged"
         //   "this pull request is already merged"
         return stderr.Contains("already merged", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikePrNotFound(string stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr)) return false;
+        // gh emits one of:
+        //   "GraphQL: Could not resolve to a PullRequest with the number of N"
+        //   "could not resolve to a PullRequest"
+        //   "no pull requests found" (`pr list` rather than `pr view`, kept
+        //                              for paranoia / future call sites)
+        //   "HTTP 404: ..." (raw API path)
+        return stderr.Contains("could not resolve", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("no pull requests found", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("HTTP 404", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<GhPullRequestState?> TryGetStateForReconcileAsync(
@@ -712,5 +795,35 @@ public sealed class GhClient : IGhClient
             files.Add(new GhPullRequestChangedFile(path, additions, deletions));
         }
         return files;
+    }
+
+    /// <summary>
+    /// Parse <c>gh pr view --json commits,body</c> output. Returns null
+    /// when the JSON itself is unparseable or the top-level shape is
+    /// wrong; the caller maps null to <see cref="GhEvidenceFloorOutcome.GhFailed"/>.
+    /// A well-formed payload with no commits and an empty body still
+    /// returns a non-null record (with zero / empty values) — that's the
+    /// happy "PR exists but is empty" case the floor verb wants to
+    /// surface as a violation, not as a transport error.
+    /// </summary>
+    private static GhEvidenceFloorRead? ParseEvidenceFloor(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        JsonNode? node;
+        try { node = JsonNode.Parse(raw); }
+        catch (JsonException) { return null; }
+        if (node is not JsonObject obj) return null;
+
+        // commits is an array; count its length. gh's commits payload is
+        // each non-merge commit on the head beyond base — exactly the "PR
+        // has at least one substantive commit" notion the floor encodes.
+        var commitCount = obj["commits"] is JsonArray arr ? arr.Count : 0;
+        var body = obj["body"]?.GetValue<string>() ?? string.Empty;
+
+        return new GhEvidenceFloorRead(
+            GhEvidenceFloorOutcome.Found,
+            CommitCount: commitCount,
+            Body: body,
+            Detail: null);
     }
 }
