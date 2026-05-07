@@ -53,8 +53,8 @@ workflow:
     platform:
       type: string
       required: false
-      default: github
-      description: "PR platform: github | ado"
+      default: ado
+      description: "PR platform: 'ado' (default — matches the work item source) or 'github' (for repos hosted on GitHub)"
 
 tools:
   - twig
