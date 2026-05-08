@@ -19,6 +19,14 @@
                  The branch is created with `git worktree add -b`.
                  If the worktree directory already exists, the
                  operation is a no-op (idempotent re-entry on resume).
+                 If the branch already exists locally but the worktree
+                 directory does not (a prior aborted run left the
+                 branch behind), the worktree is attached to the
+                 existing branch via `git worktree add` (no `-b`)
+                 — this preserves any in-flight commits on the branch
+                 so resume actually resumes. If the branch is checked
+                 out by another worktree, the spawn fails fast with
+                 `branch_in_use` to avoid corrupting the live tree.
 
       teardown — Removes the worktree directory and prunes the entry
                  from the parent repo. Forced (--force) so a
@@ -45,7 +53,13 @@
 
     Error codes:
       git_unavailable         — git not on PATH.
-      worktree_add_failed     — `git worktree add` returned non-zero.
+      worktree_add_failed     — `git worktree add -b` returned non-zero
+                                (no existing branch — fresh creation
+                                path).
+      worktree_attach_failed  — `git worktree add` returned non-zero
+                                (existing-branch reuse path).
+      branch_in_use           — branch exists and is checked out by
+                                another worktree (cannot attach).
       worktree_remove_failed  — `git worktree remove` returned non-zero.
       invalid_operation       — Operation not one of spawn|teardown.
       missing_base_branch     — spawn called without -BaseBranch and no remote default.
@@ -109,6 +123,39 @@ function Get-RepoRoot {
     }
 }
 
+function Test-LocalBranchExists([string]$branchName) {
+    & git rev-parse --verify --quiet "refs/heads/$branchName" *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Get-BranchCheckedOutWorktree([string]$branchName) {
+    # Returns the absolute path of the worktree currently checked out
+    # on $branchName, or $null if no worktree has it checked out.
+    # Parses `git worktree list --porcelain` which emits records of:
+    #   worktree <path>
+    #   HEAD <sha>
+    #   branch refs/heads/<name>
+    #   <blank line between records>
+    $output = & git worktree list --porcelain 2>&1
+    if ($LASTEXITCODE -ne 0) { return $null }
+
+    $currentPath = $null
+    foreach ($line in $output) {
+        if ($line -match '^worktree\s+(.+)$') {
+            $currentPath = $matches[1].Trim()
+        }
+        elseif ($line -match "^branch\s+refs/heads/(.+)$") {
+            if ($matches[1].Trim() -eq $branchName) {
+                return $currentPath
+            }
+        }
+        elseif ([string]::IsNullOrWhiteSpace($line)) {
+            $currentPath = $null
+        }
+    }
+    return $null
+}
+
 function Get-WorktreePath([string]$repoRoot, [string]$worktreeRoot, [int]$workItemId) {
     if ([string]::IsNullOrWhiteSpace($worktreeRoot)) {
         $parent = Split-Path -Parent $repoRoot
@@ -159,6 +206,33 @@ try {
 
         if (Test-Path $worktreePath) {
             # Idempotent re-entry: a prior dispatch already spawned this worktree.
+            $envelope.success = $true
+            $envelope | ConvertTo-Json -Compress
+            exit 0
+        }
+
+        if (Test-LocalBranchExists $branchName) {
+            # Branch survived from a prior aborted run but the worktree
+            # directory is gone (operator deleted it, teardown ran but
+            # branch deletion is intentionally not part of teardown,
+            # etc.). Resume by attaching the worktree to the existing
+            # branch — preserves any in-flight commits.
+            $checkedOutAt = Get-BranchCheckedOutWorktree $branchName
+            if ($checkedOutAt) {
+                $envelope.error_code = 'branch_in_use'
+                $envelope.error_message = "branch '$branchName' is already checked out by worktree at '$checkedOutAt'; cannot attach a second worktree to the same branch"
+                $envelope | ConvertTo-Json -Compress
+                exit 0
+            }
+
+            $output = & git worktree add $worktreePath $branchName 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $envelope.error_code = 'worktree_attach_failed'
+                $envelope.error_message = "git worktree add (existing branch '$branchName') failed: $($output -join "`n")"
+                $envelope | ConvertTo-Json -Compress
+                exit 0
+            }
+
             $envelope.success = $true
             $envelope | ConvertTo-Json -Compress
             exit 0
