@@ -39,8 +39,8 @@ public sealed partial class PrCommands
     [Command("open-plan-pr")]
     [VerbResult(typeof(PrOpenPlanPrResult))]
     public async Task<int> OpenPlanPr(
-        int rootId,
-        int itemId,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
         int parentItemId = 0,
         string ancestorIds = "",
         string manifestPath = RunManifestStore.DefaultRelativePath,
@@ -48,6 +48,11 @@ public sealed partial class PrCommands
         string body = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr open-plan-pr",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         // ── 1. Validate input + derive head/base + ancestor chain. ────────
         if (!Branching.RootId.TryParse(rootId, out var root))
         {

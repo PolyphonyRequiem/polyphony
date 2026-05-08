@@ -50,14 +50,22 @@ public sealed partial class PrCommands
     [Command("merge-mg-ado")]
     [VerbResult(typeof(PrMergeMgAdoResult))]
     public async Task<int> MergeMgAdo(
-        string organization,
-        string project,
-        string repository,
-        int rootId,
-        string mgPath,
+        string organization = "",
+        string project = "",
+        string repository = "",
+        int rootId = RequiredInput.MissingInt,
+        string mgPath = "",
         string matchHeadCommit = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr merge-mg-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository", string.IsNullOrEmpty(repository)),
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
+            return halt;
+
         const string MgMethod = "merge";
         const bool MgDeleteBranch = false;
 

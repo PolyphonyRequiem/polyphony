@@ -35,15 +35,23 @@ public sealed partial class PrCommands
     [Command("open-mg-ado")]
     [VerbResult(typeof(PrOpenMgAdoResult))]
     public async Task<int> OpenMgAdo(
-        string organization,
-        string project,
-        string repository,
-        int rootId,
-        string mgPath,
+        string organization = "",
+        string project = "",
+        string repository = "",
+        int rootId = RequiredInput.MissingInt,
+        string mgPath = "",
         string title = "",
         string body = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr open-mg-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository", string.IsNullOrEmpty(repository)),
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
+            return halt;
+
         var slug = BuildAdoSlug(organization, project, repository);
 
         // ── 1. Validate inputs. ────────────────────────────────────────────

@@ -28,8 +28,13 @@ public sealed class WorktreeCommandsRemoveTests : CommandTestBase
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.Remove(path: ""));
 
-        exit.ShouldBe(ExitCodes.Success);
-        Parse(output).Error!.ShouldContain("path is required");
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("worktree remove");
+        envelope.MissingArgs.ShouldContain("--path");
         runner.Invocations.ShouldBeEmpty();
     }
 

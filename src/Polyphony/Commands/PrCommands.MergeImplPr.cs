@@ -32,15 +32,21 @@ public sealed partial class PrCommands
     [Command("merge-impl-pr")]
     [VerbResult(typeof(PrMergeImplResult))]
     public async Task<int> MergeImplPr(
-        int rootId,
-        int itemId,
-        string mgPath,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
+        string mgPath = "",
         string method = "squash",
         bool admin = false,
         bool deleteBranch = true,
         string matchHeadCommit = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr merge-impl-pr",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt),
+            ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
+            return halt;
+
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
             EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, $"rootId must be positive (got {rootId})");

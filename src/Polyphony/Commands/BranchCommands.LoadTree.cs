@@ -29,8 +29,12 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("load-tree")]
     [VerbResult(typeof(BranchLoadTreeResult))]
-    public async Task<int> LoadTree(int workItem, CancellationToken ct = default)
+    public async Task<int> LoadTree(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch load-tree",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         BranchLoadTreeResult result;
         try
         {

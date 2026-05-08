@@ -34,14 +34,23 @@ public sealed partial class PrCommands
     [Command("vote-ado")]
     [VerbResult(typeof(PrVoteAdoResult))]
     public async Task<int> VoteAdo(
-        string organization,
-        string project,
-        string repository,
-        int prNumber,
-        string reviewerId,
-        string vote,
+        string organization = "",
+        string project = "",
+        string repository = "",
+        int prNumber = RequiredInput.MissingInt,
+        string reviewerId = "",
+        string vote = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr vote-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository", string.IsNullOrEmpty(repository)),
+            ("--pr-number", prNumber == RequiredInput.MissingInt),
+            ("--reviewer-id", string.IsNullOrEmpty(reviewerId)),
+            ("--vote", string.IsNullOrEmpty(vote))) is { } halt)
+            return halt;
+
         var prUrl = BuildAdoPrUrl(organization, project, repository, prNumber);
         var slug = BuildAdoSlug(organization, project, repository);
 

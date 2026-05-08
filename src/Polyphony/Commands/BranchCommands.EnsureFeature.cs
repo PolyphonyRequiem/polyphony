@@ -19,11 +19,15 @@ public sealed partial class BranchCommands
     [Command("ensure-feature")]
     [VerbResult(typeof(BranchEnsureFeatureResult))]
     public async Task<int> EnsureFeature(
-        string branch,
+        string branch = "",
         string baseBranch = "main",
         string remote = "origin",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch ensure-feature",
+            ("--branch", string.IsNullOrEmpty(branch))) is { } halt)
+            return halt;
+
         try
         {
             // 1. Check if the branch exists on the remote.

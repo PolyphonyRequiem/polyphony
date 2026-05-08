@@ -220,8 +220,14 @@ public sealed class LockCommandsTests : IDisposable
     [Fact]
     public async Task Release_RejectsEmptyToken()
     {
-        var (exit, _) = await CaptureAsync(() => _sut.Release(rootId: 1234, lockToken: ""));
-        exit.ShouldBe(ExitCodes.ConfigError);
+        var (exit, output) = await CaptureAsync(() => _sut.Release(rootId: 1234, lockToken: ""));
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("lock release");
+        envelope.MissingArgs.ShouldContain("--lock-token");
     }
 
     [Fact]

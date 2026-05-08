@@ -54,12 +54,18 @@ public sealed partial class PrCommands(
     [Command("create-feature-pr")]
     [VerbResult(typeof(PrCreateFeatureResult))]
     public async Task<int> CreateFeaturePr(
-        int workItem,
-        string featureBranch,
-        string targetBranch,
+        int workItem = RequiredInput.MissingInt,
+        string featureBranch = "",
+        string targetBranch = "",
         string title = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr create-feature-pr",
+            ("--work-item", workItem == RequiredInput.MissingInt),
+            ("--feature-branch", string.IsNullOrEmpty(featureBranch)),
+            ("--target-branch", string.IsNullOrEmpty(targetBranch))) is { } halt)
+            return halt;
+
         if (string.IsNullOrWhiteSpace(featureBranch) || string.IsNullOrWhiteSpace(targetBranch))
         {
             EmitError("featureBranch and targetBranch are required");

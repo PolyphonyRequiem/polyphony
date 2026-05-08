@@ -33,13 +33,20 @@ public sealed partial class PrCommands
     [Command("poll-status-ado")]
     [VerbResult(typeof(PrPollStatusResult))]
     public async Task<int> PollStatusAdo(
-        string organization,
-        string project,
-        string repositoryId,
-        int prNumber,
+        string organization = "",
+        string project = "",
+        string repositoryId = "",
+        int prNumber = RequiredInput.MissingInt,
         bool includeMetadata = false,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr poll-status-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository-id", string.IsNullOrEmpty(repositoryId)),
+            ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var prUrl = BuildAdoPrUrl(organization, project, repositoryId, prNumber);
 
         if (string.IsNullOrWhiteSpace(organization)

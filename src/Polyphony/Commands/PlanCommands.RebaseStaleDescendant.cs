@@ -54,16 +54,23 @@ public sealed partial class PlanCommands
     [Command("rebase-stale-descendant")]
     [VerbResult(typeof(PlanRebaseStaleDescendantResult))]
     public async Task<int> RebaseStaleDescendant(
-        int rootId,
-        int itemId,
-        int parentItemId,
-        int prNumber,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
+        int parentItemId = RequiredInput.MissingInt,
+        int prNumber = RequiredInput.MissingInt,
         string ancestorIds = "",
         string manifestPath = ".polyphony/run.yaml",
         string by = "",
         int lockTtlHours = 24,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan rebase-stale-descendant",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt),
+            ("--parent-item-id", parentItemId == RequiredInput.MissingInt),
+            ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         // ── 1. Validate inputs + derive head/parent branches. ──────────────
         if (!Polyphony.Branching.RootId.TryParse(rootId, out var root))
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "invalid_argument",

@@ -59,11 +59,15 @@ public sealed partial class WorklistCommands
     [Command("build")]
     [VerbResult(typeof(WorklistResult))]
     public async Task<int> Build(
-        int rootId,
+        int rootId = RequiredInput.MissingInt,
         string manifestPath = ".polyphony/run.yaml",
         bool json = false,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("worklist build",
+            ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (rootId <= 0)
         {
             EmitWorklist(EmptyResult(rootId, $"--root-id must be positive (got {rootId})", "invalid_argument"), json);

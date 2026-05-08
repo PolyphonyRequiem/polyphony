@@ -311,6 +311,15 @@ public sealed class VerbSchemaGenerator : IIncrementalGenerator
     /// <c>CancellationToken ct = default</c> trailer (not a user-facing
     /// flag) and renames each parameter from PascalCase to kebab-case
     /// to mirror ConsoleAppFramework's flag mapping.
+    ///
+    /// <para>Move #2 note: the schema's <c>required</c> flag is
+    /// <c>!HasExplicitDefaultValue</c> — i.e. it reflects CAF's view of
+    /// the API surface, not the verb's internal <c>HaltIfMissing</c>
+    /// list. A param defaulted to a Move #2 sentinel
+    /// (<c>int.MinValue</c> or <c>""</c>) appears as <c>required:
+    /// false</c> in the schema even though the verb body may halt on
+    /// it. The runtime envelope is the safety net — the schema's role
+    /// is to document the CAF surface only.</para>
     /// </summary>
     private static System.Collections.Immutable.ImmutableArray<InputInfo> ExtractInputs(IMethodSymbol method)
     {

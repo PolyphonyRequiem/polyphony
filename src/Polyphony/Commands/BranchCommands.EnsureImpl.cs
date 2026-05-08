@@ -24,12 +24,18 @@ public sealed partial class BranchCommands
     [Command("ensure-impl")]
     [VerbResult(typeof(BranchEnsureImplResult))]
     public async Task<int> EnsureImpl(
-        int rootId,
-        int itemId,
-        string mgPath,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
+        string mgPath = "",
         string remote = "origin",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch ensure-impl",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt),
+            ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
+            return halt;
+
         if (!RootId.TryParse(rootId, out var root))
         {
             EmitImplError(rootId, itemId, mgPath, $"rootId must be positive (got {rootId})");

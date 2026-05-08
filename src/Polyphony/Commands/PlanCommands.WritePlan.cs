@@ -30,11 +30,16 @@ public sealed partial class PlanCommands
     [Command("write-plan")]
     [VerbResult(typeof(PlanWritePlanResult))]
     public async Task<int> WritePlan(
-        int itemId,
-        string contentJson,
+        int itemId = RequiredInput.MissingInt,
+        string contentJson = "",
         string plansDir = "plans",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan write-plan",
+            ("--item-id", itemId == RequiredInput.MissingInt),
+            ("--content-json", string.IsNullOrEmpty(contentJson))) is { } halt)
+            return halt;
+
         if (itemId <= 0)
         {
             EmitWriteError(itemId, plansDir, $"--item-id must be positive (got {itemId})");

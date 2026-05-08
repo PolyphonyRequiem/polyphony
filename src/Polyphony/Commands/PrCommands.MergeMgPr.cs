@@ -30,12 +30,17 @@ public sealed partial class PrCommands
     [Command("merge-mg-pr")]
     [VerbResult(typeof(PrMergeMergeGroupResult))]
     public async Task<int> MergeMgPr(
-        int rootId,
-        string mgPath,
+        int rootId = RequiredInput.MissingInt,
+        string mgPath = "",
         bool admin = false,
         string matchHeadCommit = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr merge-mg-pr",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
+            return halt;
+
         const string MgMethod = "merge";
         const bool MgDeleteBranch = false;
 

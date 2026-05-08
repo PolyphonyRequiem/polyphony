@@ -30,8 +30,13 @@ public sealed class RootCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("declare")]
     [VerbResult(typeof(ScopeMutationResult))]
-    public Task<int> Declare(int workItem, CancellationToken ct = default) =>
-        scopeCommands.TagMutationAsync(workItem, PolyphonyTags.Root, add: true, ct);
+    public Task<int> Declare(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
+    {
+        if (RequiredInput.HaltIfMissing("root declare",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return Task.FromResult(halt);
+        return scopeCommands.TagMutationAsync(workItem, PolyphonyTags.Root, add: true, ct);
+    }
 
     /// <summary>
     /// Walks ancestors of <paramref name="workItem"/> (inclusive) to find the
@@ -45,8 +50,12 @@ public sealed class RootCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("resolve")]
     [VerbResult(typeof(RootResolveResult))]
-    public async Task<int> Resolve(int workItem, int maxAncestorWalk = 32, CancellationToken ct = default)
+    public async Task<int> Resolve(int workItem = RequiredInput.MissingInt, int maxAncestorWalk = 32, CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("root resolve",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         await twig.SyncAsync(ct).ConfigureAwait(false);
 
         var walked = new List<int>();

@@ -36,10 +36,14 @@ public sealed partial class PlanCommands
     [Command("extract-renegotiation-flag")]
     [VerbResult(typeof(PlanExtractRenegotiationFlagResult))]
     public async Task<int> ExtractRenegotiationFlag(
-        int prNumber,
+        int prNumber = RequiredInput.MissingInt,
         string repo = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan extract-renegotiation-flag",
+            ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (prNumber <= 0)
         {
             EmitRenegotiationError(prNumber,

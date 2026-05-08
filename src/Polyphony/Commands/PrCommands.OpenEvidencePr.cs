@@ -39,7 +39,7 @@ public sealed partial class PrCommands
     [Command("open-evidence-pr")]
     [VerbResult(typeof(PrOpenEvidenceResult))]
     public async Task<int> OpenEvidencePr(
-        int workItem,
+        int workItem = RequiredInput.MissingInt,
         int apexId = 0,
         string head = "",
         string baseBranch = "",
@@ -47,6 +47,10 @@ public sealed partial class PrCommands
         string body = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr open-evidence-pr",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (workItem <= 0)
         {
             EmitEvidenceError(workItem, apexId, $"workItem must be positive (got {workItem})");

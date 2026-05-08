@@ -36,8 +36,12 @@ public sealed class ScopeCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("check")]
     [VerbResult(typeof(ScopeCheckResult))]
-    public async Task<int> Check(int workItem, CancellationToken ct = default)
+    public async Task<int> Check(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("scope check",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         await twig.SyncAsync(ct).ConfigureAwait(false);
 
         var item = await repository.GetByIdAsync(workItem, ct).ConfigureAwait(false);
@@ -74,8 +78,12 @@ public sealed class ScopeCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("list")]
     [VerbResult(typeof(ScopeListResult))]
-    public async Task<int> List(int rootId, int maxDepth = 5, CancellationToken ct = default)
+    public async Task<int> List(int rootId = RequiredInput.MissingInt, int maxDepth = 5, CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("scope list",
+            ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         await twig.SyncAsync(ct).ConfigureAwait(false);
 
         var hierarchy = await walker.WalkAsync(rootId, maxDepth, ct).ConfigureAwait(false);
@@ -142,8 +150,13 @@ public sealed class ScopeCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("tag")]
     [VerbResult(typeof(ScopeMutationResult))]
-    public Task<int> Tag(int workItem, CancellationToken ct = default) =>
-        TagMutationAsync(workItem, PolyphonyTags.InScope, add: true, ct);
+    public Task<int> Tag(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
+    {
+        if (RequiredInput.HaltIfMissing("scope tag",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return Task.FromResult(halt);
+        return TagMutationAsync(workItem, PolyphonyTags.InScope, add: true, ct);
+    }
 
     /// <summary>
     /// Removes the bare <c>polyphony</c> tag from a work item. Idempotent —
@@ -156,8 +169,13 @@ public sealed class ScopeCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("untag")]
     [VerbResult(typeof(ScopeMutationResult))]
-    public Task<int> Untag(int workItem, CancellationToken ct = default) =>
-        TagMutationAsync(workItem, PolyphonyTags.InScope, add: false, ct);
+    public Task<int> Untag(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
+    {
+        if (RequiredInput.HaltIfMissing("scope untag",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return Task.FromResult(halt);
+        return TagMutationAsync(workItem, PolyphonyTags.InScope, add: false, ct);
+    }
 
     internal async Task<int> TagMutationAsync(int workItem, string tag, bool add, CancellationToken ct)
     {

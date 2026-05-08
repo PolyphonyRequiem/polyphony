@@ -56,11 +56,11 @@ public sealed partial class PrCommands
     [Command("open-plan-ado")]
     [VerbResult(typeof(PrOpenPlanAdoResult))]
     public async Task<int> OpenPlanAdo(
-        string organization,
-        string project,
-        string repository,
-        int rootId,
-        int itemId,
+        string organization = "",
+        string project = "",
+        string repository = "",
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
         int parentItemId = 0,
         string ancestorIds = "",
         string manifestPath = RunManifestStore.DefaultRelativePath,
@@ -68,6 +68,13 @@ public sealed partial class PrCommands
         string body = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr open-plan-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository", string.IsNullOrEmpty(repository)),
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
         var slug = BuildAdoSlug(organization, project, repository);
 
         // ── 1. Validate inputs. ────────────────────────────────────────────

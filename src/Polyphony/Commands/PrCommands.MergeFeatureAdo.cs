@@ -51,14 +51,21 @@ public sealed partial class PrCommands
     [Command("merge-feature-ado")]
     [VerbResult(typeof(PrMergeFeatureAdoResult))]
     public async Task<int> MergeFeatureAdo(
-        string organization,
-        string project,
-        string repository,
-        int rootId,
+        string organization = "",
+        string project = "",
+        string repository = "",
+        int rootId = RequiredInput.MissingInt,
         string targetBranch = "main",
         string matchHeadCommit = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr merge-feature-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository", string.IsNullOrEmpty(repository)),
+            ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         const string FeatureMethod = "merge";
         const bool FeatureDeleteBranch = false;
 

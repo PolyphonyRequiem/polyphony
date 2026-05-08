@@ -21,11 +21,16 @@ public sealed partial class WorktreeCommands
     [Command("add")]
     [VerbResult(typeof(WorktreeAddResult))]
     public async Task<int> Add(
-        string branch,
-        string path,
+        string branch = "",
+        string path = "",
         string? gitRef = null,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("worktree add",
+            ("--branch", string.IsNullOrEmpty(branch)),
+            ("--path", string.IsNullOrEmpty(path))) is { } halt)
+            return halt;
+
         try
         {
             if (string.IsNullOrWhiteSpace(branch))

@@ -45,11 +45,15 @@ public sealed partial class PlanCommands
     [Command("validate-scope")]
     [VerbResult(typeof(PlanValidateScopeResult))]
     public async Task<int> ValidateScope(
-        int prNumber,
+        int prNumber = RequiredInput.MissingInt,
         string childScope = "",
         string repo = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan validate-scope",
+            ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (prNumber <= 0)
         {
             EmitScopeError(prNumber,

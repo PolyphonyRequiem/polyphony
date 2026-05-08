@@ -130,8 +130,13 @@ public sealed class PolicyCommands
     /// <param name="path">Path to the policy file. Defaults to <c>.conductor/policy.yaml</c>.</param>
     [Command("resolve")]
     [VerbResult(typeof(ResolvedRule))]
-    public int Resolve(string scope, string domain, string path = ".conductor/policy.yaml")
+    public int Resolve(string scope = "", string domain = "", string path = ".conductor/policy.yaml")
     {
+        if (RequiredInput.HaltIfMissing("policy resolve",
+            ("--scope", string.IsNullOrEmpty(scope)),
+            ("--domain", string.IsNullOrEmpty(domain))) is { } halt)
+            return halt;
+
         if (!TryParseDomain(domain, out var domainEnum))
         {
             Console.WriteLine($$"""{"error":"Unknown domain '{{domain}}'. Expected 'approvals', 'pr', or 'open_questions'."}""");

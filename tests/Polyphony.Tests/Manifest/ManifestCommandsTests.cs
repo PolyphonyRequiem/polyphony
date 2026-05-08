@@ -265,9 +265,13 @@ public sealed class ManifestCommandsTests : IDisposable
             commit: "abc",
             path: this.manifestPath));
 
-        exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRebaseRecordResult)!;
-        result.Error!.ShouldContain("non-empty");
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("manifest record-rebase");
+        envelope.MissingArgs.ShouldContain("--branch");
     }
 
     [Fact]
@@ -323,9 +327,13 @@ public sealed class ManifestCommandsTests : IDisposable
             approvedBy: "dangreen",
             path: this.manifestPath));
 
-        exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestApprovalRecordResult)!;
-        result.Error!.ShouldContain("non-empty");
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("manifest record-approval");
+        envelope.MissingArgs.ShouldContain("--gate");
     }
 
     // -- record-plan-merge --
@@ -367,7 +375,6 @@ public sealed class ManifestCommandsTests : IDisposable
     }
 
     [Theory]
-    [InlineData("")]
     [InlineData("   ")]
     [InlineData("0")]
     [InlineData("-1")]
@@ -385,6 +392,24 @@ public sealed class ManifestCommandsTests : IDisposable
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult)!;
         result.Error!.ShouldNotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task RecordPlanMerge_EmptyItem_RoutesRequiredInputHalt()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() => cmd.Init(rootId: 1234, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.RecordPlanMerge(item: "", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("manifest record-plan-merge");
+        envelope.MissingArgs.ShouldContain("--item");
     }
 
     [Fact]

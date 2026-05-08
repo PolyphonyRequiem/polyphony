@@ -42,12 +42,18 @@ public sealed partial class PlanCommands
     [Command("extract-parent-patch")]
     [VerbResult(typeof(PlanExtractParentPatchResult))]
     public async Task<int> ExtractParentPatch(
-        string prUrl,
-        int rootId,
-        int parentItemId,
+        string prUrl = "",
+        int rootId = RequiredInput.MissingInt,
+        int parentItemId = RequiredInput.MissingInt,
         int diffSizeLimitBytes = DefaultDiffSizeLimitBytes,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan extract-parent-patch",
+            ("--pr-url", string.IsNullOrEmpty(prUrl)),
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--parent-item-id", parentItemId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         // ── 1. Validate inputs. ───────────────────────────────────────────
         if (!RootId.TryParse(rootId, out _))
         {

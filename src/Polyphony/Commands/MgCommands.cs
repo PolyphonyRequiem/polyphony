@@ -58,16 +58,22 @@ public sealed partial class MgCommands
     [Command("nesting-decision")]
     [VerbResult(typeof(MgNestingDecisionResult))]
     public Task<int> NestingDecision(
-        int rootId,
-        int itemId,
-        string parentMgPath,
-        bool hasImplementable,
-        bool decomposable,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
+        string parentMgPath = "",
+        bool hasImplementable = false,
+        bool decomposable = false,
         bool overrideFlat = false,
         string overrideNestedMgId = "",
         CancellationToken ct = default)
     {
         _ = ct; // pure function — no async work needed yet.
+
+        if (RequiredInput.HaltIfMissing("mg nesting-decision",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt),
+            ("--parent-mg-path", string.IsNullOrEmpty(parentMgPath))) is { } halt)
+            return Task.FromResult(halt);
 
         if (!Branching.RootId.TryParse(rootId, out var typedRootId))
         {

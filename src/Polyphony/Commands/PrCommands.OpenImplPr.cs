@@ -23,13 +23,19 @@ public sealed partial class PrCommands
     [Command("open-impl-pr")]
     [VerbResult(typeof(PrOpenImplResult))]
     public async Task<int> OpenImplPr(
-        int rootId,
-        int itemId,
-        string mgPath,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
+        string mgPath = "",
         string title = "",
         string body = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr open-impl-pr",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt),
+            ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
+            return halt;
+
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
             EmitImplError(rootId, itemId, mgPath, $"rootId must be positive (got {rootId})");

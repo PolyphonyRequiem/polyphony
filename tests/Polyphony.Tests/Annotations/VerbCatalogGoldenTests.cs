@@ -206,10 +206,16 @@ public sealed class VerbCatalogGoldenTests
             ["organization", "project", "repository-id", "pr-number", "include-metadata"],
             ignoreOrder: false);
 
-        byName["organization"]["required"]!.GetValue<bool>().ShouldBeTrue();
+        // Move #2: organization/project/repository-id/pr-number use sentinel
+        // defaults ("" or RequiredInput.MissingInt) so CAF accepts dispatch;
+        // the verb body re-asserts required-ness via HaltIfMissing. The
+        // schema's `required` flag reflects CAF's view (has-default → not
+        // required), so these now report false here. Conductor's safety net
+        // is the runtime RequiredInputErrorResult envelope, not the schema.
+        byName["organization"]["required"]!.GetValue<bool>().ShouldBeFalse();
         byName["organization"]["clr_type"]!.GetValue<string>().ShouldBe("string");
 
-        byName["pr-number"]["required"]!.GetValue<bool>().ShouldBeTrue();
+        byName["pr-number"]["required"]!.GetValue<bool>().ShouldBeFalse();
         byName["pr-number"]["clr_type"]!.GetValue<string>().ShouldBe("int");
 
         byName["include-metadata"]["required"]!.GetValue<bool>().ShouldBeFalse();

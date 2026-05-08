@@ -19,10 +19,14 @@ public sealed partial class WorktreeCommands
     [Command("remove")]
     [VerbResult(typeof(WorktreeRemoveResult))]
     public async Task<int> Remove(
-        string path,
+        string path = "",
         bool force = false,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("worktree remove",
+            ("--path", string.IsNullOrEmpty(path))) is { } halt)
+            return halt;
+
         try
         {
             if (string.IsNullOrWhiteSpace(path))

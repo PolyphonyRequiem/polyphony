@@ -91,11 +91,8 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     // ─── Input validation ────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("",     "p", "r")]
-    [InlineData("o",    "",  "r")]
-    [InlineData("o",    "p", "")]
     [InlineData("   ",  "p", "r")]
-    public async Task MergeFeatureAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
+    public async Task MergeFeatureAdo_WhitespaceIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
@@ -104,6 +101,24 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
         result.Error!.ShouldContain("organization");
+    }
+
+    [Theory]
+    [InlineData("",  "p", "r", "--organization")]
+    [InlineData("o", "",  "r", "--project")]
+    [InlineData("o", "p", "",  "--repository")]
+    public async Task MergeFeatureAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository, string missingFlag)
+    {
+        var (cmd, _) = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.MergeFeatureAdo(organization, project, repository, rootId: 100));
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr merge-feature-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
     }
 
     [Theory]

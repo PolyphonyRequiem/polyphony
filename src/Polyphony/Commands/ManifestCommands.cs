@@ -41,14 +41,19 @@ public sealed partial class ManifestCommands(IGitClient git)
     [Command("init")]
     [VerbResult(typeof(ManifestInitResult))]
     public Task<int> Init(
-        int rootId,
-        string platformProject,
+        int rootId = RequiredInput.MissingInt,
+        string platformProject = "",
         string path = RunManifestStore.DefaultRelativePath,
         string createdBy = "",
         bool force = false,
         CancellationToken ct = default)
     {
         _ = ct;
+
+        if (RequiredInput.HaltIfMissing("manifest init",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--platform-project", string.IsNullOrEmpty(platformProject))) is { } halt)
+            return Task.FromResult(halt);
 
         if (rootId <= 0)
         {
@@ -191,15 +196,22 @@ public sealed partial class ManifestCommands(IGitClient git)
     [Command("record-rebase")]
     [VerbResult(typeof(ManifestRebaseRecordResult))]
     public Task<int> RecordRebase(
-        string branch,
-        string onto,
-        string reason,
-        string commit,
+        string branch = "",
+        string onto = "",
+        string reason = "",
+        string commit = "",
         string path = RunManifestStore.DefaultRelativePath,
         string at = "",
         CancellationToken ct = default)
     {
         _ = ct;
+
+        if (RequiredInput.HaltIfMissing("manifest record-rebase",
+            ("--branch", string.IsNullOrEmpty(branch)),
+            ("--onto", string.IsNullOrEmpty(onto)),
+            ("--reason", string.IsNullOrEmpty(reason)),
+            ("--commit", string.IsNullOrEmpty(commit))) is { } halt)
+            return Task.FromResult(halt);
 
         if (string.IsNullOrWhiteSpace(branch) ||
             string.IsNullOrWhiteSpace(onto) ||
@@ -267,14 +279,19 @@ public sealed partial class ManifestCommands(IGitClient git)
     [Command("record-approval")]
     [VerbResult(typeof(ManifestApprovalRecordResult))]
     public Task<int> RecordApproval(
-        string gate,
-        string approvedBy,
+        string gate = "",
+        string approvedBy = "",
         string path = RunManifestStore.DefaultRelativePath,
         string detail = "",
         string at = "",
         CancellationToken ct = default)
     {
         _ = ct;
+
+        if (RequiredInput.HaltIfMissing("manifest record-approval",
+            ("--gate", string.IsNullOrEmpty(gate)),
+            ("--approved-by", string.IsNullOrEmpty(approvedBy))) is { } halt)
+            return Task.FromResult(halt);
 
         if (string.IsNullOrWhiteSpace(gate) || string.IsNullOrWhiteSpace(approvedBy))
         {
@@ -364,13 +381,17 @@ public sealed partial class ManifestCommands(IGitClient git)
     [Command("record-plan-merge")]
     [VerbResult(typeof(ManifestRecordPlanMergeResult))]
     public Task<int> RecordPlanMerge(
-        string item,
+        string item = "",
         string path = RunManifestStore.DefaultRelativePath,
         int prNumber = 0,
         string mergeCommit = "",
         CancellationToken ct = default)
     {
         _ = ct;
+
+        if (RequiredInput.HaltIfMissing("manifest record-plan-merge",
+            ("--item", string.IsNullOrEmpty(item))) is { } halt)
+            return Task.FromResult(halt);
 
         if (!TryNormalizePlanKey(item, out var itemKey, out var keyError))
         {
@@ -477,11 +498,15 @@ public sealed partial class ManifestCommands(IGitClient git)
     [Command("read-plan-generation")]
     [VerbResult(typeof(ManifestReadPlanGenerationResult))]
     public Task<int> ReadPlanGeneration(
-        string item,
+        string item = "",
         string path = RunManifestStore.DefaultRelativePath,
         CancellationToken ct = default)
     {
         _ = ct;
+
+        if (RequiredInput.HaltIfMissing("manifest read-plan-generation",
+            ("--item", string.IsNullOrEmpty(item))) is { } halt)
+            return Task.FromResult(halt);
 
         if (!TryNormalizePlanKey(item, out var itemKey, out var keyError))
         {
@@ -539,12 +564,16 @@ public sealed partial class ManifestCommands(IGitClient git)
     [Command("read-plan-generation-snapshot")]
     [VerbResult(typeof(ManifestReadPlanGenerationSnapshotResult))]
     public Task<int> ReadPlanGenerationSnapshot(
-        string item,
+        string item = "",
         string ancestorIds = "",
         string path = RunManifestStore.DefaultRelativePath,
         CancellationToken ct = default)
     {
         _ = ct;
+
+        if (RequiredInput.HaltIfMissing("manifest read-plan-generation-snapshot",
+            ("--item", string.IsNullOrEmpty(item))) is { } halt)
+            return Task.FromResult(halt);
 
         if (!TryNormalizePlanKey(item, out var itemKey, out var keyError))
         {

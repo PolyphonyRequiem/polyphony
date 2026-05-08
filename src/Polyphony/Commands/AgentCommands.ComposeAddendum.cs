@@ -49,10 +49,14 @@ public sealed partial class AgentCommands
     [Command("compose-addendum")]
     [VerbResult(typeof(AgentComposeAddendumResult))]
     public async Task<int> ComposeAddendum(
-        [Argument] int workItem,
+        [Argument] int workItem = RequiredInput.MissingInt,
         string policy = ".conductor/policy.yaml",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("agent compose-addendum",
+            ("work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (workItem <= 0)
         {
             Emit(EmptyResult(workItem, "work_item_id must be positive", "invalid_argument"));

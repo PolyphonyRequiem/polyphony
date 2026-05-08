@@ -51,11 +51,15 @@ public sealed partial class PrCommands
     [Command("check-evidence-floor")]
     [VerbResult(typeof(PrCheckEvidenceFloorResult))]
     public async Task<int> CheckEvidenceFloor(
-        [Argument] int prNumber,
+        [Argument] int prNumber = RequiredInput.MissingInt,
         string repo = "",
         int minCommits = 1,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr check-evidence-floor",
+            ("pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (prNumber <= 0)
         {
             EmitFloorError(

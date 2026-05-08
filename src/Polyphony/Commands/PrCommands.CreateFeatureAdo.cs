@@ -35,15 +35,22 @@ public sealed partial class PrCommands
     [Command("create-feature-ado")]
     [VerbResult(typeof(PrCreateFeatureAdoResult))]
     public async Task<int> CreateFeatureAdo(
-        string organization,
-        string project,
-        string repository,
-        int rootId,
+        string organization = "",
+        string project = "",
+        string repository = "",
+        int rootId = RequiredInput.MissingInt,
         string targetBranch = "main",
         string title = "",
         string body = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr create-feature-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository", string.IsNullOrEmpty(repository)),
+            ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var slug = BuildAdoSlug(organization, project, repository);
 
         // ── 1. Validate inputs. ────────────────────────────────────────────

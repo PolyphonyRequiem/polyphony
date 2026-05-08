@@ -33,8 +33,12 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("route")]
     [VerbResult(typeof(BranchRouteResult))]
-    public async Task<int> Route(int workItem, int pgNumber = 0, CancellationToken ct = default)
+    public async Task<int> Route(int workItem = RequiredInput.MissingInt, int pgNumber = 0, CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch route",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         BranchRouteResult result;
         try
         {

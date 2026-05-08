@@ -126,11 +126,15 @@ public sealed partial class StateCommands(
     [Command("preflight")]
     [VerbResult(typeof(StatePreflightResult))]
     public async Task<int> Preflight(
-        int workItem,
+        int workItem = RequiredInput.MissingInt,
         string? workflowYaml = null,
         string? requiredVersion = null,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("state preflight",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         StatePreflightResult result;
         try
         {
