@@ -718,15 +718,19 @@ agents:
       ## ⚠️ Plan Write Failed
 
       Could not write the plan for work item
-      **{{ workflow.input.work_item_id }}** to disk.
+      **{{ workflow.input.work_item_id }}**.
 
       **Error:** {{ write_plan.output.error if write_plan.output.error is defined else "Unknown error" }}
 
       ---
 
       Choose an action:
+      - **Retry** — re-run `polyphony plan write-plan` (idempotent)
       - **Abort** — cancel planning
     options:
+      - label: "🔁 Retry"
+        value: retry
+        route: write_plan
       - label: "🛑 Abort"
         value: abort
         route: $end
@@ -775,8 +779,13 @@ agents:
       ---
 
       Choose an action:
+      - **Retry** — re-run `polyphony branch ensure-plan` (idempotent;
+        recovers from transient git-network failures)
       - **Abort** — cancel planning
     options:
+      - label: "🔁 Retry"
+        value: retry
+        route: ensure_plan_branch
       - label: "🛑 Abort"
         value: abort
         route: $end
@@ -829,8 +838,14 @@ agents:
       ---
 
       Choose an action:
+      - **Retry** — re-run `polyphony plan commit-and-push` (idempotent;
+        emits no_changes when nothing is staged, recovers from transient
+        push-network failures)
       - **Abort** — cancel planning
     options:
+      - label: "🔁 Retry"
+        value: retry
+        route: commit_and_push
       - label: "🛑 Abort"
         value: abort
         route: $end
@@ -881,13 +896,20 @@ agents:
       **Error:** {{ open_plan_pr.output.error if open_plan_pr.output.error is defined else "Unknown error" }}
 
       Common causes: stale ancestor snapshot on an existing PR (operator
-      must close/recreate); gh authentication missing; network timeout.
+      must close/recreate); gh authentication missing; network timeout
+      (gh rate-limit, GitHub API hiccup, DNS); transient gh process hang.
 
       ---
 
       Choose an action:
+      - **Retry** — re-run `polyphony pr open-plan-pr` (idempotent — reuses
+        an existing PR with a matching ancestor snapshot; safe for
+        transient gh/network failures)
       - **Abort** — cancel planning
     options:
+      - label: "🔁 Retry"
+        value: retry
+        route: open_plan_pr
       - label: "🛑 Abort"
         value: abort
         route: $end
@@ -1873,8 +1895,14 @@ agents:
       ---
 
       Choose an action:
+      - **Retry** — re-run `polyphony pr open-plan-pr-ado` (idempotent —
+        reuses an existing PR with a matching ancestor snapshot; safe for
+        transient ADO API / network failures)
       - **Abort** — cancel planning
     options:
+      - label: "🔁 Retry"
+        value: retry
+        route: open_plan_pr_ado
       - label: "🛑 Abort"
         value: abort
         route: $end
