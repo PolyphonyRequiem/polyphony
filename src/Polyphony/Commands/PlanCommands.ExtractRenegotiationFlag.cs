@@ -75,7 +75,7 @@ public sealed partial class PlanCommands
         {
             EmitRenegotiationError(prNumber,
                 "gh_timeout",
-                $"gh pr view timed out after {ex.Attempts} attempt(s).");
+                ex.FormatErrorMessage("gh pr view"));
             return ExitCodes.Success;
         }
         catch (ExternalToolException ex)
