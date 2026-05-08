@@ -4,6 +4,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
+using Polyphony.Postconditions;
 
 namespace Polyphony.Commands;
 
@@ -17,14 +18,16 @@ namespace Polyphony.Commands;
 /// <see cref="RunManifestStore"/>; the manifest's <c>topology_hash</c>
 /// is recomputed on every save.</para>
 ///
-/// <para><see cref="IGitClient"/> is injected for the
-/// <see cref="CommitAndPush"/> verb only; the read/init/record-* verbs
-/// that pre-existed <c>commit-and-push</c> do not consume it.</para>
+/// <para><see cref="IGitClient"/> and <see cref="IPostconditionVerifier"/>
+/// are injected for the <see cref="CommitAndPush"/> verb only; the
+/// read/init/record-* verbs that pre-existed <c>commit-and-push</c> do
+/// not consume them.</para>
 /// </summary>
 [VerbGroup("manifest")]
-public sealed partial class ManifestCommands(IGitClient git)
+public sealed partial class ManifestCommands(IGitClient git, IPostconditionVerifier postconditions)
 {
     private readonly IGitClient git = git;
+    private readonly IPostconditionVerifier postconditions = postconditions;
 
     /// <summary>
     /// Creates a fresh run manifest at <paramref name="path"/> with the

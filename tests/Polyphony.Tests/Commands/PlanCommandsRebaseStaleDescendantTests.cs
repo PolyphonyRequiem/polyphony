@@ -59,7 +59,7 @@ public sealed class PlanCommandsRebaseStaleDescendantTests : CommandTestBase, ID
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner)), runner);
+        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier()), runner);
     }
 
     private static PlanRebaseStaleDescendantResult Parse(string output) =>

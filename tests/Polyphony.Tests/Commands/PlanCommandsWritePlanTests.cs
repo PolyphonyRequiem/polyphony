@@ -40,7 +40,7 @@ public sealed class PlanCommandsWritePlanTests : CommandTestBase, IDisposable
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner));
+        return new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier());
     }
 
     private static PlanWritePlanResult Parse(string output) =>

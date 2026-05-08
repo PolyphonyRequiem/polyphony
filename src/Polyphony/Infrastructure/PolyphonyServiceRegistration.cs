@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Postconditions;
 using Polyphony.Routing;
 using Twig.Infrastructure;
 
@@ -51,6 +52,11 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<IGitClient, GitClient>();
         services.AddSingleton<IGhClient, GhClient>();
         services.AddSingleton<GhTokenResolver>();
+
+        // Shared "is the post-condition met on origin?" check used by every
+        // commit-and-push verb. Stateless wrapper over IGitClient — singleton-safe.
+        // See Polyphony.Postconditions.IPostconditionVerifier for the contract.
+        services.AddSingleton<IPostconditionVerifier, PostconditionVerifier>();
 
         // Azure DevOps REST infrastructure (Phase 5 scaffolding — auth probe only).
         // HttpClient is registered as a singleton to avoid socket exhaustion under

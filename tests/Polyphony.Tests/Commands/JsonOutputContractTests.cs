@@ -1311,7 +1311,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         var config = CreateConfigBuilder().Build();
         var twig = new TwigClient(new FakeProcessRunner());
-        return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config, twig, new GitClient(new FakeProcessRunner()), new GhClient(new FakeProcessRunner()));
+        return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config, twig, new GitClient(new FakeProcessRunner()), new GhClient(new FakeProcessRunner()), new FakePostconditionVerifier());
     }
 
     private ValidateCommand CreateValidateCommand()

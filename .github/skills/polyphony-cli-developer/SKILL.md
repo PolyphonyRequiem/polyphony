@@ -175,6 +175,93 @@ Note the literal raw-string interpolation: this exact format
 
 ---
 
+## Post-condition verification — when origin must hold blob X
+
+Some verbs have a post-condition stronger than "we ran successfully": they
+must guarantee that **after the verb returns, the remote holds a specific
+blob at a specific path**. Examples:
+
+- `manifest commit-and-push` — downstream verbs read the manifest from
+  `origin/{branch}`; if the local commit was created in a prior run but
+  never pushed (crash, transient network failure, retry), the next run
+  silently no-ops on `git add` and the manifest never reaches origin.
+  Bug #192 was this exact pattern.
+- `plan commit-and-push` — same Class B bug shape for plan files.
+
+Without an explicit remote-side check, the verb stages, sees nothing
+changed, declares no_op, and exits 0. Downstream readers then fail with
+"file not found at origin/...".
+
+### The contract
+
+Use `IPostconditionVerifier` from `Polyphony.Postconditions`:
+
+```csharp
+public sealed class FooCommands(IGitClient git, IPostconditionVerifier postconditions)
+{
+    public async Task<int> CommitAndPush(...)
+    {
+        // ... stage, classify changes, commit-if-needed ...
+
+        if (nothingStaged)
+        {
+            // HEAD already has the right blob locally. But does origin?
+            var expectations = paths
+                .Select(p => new PostconditionExpectation(p, File.ReadAllText(p)))
+                .ToList();
+            var outcome = await postconditions.VerifyAsync(branch, expectations, "origin", ct);
+
+            return outcome switch
+            {
+                PostconditionOutcome.Satisfied        => EmitNoOp(...),  // truly idempotent
+                PostconditionOutcome.NeedsPush        => PushAndReport(...),
+                PostconditionOutcome.Conflict         => PushAndReport(...),  // let git reject if non-ff
+                _ => throw new InvalidOperationException($"unhandled outcome: {outcome.GetType().Name}")
+            };
+        }
+
+        // ... normal commit + push path ...
+    }
+}
+```
+
+### Three outcomes
+
+`PostconditionOutcome` is a discriminated union (abstract record + sealed
+nested cases, same shape as `RebaseOutcome` in
+`src/Polyphony/Infrastructure/Processes/`):
+
+| Case        | Meaning                                       | Typical action     |
+| ----------- | --------------------------------------------- | ------------------ |
+| `Satisfied` | Origin holds the expected blob at every path. | No-op success.     |
+| `NeedsPush` | Origin is missing one or more paths.          | Push HEAD.         |
+| `Conflict`  | Origin has different content for some paths.  | Push (let git reject as non-ff) or escalate. |
+
+The verifier treats `git fetch` failure (most often "remote ref doesn't
+exist yet" — first push of a fresh branch) as `NeedsPush` for all
+expectations. Per-path read failures are also treated as missing.
+
+### Switch hygiene
+
+Always include a `default` arm that throws — the compiler can't prove
+exhaustiveness across the assembly boundary, and a future `PostconditionOutcome`
+case must fail loudly rather than silently fall through.
+
+### Tests
+
+- For verbs that drive the verifier from a single path:
+  `FakePostconditionVerifier` in `tests/Polyphony.Tests/TestFixtures/`
+  records calls and lets you set `NextOutcome` to drive the switch arms
+  without stubbing `git fetch` + `git show`.
+- For the verifier itself: stub at the `FakeProcessRunner` level and use
+  the real `PostconditionVerifier(GitClient(runner))`. See
+  `tests/Polyphony.Tests/Postconditions/PostconditionVerifierTests.cs`.
+- Verbs that mutate `Environment.CurrentDirectory` (most file-reading
+  ones) must opt into `[Collection("CwdSerial")]` so they don't race
+  with sibling cwd-mutating classes.
+
+---
+
 ## Test scaffolding
 
 ### `CommandTestBase` (`tests/Polyphony.Tests/Commands/CommandTestBase.cs`)
