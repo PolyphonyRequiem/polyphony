@@ -1829,6 +1829,12 @@ agents:
     args:
       - "pr"
       - "open-plan-ado"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
       - "--root-id"
       - "{{ root_resolver.output.resolved_root_id }}"
       - "--item-id"
