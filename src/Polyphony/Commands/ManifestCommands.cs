@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
 
 namespace Polyphony.Commands;
@@ -14,9 +15,15 @@ namespace Polyphony.Commands;
 /// against temp files. Mutating verbs use the atomic write semantics in
 /// <see cref="RunManifestStore"/>; the manifest's <c>topology_hash</c>
 /// is recomputed on every save.</para>
+///
+/// <para><see cref="IGitClient"/> is injected for the
+/// <see cref="CommitAndPush"/> verb only; the read/init/record-* verbs
+/// that pre-existed <c>commit-and-push</c> do not consume it.</para>
 /// </summary>
-public sealed partial class ManifestCommands
+public sealed partial class ManifestCommands(IGitClient git)
 {
+    private readonly IGitClient git = git;
+
     /// <summary>
     /// Creates a fresh run manifest at <paramref name="path"/> with the
     /// supplied <paramref name="rootId"/>, <paramref name="platformProject"/>,
