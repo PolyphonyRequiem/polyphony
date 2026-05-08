@@ -543,39 +543,39 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
+      - |
         $raw = @'
         {{ wave_dispatch_loop.outputs | tojson }}
-        '@;
-        $items = @();
-        $any = $false;
+        '@
+        $items = @()
+        $any = $false
         try {
-          $parsed = $raw | ConvertFrom-Json;
+          $parsed = $raw | ConvertFrom-Json
           $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
-                    else { $parsed.PSObject.Properties.Value };
+                    else { $parsed.PSObject.Properties.Value }
           foreach ($v in $values) {
             if ($null -eq $v) { continue }
-            $pending = $false;
+            $pending = $false
             if ($v.PSObject.Properties.Name -contains 'renegotiation_pending') {
-              $val = "$($v.renegotiation_pending)".ToLowerInvariant();
-              $pending = ($val -eq 'true');
+              $val = "$($v.renegotiation_pending)".ToLowerInvariant()
+              $pending = ($val -eq 'true')
             }
             if ($pending) {
-              $any = $true;
+              $any = $true
               $items += [ordered]@{
-                wave_index = $v.wave_index;
-                renegotiation_items = $v.renegotiation_items;
-              };
+                wave_index = $v.wave_index
+                renegotiation_items = $v.renegotiation_items
+              }
             }
           }
         } catch {
-          $any = $false;
-          $items = @();
+          $any = $false
+          $items = @()
         }
         [ordered]@{
-          any_pending = $any;
-          waves = ($items | ConvertTo-Json -Compress -Depth 6);
-          wave_count = $items.Count;
+          any_pending = $any
+          waves = ($items | ConvertTo-Json -Compress -Depth 6)
+          wave_count = $items.Count
         } | ConvertTo-Json -Compress -Depth 6
     routes:
       - to: renegotiation_gate

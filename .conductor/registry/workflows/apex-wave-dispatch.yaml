@@ -153,46 +153,46 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
+      - |
         $raw = @'
         {{ dispatch_items.outputs | tojson }}
-        '@;
-        $items = @();
-        $any = $false;
+        '@
+        $items = @()
+        $any = $false
         try {
-          $parsed = $raw | ConvertFrom-Json;
+          $parsed = $raw | ConvertFrom-Json
           # for_each .outputs is a dict keyed by iteration index;
           # iterate the values to inspect each item's surfaced output.
           $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
-                    else { $parsed.PSObject.Properties.Value };
+                    else { $parsed.PSObject.Properties.Value }
           foreach ($v in $values) {
             if ($null -eq $v) { continue }
-            $pending = $false;
+            $pending = $false
             if ($v.PSObject.Properties.Name -contains 'renegotiation_pending') {
-              $val = "$($v.renegotiation_pending)".ToLowerInvariant();
-              $pending = ($val -eq 'true');
+              $val = "$($v.renegotiation_pending)".ToLowerInvariant()
+              $pending = ($val -eq 'true')
             }
             if ($pending) {
-              $any = $true;
+              $any = $true
               $items += [ordered]@{
-                work_item_id = $v.work_item_id;
-                lifecycle_workflow = $v.lifecycle_workflow;
-                renegotiation_request = $v.renegotiation_request;
-                validate_scope_verdict = $v.validate_scope_verdict;
-                scope_violation_files = $v.scope_violation_files;
-              };
+                work_item_id = $v.work_item_id
+                lifecycle_workflow = $v.lifecycle_workflow
+                renegotiation_request = $v.renegotiation_request
+                validate_scope_verdict = $v.validate_scope_verdict
+                scope_violation_files = $v.scope_violation_files
+              }
             }
           }
         } catch {
           # Bubble parse failures as no-renegotiation rather than
           # halting the wave; the integrate step still needs to run.
-          $any = $false;
-          $items = @();
+          $any = $false
+          $items = @()
         }
         [ordered]@{
-          renegotiation_pending = $any;
-          renegotiation_items = ($items | ConvertTo-Json -Compress -Depth 6);
-          item_count = $items.Count;
+          renegotiation_pending = $any
+          renegotiation_items = ($items | ConvertTo-Json -Compress -Depth 6)
+          item_count = $items.Count
         } | ConvertTo-Json -Compress -Depth 6
     routes:
       - to: integrate_wave
