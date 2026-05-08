@@ -48,16 +48,31 @@ namespace Polyphony.Sdlc;
 /// </remarks>
 public static class RequirementInputResolver
 {
-    /// <summary>Resolve inputs for an item; <paramref name="childCount"/> is the
-    /// observed number of children (used for the decomposable inference fallback).</summary>
-    public static ResolvedRequirementInputs Resolve(TypeConfig type, int childCount)
+    /// <summary>Resolve inputs for an item.</summary>
+    /// <param name="type">The type-config to consult for defaults.</param>
+    /// <param name="childCount">Observed number of children (used for the
+    /// decomposable inference fallback).</param>
+    /// <param name="overrideFacets">Optional per-item facet override sourced
+    /// from the item's <c>polyphony:facets=...</c> tag (closed-loop PR #7).
+    /// When non-null and non-empty, REPLACES <see cref="TypeConfig.Facets"/>
+    /// for this call only — the type-config object is not mutated. When null
+    /// or empty, the resolver falls back to <see cref="TypeConfig.Facets"/>.
+    /// Tokens are not re-validated here; callers MUST pass values already
+    /// vetted by <see cref="FacetTagParser"/>.</param>
+    public static ResolvedRequirementInputs Resolve(
+        TypeConfig type,
+        int childCount,
+        IReadOnlyList<string>? overrideFacets = null)
     {
         ArgumentNullException.ThrowIfNull(type);
 
         var (decomposable, decomposableProvenance) = ResolveDecomposable(type, childCount);
         var (executionMode, executionModeProvenance) = ResolveExecutionMode(type);
+        var (facets, facetsProvenance) = ResolveFacets(type, overrideFacets);
         return new ResolvedRequirementInputs
         {
+            Facets = facets,
+            FacetsProvenance = facetsProvenance,
             Decomposable = decomposable,
             DecomposableProvenance = decomposableProvenance,
             FacetOrder = type.FacetOrder,
@@ -71,6 +86,27 @@ public static class RequirementInputResolver
             ExecutionMode = executionMode,
             ExecutionModeProvenance = executionModeProvenance,
         };
+    }
+
+    private static (IReadOnlyList<string>, string) ResolveFacets(
+        TypeConfig type,
+        IReadOnlyList<string>? overrideFacets)
+    {
+        if (overrideFacets is { Count: > 0 })
+        {
+            // Override is per-call — type.Facets is left untouched. The
+            // override carries Explicit provenance: the architect declared
+            // it in plan front-matter, which is a stronger signal than the
+            // type-config default.
+            return (overrideFacets, ResolutionProvenance.Explicit);
+        }
+        // Fall back to the type-config default. Provenance mirrors whether
+        // the config declares any facets at all — an empty default is itself
+        // a deliberate "pure container" choice and surfaces as Default.
+        var configured = type.Facets ?? [];
+        return configured.Length > 0
+            ? (configured, ResolutionProvenance.Explicit)
+            : ((IReadOnlyList<string>)configured, ResolutionProvenance.Default);
     }
 
     private static (bool, string) ResolveDecomposable(TypeConfig type, int childCount)
@@ -133,6 +169,19 @@ public static class ResolutionProvenance
 /// with per-input provenance for transparency.</summary>
 public sealed record ResolvedRequirementInputs
 {
+    /// <summary>The facet set the deriver should consume — either the
+    /// per-item override (architect-declared via plan front-matter and
+    /// surfaced as the <c>polyphony:facets=...</c> tag) or the type-config
+    /// default. Always non-null; may be empty for pure containers.</summary>
+    public IReadOnlyList<string> Facets { get; init; } = [];
+
+    /// <summary>Provenance for <see cref="Facets"/> —
+    /// <see cref="ResolutionProvenance.Explicit"/> when the override was
+    /// supplied OR the type-config declared a non-empty list,
+    /// <see cref="ResolutionProvenance.Default"/> when the type-config
+    /// declared no facets at all.</summary>
+    public string FacetsProvenance { get; init; } = ResolutionProvenance.Default;
+
     public required bool Decomposable { get; init; }
     public required string DecomposableProvenance { get; init; }
     public string[]? FacetOrder { get; init; }
@@ -155,5 +204,6 @@ public sealed record ResolvedRequirementInputs
     public bool AnyInferred =>
         DecomposableProvenance == ResolutionProvenance.Inferred
         || FacetOrderProvenance == ResolutionProvenance.Inferred
-        || ActionableExecutorProvenance == ResolutionProvenance.Inferred;
+        || ActionableExecutorProvenance == ResolutionProvenance.Inferred
+        || FacetsProvenance == ResolutionProvenance.Inferred;
 }

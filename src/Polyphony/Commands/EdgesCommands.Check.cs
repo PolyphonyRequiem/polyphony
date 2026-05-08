@@ -186,10 +186,19 @@ public sealed partial class EdgesCommands
                 "type_unknown");
         }
 
+        // Per-item facet override: architects can declare apex_facets in plan
+        // front-matter for an indivisible apex; seed-children stamps the
+        // resulting set as a polyphony:facets=... tag. When present and
+        // well-formed, it REPLACES type-config facets for this derivation.
+        // Malformed tag content is fail-fast — a bad override hiding behind
+        // a silent fallback to the wrong facet set is worse than a noisy
+        // routing error.
+        var overrideFacets = ExtractFacetOverride(item);
+
         var children = await _repository.GetChildrenAsync(item.Id, ct).ConfigureAwait(false);
-        var resolved = RequirementInputResolver.Resolve(typeConfig, children.Count);
+        var resolved = RequirementInputResolver.Resolve(typeConfig, children.Count, overrideFacets);
         var derivation = RequirementSetDeriver.Derive(
-            typeConfig.Facets,
+            resolved.Facets,
             resolved.Decomposable,
             resolved.FacetOrder,
             resolved.ActionableExecutor);
@@ -202,6 +211,21 @@ public sealed partial class EdgesCommands
         }
 
         return new EdgeGraphInput(item.Id, parentItemId, derivation.Set);
+    }
+
+    private static IReadOnlyList<string>? ExtractFacetOverride(WorkItem item)
+    {
+        item.Fields.TryGetValue("System.Tags", out var raw);
+        var tags = Polyphony.Tagging.TagSet.Parse(raw);
+        var parsed = FacetTagParser.TryExtract(tags);
+        if (parsed is null) return null;
+        if (!parsed.IsValid)
+        {
+            throw new CollectionFailureException(
+                $"Item {item.Id} has malformed polyphony:facets tag — unknown facet(s): {string.Join(", ", parsed.UnknownFacets)}.",
+                "facet_override_invalid");
+        }
+        return parsed.Facets.Count == 0 ? null : parsed.Facets;
     }
 
     private static EdgesCheckResult EmptyResult(int workItemId, string error, string errorCode) =>

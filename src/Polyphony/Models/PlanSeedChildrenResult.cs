@@ -22,6 +22,20 @@ public sealed record PlanSeedChildrenResult
     public required IReadOnlyList<string> Warnings { get; init; }
     public required bool PlannedTagSet { get; init; }
     public required bool PlannedTagAlready { get; init; }
+
+    /// <summary>
+    /// Architect-declared <c>apex_facets</c> sourced from plan front-matter
+    /// (closed-loop PR #7). Empty when the plan did not declare it (the
+    /// common case). Always alphabetical, lowercase, deduplicated.
+    /// </summary>
+    public IReadOnlyList<string> ApexFacets { get; init; } = [];
+
+    /// <summary>
+    /// True when a <c>polyphony:facets=...</c> tag was written or updated on
+    /// the parent during this seed (i.e. <see cref="ApexFacets"/> was
+    /// non-empty AND no errors blocked tag application).
+    /// </summary>
+    public bool FacetsTagSet { get; init; }
 }
 
 public sealed record SeedReconciliation

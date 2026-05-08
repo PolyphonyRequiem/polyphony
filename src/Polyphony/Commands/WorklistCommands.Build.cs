@@ -266,10 +266,15 @@ public sealed partial class WorklistCommands
                     "type_unknown");
             }
 
+            // Per-item facet override (closed-loop PR #7): architect-declared
+            // apex_facets surface as a polyphony:facets=... tag. Replaces
+            // type-config facets when present.
+            var overrideFacets = ExtractFacetOverride(w.Item);
+
             var children = await _repository.GetChildrenAsync(w.Item.Id, ct).ConfigureAwait(false);
-            var resolved = RequirementInputResolver.Resolve(typeConfig, children.Count);
+            var resolved = RequirementInputResolver.Resolve(typeConfig, children.Count, overrideFacets);
             var derivation = RequirementSetDeriver.Derive(
-                typeConfig.Facets,
+                resolved.Facets,
                 resolved.Decomposable,
                 resolved.FacetOrder,
                 resolved.ActionableExecutor);
@@ -285,6 +290,21 @@ public sealed partial class WorklistCommands
             inputs.Add(new EdgeGraphInput(w.Item.Id, w.ParentItemId, injected));
         }
         return inputs;
+    }
+
+    private static IReadOnlyList<string>? ExtractFacetOverride(WorkItem item)
+    {
+        item.Fields.TryGetValue("System.Tags", out var raw);
+        var tags = Polyphony.Tagging.TagSet.Parse(raw);
+        var parsed = FacetTagParser.TryExtract(tags);
+        if (parsed is null) return null;
+        if (!parsed.IsValid)
+        {
+            throw new CollectionFailureException(
+                $"Item {item.Id} has malformed polyphony:facets tag — unknown facet(s): {string.Join(", ", parsed.UnknownFacets)}.",
+                "facet_override_invalid");
+        }
+        return parsed.Facets.Count == 0 ? null : parsed.Facets;
     }
 
     /// <summary>

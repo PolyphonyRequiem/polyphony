@@ -28,6 +28,18 @@ public static class PolyphonyTags
     public const string Planned = "polyphony:planned";
 
     /// <summary>
+    /// Tag-name prefix for the per-item facet override (closed-loop PR #7).
+    /// Stamped by <c>polyphony plan seed-children</c> as
+    /// <c>polyphony:facets=&lt;csv&gt;</c> when the architect declared
+    /// <c>apex_facets</c> in plan front-matter for an indivisible apex.
+    /// Read by <see cref="Sdlc.RequirementInputResolver"/> to override the
+    /// type-config default facet set on a per-call basis. The full tag
+    /// shape (prefix + <c>=</c> + canonical csv) is owned by
+    /// <see cref="Sdlc.FacetTagParser"/>.
+    /// </summary>
+    public const string FacetsPrefix = "polyphony:facets";
+
+    /// <summary>
     /// Returns true if the given parsed tag set indicates the item is in-scope
     /// (carries either <see cref="InScope"/> or <see cref="Root"/>).
     /// </summary>
