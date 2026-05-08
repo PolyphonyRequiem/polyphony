@@ -10,8 +10,12 @@ namespace Polyphony.Infrastructure.Processes;
 ///   The classic deadlock here is "wait, then read": if the child writes
 ///   more than the OS pipe buffer it blocks waiting for someone to drain,
 ///   and the parent blocks on WaitForExit. Both sides hang.
-/// - On cancellation, kills the entire process tree, then still awaits the
-///   read tasks so we capture any buffered output before returning.
+/// - On cancellation (caller-requested OR per-attempt timeout fired by an
+///   outer linked CTS), kills the entire process tree, drains whatever
+///   is buffered, and throws <see cref="ProcessCanceledException"/>
+///   carrying the captured stdout/stderr + elapsed time. Cancellation
+///   coverage spans the entire post-Start lifetime — including the stdin
+///   write — so a cancel during a slow stdin write also kills cleanly.
 /// - Stateless. Safe to register as a singleton.
 /// </summary>
 public sealed class ProcessRunner : IProcessRunner
@@ -21,7 +25,8 @@ public sealed class ProcessRunner : IProcessRunner
         IReadOnlyList<string> arguments,
         CancellationToken ct = default,
         string? workingDirectory = null,
-        string? stdin = null)
+        string? stdin = null,
+        IReadOnlyDictionary<string, string?>? environment = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -43,48 +48,75 @@ public sealed class ProcessRunner : IProcessRunner
             startInfo.ArgumentList.Add(arg);
         }
 
-        using var process = new Process { StartInfo = startInfo };
-        process.Start();
-
-        // When stdin was requested, write the payload and close the stream so
-        // the child sees EOF. Done BEFORE we await pipe drains / WaitForExit
-        // so a child that wants the full input before producing output (e.g.
-        // `gh pr edit --body-file -`) doesn't deadlock waiting on our writer.
-        if (stdin is not null)
+        // Apply caller-supplied environment overrides on top of the inherited
+        // parent environment. Null value removes the variable for the child,
+        // matching ProcessStartInfo.Environment semantics.
+        if (environment is not null)
         {
-            try
+            foreach (var (key, value) in environment)
             {
-                await process.StandardInput.WriteAsync(stdin.AsMemory(), ct).ConfigureAwait(false);
-            }
-            finally
-            {
-                process.StandardInput.Close();
+                if (value is null)
+                {
+                    startInfo.Environment.Remove(key);
+                }
+                else
+                {
+                    startInfo.Environment[key] = value;
+                }
             }
         }
+
+        using var process = new Process { StartInfo = startInfo };
+        process.Start();
+        var stopwatch = Stopwatch.StartNew();
 
         // Begin draining BOTH pipes immediately. If we waited for exit first
         // and the child wrote enough to fill the OS pipe buffer (~64KB), the
         // child would block on the write and we would block on WaitForExit.
+        // CT=None: drain tasks must keep running on cancel so we can capture
+        // whatever the child emitted before the kill.
         var stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
         var stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
 
         try
         {
+            // Stdin write happens INSIDE the cancel-handling try/catch so
+            // a slow stdin write that's cancelled also triggers the kill+drain
+            // path (was previously a coverage gap — a cancel during stdin
+            // write left the child running and threw a bare OCE).
+            if (stdin is not null)
+            {
+                try
+                {
+                    await process.StandardInput.WriteAsync(stdin.AsMemory(), ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    process.StandardInput.Close();
+                }
+            }
+
             await process.WaitForExitAsync(ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            // Caller cancelled. Kill the tree, drain whatever buffered, then propagate.
+            // Caller cancelled OR an outer linked CTS fired (per-attempt
+            // timeout in GhClient). Kill the tree, drain whatever buffered,
+            // then throw the typed exception so callers can surface
+            // diagnostic context (last gh stderr with GH_DEBUG=api set,
+            // for example) instead of a bare OperationCanceledException.
             TryKillTree(process);
-            try
-            {
-                await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Ignore drain exceptions — the original cancellation is what matters.
-            }
-            throw;
+            stopwatch.Stop();
+
+            string capturedStdout = string.Empty;
+            string capturedStderr = string.Empty;
+            try { capturedStdout = await stdoutTask.ConfigureAwait(false); }
+            catch { /* drain failure shouldn't mask the cancellation. */ }
+            try { capturedStderr = await stderrTask.ConfigureAwait(false); }
+            catch { /* see above. */ }
+
+            throw new ProcessCanceledException(
+                executable, arguments, capturedStdout, capturedStderr, stopwatch.Elapsed);
         }
 
         var stdout = await stdoutTask.ConfigureAwait(false);

@@ -37,10 +37,21 @@ public interface IProcessRunner
     /// stdin handle (existing behaviour). Used by callers that need to feed
     /// large bodies via <c>--body-file -</c> to avoid command-line length limits.
     /// </param>
+    /// <param name="environment">
+    /// Optional additional environment variables to set on the child process,
+    /// applied <em>on top of</em> the inherited parent environment. A
+    /// <c>null</c> value removes the inherited variable for the child;
+    /// a non-null value overrides it. Used by typed clients (<see cref="GhClient"/>)
+    /// to opt subprocesses into specific behaviour (e.g. <c>GH_PROMPT_DISABLED=1</c>
+    /// to surface hidden-prompt hangs as immediate errors instead of indefinite waits).
+    /// When null/empty, only the parent process environment is inherited
+    /// (existing behaviour).
+    /// </param>
     Task<ProcessResult> RunAsync(
         string executable,
         IReadOnlyList<string> arguments,
         CancellationToken ct = default,
         string? workingDirectory = null,
-        string? stdin = null);
+        string? stdin = null,
+        IReadOnlyDictionary<string, string?>? environment = null);
 }

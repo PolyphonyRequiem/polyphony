@@ -100,6 +100,101 @@ public sealed class ProcessRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_TimeoutAfterEmittedOutput_ThrowsProcessCanceledWithBufferedOutput()
+    {
+        // Child writes some stdout AND stderr, then hangs. ProcessRunner
+        // must drain whatever buffered before the kill and surface it on
+        // the typed exception (instead of throwing a bare OCE that
+        // discards the diagnostic).
+        //
+        // NB: we use try/catch instead of Should.ThrowAsync<ProcessCanceledException>.
+        // Shouldly's async-throws assertion appears to lose OperationCanceledException
+        // subtypes (likely intercepts TaskCanceledException specially in its
+        // async wrapper) and reports the type as TaskCanceledException even
+        // when the thrown object actually IS the PCE subclass. The manual
+        // try/catch does not have this issue — both `is ProcessCanceledException`
+        // and `is OperationCanceledException` evaluate true on the caught
+        // instance.
+        var runner = new ProcessRunner();
+
+        var (exe, args) = IsWindows
+            ? ("cmd.exe", new[] { "/c", "echo HELLO-OUT & echo HELLO-ERR 1>&2 & ping 127.0.0.1 -n 30 > nul" })
+            : ("sh", new[] { "-c", "echo HELLO-OUT; echo HELLO-ERR >&2; sleep 30" });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+
+        ProcessCanceledException? captured = null;
+        try
+        {
+            await runner.RunAsync(exe, args, cts.Token);
+        }
+        catch (ProcessCanceledException ex)
+        {
+            captured = ex;
+        }
+
+        captured.ShouldNotBeNull("expected ProcessCanceledException, got nothing thrown");
+        captured.Executable.ShouldBe(exe);
+        captured.Arguments.ShouldBe(args);
+        captured.BufferedStdout.ShouldContain("HELLO-OUT");
+        captured.BufferedStderr.ShouldContain("HELLO-ERR");
+        captured.Elapsed.ShouldBeGreaterThan(TimeSpan.Zero);
+        // Subclass relationship — existing OCE catches still match.
+        ((object)captured).ShouldBeAssignableTo<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task RunAsync_EnvironmentOverride_AppliesToChildProcess()
+    {
+        var runner = new ProcessRunner();
+        var env = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["POLYPHONY_TEST_VAR"] = "polyphony-test-value-42",
+        };
+
+        var (exe, args) = IsWindows
+            ? ("cmd.exe", new[] { "/c", "echo %POLYPHONY_TEST_VAR%" })
+            : ("sh", new[] { "-c", "echo $POLYPHONY_TEST_VAR" });
+
+        var result = await runner.RunAsync(exe, args, environment: env);
+
+        result.Succeeded.ShouldBeTrue();
+        result.Stdout.Trim().ShouldBe("polyphony-test-value-42");
+    }
+
+    [Fact]
+    public async Task RunAsync_EnvironmentNullValue_RemovesInheritedVariable()
+    {
+        // Set the var on the parent, then clear it for the child via a null value.
+        var runner = new ProcessRunner();
+        const string varName = "POLYPHONY_TEST_INHERIT";
+        Environment.SetEnvironmentVariable(varName, "PARENT-VALUE");
+        try
+        {
+            var env = new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                [varName] = null,
+            };
+
+            var (exe, args) = IsWindows
+                ? ("cmd.exe", new[] { "/c", $"echo [%{varName}%]" })
+                : ("sh", new[] { "-c", $"echo \"[$" + varName + "]\"" });
+
+            var result = await runner.RunAsync(exe, args, environment: env);
+
+            result.Succeeded.ShouldBeTrue();
+            // On Windows %UNDEFINED% expands to literally "%UNDEFINED%"; on Unix
+            // $UNDEFINED expands to empty. Both are acceptable as long as the
+            // PARENT-VALUE didn't leak through.
+            result.Stdout.ShouldNotContain("PARENT-VALUE");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(varName, null);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_WorkingDirectory_ChangesProcessCwd()
     {
         var runner = new ProcessRunner();
