@@ -126,6 +126,42 @@ public sealed partial class ManifestCommands
 
             if (!manifestStaged)
             {
+                // Local working tree has nothing to commit for the manifest.
+                // Before declaring the run a no-op, verify origin actually
+                // has the manifest — otherwise we silently mask the bug
+                // where local HEAD carries the file but the push never
+                // completed (resume after partial run, prior worktree on
+                // wrong branch, force-reset of the remote, etc.). Issue
+                // #192 documents the failure mode this guards against.
+                string? remoteManifest = null;
+                try
+                {
+                    // Refresh the local view of origin/{branch} so we don't
+                    // base the decision on a stale ref. Tolerate fetch
+                    // failure — the most common cause is the remote branch
+                    // not existing yet (first push), which is exactly the
+                    // case we want to push to recover from.
+                    await git.FetchAsync("origin", expectedBranch, ct).ConfigureAwait(false);
+                    remoteManifest = await git.ShowFileAtRefAsync(
+                        $"origin/{expectedBranch}", path, ct).ConfigureAwait(false);
+                }
+                catch (ExternalToolException)
+                {
+                    remoteManifest = null;
+                }
+
+                if (remoteManifest is null)
+                {
+                    // Local HEAD has the manifest, origin does not. Push
+                    // HEAD so the post-condition (origin/{branch} contains
+                    // the manifest) holds. No commit needed — the right
+                    // blob is already at HEAD.
+                    await git.PushAsync(expectedBranch, ct: ct).ConfigureAwait(false);
+                    var headSha = await git.RevParseLocalBranchAsync(expectedBranch, ct).ConfigureAwait(false);
+                    EmitSuccess(rootId, path, expectedBranch, headSha);
+                    return ExitCodes.Success;
+                }
+
                 EmitNoOp(rootId, path, expectedBranch);
                 return ExitCodes.Success;
             }

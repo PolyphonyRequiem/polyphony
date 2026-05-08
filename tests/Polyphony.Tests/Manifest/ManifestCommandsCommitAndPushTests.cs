@@ -93,6 +93,25 @@ public sealed class ManifestCommandsCommitAndPushTests : IDisposable
         => runner.WhenExact("git", ["rev-parse", "--verify", $"refs/heads/{branch}"],
             new ProcessResult(0, sha + "\n", ""));
 
+    private static void StubFetch(FakeProcessRunner runner, string branch, ProcessResult? result = null)
+        => runner.WhenExact("git", ["fetch", "origin", branch],
+            result ?? new ProcessResult(0, "", ""));
+
+    /// <summary>Stubs <c>git show origin/{branch}:{path}</c> with the supplied content (null = ref/path missing).</summary>
+    private static void StubShowOriginFile(FakeProcessRunner runner, string branch, string path, string? content)
+    {
+        var result = content is null
+            ? new ProcessResult(128, "",
+                $"fatal: path '{path}' does not exist in 'origin/{branch}'")
+            : new ProcessResult(0, content, "");
+        runner.WhenExact("git", ["show", $"origin/{branch}:{path}"], result);
+    }
+
+    /// <summary>Stubs <c>git show origin/{branch}:{path}</c> as a hard failure (e.g., remote ref missing entirely).</summary>
+    private static void StubShowOriginFileFatal(FakeProcessRunner runner, string branch, string path, string stderr)
+        => runner.WhenExact("git", ["show", $"origin/{branch}:{path}"],
+            new ProcessResult(128, "", stderr));
+
     // ─── Argument validation ─────────────────────────────────────────────
 
     [Fact]
@@ -266,6 +285,9 @@ public sealed class ManifestCommandsCommitAndPushTests : IDisposable
         StubAdd(runner, this.manifestPath);
         // Status empty — manifest already at HEAD on this branch.
         StubStatus(runner, "");
+        // Origin has the manifest → genuine no-op (issue #192 guard satisfied).
+        StubFetch(runner, "feature/100");
+        StubShowOriginFile(runner, "feature/100", this.manifestPath, "schema: 1\nroot_id: 100\n");
 
         var (exit, output) = await CommandTestBase_CaptureAsync(
             () => cmd.CommitAndPush(rootId: 100, path: this.manifestPath));
@@ -291,6 +313,8 @@ public sealed class ManifestCommandsCommitAndPushTests : IDisposable
         StubCurrentBranch(runner, "feature/100");
         StubAdd(runner, this.manifestPath);
         StubStatus(runner, " M unrelated.txt\n?? scratch.md\n");
+        StubFetch(runner, "feature/100");
+        StubShowOriginFile(runner, "feature/100", this.manifestPath, "schema: 1\nroot_id: 100\n");
 
         var (exit, output) = await CommandTestBase_CaptureAsync(
             () => cmd.CommitAndPush(rootId: 100, path: this.manifestPath));
@@ -312,6 +336,8 @@ public sealed class ManifestCommandsCommitAndPushTests : IDisposable
         StubCurrentBranch(runner, "feature/100");
         StubAdd(runner, this.manifestPath);
         StubStatus(runner, "M  some/other/file.txt\n");
+        StubFetch(runner, "feature/100");
+        StubShowOriginFile(runner, "feature/100", this.manifestPath, "schema: 1\nroot_id: 100\n");
 
         var (exit, output) = await CommandTestBase_CaptureAsync(
             () => cmd.CommitAndPush(rootId: 100, path: this.manifestPath));
@@ -322,6 +348,126 @@ public sealed class ManifestCommandsCommitAndPushTests : IDisposable
         result.Pushed.ShouldBeFalse();
         // Critical: no commit for someone else's staged change.
         runner.Invocations.ShouldNotContain(c => c.Executable == "git" && c.Arguments[0] == "commit");
+    }
+
+    // ─── Remote-side guard (issue #192) ──────────────────────────────────
+
+    [Fact]
+    public async Task CommitAndPush_LocalCleanButOriginLacksManifest_PushesAnyway()
+    {
+        // The bug from issue #192: local HEAD has the manifest (so `git add`
+        // stages nothing), but origin/{branch}:{path} is missing — e.g. a
+        // prior run committed but never pushed, or the branch was created
+        // before the workflow learned to push the manifest. Without the
+        // remote-side guard, we'd silently no-op and downstream verbs
+        // (pr open-plan-pr) would fail when reading the manifest from origin.
+        WriteManifest(this.manifestPath, rootId: 3043);
+        var (cmd, runner) = CreateCommand();
+        StubCurrentBranch(runner, "feature/3043");
+        StubAdd(runner, this.manifestPath);
+        StubStatus(runner, ""); // local clean — manifest matches HEAD
+        StubFetch(runner, "feature/3043");
+        StubShowOriginFile(runner, "feature/3043", this.manifestPath, content: null); // origin lacks it
+        StubPush(runner, "feature/3043");
+        StubRevParse(runner, "feature/3043", "deadbeefcafe1234");
+
+        var (exit, output) = await CommandTestBase_CaptureAsync(
+            () => cmd.CommitAndPush(rootId: 3043, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.ErrorCode.ShouldBeNull();
+        result.Pushed.ShouldBeTrue();
+        result.NoOpReason.ShouldBeNull(); // not a no-op — we recovered by pushing
+        result.Branch.ShouldBe("feature/3043");
+        result.CommitSha.ShouldBe("deadbeefcafe1234");
+
+        // Critical: we must NOT have created a redundant commit; HEAD already had the right blob.
+        runner.Invocations.ShouldNotContain(c => c.Executable == "git" && c.Arguments[0] == "commit");
+        // We MUST have pushed.
+        runner.Invocations.ShouldContain(c =>
+            c.Executable == "git" &&
+            c.Arguments.SequenceEqual(new[] { "push", "-u", "origin", "feature/3043" }));
+    }
+
+    [Fact]
+    public async Task CommitAndPush_LocalCleanAndOriginBranchMissingEntirely_PushesAnyway()
+    {
+        // Variant of the above: not just the manifest, the entire remote
+        // branch is missing (first push of feature/{root}). Fetch will
+        // fail with "couldn't find remote ref"; the guard tolerates it
+        // and pushes HEAD to create the remote branch.
+        WriteManifest(this.manifestPath, rootId: 100);
+        var (cmd, runner) = CreateCommand();
+        StubCurrentBranch(runner, "feature/100");
+        StubAdd(runner, this.manifestPath);
+        StubStatus(runner, "");
+        // Fetch fails because origin doesn't have feature/100 yet.
+        StubFetch(runner, "feature/100",
+            new ProcessResult(128, "", "fatal: couldn't find remote ref feature/100"));
+        StubPush(runner, "feature/100");
+        StubRevParse(runner, "feature/100", "abc123");
+
+        var (exit, output) = await CommandTestBase_CaptureAsync(
+            () => cmd.CommitAndPush(rootId: 100, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.ErrorCode.ShouldBeNull();
+        result.Pushed.ShouldBeTrue();
+        result.CommitSha.ShouldBe("abc123");
+    }
+
+    [Fact]
+    public async Task CommitAndPush_LocalCleanAndShowFails_PushesAnyway()
+    {
+        // Belt-and-suspenders for ShowFileAtRefAsync stderr we don't
+        // explicitly recognize: any ExternalToolException from the remote
+        // check is treated as "origin lacks the manifest" and we push.
+        WriteManifest(this.manifestPath, rootId: 100);
+        var (cmd, runner) = CreateCommand();
+        StubCurrentBranch(runner, "feature/100");
+        StubAdd(runner, this.manifestPath);
+        StubStatus(runner, "");
+        StubFetch(runner, "feature/100");
+        StubShowOriginFileFatal(runner, "feature/100", this.manifestPath,
+            "fatal: ambiguous argument 'origin/feature/100': unknown revision");
+        StubPush(runner, "feature/100");
+        StubRevParse(runner, "feature/100", "abc123");
+
+        var (exit, output) = await CommandTestBase_CaptureAsync(
+            () => cmd.CommitAndPush(rootId: 100, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Pushed.ShouldBeTrue();
+        result.ErrorCode.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task CommitAndPush_LocalCleanAndOriginPushFails_GitFailed()
+    {
+        // Recovery push can still fail (e.g. non-fast-forward because
+        // someone moved origin in the meantime). Surface as git_failed
+        // rather than masking the failure.
+        WriteManifest(this.manifestPath, rootId: 100);
+        var (cmd, runner) = CreateCommand();
+        StubCurrentBranch(runner, "feature/100");
+        StubAdd(runner, this.manifestPath);
+        StubStatus(runner, "");
+        StubFetch(runner, "feature/100");
+        StubShowOriginFile(runner, "feature/100", this.manifestPath, content: null);
+        runner.WhenExact("git", ["push", "-u", "origin", "feature/100"],
+            new ProcessResult(1, "", "fatal: non-fast-forward"));
+
+        var (exit, output) = await CommandTestBase_CaptureAsync(
+            () => cmd.CommitAndPush(rootId: 100, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("git_failed");
+        result.Error!.ShouldContain("non-fast-forward");
+        result.Pushed.ShouldBeFalse();
     }
 
     // ─── Git failures ────────────────────────────────────────────────────
