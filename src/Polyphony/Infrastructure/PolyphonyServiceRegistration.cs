@@ -44,6 +44,11 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<HierarchyWalker>();
         services.AddSingleton<TransitionValidator>();
 
+        // Sdlc observers — singleton services that wrap IGitClient/IGhClient/ITwigClient
+        // to produce per-RequirementKind observations. Shared by routing-style verbs
+        // (e.g. plan detect-state) and the next-ready worklist builder.
+        services.AddSingleton<Sdlc.Observers.PlanObserver>();
+
         // Process-shell-out infrastructure for verbs that need to talk to
         // external tools (twig CLI for side-effect operations, git, gh).
         // All stateless — singletons are safe.
