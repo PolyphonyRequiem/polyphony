@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Tagging;
 using Twig.Domain.Interfaces;
@@ -16,6 +17,7 @@ namespace Polyphony.Commands;
 ///   <item><c>resolve</c> — walk ancestors to find the nearest root tag; surface fallback-required when none found.</item>
 /// </list>
 /// </summary>
+[VerbGroup("root")]
 public sealed class RootCommands(
     ITwigClient twig,
     IWorkItemRepository repository,
@@ -27,6 +29,7 @@ public sealed class RootCommands(
     /// <param name="workItem">ADO work item ID to declare as root.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("declare")]
+    [VerbResult(typeof(ScopeMutationResult))]
     public Task<int> Declare(int workItem, CancellationToken ct = default) =>
         scopeCommands.TagMutationAsync(workItem, PolyphonyTags.Root, add: true, ct);
 
@@ -41,6 +44,7 @@ public sealed class RootCommands(
     /// <param name="maxAncestorWalk">Max ancestors to walk before giving up (default 32).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("resolve")]
+    [VerbResult(typeof(RootResolveResult))]
     public async Task<int> Resolve(int workItem, int maxAncestorWalk = 32, CancellationToken ct = default)
     {
         await twig.SyncAsync(ct).ConfigureAwait(false);

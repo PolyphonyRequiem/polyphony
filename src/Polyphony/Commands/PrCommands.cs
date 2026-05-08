@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
@@ -24,6 +25,7 @@ namespace Polyphony.Commands;
 // IAdoClient is injected as an optional dependency: production runs get the
 // DI-resolved instance (registered in PolyphonyServiceRegistration); GitHub-only
 // tests pass null and never exercise the ADO leg.
+[VerbGroup("pr")]
 public sealed partial class PrCommands(
     IGitClient git,
     IGhClient gh,
@@ -50,6 +52,7 @@ public sealed partial class PrCommands(
     /// <param name="title">Optional PR title; auto-generated from the work item when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("create-feature-pr")]
+    [VerbResult(typeof(PrCreateFeatureResult))]
     public async Task<int> CreateFeaturePr(
         int workItem,
         string featureBranch,

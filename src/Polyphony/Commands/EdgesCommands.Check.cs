@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Sdlc;
 using Twig.Domain.Aggregates;
 
@@ -42,6 +43,7 @@ public sealed partial class EdgesCommands
     /// JSON so workflow consumers and output_map readers stay stable.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("check")]
+    [VerbResult(typeof(EdgesCheckResult))]
     public async Task<int> Check(
         [Argument] int workItem,
         int depth = 0,

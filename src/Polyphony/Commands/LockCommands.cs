@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Locking;
 using Polyphony.Models;
 
@@ -28,6 +29,7 @@ namespace Polyphony.Commands;
 /// <c>reason: stale</c>. They are NEVER auto-deleted. The operator must
 /// invoke <c>polyphony lock force-release</c> to clear them per ADR Rev 4.</para>
 /// </summary>
+[VerbGroup("lock")]
 public sealed class LockCommands(
     RunLockStore store,
     RunLockPathResolver pathResolver)
@@ -43,6 +45,7 @@ public sealed class LockCommands(
     /// <param name="path">Override lock path (default: resolved via git top-level).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("acquire")]
+    [VerbResult(typeof(AcquireLockResult))]
     public async Task<int> Acquire(
         int rootId,
         int ttlHours = 24,
@@ -130,6 +133,7 @@ public sealed class LockCommands(
     /// <param name="path">Override lock path (default: resolved via git top-level).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("release")]
+    [VerbResult(typeof(ReleaseLockResult))]
     public async Task<int> Release(
         int rootId,
         string lockToken,
@@ -193,6 +197,7 @@ public sealed class LockCommands(
     /// <param name="path">Override lock path (default: resolved via git top-level).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("force-release")]
+    [VerbResult(typeof(ForceReleaseLockResult))]
     public async Task<int> ForceRelease(
         int rootId,
         string path = "",
@@ -234,6 +239,7 @@ public sealed class LockCommands(
     /// <param name="path">Override lock path (default: resolved via git top-level).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("status")]
+    [VerbResult(typeof(LockStatusResult))]
     public async Task<int> Status(
         int rootId,
         string path = "",

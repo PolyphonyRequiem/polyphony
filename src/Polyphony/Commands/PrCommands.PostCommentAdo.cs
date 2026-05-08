@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Routing;
 
@@ -30,6 +31,7 @@ public sealed partial class PrCommands
     /// <param name="body">The comment body (Markdown).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("post-comment-ado")]
+    [VerbResult(typeof(PrPostCommentAdoResult))]
     public async Task<int> PostCommentAdo(
         string organization,
         string project,

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 
@@ -27,6 +28,7 @@ public sealed partial class PrCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-mg-pr")]
+    [VerbResult(typeof(PrMergeMergeGroupResult))]
     public async Task<int> MergeMgPr(
         int rootId,
         string mgPath,

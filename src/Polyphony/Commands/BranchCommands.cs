@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
@@ -19,6 +20,7 @@ namespace Polyphony.Commands;
 /// Routing-style verbs ALWAYS exit 0; callers route on the JSON payload
 /// (see <c>docs/decisions/polyphony-verb-migration.md</c>).
 /// </summary>
+[VerbGroup("branch")]
 public sealed partial class BranchCommands(
     ITwigClient twig,
     HierarchyWalker walker,
@@ -35,6 +37,7 @@ public sealed partial class BranchCommands(
     /// <param name="workItem">ADO work item ID to check predecessor links for.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("check-deps")]
+    [VerbResult(typeof(BranchCheckDepsResult))]
     public async Task<int> CheckDeps(int workItem, CancellationToken ct = default)
     {
         BranchCheckDepsResult result;
@@ -238,6 +241,7 @@ public sealed partial class BranchCommands(
     /// <param name="prNumber">PR number associated with this scope closure (echoed in output).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("close-scope")]
+    [VerbResult(typeof(BranchCloseScopeResult))]
     public async Task<int> CloseScope(
         int workItem,
         string pgName = "",

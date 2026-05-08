@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 
 namespace Polyphony.Commands;
@@ -42,6 +43,7 @@ public sealed partial class PlanCommands
     /// (defaults to <c>polyphony:planned</c>).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("seed-children")]
+    [VerbResult(typeof(PlanSeedChildrenResult))]
     public async Task<int> SeedChildren(
         int workItem,
         string childrenJson,

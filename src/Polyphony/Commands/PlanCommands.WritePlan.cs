@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Models;
 
 namespace Polyphony.Commands;
@@ -27,6 +28,7 @@ public sealed partial class PlanCommands
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Always <see cref="ExitCodes.Success"/>; routing is via JSON payload.</returns>
     [Command("write-plan")]
+    [VerbResult(typeof(PlanWritePlanResult))]
     public async Task<int> WritePlan(
         int itemId,
         string contentJson,

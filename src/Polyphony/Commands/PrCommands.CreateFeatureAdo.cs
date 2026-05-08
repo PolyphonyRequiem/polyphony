@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
 
@@ -32,6 +33,7 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("create-feature-ado")]
+    [VerbResult(typeof(PrCreateFeatureAdoResult))]
     public async Task<int> CreateFeatureAdo(
         string organization,
         string project,

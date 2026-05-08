@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 
@@ -27,6 +28,7 @@ public sealed partial class BranchCommands
     /// <param name="workItem">ADO work item ID — root of the hierarchy (typically an epic).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("load-tree")]
+    [VerbResult(typeof(BranchLoadTreeResult))]
     public async Task<int> LoadTree(int workItem, CancellationToken ct = default)
     {
         BranchLoadTreeResult result;

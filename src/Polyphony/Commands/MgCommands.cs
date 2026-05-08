@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 
 namespace Polyphony.Commands;
@@ -15,6 +16,7 @@ namespace Polyphony.Commands;
 /// are all "success"); validation errors return ConfigError per the
 /// project-wide convention.
 /// </summary>
+[VerbGroup("mg")]
 public sealed partial class MgCommands
 {
     /// <summary>
@@ -54,6 +56,7 @@ public sealed partial class MgCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("nesting-decision")]
+    [VerbResult(typeof(MgNestingDecisionResult))]
     public Task<int> NestingDecision(
         int rootId,
         int itemId,

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Policy;
 using Polyphony.Sdlc;
 
@@ -16,6 +17,7 @@ namespace Polyphony.Commands;
 ///   <item><c>resolve</c> — returns the effective mode + caps for a given scope and domain (most-specific wins).</item>
 /// </list>
 /// </summary>
+[VerbGroup("policy")]
 public sealed class PolicyCommands
 {
     /// <summary>
@@ -26,6 +28,7 @@ public sealed class PolicyCommands
     /// </summary>
     /// <param name="path">Path to the policy file. Defaults to <c>.conductor/policy.yaml</c>.</param>
     [Command("load")]
+    [VerbResult(typeof(PolicyLoadResult))]
     public int Load(string path = ".conductor/policy.yaml")
     {
         PolicyConfig config;
@@ -68,6 +71,7 @@ public sealed class PolicyCommands
     /// </summary>
     /// <param name="path">Path to the policy file. Defaults to <c>.conductor/policy.yaml</c>.</param>
     [Command("validate")]
+    [VerbResult(typeof(PolicyValidateResult))]
     public int Validate(string path = ".conductor/policy.yaml")
     {
         if (!File.Exists(path))
@@ -125,6 +129,7 @@ public sealed class PolicyCommands
     /// <param name="domain">Either <c>approvals</c> or <c>pr</c>.</param>
     /// <param name="path">Path to the policy file. Defaults to <c>.conductor/policy.yaml</c>.</param>
     [Command("resolve")]
+    [VerbResult(typeof(ResolvedRule))]
     public int Resolve(string scope, string domain, string path = ".conductor/policy.yaml")
     {
         if (!TryParseDomain(domain, out var domainEnum))

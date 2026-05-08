@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Sdlc;
 
 namespace Polyphony.Commands;
@@ -19,6 +20,7 @@ public sealed partial class StateCommands
     /// <param name="planRoot">Directory glob root for filesystem plan discovery (default <c>docs/projects</c>).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("next-ready")]
+    [VerbResult(typeof(StateNextReadyResult))]
     public async Task<int> NextReady(
         int workItem,
         string planRoot = "docs/projects",

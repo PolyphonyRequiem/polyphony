@@ -1,3 +1,4 @@
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 
 namespace Polyphony.Commands;
@@ -18,6 +19,7 @@ namespace Polyphony.Commands;
 ///   <item><see cref="List"/> — wraps <c>git worktree list --porcelain</c></item>
 /// </list>
 /// </summary>
+[VerbGroup("worktree")]
 public sealed partial class WorktreeCommands(IGitClient git)
 {
     private readonly IGitClient _git = git;

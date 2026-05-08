@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Polyphony.SchemaGenerator — Roslyn incremental source generator.
+
+    Generates `Polyphony.VerbOutputSchemaCatalog` (a public C# class
+    holding a JSON-serialised verb-output schema registry) from
+    [VerbGroup] / [VerbResult] / [JsonSerializable] attributes in the
+    referencing project (Polyphony).
+
+    Implements the design ADR'd at
+    docs/decisions/verb-output-schema-registry.md.
+
+    Roslyn analyzers/source-generators target netstandard2.0 — the
+    Roslyn host (csc / VS) only loads analyzers built for that TFM.
+    The TargetFramework override here intentionally diverges from the
+    repo-wide `net11.0` set by Directory.Build.props.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <!--
+      MinVer (inherited from Directory.Build.props) requires SourceLink
+      packages that don't exist on netstandard2.0. Disable on this
+      project — the generator never ships as a NuGet package.
+    -->
+    <MinVerSkip>true</MinVerSkip>
+    <!--
+      LangVersion=preview from Directory.Build.props expects net11; on
+      netstandard2.0 we need the matching latest C# the analyzer host
+      tolerates. Roslyn 4.x supports C# preview language features for
+      the *analyzer source* itself.
+    -->
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Don't pull in MinVer for the generator. -->
+    <PackageReference Remove="MinVer" />
+  </ItemGroup>
+
+</Project>

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Locking;
@@ -63,6 +64,7 @@ public sealed partial class PlanCommands
     /// <param name="lockTtlHours">Run-lock TTL (default 24).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("recreate-stale-descendant")]
+    [VerbResult(typeof(PlanRecreateStaleDescendantResult))]
     public async Task<int> RecreateStaleDescendant(
         int rootId,
         int itemId,

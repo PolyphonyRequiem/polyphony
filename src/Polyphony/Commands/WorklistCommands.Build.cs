@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Manifest;
 using Polyphony.Sdlc;
 using Twig.Domain.Aggregates;
@@ -56,6 +57,7 @@ public sealed partial class WorklistCommands
     /// <see cref="WorklistResult"/>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("build")]
+    [VerbResult(typeof(WorklistResult))]
     public async Task<int> Build(
         int rootId,
         string manifestPath = ".polyphony/run.yaml",

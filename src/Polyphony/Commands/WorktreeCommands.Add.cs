@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 
 namespace Polyphony.Commands;
 
@@ -18,6 +19,7 @@ public sealed partial class WorktreeCommands
     /// <param name="gitRef">-- ref. Optional git ref the new branch is rooted at; defaults to <c>HEAD</c> when omitted.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("add")]
+    [VerbResult(typeof(WorktreeAddResult))]
     public async Task<int> Add(
         string branch,
         string path,

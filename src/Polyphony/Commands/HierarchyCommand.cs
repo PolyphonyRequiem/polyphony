@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Routing;
 
 namespace Polyphony.Commands;
@@ -7,6 +8,7 @@ namespace Polyphony.Commands;
 /// <summary>
 /// Outputs the work item hierarchy with role annotations.
 /// </summary>
+[VerbGroup("")]
 public sealed class HierarchyCommand(HierarchyWalker walker)
 {
     /// <summary>
@@ -16,6 +18,7 @@ public sealed class HierarchyCommand(HierarchyWalker walker)
     /// <param name="depth">Maximum depth to traverse</param>
     /// <param name="config">Path to .conductor/process-config.yaml</param>
     [Command("hierarchy")]
+    [VerbResult(typeof(HierarchyResult))]
     public async Task<int> Hierarchy(int workItem, int depth = 3, string config = ".conductor/process-config.yaml", CancellationToken ct = default)
     {
         var result = await walker.WalkAsync(workItem, depth, ct);

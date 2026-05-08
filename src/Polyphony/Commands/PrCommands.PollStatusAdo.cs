@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Routing;
 
@@ -30,6 +31,7 @@ public sealed partial class PrCommands
     /// <param name="includeMetadata">When true, parse plan-PR YAML front-matter from the PR body.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("poll-status-ado")]
+    [VerbResult(typeof(PrPollStatusResult))]
     public async Task<int> PollStatusAdo(
         string organization,
         string project,

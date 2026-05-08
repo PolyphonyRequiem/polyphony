@@ -1,3 +1,4 @@
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Twig.Domain.Interfaces;
 
@@ -18,6 +19,7 @@ namespace Polyphony.Commands;
 /// decomposability lookup, mirroring how <c>EdgesCommands</c> takes
 /// the same dependency.</para>
 /// </summary>
+[VerbGroup("worklist")]
 public sealed partial class WorklistCommands(
     IWorkItemRepository repository,
     ProcessConfig processConfig)

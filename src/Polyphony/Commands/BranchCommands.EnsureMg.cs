@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 
@@ -20,6 +21,7 @@ public sealed partial class BranchCommands
     /// <param name="remote">Git remote name.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-mg")]
+    [VerbResult(typeof(BranchEnsureMergeGroupResult))]
     public async Task<int> EnsureMg(
         int rootId,
         string mgPath,

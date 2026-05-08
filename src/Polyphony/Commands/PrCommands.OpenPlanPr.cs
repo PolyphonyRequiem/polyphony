@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
@@ -36,6 +37,7 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body summary (rendered after the front-matter); minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-plan-pr")]
+    [VerbResult(typeof(PrOpenPlanPrResult))]
     public async Task<int> OpenPlanPr(
         int rootId,
         int itemId,

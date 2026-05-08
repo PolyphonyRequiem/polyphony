@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 
 namespace Polyphony.Commands;
@@ -24,6 +25,7 @@ public sealed partial class BranchCommands
     /// <param name="remote">Git remote name.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-plan")]
+    [VerbResult(typeof(BranchEnsurePlanResult))]
     public async Task<int> EnsurePlan(
         int rootId,
         int itemId,

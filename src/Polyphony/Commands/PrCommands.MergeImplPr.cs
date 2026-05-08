@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 
@@ -29,6 +30,7 @@ public sealed partial class PrCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-impl-pr")]
+    [VerbResult(typeof(PrMergeImplResult))]
     public async Task<int> MergeImplPr(
         int rootId,
         int itemId,

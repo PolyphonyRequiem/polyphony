@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Sdlc;
 using Twig.Domain.Interfaces;
@@ -9,6 +10,7 @@ namespace Polyphony.Commands;
 /// <summary>
 /// Verbs in the <c>requirements</c> family. Today: <c>derive</c> only.
 /// </summary>
+[VerbGroup("requirements")]
 public sealed class RequirementsCommands(
     IWorkItemRepository repository,
     ProcessConfig processConfig)
@@ -27,6 +29,7 @@ public sealed class RequirementsCommands(
     /// One of <c>polyphony</c> (evidence required) or <c>human</c> (no evidence).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("derive")]
+    [VerbResult(typeof(RequirementsDeriveResult))]
     public async Task<int> Derive(
         int workItem,
         bool decomposable,

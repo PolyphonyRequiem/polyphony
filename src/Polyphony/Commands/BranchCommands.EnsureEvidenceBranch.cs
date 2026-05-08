@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 
@@ -26,6 +27,7 @@ public sealed partial class BranchCommands
     /// <param name="remote">Git remote name.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-evidence-branch")]
+    [VerbResult(typeof(BranchEnsureEvidenceResult))]
     public async Task<int> EnsureEvidenceBranch(
         int workItemId,
         int apexId = 0,
