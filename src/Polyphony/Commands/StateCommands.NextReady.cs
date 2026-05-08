@@ -185,6 +185,7 @@ public sealed partial class StateCommands
         IReadOnlyList<Twig.Domain.Aggregates.WorkItem> children,
         CancellationToken ct)
     {
+        _ = children;  // PR #4: legacy children-state heuristic removed; cross-item rollup is PR #5's job.
         var reasons = new Dictionary<string, string>(StringComparer.Ordinal);
 
         // ── Plan-kind observers (PR #2 — wired here). Build the per-item
@@ -214,22 +215,19 @@ public sealed partial class StateCommands
         var (childrenSeededDisp, childrenSeededReason) = ComposeChildrenSeeded(scope);
         reasons[RequirementKind.ChildrenSeeded] = childrenSeededReason;
 
-        // ── Legacy implementation_merged observer (PR #4 will replace with
-        // an ImplementationObserver reading impl-PR / MG-PR state).
-        // Today: best-effort from item state + child state.
-        var childCount = children.Count;
-        var allChildrenDone = childCount > 0 && children.All(c => c.State == "Done");
-        var implDisposition = (item.State, childCount, allChildrenDone) switch
-        {
-            ("Done", _, _) => Disposition.Satisfied,
-            (_, > 0, true) => Disposition.Satisfied,
-            ("Doing", _, _) => Disposition.Fulfilling,
-            _ => Disposition.Needed,
-        };
+        // ── PR #4 implementation_merged observer: read the impl PR for
+        // the canonical impl/{root}-{item} branch (gh pr list + gh pr
+        // view). Replaces the pre-PR-#4 "item.State + child.State"
+        // heuristic which had no closed-loop after a merge and no PR
+        // introspection at all. Per-item only in PR #4 — cross-item
+        // rollup (the MG-PR roll-up case from closed-loop §3.1 row 5) is
+        // deferred to PR #5's reducer.
+        var (implMergedDisp, implMergedReason) = ComposeImplementationMerged(scope);
+        reasons[RequirementKind.ImplementationMerged] = implMergedReason;
 
         var observed = BuildObservedFromSignals(
             planAuthoredDisp, planReviewedDisp, planPromotedDisp,
-            childrenSeededDisp, implDisposition);
+            childrenSeededDisp, implMergedDisp);
         return (observed, reasons);
     }
 
@@ -248,12 +246,14 @@ public sealed partial class StateCommands
     {
         var rootId = await ResolveRootIdAsync(item, ct).ConfigureAwait(false);
         var planBranch = PlanObserver.ResolvePlanBranch(rootId, workItem);
+        var implBranch = PlanObserver.ResolveImplBranch(rootId, workItem);
 
         var scope = new NextReadyObservationScope
         {
             ItemId = workItem,
             RootId = rootId,
             PlanBranch = planBranch,
+            ImplBranch = implBranch,
         };
 
         // PR #3: children_seeded depends only on the polyphony:planned tag
@@ -273,6 +273,15 @@ public sealed partial class StateCommands
         {
             scope.Slug = string.Empty;
         }
+
+        // PR #4: implementation_merged is independent of plan branch /
+        // plan PR existence — fetch the impl signal up-front, before the
+        // plan-branch / slug early returns below. The impl PR query
+        // itself still requires the slug, so it sits AFTER slug
+        // resolution but BEFORE any plan-related early returns. Empty
+        // implBranch (non-positive ids) and empty slug both degrade to
+        // structured "could not observe" reasons inside FetchImplPrAsync.
+        await FetchImplPrAsync(scope, ct).ConfigureAwait(false);
 
         if (string.IsNullOrEmpty(planBranch))
         {
@@ -371,6 +380,83 @@ public sealed partial class StateCommands
         {
             scope.PlannedTagPresent = false;
             scope.PlannedTagFetchError = $"twig show failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Fetch the implementation_merged signal: the latest PR for the
+    /// canonical <c>impl/{root}-{item}</c> branch and (when one exists)
+    /// its rich poll snapshot. Empty <see cref="NextReadyObservationScope.ImplBranch"/>
+    /// (non-positive ids) and empty <see cref="NextReadyObservationScope.Slug"/>
+    /// both degrade to a structured "could not observe" reason on
+    /// <see cref="NextReadyObservationScope.ImplPrFetchError"/> rather than
+    /// throwing — same posture as the plan-PR fetch. Failures from gh
+    /// pr list / gh pr view are captured into
+    /// <see cref="NextReadyObservationScope.ImplPrFetchError"/> /
+    /// <see cref="NextReadyObservationScope.ImplPrPollError"/> so the
+    /// composer can distinguish "couldn't observe" from "observed: no
+    /// PR" — the closed-loop spec requires that distinction.
+    /// </summary>
+    private async Task FetchImplPrAsync(
+        NextReadyObservationScope scope,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(scope.ImplBranch))
+        {
+            scope.ImplPrFetchError = "could not resolve impl branch (non-positive root or item id)";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(scope.Slug))
+        {
+            // Without a slug we cannot list PRs — record the gap as a
+            // structured fetch error so the composer says "could not
+            // resolve repo slug" rather than "no impl PR opened".
+            scope.ImplPrFetchError = "could not resolve repo slug from origin remote";
+            return;
+        }
+
+        try
+        {
+            scope.LatestImplPr = await planObserver
+                .GetLatestImplPrAsync(scope.Slug, scope.ImplBranch, ct)
+                .ConfigureAwait(false);
+        }
+        catch (ExternalToolTimeoutException ex)
+        {
+            scope.ImplPrFetchError = ex.FormatErrorMessage("gh pr list");
+            return;
+        }
+        catch (ExternalToolException ex)
+        {
+            scope.ImplPrFetchError = $"gh pr list failed: {ex.Message}";
+            return;
+        }
+        catch (Exception ex)
+        {
+            scope.ImplPrFetchError = $"gh pr list failed: {ex.Message}";
+            return;
+        }
+
+        if (scope.LatestImplPr is null) return;
+
+        try
+        {
+            scope.ImplPrPoll = await planObserver
+                .GetPlanPrPollAsync(scope.Slug, scope.LatestImplPr.Number, ct)
+                .ConfigureAwait(false);
+        }
+        catch (ExternalToolTimeoutException ex)
+        {
+            scope.ImplPrPollError = ex.FormatErrorMessage("gh pr view");
+        }
+        catch (ExternalToolException ex)
+        {
+            scope.ImplPrPollError = $"gh pr view failed: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            scope.ImplPrPollError = $"gh pr view failed: {ex.Message}";
         }
     }
 
@@ -487,6 +573,43 @@ public sealed partial class StateCommands
     }
 
     /// <summary>
+    /// Map the implementation-merged shared signals on
+    /// <paramref name="scope"/> to a (Disposition, Reason) tuple for the
+    /// <c>implementation_merged</c> requirement. Failed I/O (recorded on
+    /// <see cref="NextReadyObservationScope.ImplPrFetchError"/> /
+    /// <see cref="NextReadyObservationScope.ImplPrPollError"/>) forces
+    /// Needed with the captured error in the reason — distinguishing
+    /// "couldn't observe" from "observed: no PR" per the closed-loop
+    /// spec.
+    /// </summary>
+    /// <remarks>
+    /// PR #4 scope: per-item impl PR only. For an MG item that has its
+    /// own impl PR merged but unmerged impl-children, this composer will
+    /// still report <see cref="Disposition.Satisfied"/> — the cross-item
+    /// rollup that should tighten that to the worst child disposition is
+    /// PR #5's job (see closed-loop §3.1 row 5). The reason string does
+    /// not currently distinguish "self-PR merged" from "self + all
+    /// children merged" — PR #5 will introduce the rollup signal and can
+    /// extend this composer to surface the joint disposition.
+    /// </remarks>
+    private static (string Disposition, string Reason) ComposeImplementationMerged(NextReadyObservationScope scope)
+    {
+        if (scope.ImplPrFetchError is not null)
+        {
+            return (Disposition.Needed, scope.ImplPrFetchError);
+        }
+        if (scope.LatestImplPr is not null && scope.ImplPrPollError is not null)
+        {
+            return (Disposition.Needed, scope.ImplPrPollError);
+        }
+
+        var prState = scope.ImplPrPoll?.State?.ToUpperInvariant();
+        var observation = PlanObserver.MapImplementationMerged(
+            scope.ImplBranch, scope.LatestImplPr, prState);
+        return ValidateDisposition(observation.Disposition, observation.Reason);
+    }
+
+    /// <summary>
     /// Guard against an observer ever returning a string that is not one of
     /// the four canonical <see cref="Disposition"/> values. Per the
     /// closed-loop spec we throw rather than silently swallow — silent
@@ -514,9 +637,9 @@ public sealed partial class StateCommands
     /// composed signal dispositions. Kinds at <see cref="Disposition.Needed"/>
     /// are omitted because the reducer treats absence as Needed by default;
     /// stronger dispositions are surfaced explicitly so the reducer can
-    /// promote downstream gates. After PR #4 lands this becomes the only
-    /// composer of observed plan/seed/impl signals — the per-kind reasons
-    /// dictionary travels alongside via <c>ComputeObservedAsync</c>.</summary>
+    /// promote downstream gates. As of PR #4 this is the sole composer of
+    /// observed plan/seed/impl signals — the per-kind reasons dictionary
+    /// travels alongside via <c>ComputeObservedAsync</c>.</summary>
     private static ObservedRequirementState BuildObservedFromSignals(
         string planAuthored,
         string planReviewed,
