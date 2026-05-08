@@ -17,22 +17,22 @@
 # Current entries (4) — all real bugs in plan-level.yaml found by this lint
 # during its initial smoke-run. References live in human-facing remediation
 # prompts; the agent never sees them resolved, but the prompts assert false
-# field shapes. Tracking issue: TBD (filed alongside #175).
+# field shapes. Tracking issue: #185.
 
 suppress:
   - file: .conductor/registry/workflows/plan-level.yaml
     code: JINJA001
     reference: merge_plan_pr.output.ancestor_key
-    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/TBD-plan-level-merge-plan-pr-fields'
+    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/185'
   - file: .conductor/registry/workflows/plan-level.yaml
     code: JINJA001
     reference: merge_plan_pr.output.snapshot_generation
-    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/TBD-plan-level-merge-plan-pr-fields'
+    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/185'
   - file: .conductor/registry/workflows/plan-level.yaml
     code: JINJA001
     reference: merge_plan_pr_ado.output.ancestor_key
-    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/TBD-plan-level-merge-plan-pr-fields'
+    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/185'
   - file: .conductor/registry/workflows/plan-level.yaml
     code: JINJA001
     reference: merge_plan_pr_ado.output.snapshot_generation
-    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/TBD-plan-level-merge-plan-pr-fields'
+    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/185'
