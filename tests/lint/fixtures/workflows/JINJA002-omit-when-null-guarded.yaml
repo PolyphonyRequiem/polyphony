@@ -1,0 +1,35 @@
+# JINJA002 — clean variant. Same field as the unguarded fixture but wrapped
+# in each of the three recognized guard forms. No diagnostics expected.
+
+workflow:
+  name: jinja002-omit-when-null-guarded
+  entry_point: derive_chain
+
+agents:
+  - name: derive_chain
+    type: script
+    command: polyphony
+    args:
+      - "plan"
+      - "derive-ancestor-chain"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: consumer
+
+  - name: consumer
+    type: agent
+    model: claude-haiku-4.5
+    prompt: |
+      With default filter: {{ derive_chain.output.error | default('none') }}.
+      With block-scope guard:
+      {% if derive_chain.output.error is defined %}
+      Error: {{ derive_chain.output.error }}.
+      {% endif %}
+      With zero-prefix block guard:
+      {% if derive_chain.output is defined %}
+      Error: {{ derive_chain.output.error }}.
+      {% endif %}
+      With intra-expression and-guard:
+      Result: {{ derive_chain.output.error is defined and derive_chain.output.error != '' }}.
+    routes:
+      - to: $end

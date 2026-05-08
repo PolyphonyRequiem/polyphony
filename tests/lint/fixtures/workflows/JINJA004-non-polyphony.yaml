@@ -1,0 +1,25 @@
+# JINJA004 — references the output of a non-polyphony script step.
+# Surfaced only with -Pedantic; suppressed in default runs.
+
+workflow:
+  name: jinja004-non-polyphony
+  entry_point: pwsh_step
+
+agents:
+  - name: pwsh_step
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - "@{ status='ok' } | ConvertTo-Json"
+    routes:
+      - to: consumer
+
+  - name: consumer
+    type: agent
+    model: claude-haiku-4.5
+    prompt: |
+      Status: {{ pwsh_step.output.status }}.
+    routes:
+      - to: $end

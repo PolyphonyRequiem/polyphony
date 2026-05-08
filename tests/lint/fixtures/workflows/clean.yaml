@@ -1,0 +1,37 @@
+# Clean fixture — no diagnostics expected.
+# Exercises the happy path: a polyphony verb step whose downstream consumer
+# accesses fields that exist in the registry, with omit-when-null fields
+# either guarded by `is defined` block scope, intra-expression `is defined`,
+# or `| default(...)`.
+
+workflow:
+  name: clean-fixture
+  entry_point: derive_chain
+
+agents:
+  - name: derive_chain
+    type: script
+    command: polyphony
+    args:
+      - "plan"
+      - "derive-ancestor-chain"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: print_root
+        when: "{{ derive_chain.output.error is not defined or derive_chain.output.error == '' }}"
+      - to: $end
+
+  - name: print_root
+    type: agent
+    model: claude-haiku-4.5
+    prompt: |
+      {% if derive_chain.output is defined %}
+      Root id is {{ derive_chain.output.root_id }}.
+      Item is {{ derive_chain.output.item_id }}.
+      Ancestor chain length: {{ derive_chain.output.ancestor_chain | length }}.
+      First ancestor: {{ derive_chain.output.ancestor_chain | first }}.
+      Parent is {{ derive_chain.output.parent_item_id | default('none') }}.
+      {% endif %}
+      Error: {{ derive_chain.output.error | default('') }}.
+    routes:
+      - to: $end
