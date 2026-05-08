@@ -531,7 +531,7 @@ Describe 'apex-item-dispatch e2e — branch-on-router' {
         $argsJoined | Should -Match 'worktree-manager\.ps1'
         $argsJoined | Should -Match '-Operation'
         $argsJoined | Should -Match 'spawn'
-        $argsJoined | Should -Match 'feature/apex-'
+        $argsJoined | Should -Match 'feature/\{\{'
     }
 
     It 'spawn_worktree branch-on-routers to each lifecycle dispatch node based on the classifier verdict' {
@@ -764,15 +764,15 @@ Describe 'apex-driver e2e — input contracts thread through all three YAMLs' {
         if (-not $im) { $im = $script:ItemAgents['implement_pg_dispatch'].agent.input_mapping }
         $im.pg_number      | Should -Match 'workflow\.input\.work_item_id'
         $im.work_item_ids  | Should -Match 'workflow\.input\.work_item_id'
-        $im.branch_name    | Should -Match 'feature/apex-'
-        $im.feature_branch | Should -Match 'feature/apex-'
+        $im.branch_name    | Should -Match '^feature/\{\{ workflow\.input\.apex_id \}\}-pg-'
+        $im.feature_branch | Should -Match '^feature/\{\{ workflow\.input\.apex_id \}\}$'
     }
 
     It 'apex-item-dispatch -> feature-pr targets main on the apex feature branch' {
         $im = $script:ItemAgents['feature_pr_dispatch'].input_mapping
         if (-not $im) { $im = $script:ItemAgents['feature_pr_dispatch'].agent.input_mapping }
         $im.work_item_id   | Should -Match 'workflow\.input\.work_item_id'
-        $im.feature_branch | Should -Match 'feature/apex-'
+        $im.feature_branch | Should -Match '^feature/\{\{ workflow\.input\.apex_id \}\}$'
         $im.target_branch  | Should -Be 'main'
         $im.platform       | Should -Match 'workflow\.input\.platform'
     }
@@ -956,7 +956,7 @@ Describe 'apex-driver e2e — script envelope contracts (worktree-manager, wave-
         # Defaults that downstream gates rely on.
         [int]$envelope.apex_id    | Should -Be 99999
         [int]$envelope.wave_index | Should -Be 0
-        $envelope.feature_branch  | Should -Be 'feature/apex-99999'
+        $envelope.feature_branch  | Should -Be 'feature/99999'
         $envelope.merge_strategy  | Should -Be 'no-ff'
     }
 }

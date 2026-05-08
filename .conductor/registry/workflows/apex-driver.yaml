@@ -253,16 +253,16 @@ agents:
   #
   # Invariants:
   #   Pre:  preflight_apex_state confirmed a dispatchable tree.
-  #   Post: feature/apex-{apex_id} exists locally.
+  #   Post: feature/{apex_id} exists locally.
   - name: preflight_ensure_branch
     type: script
-    description: Ensure feature/apex-{apex_id} exists (idempotent)
+    description: Ensure feature/{apex_id} exists (idempotent)
     command: polyphony
     args:
       - "branch"
       - "ensure-feature"
       - "--branch"
-      - "feature/apex-{{ workflow.input.apex_id }}"
+      - "feature/{{ workflow.input.apex_id }}"
     routes:
       - to: init_manifest
         when: "{{ preflight_ensure_branch.output.error is not defined or preflight_ensure_branch.output.error == '' }}"

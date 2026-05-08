@@ -214,7 +214,7 @@ agents:
       - "-WorkItemId"
       - "{{ workflow.input.work_item_id }}"
       - "-BaseBranch"
-      - "feature/apex-{{ workflow.input.apex_id }}"
+      - "feature/{{ workflow.input.apex_id }}"
     routes:
       # Branch-on-router: dispatch into the lifecycle picked by classify_lifecycle.
       # Each lifecycle has an explicit `when:` clause, plus an M4 catch-all
@@ -281,7 +281,7 @@ agents:
   # Single PG implementation lifecycle. The apex-driver's per-item
   # dispatch model treats each work item as its own PG container —
   # `pg_number` = work_item_id, `work_item_ids` = [work_item_id],
-  # `branch_name` = feature/apex-{apex_id}-pg-{work_item_id} (sits
+  # `branch_name` = feature/{apex_id}-pg-{work_item_id} (sits
   # alongside the per-item worktree branch convention). The
   # `feature_branch` is the apex's feature branch; implement-pg's
   # internal `pg_router` detects existing state on re-entry.
@@ -298,8 +298,8 @@ agents:
       work_item_id: "{{ workflow.input.work_item_id }}"
       pg_number: "{{ workflow.input.work_item_id }}"
       work_item_ids: "[{{ workflow.input.work_item_id }}]"
-      branch_name: "feature/apex-{{ workflow.input.apex_id }}-pg-{{ workflow.input.work_item_id }}"
-      feature_branch: "feature/apex-{{ workflow.input.apex_id }}"
+      branch_name: "feature/{{ workflow.input.apex_id }}-pg-{{ workflow.input.work_item_id }}"
+      feature_branch: "feature/{{ workflow.input.apex_id }}"
       platform: "{{ workflow.input.platform }}"
     routes:
       - to: teardown_worktree
@@ -316,7 +316,7 @@ agents:
     workflow: ./feature-pr.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
-      feature_branch: "feature/apex-{{ workflow.input.apex_id }}"
+      feature_branch: "feature/{{ workflow.input.apex_id }}"
       target_branch: "main"
       platform: "{{ workflow.input.platform }}"
       organization: "{{ workflow.input.organization }}"
