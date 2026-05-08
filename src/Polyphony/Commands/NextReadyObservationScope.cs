@@ -95,4 +95,27 @@ internal sealed class NextReadyObservationScope
     /// or null on success. Same semantics as
     /// <see cref="PlanPrFetchError"/>.</summary>
     public string? PlanPrPollError { get; set; }
+
+    // ── Children-seeded shared signals (PR #3) ──────────────────────────
+
+    /// <summary>True when the canonical <c>polyphony:planned</c> tag is
+    /// present on the work item — the write-once side effect of
+    /// <c>plan seed-children</c>. Reading the tag instead of counting
+    /// children correctly handles the "decomposable but indivisible"
+    /// case (the planner ran, decided no children were warranted, and
+    /// stamped the tag) — see <c>files/closed-loop-state-plan.md §3.4</c>.
+    /// False on absence OR on a swallowed twig lookup failure (callers
+    /// should treat the value alongside <see cref="PlannedTagFetchError"/>
+    /// for precise diagnostics).</summary>
+    public bool PlannedTagPresent { get; set; }
+
+    /// <summary>Captured error message from the <c>twig show</c> call
+    /// used to inspect the <c>polyphony:planned</c> tag, or null on
+    /// success. <see cref="PlanObserver.IsParentSeededAsync"/> already
+    /// swallows internally and degrades to "not seeded" — this field is
+    /// defense-in-depth so a future tightening of the observer (or any
+    /// non-swallowed exception path such as cancellation) still
+    /// surfaces here as a structured reason rather than as an unhandled
+    /// throw escaping the verb.</summary>
+    public string? PlannedTagFetchError { get; set; }
 }

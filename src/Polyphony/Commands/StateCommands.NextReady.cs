@@ -204,22 +204,21 @@ public sealed partial class StateCommands
         var (planPromotedDisp, planPromotedReason) = ComposePlanPromoted(scope);
         reasons[RequirementKind.PlanPromoted] = planPromotedReason;
 
-        // ── Legacy children_seeded observer (PR #3 will replace with
-        // PlanObserver.ObserveChildrenSeededAsync — the polyphony:planned
-        // tag check). Today: heuristic from cached child set.
-        var childCount = children.Count;
-        var anyChildMissingTasks = childCount > 0 && children.Any(c => c.State != "Done");
-        var allChildrenDone = childCount > 0 && children.All(c => c.State == "Done");
-        var seedDisposition = (childCount, anyChildMissingTasks, allChildrenDone) switch
-        {
-            (0, _, _) => Disposition.Needed,
-            (_, _, true) => Disposition.Satisfied,
-            _ => Disposition.Fulfilling,
-        };
+        // ── PR #3 children_seeded observer: the polyphony:planned tag is
+        // the canonical write-once signal that the seeder ran, regardless
+        // of whether it produced children (the indivisible case from
+        // closed-loop §3.4). Replaces the pre-PR-#3 "any non-Done child"
+        // heuristic which mis-labeled apex items with no children seeded
+        // yet (e.g. #3043) as Needed despite the seeder also not having
+        // run — silently equating "never planned" with "ready to plan".
+        var (childrenSeededDisp, childrenSeededReason) = ComposeChildrenSeeded(scope);
+        reasons[RequirementKind.ChildrenSeeded] = childrenSeededReason;
 
         // ── Legacy implementation_merged observer (PR #4 will replace with
         // an ImplementationObserver reading impl-PR / MG-PR state).
         // Today: best-effort from item state + child state.
+        var childCount = children.Count;
+        var allChildrenDone = childCount > 0 && children.All(c => c.State == "Done");
         var implDisposition = (item.State, childCount, allChildrenDone) switch
         {
             ("Done", _, _) => Disposition.Satisfied,
@@ -230,7 +229,7 @@ public sealed partial class StateCommands
 
         var observed = BuildObservedFromSignals(
             planAuthoredDisp, planReviewedDisp, planPromotedDisp,
-            seedDisposition, implDisposition);
+            childrenSeededDisp, implDisposition);
         return (observed, reasons);
     }
 
@@ -256,6 +255,12 @@ public sealed partial class StateCommands
             RootId = rootId,
             PlanBranch = planBranch,
         };
+
+        // PR #3: children_seeded depends only on the polyphony:planned tag
+        // on the item itself — independent of plan branch / slug / PR
+        // state. Fetch up-front so every early-return path below still
+        // surfaces an observed children_seeded signal.
+        await FetchPlannedTagAsync(scope, ct).ConfigureAwait(false);
 
         // PlanObserver.TryResolveSlugAsync swallows internally, but defend
         // again here so a future tightening of the observer does not break
@@ -334,6 +339,39 @@ public sealed partial class StateCommands
         }
 
         return scope;
+    }
+
+    /// <summary>
+    /// Fetch the children-seeded signal: presence of the
+    /// <c>polyphony:planned</c> tag on the work item itself. Delegates to
+    /// the PR #1 <see cref="PlanObserver.IsParentSeededAsync"/> primitive
+    /// (the same tag-read that <c>plan detect-state</c> already uses) so
+    /// the verb and the legacy state-machine stay on a single source of
+    /// truth.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="PlanObserver.IsParentSeededAsync"/> swallows transient
+    /// twig failures internally and degrades to "not seeded" — the
+    /// outer try/catch here is defense-in-depth so any future tightening
+    /// of the observer (or a non-swallowed path such as cancellation)
+    /// surfaces as a structured <see cref="NextReadyObservationScope.PlannedTagFetchError"/>
+    /// rather than escaping the verb.
+    /// </remarks>
+    private async Task FetchPlannedTagAsync(
+        NextReadyObservationScope scope,
+        CancellationToken ct)
+    {
+        try
+        {
+            scope.PlannedTagPresent = await planObserver
+                .IsParentSeededAsync(scope.ItemId, "polyphony:planned", ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            scope.PlannedTagPresent = false;
+            scope.PlannedTagFetchError = $"twig show failed: {ex.Message}";
+        }
     }
 
     /// <summary>
@@ -425,6 +463,26 @@ public sealed partial class StateCommands
 
         var prState = scope.PlanPrPoll?.State?.ToUpperInvariant();
         var observation = PlanObserver.MapPlanPromoted(scope.LatestPlanPr, prState);
+        return ValidateDisposition(observation.Disposition, observation.Reason);
+    }
+
+    /// <summary>
+    /// Map the children-seeded shared signals on <paramref name="scope"/>
+    /// to a (Disposition, Reason) tuple for the <c>children_seeded</c>
+    /// requirement. The tag-presence semantics (NOT child counts)
+    /// correctly report <see cref="Disposition.Satisfied"/> for plans
+    /// that legitimately seeded zero children — see
+    /// <c>files/closed-loop-state-plan.md §3.4</c> and the rationale on
+    /// <see cref="Sdlc.Observers.ChildrenSeededObservation"/>.
+    /// </summary>
+    private static (string Disposition, string Reason) ComposeChildrenSeeded(NextReadyObservationScope scope)
+    {
+        if (scope.PlannedTagFetchError is not null)
+        {
+            return (Disposition.Needed, scope.PlannedTagFetchError);
+        }
+
+        var observation = PlanObserver.MapChildrenSeeded(scope.PlannedTagPresent, "polyphony:planned");
         return ValidateDisposition(observation.Disposition, observation.Reason);
     }
 
