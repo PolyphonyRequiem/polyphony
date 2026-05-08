@@ -173,15 +173,21 @@ introduce new dependencies.
   `null` for the root-plan case (`item_id == root_id`) and for direct
   children of root, and an integer for deeper descendants.
 
-  Bug #8 (dogfood apex #3043, 2026-05-08) had the field elided on the
-  root path; conductor's `strict_undefined` then raised
+  Bug #8 (dogfood apex #3043, 2026-05-08, two iterations) had the field
+  elided on the root path; conductor's `strict_undefined` then raised
   `'dict object' has no attribute 'parent_item_id'` when the workflow
-  tried to thread it into the recursive `for_each` step. Even after the
-  field is always emitted, Jinja's bare `default(0)` filter does NOT
-  substitute on `None` — only on `Undefined`. Workflow MUST use
-  `default(0, true)` (two-arg, `boolean=True`) to coerce both. Pinned
-  by lint check `parent-item-id-bare-default` in `lint-plan-level.ps1`
-  as of this PR.
+  tried to thread it into the recursive `for_each` step.
+
+  **Filter form**: workflow consumers use bare
+  `{{ ancestor_chain.output.parent_item_id | default(0) }}`. Conductor's
+  custom `_default_filter(value, default="")` (in
+  `conductor/executor/template.py`) handles BOTH Undefined AND None,
+  unlike standard Jinja which only handles Undefined unless given the
+  3-arg `default(0, true)` form. **The 3-arg form CRASHES conductor**
+  (`takes from 1 to 2 positional arguments but 3 were given`) — the
+  iter-5 dogfood demonstrated this when an over-cautious "fix" added
+  the second arg. Pinned by lint check `parent-item-id-multi-arg-default`
+  in `lint-plan-level.ps1` as of this PR.
 
 ### `polyphony policy resolve --domain <d> --scope <s> [--path P]`
 - **Purpose**: resolve effective policy for a `(scope, domain)` pair by
