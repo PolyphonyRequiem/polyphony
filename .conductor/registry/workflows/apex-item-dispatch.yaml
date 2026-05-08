@@ -74,10 +74,10 @@ workflow:
     sub-workflow (plan-level / actionable / implement-pg / feature-pr /
     fast-path), tear down worktree. Inner sub-workflow of
     apex-wave-dispatch.
-  version: "1.1.0"
+  version: "1.2.0"
   entry_point: classify_lifecycle
   metadata:
-    min_polyphony_version: "1.0.1"
+    min_polyphony_version: "1.2.0"
 
   limits:
     # Five branch nodes plus a teardown plus terminals. Sub-workflow
@@ -161,6 +161,19 @@ output:
   feature_pr_merged: >-
     {%- if feature_pr_dispatch is defined -%}{{ (feature_pr_dispatch.output.merged | default(false)) | string | lower }}
     {%- else -%}false{%- endif -%}
+  # ── Error surfacing (issue #178) ──
+  # The two terminal-error legs (`terminal_classify_error`,
+  # `terminal_spawn_error`) emit `error` + `error_code` in their canonical
+  # envelope. Surface them at the workflow output so the wave consumer
+  # can attribute failures without parsing the for_each `errors` array.
+  error: >-
+    {%- if terminal_classify_error is defined -%}lifecycle classification failed
+    {%- elif terminal_spawn_error is defined -%}worktree spawn failed
+    {%- else -%}{%- endif -%}
+  error_code: >-
+    {%- if terminal_classify_error is defined -%}{{ classify_lifecycle.output.error_code | default('classification_failed') }}
+    {%- elif terminal_spawn_error is defined -%}{{ spawn_worktree.output.error_code | default('worktree_spawn_failed') }}
+    {%- else -%}{%- endif -%}
 
 agents:
   # ── Classify lifecycle ────────────────────────────────────────────────────
@@ -344,6 +357,25 @@ agents:
       - to: terminal_dispatched
 
   # ── Terminals ────────────────────────────────────────────────────────────
+  #
+  # Issue #178 (canonical-output): Every terminal MUST emit the FULL canonical output
+  # schema with safe defaults. When the workflow `output:` template
+  # reference resolution misbehaves, conductor can surface a terminal's
+  # raw output in place of the rendered workflow output; consumers in
+  # apex-wave-dispatch and apex-driver assume the canonical shape and
+  # blow up on missing keys (TemplateError: 'dict object' has no
+  # attribute 'renegotiation_pending'). Defense-in-depth — even when the
+  # template path works, having the terminals self-describe makes
+  # debugging tractable and pre-positions us for #173 (typed verb
+  # output schema registry).
+  #
+  # Canonical fields (12): work_item_id, apex_id, lifecycle_workflow,
+  # dispatched, fast_pathed, renegotiation_pending, renegotiation_request,
+  # validate_scope_verdict, scope_violation_files, actionable_satisfied,
+  # implement_pg_merged, feature_pr_merged. Error terminals add `error`
+  # and `error_code`. `monitoring`/`blocked` legs keep their additive
+  # boolean as a non-canonical convenience — harmless to consumers that
+  # ignore unknown keys.
   - name: terminal_dispatched
     type: script
     description: Terminal — item dispatched into its lifecycle sub-workflow
@@ -352,7 +384,20 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        @{ work_item_id = {{ workflow.input.work_item_id }}; dispatched = $true } | ConvertTo-Json -Compress
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          apex_id = '{{ workflow.input.apex_id }}';
+          lifecycle_workflow = '{{ classify_lifecycle.output.lifecycle_workflow | default('') }}';
+          dispatched = $true;
+          fast_pathed = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_pg_merged = $false;
+          feature_pr_merged = $false;
+        } | ConvertTo-Json -Compress
     routes:
       - to: $end
 
@@ -364,7 +409,20 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        @{ work_item_id = {{ workflow.input.work_item_id }}; fast_pathed = $true } | ConvertTo-Json -Compress
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          apex_id = '{{ workflow.input.apex_id }}';
+          lifecycle_workflow = 'fast-path';
+          dispatched = $false;
+          fast_pathed = $true;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_pg_merged = $false;
+          feature_pr_merged = $false;
+        } | ConvertTo-Json -Compress
     routes:
       - to: $end
 
@@ -376,7 +434,21 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        @{ work_item_id = {{ workflow.input.work_item_id }}; monitoring = $true } | ConvertTo-Json -Compress
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          apex_id = '{{ workflow.input.apex_id }}';
+          lifecycle_workflow = 'monitoring';
+          dispatched = $false;
+          fast_pathed = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_pg_merged = $false;
+          feature_pr_merged = $false;
+          monitoring = $true;
+        } | ConvertTo-Json -Compress
     routes:
       - to: $end
 
@@ -388,7 +460,21 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        @{ work_item_id = {{ workflow.input.work_item_id }}; blocked = $true } | ConvertTo-Json -Compress
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          apex_id = '{{ workflow.input.apex_id }}';
+          lifecycle_workflow = 'blocked';
+          dispatched = $false;
+          fast_pathed = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_pg_merged = $false;
+          feature_pr_merged = $false;
+          blocked = $true;
+        } | ConvertTo-Json -Compress
     routes:
       - to: $end
 
@@ -402,8 +488,19 @@ agents:
       - >-
         @{
           work_item_id = {{ workflow.input.work_item_id }};
+          apex_id = '{{ workflow.input.apex_id }}';
+          lifecycle_workflow = 'error';
+          dispatched = $false;
+          fast_pathed = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_pg_merged = $false;
+          feature_pr_merged = $false;
           error = 'lifecycle classification failed';
-          error_code = '{{ classify_lifecycle.output.error_code }}';
+          error_code = '{{ classify_lifecycle.output.error_code | default('classification_failed') }}';
         } | ConvertTo-Json -Compress
     routes:
       - to: $end
@@ -418,8 +515,19 @@ agents:
       - >-
         @{
           work_item_id = {{ workflow.input.work_item_id }};
+          apex_id = '{{ workflow.input.apex_id }}';
+          lifecycle_workflow = '{{ classify_lifecycle.output.lifecycle_workflow | default('') }}';
+          dispatched = $false;
+          fast_pathed = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_pg_merged = $false;
+          feature_pr_merged = $false;
           error = 'worktree spawn failed';
-          error_code = '{{ spawn_worktree.output.error_code }}';
+          error_code = '{{ spawn_worktree.output.error_code | default('worktree_spawn_failed') }}';
         } | ConvertTo-Json -Compress
     routes:
       - to: $end
