@@ -26,14 +26,18 @@ public sealed class StateNextReadyTests : CommandTestBase
         Directory.CreateDirectory(_planRoot);
     }
 
-    private StateCommands CreateCommand(ProcessConfig? configOverride = null)
+    private StateCommands CreateCommand(
+        ProcessConfig? configOverride = null,
+        Action<FakeProcessRunner>? runnerSetup = null)
     {
         var config = configOverride ?? Config;
         var runner = new FakeProcessRunner();
-        // Default: every git/gh shell-out resolves to a "no signal" response
-        // so the plan-kind observers degrade cleanly to Needed without
-        // requiring per-test stubs. Tests that exercise specific observed
-        // states use their own runner.
+        // Per-test stubs run FIRST so they win FakeProcessRunner's first-match
+        // dispatch over the catch-all baseline. Tests that need to exercise
+        // specific impl-PR or plan-PR observations (the only signals the verb
+        // currently observes) pass a runnerSetup callback; everything else
+        // falls through to "no signal" and the disposition degrades to Needed.
+        runnerSetup?.Invoke(runner);
         StubBaselineNoSignal(runner);
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
@@ -48,10 +52,57 @@ public sealed class StateNextReadyTests : CommandTestBase
         runner.WhenStartsWith("git", ["remote", "get-url"], new ProcessResult(0, "", ""));
         // git ls-remote → empty stdout; PlanObserver returns false.
         runner.WhenStartsWith("git", ["ls-remote"], new ProcessResult(0, "", ""));
-        // gh pr list → no PRs.
+        // gh pr list → no PRs (catch-all; per-test impl/plan PR stubs win
+        // because they're registered earlier via runnerSetup).
         runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(0, "[]", ""));
         // twig show → empty payload (legacy children_seeded path doesn't call this; harmless safety net).
         runner.WhenStartsWith("twig", ["show"], new ProcessResult(0, """{"id":0,"tags":""}""", ""));
+    }
+
+    /// <summary>Stub <c>git remote get-url origin</c> with a real-ish URL,
+    /// then <c>gh pr list --head impl/{itemId}-{itemId}</c> and the matching
+    /// <c>gh pr view</c> with a single impl PR in the requested state.
+    /// Caller-provided to <see cref="CreateCommand"/>'s runnerSetup callback
+    /// so it wins the first-match dispatch over the catch-all baseline.</summary>
+    private static void StubImplPr(FakeProcessRunner runner, int itemId, int prNumber, string state)
+    {
+        var implBranch = $"impl/{itemId}-{itemId}";
+        // Origin URL must resolve to a non-empty slug so FetchImplPrAsync
+        // actually queries gh instead of short-circuiting on missing slug.
+        runner.WhenExact("git", ["remote", "get-url", "origin"],
+            new ProcessResult(0, "https://github.com/acme/repo.git\n", ""));
+        runner.When(
+            (e, a) => e == "gh"
+                && a.Count >= 4 && a[0] == "pr" && a[1] == "list"
+                && HasHeadFilter(a, implBranch),
+            new ProcessResult(0,
+                $$"""[{"number":{{prNumber}},"headRefName":"{{implBranch}}","url":"https://gh/pr/{{prNumber}}"}]""",
+                ""));
+        var poll = $$"""
+            {
+              "number": {{prNumber}},
+              "state": "{{state}}",
+              "reviewDecision": "",
+              "mergeable": "MERGEABLE",
+              "headRefName": "{{implBranch}}",
+              "headRefOid": "abc123",
+              "baseRefName": "feature/{{itemId}}",
+              "mergedAt": null,
+              "mergeCommit": null,
+              "body": "",
+              "reviews": []
+            }
+            """;
+        runner.WhenStartsWith("gh", ["pr", "view", prNumber.ToString()], new ProcessResult(0, poll, ""));
+    }
+
+    private static bool HasHeadFilter(IReadOnlyList<string> args, string branch)
+    {
+        for (var i = 0; i < args.Count - 1; i++)
+        {
+            if (args[i] == "--head" && args[i + 1] == branch) return true;
+        }
+        return false;
     }
 
     [Fact]
@@ -105,12 +156,14 @@ public sealed class StateNextReadyTests : CommandTestBase
     [Fact]
     public async Task NextReady_TaskTypeImplementableOnly_DoneItem_StatusSatisfied()
     {
-        // Task type has [implementable] only and item is Done → implementation_merged
-        // observed Satisfied → status=satisfied.
+        // Task type has [implementable] only. Closed-loop PR #4: status=satisfied
+        // requires an actually-merged impl PR — item.State="Done" alone no longer
+        // suffices (legacy heuristic was removed in favour of canonical
+        // gh-PR observation per closed-loop §3.1 row 5).
         var item = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("Done").WithState("Done").Build();
         await SeedAsync(item);
 
-        var cmd = CreateCommand();
+        var cmd = CreateCommand(runnerSetup: r => StubImplPr(r, itemId: 300, prNumber: 700, state: "MERGED"));
         var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: 300, planRoot: _planRoot));
 
         exit.ShouldBe(ExitCodes.Success);
@@ -123,10 +176,13 @@ public sealed class StateNextReadyTests : CommandTestBase
     [Fact]
     public async Task NextReady_ImplementableInProgress_StatusMonitoring()
     {
+        // Closed-loop PR #4: status=monitoring requires an open impl PR
+        // (Fulfilling). Pre-PR-#4 the verb derived this from item.State="Doing"
+        // alone via the heuristic — that heuristic is now removed.
         var item = new WorkItemBuilder().WithId(400).WithType("Task").WithTitle("In flight").WithState("Doing").Build();
         await SeedAsync(item);
 
-        var cmd = CreateCommand();
+        var cmd = CreateCommand(runnerSetup: r => StubImplPr(r, itemId: 400, prNumber: 800, state: "OPEN"));
         var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: 400, planRoot: _planRoot));
 
         exit.ShouldBe(ExitCodes.Success);

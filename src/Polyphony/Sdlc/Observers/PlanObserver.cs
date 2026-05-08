@@ -174,6 +174,57 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
         return MapChildrenSeeded(present, plannedTag);
     }
 
+    /// <summary>
+    /// Observe the <c>implementation_merged</c> requirement: does an impl
+    /// PR exist for the canonical <c>impl/{root}-{item}</c> branch and has
+    /// it merged?
+    /// </summary>
+    /// <remarks>
+    /// PR #4 scope: per-item impl PR only. The MG roll-up from
+    /// closed-loop §3.1 row 5 (an MG item gated by all its impl children's
+    /// PRs) is deferred to PR #5's cross-item reducer. See
+    /// <see cref="ImplementationMergedObservation"/> for the deferral
+    /// rationale.
+    /// </remarks>
+    public async Task<ImplementationMergedObservation> ObserveImplementationMergedAsync(
+        int rootId, int itemId, CancellationToken ct = default)
+    {
+        var implBranch = ResolveImplBranch(rootId, itemId);
+
+        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(slug))
+        {
+            return new ImplementationMergedObservation(
+                Disposition: Disposition.Needed,
+                Reason: "could not resolve repo slug from origin remote",
+                ImplBranch: implBranch,
+                PrNumber: null,
+                PrUrl: null,
+                PrState: null);
+        }
+
+        if (string.IsNullOrEmpty(implBranch))
+        {
+            return new ImplementationMergedObservation(
+                Disposition: Disposition.Needed,
+                Reason: "could not resolve impl branch (non-positive root or item id)",
+                ImplBranch: implBranch,
+                PrNumber: null,
+                PrUrl: null,
+                PrState: null);
+        }
+
+        var latestPr = await GetLatestImplPrAsync(slug, implBranch, ct).ConfigureAwait(false);
+        if (latestPr is null)
+        {
+            return MapImplementationMerged(implBranch, latestPr: null, prState: null);
+        }
+
+        var poll = await GetPlanPrPollAsync(slug, latestPr.Number, ct).ConfigureAwait(false);
+        var prState = poll?.State?.ToUpperInvariant();
+        return MapImplementationMerged(implBranch, latestPr, prState);
+    }
+
     // ── Pure mappers (no I/O) ─────────────────────────────────────────────
 
     /// <summary>
@@ -347,6 +398,48 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
             TagPresent: tagPresent);
     }
 
+    /// <summary>
+    /// Map already-fetched primitives into an
+    /// <see cref="ImplementationMergedObservation"/>. Mirrors
+    /// <see cref="MapPlanPromoted"/>'s state→disposition table:
+    /// <c>MERGED</c>=Satisfied, <c>OPEN</c>=Fulfilling, <c>CLOSED</c>=Needed,
+    /// PR-exists-but-state-unknown=Fulfilling.
+    /// </summary>
+    public static ImplementationMergedObservation MapImplementationMerged(
+        string implBranch,
+        PullRequestSummary? latestPr,
+        string? prState)
+    {
+        if (latestPr is null)
+        {
+            return new ImplementationMergedObservation(
+                Disposition: Disposition.Needed,
+                Reason: $"no impl PR for branch '{implBranch}'",
+                ImplBranch: implBranch,
+                PrNumber: null,
+                PrUrl: null,
+                PrState: null);
+        }
+
+        var prUrl = latestPr.Url ?? string.Empty;
+        var (disposition, reason) = prState switch
+        {
+            "MERGED" => (Disposition.Satisfied, $"impl PR #{latestPr.Number} merged"),
+            "OPEN" => (Disposition.Fulfilling, $"impl PR #{latestPr.Number} open; awaiting merge"),
+            "CLOSED" => (Disposition.Needed, $"impl PR #{latestPr.Number} closed unmerged"),
+            null => (Disposition.Fulfilling, $"impl PR #{latestPr.Number} state unavailable"),
+            _ => (Disposition.Fulfilling, $"impl PR #{latestPr.Number} in unknown state '{prState}'"),
+        };
+
+        return new ImplementationMergedObservation(
+            Disposition: disposition,
+            Reason: reason,
+            ImplBranch: implBranch,
+            PrNumber: latestPr.Number,
+            PrUrl: prUrl,
+            PrState: prState);
+    }
+
     // ── Lower-level primitives (shared with the verb) ─────────────────────
 
     /// <summary>
@@ -362,6 +455,30 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
         return rootId == itemId
             ? BranchNameBuilder.RootPlan(root).Value
             : BranchNameBuilder.DescendantPlan(root, item).Value;
+    }
+
+    /// <summary>
+    /// Compute the canonical impl-branch name for an item:
+    /// <c>impl/{root}-{item}</c> per Rev 4 of the branch-model ADR
+    /// (impl branches are flat — the enclosing MG is recorded by the
+    /// impl PR's base branch, not the head name). Returns the empty
+    /// string when either ID is non-positive. Delegates to
+    /// <see cref="BranchNameBuilder.Impl"/> to avoid duplicating the
+    /// grammar regex.
+    /// </summary>
+    /// <remarks>
+    /// Closed-loop §3.1 row 5 uses the shorthand
+    /// <c>impl/{root}/{mg}/{id}</c> in prose; the actual canonical name
+    /// (and the format <c>polyphony branch ensure-impl</c> writes) is
+    /// <c>impl/{root}-{item}</c>. The discrepancy is documented in the
+    /// branch-model SKILL ("PR base branch carries the topology") and
+    /// in <see cref="BranchNameBuilder.Impl"/>.
+    /// </remarks>
+    public static string ResolveImplBranch(int rootId, int itemId)
+    {
+        if (!RootId.TryParse(rootId, out var root)) return string.Empty;
+        if (!WorkItemId.TryParse(itemId, out var item)) return string.Empty;
+        return BranchNameBuilder.Impl(root, item).Value;
     }
 
     /// <summary>
@@ -444,6 +561,25 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
     public Task<GhPullRequestPollData?> GetPlanPrPollAsync(
         string slug, int prNumber, CancellationToken ct = default)
         => gh.GetPullRequestPollDataAsync(slug, prNumber, ct);
+
+    /// <summary>
+    /// Return the highest-numbered PR (open, closed, or merged) for the
+    /// impl branch <paramref name="implBranch"/>, or null when none exist.
+    /// Same shape as <see cref="GetLatestPlanPrAsync"/> — the branch name
+    /// is the only difference. Caller is responsible for handling
+    /// <see cref="ExternalToolException"/> /
+    /// <see cref="ExternalToolTimeoutException"/> when precise error
+    /// reporting is required.
+    /// </summary>
+    public async Task<PullRequestSummary?> GetLatestImplPrAsync(
+        string slug, string implBranch, CancellationToken ct = default)
+    {
+        var prs = await gh.ListPullRequestsAsync(
+            slug,
+            new PrListFilters(Head: implBranch, State: "all", Limit: 50),
+            ct).ConfigureAwait(false);
+        return prs.OrderByDescending(p => p.Number).FirstOrDefault();
+    }
 
     /// <summary>
     /// Returns true when the work item carries the

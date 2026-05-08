@@ -36,8 +36,10 @@ namespace Polyphony.Commands;
 ///     <see cref="StateCommands.BuildObservedFromSignals"/>.</description></item>
 /// </list>
 /// <para>
-/// No re-architecture of the verb's outer shape is required for the next
-/// two PRs in the closed-loop fix series. The fields below are mutable
+/// PR #3 (children_seeded) and PR #4 (implementation_merged) both
+/// followed this recipe with no re-architecture of the verb's outer
+/// shape. Future Phase-6 observers (action_satisfied, evidence_accepted)
+/// are expected to follow the same pattern. The fields below are mutable
 /// by design — <see cref="StateCommands.BuildObservationScopeAsync"/>
 /// fills them in piecewise as it issues each I/O call, then the scope is
 /// frozen by being passed to the (read-only) composers.
@@ -118,4 +120,38 @@ internal sealed class NextReadyObservationScope
     /// surfaces here as a structured reason rather than as an unhandled
     /// throw escaping the verb.</summary>
     public string? PlannedTagFetchError { get; set; }
+
+    // ── Implementation-merged shared signals (PR #4) ────────────────────
+
+    /// <summary>Canonical impl branch name for this item:
+    /// <c>impl/{root}-{item}</c> per Rev 4 of the branch-model ADR (impl
+    /// branches are flat — the enclosing MG is recorded on the impl PR's
+    /// base branch, not in the head name). Empty when <see cref="RootId"/>
+    /// or <see cref="ItemId"/> are non-positive — the impl composer
+    /// degrades to <see cref="Disposition.Needed"/> in that case.</summary>
+    public required string ImplBranch { get; init; }
+
+    /// <summary>Highest-numbered impl PR for <see cref="ImplBranch"/>
+    /// (open, closed, or merged), or null when none exist or the
+    /// <c>gh pr list</c> call failed.</summary>
+    public PullRequestSummary? LatestImplPr { get; set; }
+
+    /// <summary>Rich poll-data for <see cref="LatestImplPr"/>'s number,
+    /// fetched once and consumed by the implementation_merged composer.
+    /// Null when no PR exists or <c>gh pr view</c> failed.</summary>
+    public GhPullRequestPollData? ImplPrPoll { get; set; }
+
+    /// <summary>Captured error message from the <c>gh pr list</c> call
+    /// used to look up the impl PR (or the underlying slug resolution),
+    /// or null on success. Same semantics as
+    /// <see cref="PlanPrFetchError"/>: when non-null, the
+    /// implementation_merged composer forces a Needed disposition with
+    /// the error surfaced in the reason — distinguishing "couldn't
+    /// observe" from "observed: no PR".</summary>
+    public string? ImplPrFetchError { get; set; }
+
+    /// <summary>Captured error message from the <c>gh pr view</c> call
+    /// used to fetch <see cref="ImplPrPoll"/>, or null on success. Same
+    /// semantics as <see cref="PlanPrPollError"/>.</summary>
+    public string? ImplPrPollError { get; set; }
 }
