@@ -393,7 +393,7 @@ public sealed class VerbSchemaGenerator : IIncrementalGenerator
         var (kind, typeRef, elementKind, elementClr, elementRef, keyKind, keyClr, valueKind, valueClr, valueRef) = ClassifyType(prop.Type);
         var nullableAnn = prop.NullableAnnotation.ToString();
         var ignore = ResolveIgnoreCondition(prop);
-        var canOmit = ignore != "Never";
+        var canOmit = ComputeCanOmitWhenNull(prop, ignore);
 
         return new FieldInfo(
             Name: name,
@@ -552,6 +552,55 @@ public sealed class VerbSchemaGenerator : IIncrementalGenerator
         // Context-level naming policy is SnakeCaseLower (hardcoded —
         // PolyphonyJsonContext is the only context).
         return ToSnakeCaseLower(prop.Name);
+    }
+
+    /// <summary>
+    /// Decides whether the field can legitimately be absent from the
+    /// serialized JSON envelope — the signal that drives the workflow
+    /// resolver lint's JINJA002 "wrap in a guard" warning.
+    ///
+    /// <para>The historical (buggy) implementation returned
+    /// <c>ignore != "Never"</c>, which marked every field omittable
+    /// because the global serializer policy is <c>WhenWritingNull</c>.
+    /// That conflated "what STJ does on null" with "can the value
+    /// actually be null at runtime", and produced 200+ false-positive
+    /// JINJA002 warnings against fields like
+    /// <c>required string State</c> that the C# nullable-reference
+    /// type system already proves non-null.</para>
+    ///
+    /// <para>The correct logic respects nullable annotations
+    /// (project-wide <c>&lt;Nullable&gt;enable&lt;/Nullable&gt;</c> +
+    /// <c>TreatWarningsAsErrors</c> means an unannotated reference
+    /// type is compiler-guaranteed non-null at construction):</para>
+    /// <list type="bullet">
+    ///   <item><c>Always</c> → omittable (the field is filtered out unconditionally).</item>
+    ///   <item><c>Never</c> → never omitted (overrides the global policy).</item>
+    ///   <item><c>WhenWritingNull</c> → omittable only when the type can hold null
+    ///         (nullable reference type or <c>Nullable&lt;T&gt;</c>).</item>
+    ///   <item><c>WhenWritingDefault</c> → omittable for value types (<c>0</c>,
+    ///         <c>false</c>, <c>default(struct)</c>) and for nullable reference
+    ///         types (where <c>default</c> is null). Non-nullable reference types
+    ///         have <c>default == null</c>, but the type contract excludes that
+    ///         value, so the field cannot legitimately be omitted.</item>
+    /// </list>
+    /// </summary>
+    private static bool ComputeCanOmitWhenNull(IPropertySymbol prop, string ignore)
+    {
+        var isNullableRef =
+            prop.Type.IsReferenceType
+            && prop.NullableAnnotation == NullableAnnotation.Annotated;
+        var isNullableValue =
+            prop.Type is INamedTypeSymbol nt
+            && nt.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T;
+
+        return ignore switch
+        {
+            "Always" => true,
+            "Never" => false,
+            "WhenWritingNull" => isNullableRef || isNullableValue,
+            "WhenWritingDefault" => prop.Type.IsValueType || isNullableRef,
+            _ => true, // unknown / future enum values — fail safe (warn).
+        };
     }
 
     private static string ResolveIgnoreCondition(IPropertySymbol prop)
