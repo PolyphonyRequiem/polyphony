@@ -46,5 +46,5 @@ workflows:
   apex-item-dispatch:
     description: "Per-item innermost sub-workflow invoked by apex-wave-dispatch — classify lifecycle, spawn/teardown worktree, dispatch lifecycle (sub-workflow)"
     path: workflows/apex-item-dispatch.yaml
-    versions: ["1.0.0"]
+    versions: ["1.0.0", "1.1.0", "1.2.0"]
 

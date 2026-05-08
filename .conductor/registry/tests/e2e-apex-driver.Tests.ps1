@@ -204,7 +204,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ItemYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ItemYaml.workflow.name        | Should -Be 'apex-item-dispatch'
         $script:ItemYaml.workflow.entry_point | Should -Be 'classify_lifecycle'
-        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '1.0.1'
+        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '1.2.0'
         $script:ItemYaml.agents.Count         | Should -BeGreaterThan 8
     }
 
@@ -958,5 +958,111 @@ Describe 'apex-driver e2e — script envelope contracts (worktree-manager, wave-
         [int]$envelope.wave_index | Should -Be 0
         $envelope.feature_branch  | Should -Be 'feature/99999'
         $envelope.merge_strategy  | Should -Be 'no-ff'
+    }
+}
+
+# =====================================================================
+# Section 8 — Terminal canonical output schema (bug #11 / #178)
+# =====================================================================
+#
+# Every `terminal_*` in apex-item-dispatch.yaml must emit the FULL
+# canonical output schema with safe defaults. When the workflow's
+# top-level `output:` template fails to fully resolve, conductor
+# can surface the terminal's raw output to the parent for_each
+# consumer (apex-wave-dispatch.aggregate_renegotiation, etc). Those
+# consumers read `renegotiation_pending`, `lifecycle_workflow`, and
+# friends and crash on missing keys.
+#
+# Asserting on the script's literal `Command` text catches drift
+# without needing a Jinja render harness.
+
+Describe 'apex-item-dispatch terminal canonical output schema (#178)' {
+
+    BeforeAll {
+        $script:CanonicalFields = @(
+            'work_item_id',
+            'apex_id',
+            'lifecycle_workflow',
+            'dispatched',
+            'fast_pathed',
+            'renegotiation_pending',
+            'renegotiation_request',
+            'validate_scope_verdict',
+            'scope_violation_files',
+            'actionable_satisfied',
+            'implement_pg_merged',
+            'feature_pr_merged'
+        )
+        $script:TerminalNames = @(
+            'terminal_dispatched',
+            'terminal_fast_path',
+            'terminal_monitoring',
+            'terminal_blocked',
+            'terminal_classify_error',
+            'terminal_spawn_error'
+        )
+
+        function script:Get-TerminalCommand($agents, $name) {
+            $agent = $agents[$name]
+            if (-not $agent) { throw "terminal $name not found" }
+            # Script agents put the `pwsh -Command <text>` as the third arg.
+            $args = $agent.args
+            for ($i = 0; $i -lt $args.Count - 1; $i++) {
+                if ($args[$i] -eq '-Command') { return $args[$i + 1] }
+            }
+            throw "no -Command arg in $name"
+        }
+    }
+
+    foreach ($t in @('terminal_dispatched','terminal_fast_path','terminal_monitoring','terminal_blocked','terminal_classify_error','terminal_spawn_error')) {
+        It "$t emits all 12 canonical fields" -TestCases @{ TerminalName = $t } {
+            param($TerminalName)
+            $cmd = script:Get-TerminalCommand $script:ItemAgents $TerminalName
+            foreach ($field in $script:CanonicalFields) {
+                $cmd | Should -Match "\b$field\s*=" -Because (
+                    "$TerminalName must emit canonical field '$field' so wave-dispatch consumers don't crash on missing keys (#178)")
+            }
+        }
+    }
+
+    It 'terminal_dispatched marks dispatched=$true' {
+        (script:Get-TerminalCommand $script:ItemAgents 'terminal_dispatched') |
+            Should -Match 'dispatched\s*=\s*\$true'
+    }
+
+    It 'terminal_fast_path marks fast_pathed=$true and lifecycle_workflow=fast-path' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'terminal_fast_path'
+        $cmd | Should -Match "fast_pathed\s*=\s*\`$true"
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'fast-path'"
+    }
+
+    It 'terminal_monitoring marks lifecycle_workflow=monitoring (additive monitoring=$true permitted)' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'terminal_monitoring'
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'monitoring'"
+    }
+
+    It 'terminal_blocked marks lifecycle_workflow=blocked (additive blocked=$true permitted)' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'terminal_blocked'
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'blocked'"
+    }
+
+    It 'terminal_classify_error includes error + error_code with default-filtered classify error_code' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'terminal_classify_error'
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'error'"
+        $cmd | Should -Match "error\s*=\s*'lifecycle classification failed'"
+        $cmd | Should -Match "classify_lifecycle\.output\.error_code\s*\|\s*default"
+    }
+
+    It 'terminal_spawn_error includes error + error_code with default-filtered spawn error_code' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'terminal_spawn_error'
+        $cmd | Should -Match "error\s*=\s*'worktree spawn failed'"
+        $cmd | Should -Match "spawn_worktree\.output\.error_code\s*\|\s*default"
+        # Spawn error preserves the lifecycle that was classified before spawn failed.
+        $cmd | Should -Match "classify_lifecycle\.output\.lifecycle_workflow\s*\|\s*default"
+    }
+
+    It 'apex-item-dispatch.output exposes error and error_code keys (bug #11 surfacing)' {
+        $script:ItemYaml.output.Keys | Should -Contain 'error'
+        $script:ItemYaml.output.Keys | Should -Contain 'error_code'
     }
 }
