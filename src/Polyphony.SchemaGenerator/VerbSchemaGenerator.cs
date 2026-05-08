@@ -300,8 +300,96 @@ public sealed class VerbSchemaGenerator : IIncrementalGenerator
                 GroupName: groupName,
                 CommandName: commandPath,
                 CommandClassName: classInfo.ClassSymbol.ToDisplayString(),
-                ResultTypeFullName: resultType.ToDisplayString()));
+                ResultTypeFullName: resultType.ToDisplayString(),
+                Inputs: ExtractInputs(cmd.Method)));
         }
+    }
+
+    /// <summary>
+    /// Project a verb method's parameter list into the registry's
+    /// <see cref="InputInfo"/> shape. Filters out the conventional
+    /// <c>CancellationToken ct = default</c> trailer (not a user-facing
+    /// flag) and renames each parameter from PascalCase to kebab-case
+    /// to mirror ConsoleAppFramework's flag mapping.
+    /// </summary>
+    private static System.Collections.Immutable.ImmutableArray<InputInfo> ExtractInputs(IMethodSymbol method)
+    {
+        var builder = System.Collections.Immutable.ImmutableArray.CreateBuilder<InputInfo>();
+        foreach (var param in method.Parameters)
+        {
+            if (IsCancellationToken(param.Type))
+            {
+                continue;
+            }
+            builder.Add(new InputInfo(
+                Name: ToKebabCase(param.Name),
+                ClrType: param.Type.ToDisplayString(),
+                Required: !param.HasExplicitDefaultValue,
+                DefaultLiteral: param.HasExplicitDefaultValue
+                    ? EncodeDefaultLiteral(param.ExplicitDefaultValue)
+                    : null));
+        }
+        return builder.ToImmutable();
+    }
+
+    private static bool IsCancellationToken(ITypeSymbol type)
+    {
+        return type is INamedTypeSymbol nt
+            && nt.Name == "CancellationToken"
+            && (nt.ContainingNamespace?.ToDisplayString() ?? "") == "System.Threading";
+    }
+
+    private static string ToKebabCase(string identifier)
+    {
+        // PascalCase / camelCase → kebab-case (matches ConsoleAppFramework's
+        // flag generation): split before each capital that follows a
+        // lowercase or digit, lowercase the whole thing.
+        // Adjacent capitals collapse to a single segment to leave acronyms
+        // intact (e.g. "ioPath" → "io-path", "URL" stays "url").
+        if (string.IsNullOrEmpty(identifier))
+        {
+            return identifier;
+        }
+        var sb = new StringBuilder(identifier.Length + 4);
+        for (var i = 0; i < identifier.Length; i++)
+        {
+            var ch = identifier[i];
+            if (char.IsUpper(ch))
+            {
+                if (i > 0 && (char.IsLower(identifier[i - 1]) || char.IsDigit(identifier[i - 1])))
+                {
+                    sb.Append('-');
+                }
+                sb.Append(char.ToLowerInvariant(ch));
+            }
+            else
+            {
+                sb.Append(ch);
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static string EncodeDefaultLiteral(object? value)
+    {
+        if (value is null)
+        {
+            return "null";
+        }
+        return value switch
+        {
+            bool b => b ? "true" : "false",
+            string s => JsonEncode(s),
+            char c => JsonEncode(c.ToString()),
+            // Numeric primitives format identically to JSON.
+            sbyte or byte or short or ushort or int or uint or long or ulong
+                => System.Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)!,
+            float f => f.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+            double d => d.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+            decimal m => m.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            // Enums (and any other value) — fall back to the string form.
+            _ => JsonEncode(value.ToString() ?? ""),
+        };
     }
 
     private static string ReadGroupName(INamedTypeSymbol classSymbol)
@@ -802,7 +890,24 @@ public sealed class VerbSchemaGenerator : IIncrementalGenerator
             first = false;
             sb.Append(JsonEncode(verb.VerbPath)).Append(":{");
             sb.Append("\"result_type\":").Append(JsonEncode(verb.ResultTypeFullName)).Append(',');
-            sb.Append("\"command_class\":").Append(JsonEncode(verb.CommandClassName));
+            sb.Append("\"command_class\":").Append(JsonEncode(verb.CommandClassName)).Append(',');
+            sb.Append("\"inputs\":[");
+            var firstInput = true;
+            foreach (var inp in verb.Inputs)
+            {
+                if (!firstInput) sb.Append(',');
+                firstInput = false;
+                sb.Append('{');
+                sb.Append("\"name\":").Append(JsonEncode(inp.Name)).Append(',');
+                sb.Append("\"clr_type\":").Append(JsonEncode(inp.ClrType)).Append(',');
+                sb.Append("\"required\":").Append(inp.Required ? "true" : "false");
+                if (inp.DefaultLiteral is not null)
+                {
+                    sb.Append(",\"default\":").Append(inp.DefaultLiteral);
+                }
+                sb.Append('}');
+            }
+            sb.Append(']');
             sb.Append('}');
         }
         sb.Append("},\"types\":{");
