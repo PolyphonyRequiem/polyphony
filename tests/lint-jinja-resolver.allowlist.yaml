@@ -1,0 +1,38 @@
+# Allowlist for lint-jinja-resolver.ps1.
+#
+# Each entry suppresses a single (file, code, reference) tuple that the
+# resolver lint would otherwise flag. Every entry MUST cite an issue link so
+# the suppression is traceable and can be reviewed / removed.
+#
+# Hard cap: 15 entries (see docs/decisions/jinja-resolver-lint.md
+# § "Allowlist size cap"). If you hit the cap, the right answer is almost
+# always to fix the bug — not to amend the cap.
+#
+# Schema:
+#   - file:      path relative to repo root, forward slashes
+#     code:      JINJA001..JINJA005
+#     reference: literal "<step>.output<.path>" as it appears in the prompt
+#     issue:     issue / PR url or shortcode tracking the fix
+#
+# Current entries (4) — all real bugs in plan-level.yaml found by this lint
+# during its initial smoke-run. References live in human-facing remediation
+# prompts; the agent never sees them resolved, but the prompts assert false
+# field shapes. Tracking issue: TBD (filed alongside #175).
+
+suppress:
+  - file: .conductor/registry/workflows/plan-level.yaml
+    code: JINJA001
+    reference: merge_plan_pr.output.ancestor_key
+    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/TBD-plan-level-merge-plan-pr-fields'
+  - file: .conductor/registry/workflows/plan-level.yaml
+    code: JINJA001
+    reference: merge_plan_pr.output.snapshot_generation
+    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/TBD-plan-level-merge-plan-pr-fields'
+  - file: .conductor/registry/workflows/plan-level.yaml
+    code: JINJA001
+    reference: merge_plan_pr_ado.output.ancestor_key
+    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/TBD-plan-level-merge-plan-pr-fields'
+  - file: .conductor/registry/workflows/plan-level.yaml
+    code: JINJA001
+    reference: merge_plan_pr_ado.output.snapshot_generation
+    issue: 'https://github.com/PolyphonyRequiem/polyphony/issues/TBD-plan-level-merge-plan-pr-fields'
