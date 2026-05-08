@@ -248,7 +248,152 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         output.ShouldContain("\"seeded_count\"", Case.Sensitive);
         output.ShouldContain("\"planned_tag_set\"", Case.Sensitive);
         output.ShouldContain("\"planned_tag_already\"", Case.Sensitive);
+        output.ShouldContain("\"apex_facets\"", Case.Sensitive);
+        output.ShouldContain("\"facets_tag_set\"", Case.Sensitive);
         output.ShouldNotContain("\"WorkItemId\"", Case.Sensitive);
         output.ShouldNotContain("\"PlannedTagSet\"", Case.Sensitive);
+    }
+
+    // ── apex_facets / plan front-matter (closed-loop PR #7) ─────────────
+
+    [Fact]
+    public async Task SeedChildren_ApexFacetsFrontMatter_NoChildren_StampsFacetsTag()
+    {
+        // Architect declares apex_facets in plan front-matter and emits no
+        // children — the apex is "indivisible". The seed-children verb must
+        // stamp polyphony:facets=... on the parent so downstream consumers
+        // see the override.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 100);
+        StubShowParent(runner, 100, tagsField: "");
+        StubPatchOk(runner);
+
+        var planFile = WriteTempPlanFile(100, "---\napex_facets: [implementable]\n---\n# Plan for #100\n");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(100, "[]", "polyphony:planned", planFile));
+            exit.ShouldBe(ExitCodes.Success);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ChildCount.ShouldBe(0);
+            result.ApexFacets.ShouldBe(["implementable"]);
+            result.FacetsTagSet.ShouldBeTrue();
+            result.PlannedTagSet.ShouldBeTrue();
+
+            // The patch invocation must include the canonical facets tag.
+            var patchCall = runner.Invocations.First(i =>
+                i.Executable == "twig" && i.Arguments.Contains("patch"));
+            string.Join(" ", patchCall.Arguments).ShouldContain("polyphony:facets=implementable");
+        }
+        finally
+        {
+            File.Delete(planFile);
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_ApexFacetsFrontMatter_WithChildren_RoutesError()
+    {
+        // apex_facets and a non-empty children list say opposite things;
+        // the verb must refuse rather than guess.
+        var (cmd, _) = CreateCommand();
+        var planFile = WriteTempPlanFile(101, "---\napex_facets: [implementable]\n---\n");
+        try
+        {
+            var children = """[{"child_id":"task-1","title":"X","type":"Task","description":"Body."}]""";
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(101, children, "polyphony:planned", planFile));
+            exit.ShouldBe(ExitCodes.ConfigError);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ErrorCount.ShouldBe(1);
+            result.Errors[0].Error.ShouldContain("mutually exclusive");
+        }
+        finally
+        {
+            File.Delete(planFile);
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_PlanFileMissing_BehavesAsIfFrontMatterAbsent()
+    {
+        // Default planFile path is plans/plan-{id}.md relative to cwd; when
+        // it doesn't exist the verb falls back to the original behaviour
+        // (no facets tag, just polyphony:planned).
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 102);
+        StubShowParent(runner, 102, tagsField: "");
+        StubPatchOk(runner);
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(102, "[]", "polyphony:planned",
+                Path.Combine(Path.GetTempPath(), $"polyphony-pr7-missing-{Guid.NewGuid():N}.md")));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ApexFacets.ShouldBeEmpty();
+        result.FacetsTagSet.ShouldBeFalse();
+        result.PlannedTagSet.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task SeedChildren_PlanFileMalformed_RoutesError()
+    {
+        var (cmd, _) = CreateCommand();
+        var planFile = WriteTempPlanFile(103, "---\napex_facets:\n  - bogus\n---\n");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(103, "[]", "polyphony:planned", planFile));
+            exit.ShouldBe(ExitCodes.ConfigError);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ErrorCount.ShouldBe(1);
+            result.Errors[0].Error.ShouldContain("malformed");
+        }
+        finally
+        {
+            File.Delete(planFile);
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_ApexFacetsReplacesExistingFacetsTag()
+    {
+        // Re-plan with a different facet set should replace, not stack —
+        // otherwise the parent ends up with two polyphony:facets=... tags
+        // and TryExtract picks an arbitrary one.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 104);
+        StubShowParent(runner, 104, tagsField: "polyphony:facets=plannable; other-tag");
+        StubPatchOk(runner);
+
+        var planFile = WriteTempPlanFile(104, "---\napex_facets: [implementable]\n---\n");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(104, "[]", "polyphony:planned", planFile));
+            exit.ShouldBe(ExitCodes.Success);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.FacetsTagSet.ShouldBeTrue();
+
+            var patchCall = runner.Invocations.First(i =>
+                i.Executable == "twig" && i.Arguments.Contains("patch"));
+            var combined = string.Join(" ", patchCall.Arguments);
+            combined.ShouldContain("polyphony:facets=implementable");
+            combined.ShouldNotContain("polyphony:facets=plannable");
+            combined.ShouldContain("other-tag");
+        }
+        finally
+        {
+            File.Delete(planFile);
+        }
+    }
+
+    private static string WriteTempPlanFile(int workItemId, string body)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"polyphony-pr7-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, $"plan-{workItemId}.md");
+        File.WriteAllText(path, body);
+        return path;
     }
 }

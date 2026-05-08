@@ -266,4 +266,69 @@ public sealed class RequirementInputResolverTests
         resolved.ExecutionModeProvenance.ShouldBe(ResolutionProvenance.Default);
         resolved.AnyInferred.ShouldBeFalse();
     }
+
+    // ── facets override (closed-loop PR #7) ─────────────────────────────
+
+    [Fact]
+    public void Resolve_OverrideFacetsNull_FallsBackToTypeConfigFacets()
+    {
+        var resolved = RequirementInputResolver.Resolve(
+            Type(facets: ["plannable"]),
+            childCount: 0,
+            overrideFacets: null);
+
+        resolved.Facets.ShouldBe(["plannable"]);
+        resolved.FacetsProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    [Fact]
+    public void Resolve_OverrideFacetsEmpty_FallsBackToTypeConfigFacets()
+    {
+        // Empty override is semantically equivalent to "no override declared"
+        // — must NOT zero out the type-config default.
+        var resolved = RequirementInputResolver.Resolve(
+            Type(facets: ["implementable"]),
+            childCount: 0,
+            overrideFacets: []);
+
+        resolved.Facets.ShouldBe(["implementable"]);
+        resolved.FacetsProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    [Fact]
+    public void Resolve_OverrideFacetsNonEmpty_ReplacesTypeConfigFacets()
+    {
+        // Override wins — the architect-declared apex_facets is a stronger
+        // signal than the type-config default.
+        var resolved = RequirementInputResolver.Resolve(
+            Type(facets: ["plannable"]),
+            childCount: 0,
+            overrideFacets: ["implementable"]);
+
+        resolved.Facets.ShouldBe(["implementable"]);
+        resolved.FacetsProvenance.ShouldBe(ResolutionProvenance.Explicit);
+    }
+
+    [Fact]
+    public void Resolve_NoOverride_NoConfigFacets_ReturnsEmptyDefaultProvenance()
+    {
+        var resolved = RequirementInputResolver.Resolve(Type(), childCount: 0);
+
+        resolved.Facets.ShouldBeEmpty();
+        resolved.FacetsProvenance.ShouldBe(ResolutionProvenance.Default);
+    }
+
+    [Fact]
+    public void Resolve_OverrideDoesNotMutateTypeConfig()
+    {
+        // The override must be per-call; the type-config object is shared
+        // and must not be mutated.
+        var type = Type(facets: ["plannable"]);
+        var originalFacets = type.Facets;
+
+        RequirementInputResolver.Resolve(type, childCount: 0, overrideFacets: ["implementable"]);
+
+        type.Facets.ShouldBeSameAs(originalFacets);
+        type.Facets.ShouldBe(["plannable"]);
+    }
 }

@@ -4,6 +4,8 @@ using System.Text.RegularExpressions;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Sdlc;
+using Polyphony.Tagging;
 
 namespace Polyphony.Commands;
 
@@ -41,6 +43,11 @@ public sealed partial class PlanCommands
     /// Each child entry requires <c>child_id</c>, <c>title</c>, <c>type</c>, <c>description</c>.</param>
     /// <param name="plannedTag">Tag value to apply to the parent on success
     /// (defaults to <c>polyphony:planned</c>).</param>
+    /// <param name="planFile">Optional plan markdown file to read for
+    /// <c>apex_facets</c> front-matter (closed-loop PR #7). When omitted,
+    /// defaults to <c>plans/plan-{workItem}.md</c> relative to cwd. Missing
+    /// file is treated as "no front-matter declared" and behaviour is
+    /// unchanged.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("seed-children")]
     [VerbResult(typeof(PlanSeedChildrenResult))]
@@ -48,6 +55,7 @@ public sealed partial class PlanCommands
         int workItem = RequiredInput.MissingInt,
         string childrenJson = "",
         string plannedTag = "polyphony:planned",
+        string planFile = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan seed-children",
@@ -68,6 +76,34 @@ public sealed partial class PlanCommands
         }
 
         var children = childrenNode is JsonArray arr ? arr : new JsonArray();
+
+        // Read plan-file front-matter for apex_facets (opt-in). Architects
+        // declare apex_facets in plans/plan-{id}.md when they choose NOT to
+        // decompose ("indivisible apex" — see closed-loop plan §3.4(a)). The
+        // resolved facets land on the parent work item as a
+        // polyphony:facets=... tag so RequirementInputResolver consumers
+        // (worklist build, edges check, next-ready) can override the type-
+        // config default on a per-call basis.
+        var resolvedPlanFile = string.IsNullOrEmpty(planFile)
+            ? Path.Combine("plans", $"plan-{workItem}.md")
+            : planFile;
+        var apexFacets = ReadApexFacets(resolvedPlanFile, out var apexFacetsError);
+        if (apexFacetsError is not null)
+        {
+            EmitError(apexFacetsError);
+            return ExitCodes.ConfigError;
+        }
+
+        // apex_facets is mutually exclusive with a non-empty children list.
+        // The two say opposite things: "this apex is indivisible" vs "here
+        // are its sub-items". A planner that emits both is incoherent; we
+        // refuse rather than guess.
+        if (apexFacets is { Count: > 0 } && children.Count > 0)
+        {
+            EmitError(
+                $"plan front-matter declares apex_facets ({string.Join(",", apexFacets)}) but children-json contains {children.Count} child entr{(children.Count == 1 ? "y" : "ies")}; the two are mutually exclusive (apex_facets is for indivisible apexes — see closed-loop plan §3.4(a)).");
+            return ExitCodes.ConfigError;
+        }
 
         // Snapshot existing children once — we'll match against this.
         JsonNode? tree;
@@ -146,23 +182,51 @@ public sealed partial class PlanCommands
 
         var tagSet = false;
         var tagAlreadyPresent = false;
+        var facetsTagSet = false;
         if (errors.Count == 0)
         {
             try
             {
-                var currentTags = await GetParentTagsAsync(workItem, ct).ConfigureAwait(false);
-                if (currentTags.Contains(plannedTag, StringComparer.Ordinal))
+                var currentTagsList = await GetParentTagsAsync(workItem, ct).ConfigureAwait(false);
+                var tags = TagSet.Parse(string.Join("; ", currentTagsList));
+
+                var addPlanned = !tags.Contains(plannedTag);
+                tagAlreadyPresent = !addPlanned;
+                if (addPlanned)
                 {
-                    tagSet = true;
-                    tagAlreadyPresent = true;
+                    tags = tags.Add(plannedTag);
                 }
-                else
+
+                // Apply the facets-override tag when apex_facets was declared.
+                // Replace any existing polyphony:facets=... tag so a re-plan
+                // with a different facet set converges, rather than stacking.
+                if (apexFacets is { Count: > 0 })
                 {
-                    var merged = string.Join("; ", currentTags.Append(plannedTag).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.Ordinal));
+                    var existing = FacetTagParser.TryExtract(tags);
+                    if (existing is not null)
+                    {
+                        // Remove the prior tag verbatim so casing differences
+                        // don't survive the round-trip.
+                        var prefix = PolyphonyTags.FacetsPrefix + "=";
+                        foreach (var t in tags.ToArray())
+                        {
+                            if (t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                            {
+                                tags = tags.Remove(t);
+                            }
+                        }
+                    }
+                    var newFacetsTag = FacetTagParser.FormatTag(apexFacets);
+                    tags = tags.Add(newFacetsTag);
+                    facetsTagSet = true;
+                }
+
+                if (addPlanned || facetsTagSet)
+                {
                     await twig.PatchFieldsAsync(workItem,
-                        new Dictionary<string, string> { ["System.Tags"] = merged }, ct).ConfigureAwait(false);
-                    tagSet = true;
+                        new Dictionary<string, string> { ["System.Tags"] = tags.Format() }, ct).ConfigureAwait(false);
                 }
+                tagSet = true;
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -187,10 +251,53 @@ public sealed partial class PlanCommands
             Warnings = warnings,
             PlannedTagSet = tagSet,
             PlannedTagAlready = tagAlreadyPresent,
+            ApexFacets = apexFacets ?? [],
+            FacetsTagSet = facetsTagSet,
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PlanSeedChildrenResult));
         return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Reads the plan markdown file at <paramref name="planFilePath"/> and
+    /// returns the architect-declared <c>apex_facets</c> if present and
+    /// well-formed. Missing file or absent front-matter return null with no
+    /// error (opt-in feature). Malformed front-matter populates
+    /// <paramref name="error"/> so the caller can route to the error envelope.
+    /// </summary>
+    private static IReadOnlyList<string>? ReadApexFacets(string planFilePath, out string? error)
+    {
+        error = null;
+        if (!File.Exists(planFilePath))
+        {
+            return null;
+        }
+
+        string body;
+        try
+        {
+            body = File.ReadAllText(planFilePath);
+        }
+        catch (Exception ex)
+        {
+            error = $"failed to read plan file '{planFilePath}': {ex.Message}";
+            return null;
+        }
+
+        var parsed = PlanFileFrontMatter.Parse(body);
+        switch (parsed.Status)
+        {
+            case PlanFileFrontMatterStatus.Absent:
+                return null;
+            case PlanFileFrontMatterStatus.Malformed:
+                error = $"plan front-matter in '{planFilePath}' is malformed: {parsed.ErrorDetail}";
+                return null;
+            case PlanFileFrontMatterStatus.Present:
+                return parsed.ApexFacets.Count == 0 ? null : parsed.ApexFacets;
+            default:
+                throw new InvalidOperationException($"Unhandled PlanFileFrontMatterStatus: {parsed.Status}");
+        }
     }
 
     private static (Dictionary<string, ChildSnapshot> ByMarker, Dictionary<string, ChildSnapshot> ByTitleType)
@@ -274,6 +381,8 @@ public sealed partial class PlanCommands
             Warnings = Array.Empty<string>(),
             PlannedTagSet = false,
             PlannedTagAlready = false,
+            ApexFacets = Array.Empty<string>(),
+            FacetsTagSet = false,
         };
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PlanSeedChildrenResult));
     }
