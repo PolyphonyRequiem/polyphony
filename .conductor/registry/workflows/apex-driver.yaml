@@ -96,10 +96,10 @@ workflow:
     in topological wave order, with per-item worktree isolation and
     edge-correct wave integration. Replaces the deleted
     polyphony-full.yaml.
-  version: "1.1.0"
+  version: "1.2.0"
   entry_point: preflight_sync
   metadata:
-    min_polyphony_version: "1.0.1"
+    min_polyphony_version: "1.2.0"
 
   limits:
     # The dispatch loop is a for_each over waves; each wave is itself a
@@ -299,8 +299,42 @@ agents:
       - "-Project"
       - "{{ workflow.input.project }}"
     routes:
-      - to: declare_root
+      - to: commit_and_push_manifest
         when: "{{ init_manifest.output.success | string | lower == 'true' }}"
+      - to: preflight_failure_gate
+      # M4 catch-all
+      - to: preflight_failure_gate
+
+  # ── Preflight: commit + push the manifest to feature/{apex_id} ───────────
+  #
+  # Closes the structural manifest-lifecycle gap surfaced by bug #12 (#179).
+  # `init_manifest` writes `.polyphony/run.yaml` to the worktree filesystem
+  # but never commits it. Downstream verbs that enforce the branch-model
+  # invariant ("manifest lives on origin/feature/{root}") — most notably
+  # `polyphony pr open-plan-pr` — read from the remote and would fail the
+  # entire run on a fresh apex without this step.
+  #
+  # The verb is idempotent: a no-op when the manifest already matches HEAD
+  # on feature/{apex_id}. Refuses to run on the wrong branch (encodes the
+  # ADR's "manifest must be committed on feature branch" rule at the verb
+  # boundary, not in YAML).
+  #
+  # Invariants:
+  #   Pre:  init_manifest succeeded; worktree on feature/{apex_id}.
+  #   Post: origin/feature/{apex_id}:.polyphony/run.yaml exists and matches
+  #         the local file.
+  - name: commit_and_push_manifest
+    type: script
+    description: Commit and push .polyphony/run.yaml to feature/{apex_id}
+    command: polyphony
+    args:
+      - "manifest"
+      - "commit-and-push"
+      - "--root-id"
+      - "{{ workflow.input.apex_id }}"
+    routes:
+      - to: declare_root
+        when: "{{ commit_and_push_manifest.output.error_code is not defined or commit_and_push_manifest.output.error_code == '' }}"
       - to: preflight_failure_gate
       # M4 catch-all
       - to: preflight_failure_gate
@@ -726,6 +760,15 @@ agents:
       ```
       {%- if init_manifest.output.error is defined and init_manifest.output.error != '' -%}
       [{{ init_manifest.output.error_code | default('?') }}] {{ init_manifest.output.error }}
+      {%- else -%}
+      (no error — this step succeeded or did not run)
+      {%- endif -%}
+      ```
+
+      ### `commit_and_push_manifest` error
+      ```
+      {%- if commit_and_push_manifest.output.error is defined and commit_and_push_manifest.output.error != '' -%}
+      [{{ commit_and_push_manifest.output.error_code | default('?') }}] {{ commit_and_push_manifest.output.error }}
       {%- else -%}
       (no error — this step succeeded or did not run)
       {%- endif -%}
