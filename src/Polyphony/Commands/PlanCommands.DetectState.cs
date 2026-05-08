@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
@@ -45,6 +46,7 @@ public sealed partial class PlanCommands
     /// <c>polyphony:planned</c> — match the seeder's default.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("detect-state")]
+    [VerbResult(typeof(PlanDetectStateResult))]
     public async Task<int> DetectState(
         int rootId,
         int itemId,

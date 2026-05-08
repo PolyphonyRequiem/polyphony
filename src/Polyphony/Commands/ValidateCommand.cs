@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Routing;
 using Twig.Domain.Interfaces;
 
@@ -8,6 +9,7 @@ namespace Polyphony.Commands;
 /// <summary>
 /// Validates that a lifecycle event transition is legal for a work item.
 /// </summary>
+[VerbGroup("")]
 public sealed class ValidateCommand(
     TransitionValidator validator,
     IWorkItemRepository repository)
@@ -19,6 +21,7 @@ public sealed class ValidateCommand(
     /// <param name="event">Lifecycle event name (e.g., begin_planning, implementation_complete)</param>
     /// <param name="config">Path to .conductor/process-config.yaml</param>
     [Command("validate")]
+    [VerbResult(typeof(ValidateResult))]
     public async Task<int> Validate(int workItem, string @event, string config = ".conductor/process-config.yaml", CancellationToken ct = default)
     {
         var item = await repository.GetByIdAsync(workItem, ct);

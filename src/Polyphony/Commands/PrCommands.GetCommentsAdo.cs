@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Routing;
 
@@ -45,6 +46,7 @@ public sealed partial class PrCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("get-comments-ado")]
+    [VerbResult(typeof(PrGetCommentsAdoResult))]
     public async Task<int> GetCommentsAdo(
         string organization,
         string project,

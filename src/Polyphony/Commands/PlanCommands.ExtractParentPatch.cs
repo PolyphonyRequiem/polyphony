@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 
@@ -39,6 +40,7 @@ public sealed partial class PlanCommands
     /// <param name="diffSizeLimitBytes">Upper bound for the rendered parent-scoped diff. Defaults to 50 KB.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("extract-parent-patch")]
+    [VerbResult(typeof(PlanExtractParentPatchResult))]
     public async Task<int> ExtractParentPatch(
         string prUrl,
         int rootId,

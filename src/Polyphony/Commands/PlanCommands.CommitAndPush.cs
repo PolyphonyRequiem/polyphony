@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 
 namespace Polyphony.Commands;
@@ -44,6 +45,7 @@ public sealed partial class PlanCommands
     /// entry is passed verbatim to <c>git add</c>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("commit-and-push")]
+    [VerbResult(typeof(PlanCommitAndPushResult))]
     public async Task<int> CommitAndPush(
         string branch,
         string message,

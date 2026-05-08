@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
@@ -31,6 +32,7 @@ public sealed partial class BranchCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("route")]
+    [VerbResult(typeof(BranchRouteResult))]
     public async Task<int> Route(int workItem, int pgNumber = 0, CancellationToken ct = default)
     {
         BranchRouteResult result;

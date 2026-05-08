@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 
 namespace Polyphony.Commands;
 
@@ -21,6 +22,7 @@ public sealed partial class WorktreeCommands
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
     [Command("list")]
+    [VerbResult(typeof(WorktreeListResult))]
     public async Task<int> List(CancellationToken ct = default)
     {
         try

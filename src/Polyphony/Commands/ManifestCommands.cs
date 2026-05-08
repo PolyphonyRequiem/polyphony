@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
 
@@ -20,6 +21,7 @@ namespace Polyphony.Commands;
 /// <see cref="CommitAndPush"/> verb only; the read/init/record-* verbs
 /// that pre-existed <c>commit-and-push</c> do not consume it.</para>
 /// </summary>
+[VerbGroup("manifest")]
 public sealed partial class ManifestCommands(IGitClient git)
 {
     private readonly IGitClient git = git;
@@ -37,6 +39,7 @@ public sealed partial class ManifestCommands(IGitClient git)
     /// <param name="force">When true, overwrites an existing manifest file.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("init")]
+    [VerbResult(typeof(ManifestInitResult))]
     public Task<int> Init(
         int rootId,
         string platformProject,
@@ -102,6 +105,7 @@ public sealed partial class ManifestCommands(IGitClient git)
     /// <param name="path">Path to the manifest file.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("read")]
+    [VerbResult(typeof(ManifestReadResult))]
     public Task<int> Read(
         string path = RunManifestStore.DefaultRelativePath,
         CancellationToken ct = default)
@@ -141,6 +145,7 @@ public sealed partial class ManifestCommands(IGitClient git)
     /// <param name="path">Path to the manifest file.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("topology-hash")]
+    [VerbResult(typeof(ManifestTopologyHashResult))]
     public Task<int> TopologyHash(
         string path = RunManifestStore.DefaultRelativePath,
         CancellationToken ct = default)
@@ -184,6 +189,7 @@ public sealed partial class ManifestCommands(IGitClient git)
     /// <param name="at">Optional ISO-8601 timestamp; defaults to now (UTC).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("record-rebase")]
+    [VerbResult(typeof(ManifestRebaseRecordResult))]
     public Task<int> RecordRebase(
         string branch,
         string onto,
@@ -259,6 +265,7 @@ public sealed partial class ManifestCommands(IGitClient git)
     /// <param name="at">Optional ISO-8601 timestamp; defaults to now (UTC).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("record-approval")]
+    [VerbResult(typeof(ManifestApprovalRecordResult))]
     public Task<int> RecordApproval(
         string gate,
         string approvedBy,
@@ -355,6 +362,7 @@ public sealed partial class ManifestCommands(IGitClient git)
     /// <param name="mergeCommit">Platform-reported merge commit SHA. Required when <paramref name="prNumber"/> is supplied.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("record-plan-merge")]
+    [VerbResult(typeof(ManifestRecordPlanMergeResult))]
     public Task<int> RecordPlanMerge(
         string item,
         string path = RunManifestStore.DefaultRelativePath,
@@ -467,6 +475,7 @@ public sealed partial class ManifestCommands(IGitClient git)
     /// <param name="path">Path to the manifest file.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("read-plan-generation")]
+    [VerbResult(typeof(ManifestReadPlanGenerationResult))]
     public Task<int> ReadPlanGeneration(
         string item,
         string path = RunManifestStore.DefaultRelativePath,
@@ -528,6 +537,7 @@ public sealed partial class ManifestCommands(IGitClient git)
     /// <param name="path">Path to the manifest file.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("read-plan-generation-snapshot")]
+    [VerbResult(typeof(ManifestReadPlanGenerationSnapshotResult))]
     public Task<int> ReadPlanGenerationSnapshot(
         string item,
         string ancestorIds = "",

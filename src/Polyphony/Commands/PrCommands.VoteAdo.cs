@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Routing;
 
@@ -31,6 +32,7 @@ public sealed partial class PrCommands
     /// <param name="vote">Vote name: <c>approve</c>, <c>approve-with-suggestions</c>, <c>reject</c>, <c>wait-for-author</c>, or <c>reset</c>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("vote-ado")]
+    [VerbResult(typeof(PrVoteAdoResult))]
     public async Task<int> VoteAdo(
         string organization,
         string project,

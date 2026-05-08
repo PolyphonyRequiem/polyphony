@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Versioning;
@@ -22,6 +23,7 @@ namespace Polyphony.Commands;
 /// payload's <c>ready</c> flag. Errors are reported via the payload, not
 /// via process exit code.
 /// </remarks>
+[VerbGroup("state")]
 public sealed partial class StateCommands(
     ITwigClient twig,
     IGitClient git,
@@ -50,6 +52,7 @@ public sealed partial class StateCommands(
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("preflight-lite")]
+    [VerbResult(typeof(StatePreflightLiteResult))]
     public async Task<int> PreflightLite(
         string? workflowYaml = null,
         string? requiredVersion = null,
@@ -121,6 +124,7 @@ public sealed partial class StateCommands(
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("preflight")]
+    [VerbResult(typeof(StatePreflightResult))]
     public async Task<int> Preflight(
         int workItem,
         string? workflowYaml = null,

@@ -1,3 +1,4 @@
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Twig.Domain.Interfaces;
 
@@ -16,6 +17,7 @@ namespace Polyphony.Commands;
 /// (and, eventually, plannable / implementable) workflow consumes via
 /// Jinja2 prompt-text injection.</para>
 /// </summary>
+[VerbGroup("agent")]
 public sealed partial class AgentCommands(
     IWorkItemRepository repository,
     ProcessConfig processConfig)

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 
 namespace Polyphony.Commands;
 
@@ -16,6 +17,7 @@ public sealed partial class WorktreeCommands
     /// <param name="force">Pass <c>--force</c> to git, allowing removal of a dirty worktree.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("remove")]
+    [VerbResult(typeof(WorktreeRemoveResult))]
     public async Task<int> Remove(
         string path,
         bool force = false,

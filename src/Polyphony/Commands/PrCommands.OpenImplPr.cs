@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 
@@ -20,6 +21,7 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-impl-pr")]
+    [VerbResult(typeof(PrOpenImplResult))]
     public async Task<int> OpenImplPr(
         int rootId,
         int itemId,

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
 
@@ -10,6 +11,7 @@ namespace Polyphony.Commands;
 /// <summary>
 /// Performs environment and configuration diagnostics for Polyphony CLI.
 /// </summary>
+[VerbGroup("")]
 public sealed class HealthCommand
 {
     private readonly Func<string, HealthCheckResult> _checkTool;
@@ -31,6 +33,7 @@ public sealed class HealthCommand
     }
 
     [Command("health")]
+    [VerbResult(typeof(HealthResult))]
     public int Health(string config = ".conductor/process-config.yaml")
     {
         var checks = new List<HealthCheckResult>();

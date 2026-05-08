@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
@@ -53,6 +54,7 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body summary (rendered after the front-matter); minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-plan-ado")]
+    [VerbResult(typeof(PrOpenPlanAdoResult))]
     public async Task<int> OpenPlanAdo(
         string organization,
         string project,

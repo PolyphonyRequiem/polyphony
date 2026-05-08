@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
@@ -55,6 +56,7 @@ public sealed partial class PlanCommands
     /// human-readable table.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("status")]
+    [VerbResult(typeof(PlanStatusResult))]
     public async Task<int> Status(
         int root,
         string manifest = "",

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Guidance;
 using Polyphony.Models;
@@ -46,6 +47,7 @@ public sealed partial class AgentCommands
     /// resolution. Defaults to <c>.conductor/policy.yaml</c>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("compose-addendum")]
+    [VerbResult(typeof(AgentComposeAddendumResult))]
     public async Task<int> ComposeAddendum(
         [Argument] int workItem,
         string policy = ".conductor/policy.yaml",

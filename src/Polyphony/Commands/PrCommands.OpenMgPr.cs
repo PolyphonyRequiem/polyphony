@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 
@@ -20,6 +21,7 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-mg-pr")]
+    [VerbResult(typeof(PrOpenMergeGroupResult))]
     public async Task<int> OpenMgPr(
         int rootId,
         string mgPath,

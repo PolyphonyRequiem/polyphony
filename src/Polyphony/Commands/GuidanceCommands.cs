@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Guidance;
 using Polyphony.Models;
 using Polyphony.Policy;
@@ -13,6 +14,7 @@ namespace Polyphony.Commands;
 /// source-of-record. Driver wiring (injecting the extracted text into the
 /// agent prompt) lands in Phase 6 PR #5.
 /// </summary>
+[VerbGroup("guidance")]
 public sealed class GuidanceCommands(IWorkItemRepository repository)
 {
     /// <summary>
@@ -25,6 +27,7 @@ public sealed class GuidanceCommands(IWorkItemRepository repository)
     /// <param name="policy">Path to the policy file. Defaults to
     /// <c>.conductor/policy.yaml</c>.</param>
     [Command("extract")]
+    [VerbResult(typeof(GuidanceExtractResult))]
     public async Task<int> Extract(
         int workItem,
         string policy = ".conductor/policy.yaml",

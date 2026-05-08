@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
 
@@ -33,6 +34,7 @@ public sealed partial class PlanCommands
     /// <param name="repo">Optional <c>owner/repo</c> override; defaults to the slug derived from the current checkout's <c>origin</c> remote.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("extract-renegotiation-flag")]
+    [VerbResult(typeof(PlanExtractRenegotiationFlagResult))]
     public async Task<int> ExtractRenegotiationFlag(
         int prNumber,
         string repo = "",

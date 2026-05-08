@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Twig.Domain.Aggregates;
 
 namespace Polyphony.Commands;
@@ -31,6 +32,7 @@ public sealed partial class PlanCommands
     /// <param name="itemId">Item being planned (positive). May equal <paramref name="rootId"/> for the root plan.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("derive-ancestor-chain")]
+    [VerbResult(typeof(PlanDeriveAncestorChainResult))]
     public async Task<int> DeriveAncestorChain(
         int rootId,
         int itemId,

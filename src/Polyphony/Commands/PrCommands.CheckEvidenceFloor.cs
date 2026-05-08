@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 
 namespace Polyphony.Commands;
@@ -48,6 +49,7 @@ public sealed partial class PrCommands
     /// <param name="minCommits">Minimum number of commits the PR's head branch must have beyond base. Defaults to 1. Exposed for forward flexibility; no current workflow tunes it.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("check-evidence-floor")]
+    [VerbResult(typeof(PrCheckEvidenceFloorResult))]
     public async Task<int> CheckEvidenceFloor(
         [Argument] int prNumber,
         string repo = "",

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
 
@@ -48,6 +49,7 @@ public sealed partial class PrCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-feature-ado")]
+    [VerbResult(typeof(PrMergeFeatureAdoResult))]
     public async Task<int> MergeFeatureAdo(
         string organization,
         string project,

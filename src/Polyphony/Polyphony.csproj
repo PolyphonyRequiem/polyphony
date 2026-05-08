@@ -29,4 +29,26 @@
     <ProjectReference Include="..\..\..\twig2\src\Twig.Domain\Twig.Domain.csproj" />
     <ProjectReference Include="..\..\..\twig2\src\Twig.Infrastructure\Twig.Infrastructure.csproj" />
   </ItemGroup>
+
+  <!--
+    Polyphony.SchemaGenerator emits VerbOutputSchemaCatalog.g.cs into
+    this assembly at compile time. OutputItemType="Analyzer" wires it
+    as a source generator; ReferenceOutputAssembly="false" keeps the
+    netstandard2.0 generator binary out of polyphony.dll.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Polyphony.SchemaGenerator\Polyphony.SchemaGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!--
+    Schema JSON export lives on Polyphony.SchemaExporter.csproj's own
+    AfterBuild target — that project ProjectReferences Polyphony, so
+    building it transitively builds Polyphony (running the generator
+    and embedding the catalog), and its post-build runs the exporter
+    exe to drop artifacts/verb-output-schemas.json. Doing it from the
+    exporter's csproj rather than here keeps Polyphony's build free of
+    a recursion risk against `dotnet run`.
+  -->
 </Project>

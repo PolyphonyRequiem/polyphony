@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
@@ -30,6 +31,7 @@ public sealed partial class ManifestCommands
     /// <param name="path">Path to the manifest. Defaults to <c>.polyphony/run.yaml</c>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("commit-and-push")]
+    [VerbResult(typeof(ManifestCommitAndPushResult))]
     public async Task<int> CommitAndPush(
         int rootId,
         string message = "",

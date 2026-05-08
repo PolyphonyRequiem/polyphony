@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
@@ -26,6 +27,7 @@ namespace Polyphony.Commands;
 /// on happy path, non-zero on failure with an <c>error</c> field for the gate
 /// prompt to surface.
 /// </remarks>
+[VerbGroup("plan")]
 public sealed partial class PlanCommands(
     HierarchyWalker walker,
     IWorkItemRepository repository,
@@ -40,6 +42,7 @@ public sealed partial class PlanCommands(
     /// <param name="depth">Current recursion depth (0 = root level).</param>
     /// <param name="maxDepth">Maximum allowed recursion depth.</param>
     [Command("depth-guard")]
+    [VerbResult(typeof(PlanDepthGuardResult))]
     public int DepthGuard(int depth, int maxDepth = 6)
     {
         var allowed = depth < maxDepth;
@@ -68,6 +71,7 @@ public sealed partial class PlanCommands(
     /// </summary>
     /// <param name="workItem">ADO work item ID whose children to discover.</param>
     [Command("next-child")]
+    [VerbResult(typeof(PlanNextChildResult))]
     public async Task<int> NextChild(int workItem, CancellationToken ct = default)
     {
         var hierarchy = await walker.WalkAsync(workItem, maxDepth: 1, ct);
@@ -114,6 +118,7 @@ public sealed partial class PlanCommands(
     /// <param name="configDir">Conductor config directory containing
     /// <c>work-item-types/&lt;slug&gt;.md</c> and optional templates.</param>
     [Command("load-type")]
+    [VerbResult(typeof(PlanLoadTypeResult))]
     public async Task<int> LoadType(int workItem, string configDir = ".conductor", CancellationToken ct = default)
     {
         var item = await repository.GetByIdAsync(workItem, ct);
@@ -173,6 +178,7 @@ public sealed partial class PlanCommands(
     /// <param name="configDir">Conductor config directory containing
     /// <c>agent-guidance/*.md</c>.</param>
     [Command("load-guidance")]
+    [VerbResult(typeof(Dictionary<string, string>))]
     public int LoadGuidance(string configDir = ".conductor")
     {
         var guidancePath = Path.Combine(configDir, "agent-guidance");
@@ -240,6 +246,7 @@ public sealed partial class PlanCommands(
     /// reaches or exceeds this, <c>passed=true, forced_by_cap=true</c> is emitted to
     /// escape oscillation. Replaces the hardcoded <c>5</c> at review-router.ps1:79.</param>
     [Command("review")]
+    [VerbResult(typeof(PlanReviewResult))]
     public int Review(
         string techReviewerJson,
         string readabilityReviewerJson,

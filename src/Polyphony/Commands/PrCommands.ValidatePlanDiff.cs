@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
 
@@ -44,6 +45,7 @@ public sealed partial class PrCommands
     /// <param name="ancestorIds">Comma-separated ancestor ids ABOVE the immediate parent, ending in the literal token <c>root</c>. Empty when item is root or a direct child of root. Format matches the <c>ancestor_ids</c> field emitted by <c>plan derive-ancestor-chain</c> minus the leading parent id.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("validate-plan-diff")]
+    [VerbResult(typeof(PrValidatePlanDiffResult))]
     public async Task<int> ValidatePlanDiff(
         int rootId,
         int itemId,

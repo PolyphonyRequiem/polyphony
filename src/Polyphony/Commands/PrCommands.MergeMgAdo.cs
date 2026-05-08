@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
 
@@ -47,6 +48,7 @@ public sealed partial class PrCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-mg-ado")]
+    [VerbResult(typeof(PrMergeMgAdoResult))]
     public async Task<int> MergeMgAdo(
         string organization,
         string project,

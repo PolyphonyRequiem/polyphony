@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 using Polyphony.Tagging;
@@ -21,6 +22,7 @@ namespace Polyphony.Commands;
 /// caller routes on the JSON. Hard errors (work item not found, twig sync
 /// failures) emit JSON with <c>error</c> set and exit non-zero.
 /// </summary>
+[VerbGroup("scope")]
 public sealed class ScopeCommands(
     ITwigClient twig,
     IWorkItemRepository repository,
@@ -33,6 +35,7 @@ public sealed class ScopeCommands(
     /// <param name="workItem">ADO work item ID to inspect.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("check")]
+    [VerbResult(typeof(ScopeCheckResult))]
     public async Task<int> Check(int workItem, CancellationToken ct = default)
     {
         await twig.SyncAsync(ct).ConfigureAwait(false);
@@ -70,6 +73,7 @@ public sealed class ScopeCommands(
     /// <param name="maxDepth">Max walk depth (default 5).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("list")]
+    [VerbResult(typeof(ScopeListResult))]
     public async Task<int> List(int rootId, int maxDepth = 5, CancellationToken ct = default)
     {
         await twig.SyncAsync(ct).ConfigureAwait(false);
@@ -137,6 +141,7 @@ public sealed class ScopeCommands(
     /// <param name="workItem">ADO work item ID to tag.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("tag")]
+    [VerbResult(typeof(ScopeMutationResult))]
     public Task<int> Tag(int workItem, CancellationToken ct = default) =>
         TagMutationAsync(workItem, PolyphonyTags.InScope, add: true, ct);
 
@@ -150,6 +155,7 @@ public sealed class ScopeCommands(
     /// <param name="workItem">ADO work item ID to untag.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("untag")]
+    [VerbResult(typeof(ScopeMutationResult))]
     public Task<int> Untag(int workItem, CancellationToken ct = default) =>
         TagMutationAsync(workItem, PolyphonyTags.InScope, add: false, ct);
 

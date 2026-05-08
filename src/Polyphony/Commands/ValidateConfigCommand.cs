@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 
 namespace Polyphony.Commands;
@@ -9,6 +10,7 @@ namespace Polyphony.Commands;
 /// Loads the config YAML, runs <see cref="ConfigValidator"/>, and outputs a structured
 /// <see cref="ConfigValidationResult"/>. Exit code 0 = valid, non-zero = errors found.
 /// </summary>
+[VerbGroup("")]
 public sealed class ValidateConfigCommand
 {
     /// <summary>
@@ -17,6 +19,7 @@ public sealed class ValidateConfigCommand
     /// <param name="config">Path to .conductor directory containing process-config.yaml</param>
     /// <param name="output">Output format: json or human</param>
     [Command("validate-config")]
+    [VerbResult(typeof(ConfigValidationResult))]
     public int ValidateConfig(string config = ".conductor", string output = "json")
     {
         var configPath = Path.Combine(config, "process-config.yaml");

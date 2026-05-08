@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 
 namespace Polyphony.Commands;
@@ -36,6 +37,7 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body; minimal placeholder stub used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-evidence-pr")]
+    [VerbResult(typeof(PrOpenEvidenceResult))]
     public async Task<int> OpenEvidencePr(
         int workItem,
         int apexId = 0,

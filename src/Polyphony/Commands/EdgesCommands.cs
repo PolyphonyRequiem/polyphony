@@ -1,3 +1,4 @@
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Twig.Domain.Interfaces;
 
@@ -14,6 +15,7 @@ namespace Polyphony.Commands;
 /// no remote calls. They walk the local twig cache for tree shape and
 /// the in-memory <see cref="ProcessConfig"/> for facets / decomposability.</para>
 /// </summary>
+[VerbGroup("edges")]
 public sealed partial class EdgesCommands(
     IWorkItemRepository repository,
     ProcessConfig processConfig)

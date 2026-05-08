@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Locking;
@@ -63,6 +64,7 @@ public sealed partial class PrCommands
     /// <param name="by">Lock acquirer name; defaults to <c>USERNAME</c>/<c>USER</c> env.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-plan-pr")]
+    [VerbResult(typeof(PrMergePlanPrResult))]
     public async Task<int> MergePlanPr(
         int rootId,
         int itemId,

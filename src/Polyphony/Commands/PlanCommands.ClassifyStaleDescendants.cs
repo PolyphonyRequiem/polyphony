@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
@@ -31,6 +32,7 @@ public sealed partial class PlanCommands
     /// <param name="manifestPath">Run manifest path within <c>origin/feature/{root}</c>. Defaults to <c>.polyphony/run.yaml</c>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("classify-stale-descendants")]
+    [VerbResult(typeof(PlanClassifyStaleDescendantsResult))]
     public async Task<int> ClassifyStaleDescendants(
         int rootId,
         string manifestPath = ".polyphony/run.yaml",

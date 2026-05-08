@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
 
@@ -42,6 +43,7 @@ public sealed partial class PlanCommands
     /// <param name="repo">Optional <c>owner/repo</c> override; defaults to the slug derived from the current checkout's <c>origin</c> remote.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("validate-scope")]
+    [VerbResult(typeof(PlanValidateScopeResult))]
     public async Task<int> ValidateScope(
         int prNumber,
         string childScope = "",

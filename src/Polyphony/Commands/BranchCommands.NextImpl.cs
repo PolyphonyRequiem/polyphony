@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Routing;
 
@@ -23,6 +24,7 @@ public sealed partial class BranchCommands
     /// <param name="pgNumber">Merge-group number (e.g. 1). Convenience for callers that track merge groups as ints.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("next-impl")]
+    [VerbResult(typeof(BranchNextImplResult))]
     public async Task<int> NextImpl(
         int workItem,
         string pgName = "",

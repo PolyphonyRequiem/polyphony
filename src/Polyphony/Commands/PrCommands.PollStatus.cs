@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ConsoleAppFramework;
+using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 
@@ -27,6 +28,7 @@ public sealed partial class PrCommands
     /// <param name="includeMetadata">When true, parse <c>requests_parent_change</c> and <c>ancestor_plan_generations</c> from the PR body's YAML front-matter. Default false so the verb works on impl/MG PRs.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("poll-status")]
+    [VerbResult(typeof(PrPollStatusResult))]
     public async Task<int> PollStatus(
         string prUrl,
         bool includeMetadata = false,
