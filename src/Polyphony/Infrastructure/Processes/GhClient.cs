@@ -23,6 +23,33 @@ public sealed class GhClient : IGhClient
 {
     private const string Exe = "gh";
 
+    /// <summary>
+    /// Environment variables applied to every gh subprocess (on top of the
+    /// inherited parent env).
+    /// <list type="bullet">
+    ///   <item><c>GH_PROMPT_DISABLED=1</c> — surface hidden interactive
+    ///     prompts as immediate failures rather than indefinite hangs.
+    ///     Defensive: gh shouldn't prompt without a TTY anyway, but past
+    ///     gh hangs (e.g. PR #200 incident) had no diagnostic and this
+    ///     forecloses one prompt-based hypothesis cheaply.</item>
+    ///   <item><c>NO_COLOR=1</c> — suppress ANSI escape sequences in
+    ///     stdout/stderr so JSON parsing and stderr regex matchers see
+    ///     clean text.</item>
+    /// </list>
+    /// To enable verbose API tracing on demand, set
+    /// <c>GH_DEBUG=api</c> on the parent shell before invoking polyphony —
+    /// it inherits through automatically (UseShellExecute=false). The
+    /// resulting stderr survives a per-attempt timeout via
+    /// <see cref="ProcessCanceledException"/> and is surfaced in
+    /// <see cref="ExternalToolTimeoutException.LastBufferedStderr"/>.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string?> GhEnvironment =
+        new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["GH_PROMPT_DISABLED"] = "1",
+            ["NO_COLOR"] = "1",
+        };
+
     private readonly IProcessRunner _runner;
     private readonly GhClientPolicy _policy;
 
@@ -126,11 +153,26 @@ public sealed class GhClient : IGhClient
             {
                 throw;
             }
+            catch (ProcessCanceledException pce)
+            {
+                // Per-attempt timeout fired with buffered output. Before
+                // giving up or backing off, check whether the timed-out
+                // call actually succeeded server-side and the PR is now visible.
+                var reconciled = await TryReconcileExistingPrAsync(repoSlug, baseBranch, headBranch, ct).ConfigureAwait(false);
+                if (reconciled is not null) return reconciled;
+
+                if (attempt >= _policy.MaxAttempts)
+                {
+                    throw new ExternalToolTimeoutException(
+                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout,
+                        pce.BufferedStdout, pce.BufferedStderr, pce.Elapsed);
+                }
+
+                await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
+            }
             catch (OperationCanceledException)
             {
-                // Per-attempt timeout fired. Before giving up or backing off,
-                // check whether the timed-out call actually succeeded
-                // server-side and the PR is now visible.
+                // Per-attempt timeout fired with no buffered output (fake/test path).
                 var reconciled = await TryReconcileExistingPrAsync(repoSlug, baseBranch, headBranch, ct).ConfigureAwait(false);
                 if (reconciled is not null) return reconciled;
 
@@ -201,10 +243,33 @@ public sealed class GhClient : IGhClient
             {
                 throw;
             }
+            catch (ProcessCanceledException pce)
+            {
+                // Per-attempt timeout with buffered output. Before backing
+                // off, check whether the merge actually succeeded server-side.
+                var reconciled = await TryGetStateForReconcileAsync(repoSlug, prNumber, ct).ConfigureAwait(false);
+                if (reconciled is { State: "MERGED" })
+                {
+                    return new GhMergeResult(
+                        Succeeded: true,
+                        PrNumber: prNumber,
+                        MergeSha: reconciled.MergeCommitSha,
+                        AlreadyMerged: true,
+                        Detail: $"reconciled after timeout — PR was already merged ({reconciled.MergeCommitSha})");
+                }
+
+                if (attempt >= _policy.MaxAttempts)
+                {
+                    throw new ExternalToolTimeoutException(
+                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout,
+                        pce.BufferedStdout, pce.BufferedStderr, pce.Elapsed);
+                }
+
+                await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
+            }
             catch (OperationCanceledException)
             {
-                // Per-attempt timeout fired. Before backing off, check whether
-                // the merge actually succeeded server-side.
+                // Per-attempt timeout from a runner without buffered output (fake/test path).
                 var reconciled = await TryGetStateForReconcileAsync(repoSlug, prNumber, ct).ConfigureAwait(false);
                 if (reconciled is { State: "MERGED" })
                 {
@@ -469,6 +534,10 @@ public sealed class GhClient : IGhClient
         CancellationToken ct,
         string? stdin = null)
     {
+        string lastStdout = string.Empty;
+        string lastStderr = string.Empty;
+        TimeSpan lastElapsed = TimeSpan.Zero;
+
         for (int attempt = 1; attempt <= _policy.MaxAttempts; attempt++)
         {
             try
@@ -480,9 +549,25 @@ public sealed class GhClient : IGhClient
                 // Caller cancelled — propagate immediately, never retry.
                 throw;
             }
+            catch (ProcessCanceledException pce)
+            {
+                // Per-attempt timeout fired AND we have buffered output.
+                lastStdout = pce.BufferedStdout;
+                lastStderr = pce.BufferedStderr;
+                lastElapsed = pce.Elapsed;
+
+                if (attempt >= _policy.MaxAttempts)
+                {
+                    throw new ExternalToolTimeoutException(
+                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout,
+                        lastStdout, lastStderr, lastElapsed);
+                }
+                await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
+            }
             catch (OperationCanceledException)
             {
-                // Per-attempt timeout fired.
+                // Per-attempt timeout from a runner that didn't supply
+                // buffered output (FakeProcessRunner test paths, mainly).
                 if (attempt >= _policy.MaxAttempts)
                 {
                     throw new ExternalToolTimeoutException(
@@ -503,7 +588,7 @@ public sealed class GhClient : IGhClient
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(_policy.PerAttemptTimeout);
-        return await _runner.RunAsync(Exe, args, timeoutCts.Token, stdin: stdin).ConfigureAwait(false);
+        return await _runner.RunAsync(Exe, args, timeoutCts.Token, stdin: stdin, environment: GhEnvironment).ConfigureAwait(false);
     }
 
     private async Task DelayBackoffAsync(int attemptJustFailed, CancellationToken ct)

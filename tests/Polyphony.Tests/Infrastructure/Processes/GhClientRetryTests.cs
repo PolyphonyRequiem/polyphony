@@ -308,4 +308,120 @@ public sealed class GhClientRetryTests
         await Task.Delay(Timeout.Infinite, ct);
         return default!; // unreachable
     }
+
+    // ─── Buffered output preserved through ExternalToolTimeoutException ───
+
+    [Fact]
+    public async Task ListPullRequestsAsync_AllAttemptsTimeout_PreservesLastBufferedStderr()
+    {
+        // FakeProcessRunner throws ProcessCanceledException directly to
+        // simulate what real ProcessRunner does when killed mid-stderr.
+        // GhClient must catch the typed exception ahead of bare OCE and
+        // surface the buffered output through ExternalToolTimeoutException.
+        var fake = new FakeProcessRunner();
+        const string fakeStderr =
+            "GH_DEBUG: GET https://api.github.com/repos/o/r/pulls\n" +
+            "GH_DEBUG: waiting for response (300s)\n";
+        fake.WhenAsync(
+            (e, a) => e == "gh" && a.Take(2).SequenceEqual(new[] { "pr", "list" }, StringComparer.Ordinal),
+            (args, _) => throw new ProcessCanceledException(
+                "gh", args.ToArray(),
+                bufferedStdout: "",
+                bufferedStderr: fakeStderr,
+                elapsed: TimeSpan.FromMilliseconds(50)));
+
+        var client = new GhClient(fake, FastRetry);
+
+        var ex = await Should.ThrowAsync<ExternalToolTimeoutException>(async () =>
+            await client.ListPullRequestsAsync("o/r", new PrListFilters()));
+
+        ex.Attempts.ShouldBe(3);
+        ex.LastBufferedStderr.ShouldContain("GH_DEBUG: GET https://api.github.com");
+        ex.LastBufferedStderr.ShouldContain("waiting for response");
+        ex.LastElapsed.ShouldBe(TimeSpan.FromMilliseconds(50));
+        ex.Message.ShouldContain("Last attempt stderr (tail)");
+    }
+
+    [Fact]
+    public async Task ExternalToolTimeoutException_NoBufferedOutput_MessageHintsAtGhDebugFlag()
+    {
+        var fake = new FakeProcessRunner();
+        fake.WhenAsync(
+            (e, a) => e == "gh" && a.Take(2).SequenceEqual(new[] { "pr", "list" }, StringComparer.Ordinal),
+            HangForeverAsync);
+        var client = new GhClient(fake, FastRetry);
+
+        var ex = await Should.ThrowAsync<ExternalToolTimeoutException>(async () =>
+            await client.ListPullRequestsAsync("o/r", new PrListFilters()));
+
+        ex.LastBufferedStderr.ShouldBeEmpty();
+        ex.Message.ShouldContain("no stderr emitted before kill");
+        ex.Message.ShouldContain("GH_DEBUG=api");
+    }
+
+    [Fact]
+    public async Task ExternalToolTimeoutException_LongStderr_TailTruncatedInMessage()
+    {
+        var fake = new FakeProcessRunner();
+        // 8K of distinguishable head + a trailing marker we expect to see.
+        var longStderr = new string('H', 8192) + "TAIL-MARKER-XYZ";
+        fake.WhenAsync(
+            (e, a) => e == "gh" && a.Take(2).SequenceEqual(new[] { "pr", "list" }, StringComparer.Ordinal),
+            (args, _) => throw new ProcessCanceledException(
+                "gh", args.ToArray(), "", longStderr, TimeSpan.FromMilliseconds(50)));
+        var client = new GhClient(fake, FastRetry);
+
+        var ex = await Should.ThrowAsync<ExternalToolTimeoutException>(async () =>
+            await client.ListPullRequestsAsync("o/r", new PrListFilters()));
+
+        // Full buffer survives on the property.
+        ex.LastBufferedStderr.Length.ShouldBe(longStderr.Length);
+        // Message keeps the TAIL (most diagnostically useful), not the head.
+        ex.Message.ShouldContain("TAIL-MARKER-XYZ");
+        ex.Message.ShouldStartWith("gh pr list");
+    }
+
+    [Fact]
+    public async Task ExternalToolTimeoutException_TokenInStderr_RedactedInMessage()
+    {
+        var fake = new FakeProcessRunner();
+        const string stderrWithToken =
+            "GH_DEBUG: > Authorization: Bearer gho_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789\n" +
+            "GH_DEBUG: bare ghp_ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210TOKEN here\n";
+        fake.WhenAsync(
+            (e, a) => e == "gh" && a.Take(2).SequenceEqual(new[] { "pr", "list" }, StringComparer.Ordinal),
+            (args, _) => throw new ProcessCanceledException(
+                "gh", args.ToArray(), "", stderrWithToken, TimeSpan.FromMilliseconds(50)));
+        var client = new GhClient(fake, FastRetry);
+
+        var ex = await Should.ThrowAsync<ExternalToolTimeoutException>(async () =>
+            await client.ListPullRequestsAsync("o/r", new PrListFilters()));
+
+        // Raw buffer keeps the original (callers may need it for non-display use).
+        ex.LastBufferedStderr.ShouldContain("gho_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
+        // But the user-facing Message must be redacted.
+        ex.Message.ShouldNotContain("gho_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
+        ex.Message.ShouldNotContain("ghp_ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210TOKEN");
+        ex.Message.ShouldContain("[REDACTED");
+    }
+
+    // ─── GH_PROMPT_DISABLED env propagated to subprocess ──────────────────
+
+    [Fact]
+    public async Task RunAsync_AppliesGhPromptDisabledAndNoColorEnv()
+    {
+        var fake = new FakeProcessRunner();
+        fake.WhenAsync(
+            (e, a) => e == "gh" && a.Take(2).SequenceEqual(new[] { "auth", "status" }, StringComparer.Ordinal),
+            (_, _) => Task.FromResult(new ProcessResult(0, "", "✓ Logged in")));
+        var client = new GhClient(fake, FastNoRetry);
+
+        await client.GetAuthStatusAsync();
+
+        fake.Invocations.Count.ShouldBe(1);
+        var inv = fake.Invocations[0];
+        inv.Environment.ShouldNotBeNull();
+        inv.Environment!["GH_PROMPT_DISABLED"].ShouldBe("1");
+        inv.Environment!["NO_COLOR"].ShouldBe("1");
+    }
 }
