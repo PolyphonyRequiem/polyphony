@@ -873,25 +873,28 @@ agents:
             Remove-Item $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
 
-        It 'Real plan-level.yaml uses the two-arg default(0, true) form for every parent_item_id reference' {
+        It 'Real plan-level.yaml uses the bare default(0) form for every parent_item_id reference' {
+            # Conductor's custom _default_filter handles BOTH Undefined AND
+            # None — bare default(0) is the correct form. The standard Jinja
+            # 3-arg default(0, true) form crashes conductor at runtime
+            # ("takes from 1 to 2 positional arguments but 3 were given").
             $content = Get-Content $script:RealYaml -Raw
-            # No bare default(0) form should remain — every reference uses default(0, true).
             $bareMatches = [regex]::Matches($content, 'parent_item_id\s*\|\s*default\(\s*0\s*\)')
-            $bareMatches.Count | Should -Be 0
-            # And the two-arg form IS present (sanity check that we have references at all).
-            $twoArgMatches = [regex]::Matches($content, 'parent_item_id\s*\|\s*default\(\s*0\s*,\s*true\s*\)')
-            $twoArgMatches.Count | Should -BeGreaterThan 0
+            $bareMatches.Count | Should -BeGreaterThan 0
+            # And the multi-arg form is NOT present (would crash conductor).
+            $multiArgMatches = [regex]::Matches($content, 'parent_item_id\s*\|\s*default\(\s*[^)]*,\s*[^)]+\)')
+            $multiArgMatches.Count | Should -Be 0
         }
 
-        It 'Lint fails when plan-level.yaml regresses to bare default(0)' {
+        It 'Lint fails when plan-level.yaml regresses to the multi-arg default(0, true) form' {
             $content = Get-Content $script:RealYaml -Raw
-            # Mutate every two-arg form back to the bare form.
-            $mutated = $content -replace 'parent_item_id\s*\|\s*default\(\s*0\s*,\s*true\s*\)', 'parent_item_id | default(0)'
+            # Mutate every bare form to the multi-arg form (which would crash conductor).
+            $mutated = $content -replace 'parent_item_id\s*\|\s*default\(\s*0\s*\)', 'parent_item_id | default(0, true)'
             Set-Content (Join-Path $script:WorkflowsDir 'plan-level.yaml') $mutated
             $lintScript = Join-Path $script:TestsDir 'lint-plan-level.ps1'
             $output = pwsh -NoProfile -File $lintScript 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output -join "`n") | Should -Match 'parent-item-id-bare-default'
+            ($output -join "`n") | Should -Match 'parent-item-id-multi-arg-default'
         }
     }
 }

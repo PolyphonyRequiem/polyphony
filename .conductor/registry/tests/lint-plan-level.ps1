@@ -347,25 +347,35 @@ if ($policyBlock -match 'type_loader\.output\.type_name\b') {
         Rule   = 'open-questions-policy-bad-type-field'
         Detail = "open_questions_policy --scope references type_loader.output.type_name; the verb emits 'type', not 'type_name' (caused dogfood failure on apex #3043, 2026-05-07)"
     }
-}# ── Check 25: ancestor_chain.output.parent_item_id uses default(0, true) ─
-# Bug #8 (dogfood apex #3043, 2026-05-08). The verb's wire shape carries
-# parent_item_id as JSON null on the root-plan path; Jinja's bare
-# `default(0)` filter substitutes only on Undefined, NOT on a present
-# null value. The two-arg `default(0, true)` form substitutes on both
-# Undefined and falsy (including None). Every reference to
-# `ancestor_chain.output.parent_item_id` that wraps in `default()` MUST
-# use the two-arg form, or the recursive `for_each` rebuilds with
-# parent_item_id=None and the polyphony CLI rejects it.
+}# ── Check 25: ancestor_chain.output.parent_item_id default-filter form ──
+# Bug #8 (dogfood apex #3043, 2026-05-08, two iterations).
 #
-# This regex finds bare `parent_item_id | default(0)` (no second arg).
-# The two-arg form `default(0, true)` is allowed.
-$badDefaultMatches = [regex]::Matches(
+# Wire shape: `polyphony plan derive-ancestor-chain` returns int? for
+# `parent_item_id`, always emitted (per-property [JsonIgnore(Never)] in
+# PlanDeriveAncestorChainResult.cs). On the root path the value is JSON
+# null; on direct children of root, also null; on deeper descendants,
+# an integer.
+#
+# Filter: conductor's custom Jinja `default` filter
+# (conductor.executor.template.TemplateRenderer._default_filter) is
+# `_default_filter(value, default="")` — only TWO positional args. It
+# already returns `default` when `value is None` (handles BOTH
+# Undefined AND None — better than standard Jinja, which only handles
+# Undefined unless given the boolean=True second arg).
+#
+# Therefore the correct form is bare `default(0)`. Standard Jinja's
+# 3-arg `default(0, true)` form CRASHES conductor at runtime with
+# "TemplateRenderer._default_filter() takes from 1 to 2 positional
+# arguments but 3 were given" (iter 5 of the apex #3043 dogfood).
+#
+# This check refuses the 3-arg form to prevent the regression.
+$threeArgMatches = [regex]::Matches(
     $content,
-    'parent_item_id\s*\|\s*default\(\s*0\s*\)')
-if ($badDefaultMatches.Count -gt 0) {
+    'parent_item_id\s*\|\s*default\(\s*[^)]*,\s*[^)]+\)')
+if ($threeArgMatches.Count -gt 0) {
     $violations += [PSCustomObject]@{
-        Rule   = 'parent-item-id-bare-default'
-        Detail = "Found $($badDefaultMatches.Count) reference(s) to ancestor_chain.output.parent_item_id with bare 'default(0)'; must use two-arg form 'default(0, true)' so JSON null is coerced (caused dogfood failure on apex #3043, 2026-05-08)"
+        Rule   = 'parent-item-id-multi-arg-default'
+        Detail = "Found $($threeArgMatches.Count) reference(s) to ancestor_chain.output.parent_item_id with the multi-arg `default(...)` form (e.g. `default(0, true)`); conductor's custom _default_filter only accepts 2 positional args (value, default) and crashes on 3. Use bare `default(0)` — conductor's filter substitutes on both Undefined AND None (caused dogfood failure on apex #3043 iter 5, 2026-05-08)"
     }
 }
 
