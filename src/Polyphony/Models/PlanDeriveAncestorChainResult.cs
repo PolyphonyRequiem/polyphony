@@ -1,5 +1,7 @@
 namespace Polyphony;
 
+using System.Text.Json.Serialization;
+
 /// <summary>
 /// Output of <c>polyphony plan derive-ancestor-chain</c>. Walks the work-item
 /// parent chain from <see cref="ItemId"/> up to (but not past) <see cref="RootId"/>
@@ -8,8 +10,8 @@ namespace Polyphony;
 ///   <item><c>--root-id</c> for every verb (already known by the workflow).</item>
 ///   <item><c>--parent-item-id</c> for <c>branch ensure-plan</c>,
 ///         <c>pr open-plan-pr</c>, and <c>pr merge-plan-pr</c> — required for
-///         descendants of descendants; omitted (null) for the root plan and
-///         direct children of root.</item>
+///         descendants of descendants; null for the root plan and direct
+///         children of root.</item>
 ///   <item><c>--ancestor-ids</c> for <c>pr open-plan-pr</c> — comma-separated
 ///         chain (immediate parent first), with the literal <c>"root"</c>
 ///         token used in place of the root work-item id, e.g. <c>"5678,root"</c>
@@ -32,7 +34,24 @@ public sealed record PlanDeriveAncestorChainResult
     /// Immediate plan-tree parent's work-item id, or null when the parent is
     /// implicit (root plan, or direct child of root). Maps directly to the
     /// <c>--parent-item-id</c> flag of the plan-PR verbs (omit when null).
+    ///
+    /// <para>
+    /// Always serialized to JSON (overrides the per-context
+    /// <c>WhenWritingNull</c> default) so workflow Jinja consumers under
+    /// <c>strict_undefined</c> can reference <c>output.parent_item_id</c>
+    /// unconditionally without raising on a missing attribute. The wire shape
+    /// is uniform across root-plan and descendant-plan invocations.
+    /// </para>
+    /// <para>
+    /// Bug #8 (dogfood apex #3043, 2026-05-08) surfaced the original wire
+    /// shape: <c>WhenWritingNull</c> elided the field for the root case,
+    /// then conductor's <c>strict_undefined</c> raised on
+    /// <c>ancestor_chain.output.parent_item_id | default(0)</c> because
+    /// Jinja's <c>default()</c> filter triggers on Undefined values, not on
+    /// missing attributes of a defined dict.
+    /// </para>
     /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     public int? ParentItemId { get; init; }
 
     /// <summary>
