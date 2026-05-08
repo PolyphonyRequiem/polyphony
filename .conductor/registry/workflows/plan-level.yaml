@@ -1730,7 +1730,7 @@ agents:
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
       - "--children-json"
-      - "{{ architect.output.children | tojson if architect.output.children is defined else '[]' }}"
+      - "{{ architect.output.children | tojson if (architect is defined and architect.output.children is defined) else '[]' }}"
     routes:
       - to: child_router
 
