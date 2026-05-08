@@ -116,11 +116,8 @@ public sealed class PrCommandsOpenPlanAdoTests : CommandTestBase
     // ─── Input validation ────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("",     "p", "r")]
-    [InlineData("o",    "",  "r")]
-    [InlineData("o",    "p", "")]
     [InlineData("   ",  "p", "r")]
-    public async Task OpenPlanAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
+    public async Task OpenPlanAdo_WhitespaceIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
     {
         var (cmd, _, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
@@ -130,6 +127,25 @@ public sealed class PrCommandsOpenPlanAdoTests : CommandTestBase
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
         result.Error.ShouldNotBeNullOrEmpty();
+    }
+
+    [Theory]
+    [InlineData("",  "p", "r", "--organization")]
+    [InlineData("o", "",  "r", "--project")]
+    [InlineData("o", "p", "",  "--repository")]
+    public async Task OpenPlanAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository, string missingFlag)
+    {
+        var (cmd, _, _) = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.OpenPlanAdo(organization, project, repository, rootId: 100, itemId: 100,
+                manifestPath: "irrelevant.yaml"));
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr open-plan-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
     }
 
     [Theory]

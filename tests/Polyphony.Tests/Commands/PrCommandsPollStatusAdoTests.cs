@@ -253,11 +253,8 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
     // ─── Argument validation ─────────────────────────────────────────────
 
     [Theory]
-    [InlineData("",       Project, Repo)]
     [InlineData("   ",    Project, Repo)]
-    [InlineData(Org,      "",      Repo)]
-    [InlineData(Org,      Project, "")]
-    public async Task PollStatusAdo_EmptyRequiredArgument_EmitsInvalidArgument(
+    public async Task PollStatusAdo_WhitespaceRequiredArgument_EmitsInvalidArgument(
         string organization, string project, string repository)
     {
         var (cmd, ado) = CreateCommand();
@@ -270,6 +267,29 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
         var result = Parse(output);
         result.State.ShouldBe("error");
         result.ErrorCode.ShouldBe("invalid_argument");
+        ado.PollCallCount.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData("",       Project, Repo,    "--organization")]
+    [InlineData(Org,      "",      Repo,    "--project")]
+    [InlineData(Org,      Project, "",      "--repository-id")]
+    public async Task PollStatusAdo_EmptyRequiredArgument_EmitsInvalidArgument(
+        string organization, string project, string repository, string missingFlag)
+    {
+        var (cmd, ado) = CreateCommand();
+        ado.PollResult = OpenApprovedData(); // would succeed if invoked
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatusAdo(organization, project, repository, PrId));
+
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr poll-status-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
         ado.PollCallCount.ShouldBe(0);
     }
 

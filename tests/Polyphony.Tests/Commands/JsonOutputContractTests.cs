@@ -1504,6 +1504,85 @@ public sealed class JsonOutputContractTests : CommandTestBase
         json.ShouldContain("scope_violation_no_flag");
     }
 
+    // =========================================================================
+    // Move #2 — RequiredInputErrorResult & StateValidateInputsResult contracts
+    // =========================================================================
+
+    [Fact]
+    public void RequiredInputErrorResult_JsonContract_SnakeCase_RoundTrip()
+    {
+        var envelope = new RequiredInputErrorResult
+        {
+            Action = "error",
+            Verb = "branch ensure-plan",
+            Error = "polyphony branch ensure-plan: missing required argument(s): --root-id",
+            MissingArgs = ["--root-id"],
+        };
+        var json = JsonSerializer.Serialize(envelope, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+
+        json.ShouldContain("\"action\"");
+        json.ShouldContain("\"verb\"");
+        json.ShouldContain("\"error\"");
+        json.ShouldContain("\"missing_args\"");
+        AssertNoPascalCase(json, "Action");
+        AssertNoPascalCase(json, "Verb");
+        AssertNoPascalCase(json, "MissingArgs");
+
+        var parsed = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        parsed.ShouldNotBeNull();
+        parsed!.Action.ShouldBe("error");
+        parsed.Verb.ShouldBe("branch ensure-plan");
+        parsed.MissingArgs.ShouldBe(["--root-id"]);
+    }
+
+    [Fact]
+    public void StateValidateInputsResult_JsonContract_SnakeCase_RoundTrip()
+    {
+        var result = new StateValidateInputsResult
+        {
+            Ready = false,
+            Summary = "1 required input(s) missing: apex_item",
+            Action = "error",
+            WorkflowYaml = "/path/to/workflow.yaml",
+            Inputs =
+            [
+                new StateValidateInputsDiagnostic
+                {
+                    Name = "apex_item",
+                    Required = true,
+                    Supplied = false,
+                    Reason = "Required input 'apex_item' was not supplied via --input.",
+                },
+                new StateValidateInputsDiagnostic
+                {
+                    Name = "run_label",
+                    Required = false,
+                    Supplied = false,
+                    Default = "actionable",
+                },
+            ],
+            MissingRequiredInputs = ["apex_item"],
+            UnknownInputs = [],
+        };
+        var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.StateValidateInputsResult);
+
+        json.ShouldContain("\"ready\"");
+        json.ShouldContain("\"workflow_yaml\"");
+        json.ShouldContain("\"missing_required_inputs\"");
+        json.ShouldContain("\"unknown_inputs\"");
+        json.ShouldContain("\"inputs\"");
+        AssertNoPascalCase(json, "Ready");
+        AssertNoPascalCase(json, "WorkflowYaml");
+        AssertNoPascalCase(json, "MissingRequiredInputs");
+
+        var parsed = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.StateValidateInputsResult);
+        parsed.ShouldNotBeNull();
+        parsed!.Ready.ShouldBeFalse();
+        parsed.Action.ShouldBe("error");
+        parsed.MissingRequiredInputs.ShouldBe(["apex_item"]);
+        parsed.Inputs.Count.ShouldBe(2);
+    }
+
     /// <summary>
     /// Asserts that the exact PascalCase property name does not appear as a JSON key.
     /// Uses ordinal (case-sensitive) comparison to avoid false positives where

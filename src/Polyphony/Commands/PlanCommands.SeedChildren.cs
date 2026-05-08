@@ -45,11 +45,16 @@ public sealed partial class PlanCommands
     [Command("seed-children")]
     [VerbResult(typeof(PlanSeedChildrenResult))]
     public async Task<int> SeedChildren(
-        int workItem,
-        string childrenJson,
+        int workItem = RequiredInput.MissingInt,
+        string childrenJson = "",
         string plannedTag = "polyphony:planned",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan seed-children",
+            ("--work-item", workItem == RequiredInput.MissingInt),
+            ("--children-json", string.IsNullOrEmpty(childrenJson))) is { } halt)
+            return halt;
+
         // Parse children (tolerate empty / null payloads — atomic items have no children to seed).
         JsonNode? childrenNode;
         try

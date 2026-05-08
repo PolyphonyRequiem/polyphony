@@ -29,12 +29,16 @@ public sealed partial class BranchCommands
     [Command("ensure-evidence-branch")]
     [VerbResult(typeof(BranchEnsureEvidenceResult))]
     public async Task<int> EnsureEvidenceBranch(
-        int workItemId,
+        int workItemId = RequiredInput.MissingInt,
         int apexId = 0,
         string fromRef = "",
         string remote = "origin",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch ensure-evidence-branch",
+            ("--work-item-id", workItemId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         // ── 1. Validate inputs up front so bad CLI args produce ConfigError. ─
         if (!WorkItemId.TryParse(workItemId, out var item))
         {

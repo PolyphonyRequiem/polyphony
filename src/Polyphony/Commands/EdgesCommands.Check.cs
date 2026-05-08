@@ -45,11 +45,15 @@ public sealed partial class EdgesCommands
     [Command("check")]
     [VerbResult(typeof(EdgesCheckResult))]
     public async Task<int> Check(
-        [Argument] int workItem,
+        [Argument] int workItem = RequiredInput.MissingInt,
         int depth = 0,
         string render = "json",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("edges check",
+            ("work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (workItem <= 0)
         {
             Emit(EmptyResult(workItem, "work_item_id must be positive", "invalid_argument"), render);

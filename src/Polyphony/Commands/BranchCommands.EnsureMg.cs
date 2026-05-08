@@ -23,11 +23,16 @@ public sealed partial class BranchCommands
     [Command("ensure-mg")]
     [VerbResult(typeof(BranchEnsureMergeGroupResult))]
     public async Task<int> EnsureMg(
-        int rootId,
-        string mgPath,
+        int rootId = RequiredInput.MissingInt,
+        string mgPath = "",
         string remote = "origin",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch ensure-mg",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
+            return halt;
+
         // ── 1. Validate inputs up front so bad CLI args produce ConfigError,
         //      not a misleading CacheError later. ──────────────────────────
         if (!RootId.TryParse(rootId, out var root))

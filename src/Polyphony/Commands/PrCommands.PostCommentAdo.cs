@@ -33,13 +33,21 @@ public sealed partial class PrCommands
     [Command("post-comment-ado")]
     [VerbResult(typeof(PrPostCommentAdoResult))]
     public async Task<int> PostCommentAdo(
-        string organization,
-        string project,
-        string repository,
-        int prNumber,
-        string body,
+        string organization = "",
+        string project = "",
+        string repository = "",
+        int prNumber = RequiredInput.MissingInt,
+        string body = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr post-comment-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository", string.IsNullOrEmpty(repository)),
+            ("--pr-number", prNumber == RequiredInput.MissingInt),
+            ("--body", string.IsNullOrEmpty(body))) is { } halt)
+            return halt;
+
         var prUrl = BuildAdoPrUrl(organization, project, repository, prNumber);
         var slug = BuildAdoSlug(organization, project, repository);
         var bodyEcho = body ?? string.Empty;

@@ -22,8 +22,13 @@ public sealed class ValidateCommand(
     /// <param name="config">Path to .conductor/process-config.yaml</param>
     [Command("validate")]
     [VerbResult(typeof(ValidateResult))]
-    public async Task<int> Validate(int workItem, string @event, string config = ".conductor/process-config.yaml", CancellationToken ct = default)
+    public async Task<int> Validate(int workItem = RequiredInput.MissingInt, string @event = "", string config = ".conductor/process-config.yaml", CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("validate",
+            ("--work-item", workItem == RequiredInput.MissingInt),
+            ("--event", string.IsNullOrEmpty(@event))) is { } halt)
+            return halt;
+
         var item = await repository.GetByIdAsync(workItem, ct);
         if (item is null)
         {

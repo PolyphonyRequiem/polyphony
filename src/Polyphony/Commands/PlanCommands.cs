@@ -45,8 +45,12 @@ public sealed partial class PlanCommands(
     /// <param name="maxDepth">Maximum allowed recursion depth.</param>
     [Command("depth-guard")]
     [VerbResult(typeof(PlanDepthGuardResult))]
-    public int DepthGuard(int depth, int maxDepth = 6)
+    public int DepthGuard(int depth = RequiredInput.MissingInt, int maxDepth = 6)
     {
+        if (RequiredInput.HaltIfMissing("plan depth-guard",
+            ("--depth", depth == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var allowed = depth < maxDepth;
         var remaining = allowed ? maxDepth - depth : 0;
         var message = allowed
@@ -74,8 +78,12 @@ public sealed partial class PlanCommands(
     /// <param name="workItem">ADO work item ID whose children to discover.</param>
     [Command("next-child")]
     [VerbResult(typeof(PlanNextChildResult))]
-    public async Task<int> NextChild(int workItem, CancellationToken ct = default)
+    public async Task<int> NextChild(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan next-child",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var hierarchy = await walker.WalkAsync(workItem, maxDepth: 1, ct);
         if (hierarchy is null)
         {
@@ -121,8 +129,12 @@ public sealed partial class PlanCommands(
     /// <c>work-item-types/&lt;slug&gt;.md</c> and optional templates.</param>
     [Command("load-type")]
     [VerbResult(typeof(PlanLoadTypeResult))]
-    public async Task<int> LoadType(int workItem, string configDir = ".conductor", CancellationToken ct = default)
+    public async Task<int> LoadType(int workItem = RequiredInput.MissingInt, string configDir = ".conductor", CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan load-type",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var item = await repository.GetByIdAsync(workItem, ct);
         if (item is null)
         {
@@ -250,11 +262,17 @@ public sealed partial class PlanCommands(
     [Command("review")]
     [VerbResult(typeof(PlanReviewResult))]
     public int Review(
-        string techReviewerJson,
-        string readabilityReviewerJson,
-        int priorCycleCount,
+        string techReviewerJson = "",
+        string readabilityReviewerJson = "",
+        int priorCycleCount = RequiredInput.MissingInt,
         int maxCycles = 5)
     {
+        if (RequiredInput.HaltIfMissing("plan review",
+            ("--tech-reviewer-json", string.IsNullOrEmpty(techReviewerJson)),
+            ("--readability-reviewer-json", string.IsNullOrEmpty(readabilityReviewerJson)),
+            ("--prior-cycle-count", priorCycleCount == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var (techScore, techBlocking) = ParseReviewerJson(techReviewerJson);
         var (readScore, readBlocking) = ParseReviewerJson(readabilityReviewerJson);
 

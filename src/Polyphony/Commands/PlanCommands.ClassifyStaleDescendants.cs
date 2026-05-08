@@ -34,10 +34,14 @@ public sealed partial class PlanCommands
     [Command("classify-stale-descendants")]
     [VerbResult(typeof(PlanClassifyStaleDescendantsResult))]
     public async Task<int> ClassifyStaleDescendants(
-        int rootId,
+        int rootId = RequiredInput.MissingInt,
         string manifestPath = ".polyphony/run.yaml",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan classify-stale-descendants",
+            ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         // ── 1. Validate root id. ──────────────────────────────────────────
         if (!RootId.TryParse(rootId, out var root))
         {

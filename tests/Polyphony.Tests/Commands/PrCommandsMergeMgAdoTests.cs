@@ -89,11 +89,8 @@ public sealed class PrCommandsMergeMgAdoTests : CommandTestBase
     // ─── Input validation ────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("",     "p", "r")]
-    [InlineData("o",    "",  "r")]
-    [InlineData("o",    "p", "")]
     [InlineData("   ",  "p", "r")]
-    public async Task MergeMgAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
+    public async Task MergeMgAdo_WhitespaceIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
@@ -102,6 +99,24 @@ public sealed class PrCommandsMergeMgAdoTests : CommandTestBase
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
         result.Error!.ShouldContain("organization");
+    }
+
+    [Theory]
+    [InlineData("",  "p", "r", "--organization")]
+    [InlineData("o", "",  "r", "--project")]
+    [InlineData("o", "p", "",  "--repository")]
+    public async Task MergeMgAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository, string missingFlag)
+    {
+        var (cmd, _) = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.MergeMgAdo(organization, project, repository, rootId: 100, mgPath: "core"));
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr merge-mg-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
     }
 
     [Theory]
@@ -119,7 +134,6 @@ public sealed class PrCommandsMergeMgAdoTests : CommandTestBase
 
     [Theory]
     [InlineData("BAD")]
-    [InlineData("")]
     [InlineData("UPPER")]
     [InlineData("a__b")]
     public async Task MergeMgAdo_InvalidMgPath_RoutesInvalidArgument(string mgPath)
@@ -128,6 +142,20 @@ public sealed class PrCommandsMergeMgAdoTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergeMgAdo(Org, Project, Repo, rootId: 100, mgPath: mgPath));
         Parse(output).ErrorCode.ShouldBe("invalid_argument");
+    }
+
+    [Fact]
+    public async Task MergeMgAdo_EmptyMgPath_RoutesRequiredInputHalt()
+    {
+        var (cmd, _) = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.MergeMgAdo(Org, Project, Repo, rootId: 100, mgPath: ""));
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Verb.ShouldBe("pr merge-mg-ado");
+        envelope.MissingArgs.ShouldContain("--mg-path");
     }
 
     [Fact]

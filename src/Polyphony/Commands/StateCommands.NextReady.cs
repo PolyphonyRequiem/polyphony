@@ -22,10 +22,14 @@ public sealed partial class StateCommands
     [Command("next-ready")]
     [VerbResult(typeof(StateNextReadyResult))]
     public async Task<int> NextReady(
-        int workItem,
+        int workItem = RequiredInput.MissingInt,
         string planRoot = "docs/projects",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("state next-ready",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var item = await repository.GetByIdAsync(workItem, ct).ConfigureAwait(false);
         if (item is null)
         {

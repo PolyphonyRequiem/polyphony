@@ -67,11 +67,8 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
     // ─── Input validation ────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("",     "p", "r")]
-    [InlineData("o",    "",  "r")]
-    [InlineData("o",    "p", "")]
     [InlineData("   ",  "p", "r")]
-    public async Task CreateFeatureAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
+    public async Task CreateFeatureAdo_WhitespaceIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
     {
         var (cmd, _, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
@@ -80,6 +77,24 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
         result.Error!.ShouldContain("organization");
+    }
+
+    [Theory]
+    [InlineData("",  "p", "r", "--organization")]
+    [InlineData("o", "",  "r", "--project")]
+    [InlineData("o", "p", "",  "--repository")]
+    public async Task CreateFeatureAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository, string missingFlag)
+    {
+        var (cmd, _, _) = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.CreateFeatureAdo(organization, project, repository, rootId: 100));
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr create-feature-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
     }
 
     [Fact]

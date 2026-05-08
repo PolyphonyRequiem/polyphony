@@ -30,10 +30,14 @@ public sealed partial class PrCommands
     [Command("poll-status")]
     [VerbResult(typeof(PrPollStatusResult))]
     public async Task<int> PollStatus(
-        string prUrl,
+        string prUrl = "",
         bool includeMetadata = false,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr poll-status",
+            ("--pr-url", string.IsNullOrEmpty(prUrl))) is { } halt)
+            return halt;
+
         if (!TryParsePrUrl(prUrl, out var slug, out var prNumber))
         {
             EmitPollError(prUrl, $"could not parse pr url '{prUrl}' (expected https://github.com/owner/repo/pull/N)");

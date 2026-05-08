@@ -28,9 +28,13 @@ public sealed class WorktreeCommandsAddTests : CommandTestBase
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.Add(branch: "", path: "C:/wt/foo"));
 
-        exit.ShouldBe(ExitCodes.Success);
-        var result = Parse(output);
-        result.Error!.ShouldContain("branch is required");
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("worktree add");
+        envelope.MissingArgs.ShouldContain("--branch");
         runner.Invocations.ShouldBeEmpty();
     }
 
@@ -42,8 +46,13 @@ public sealed class WorktreeCommandsAddTests : CommandTestBase
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.Add(branch: "feature/x", path: ""));
 
-        exit.ShouldBe(ExitCodes.Success);
-        Parse(output).Error!.ShouldContain("path is required");
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("worktree add");
+        envelope.MissingArgs.ShouldContain("--path");
         runner.Invocations.ShouldBeEmpty();
     }
 

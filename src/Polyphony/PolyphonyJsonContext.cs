@@ -168,6 +168,9 @@ namespace Polyphony;
 [JsonSerializable(typeof(AdoReferenceLinks))]
 [JsonSerializable(typeof(AdoReviewerListResponse))]
 [JsonSerializable(typeof(AdoReviewerRaw))]
+[JsonSerializable(typeof(RequiredInputErrorResult))]
+[JsonSerializable(typeof(StateValidateInputsResult))]
+[JsonSerializable(typeof(StateValidateInputsDiagnostic))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

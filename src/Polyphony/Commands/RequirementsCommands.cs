@@ -31,12 +31,16 @@ public sealed class RequirementsCommands(
     [Command("derive")]
     [VerbResult(typeof(RequirementsDeriveResult))]
     public async Task<int> Derive(
-        int workItem,
-        bool decomposable,
+        int workItem = RequiredInput.MissingInt,
+        bool decomposable = false,
         string facetOrder = "",
         string actionableExecutor = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("requirements derive",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var item = await repository.GetByIdAsync(workItem, ct).ConfigureAwait(false);
         if (item is null)
         {

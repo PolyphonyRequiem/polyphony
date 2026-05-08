@@ -23,12 +23,17 @@ public sealed partial class PrCommands
     [Command("open-mg-pr")]
     [VerbResult(typeof(PrOpenMergeGroupResult))]
     public async Task<int> OpenMgPr(
-        int rootId,
-        string mgPath,
+        int rootId = RequiredInput.MissingInt,
+        string mgPath = "",
         string title = "",
         string body = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr open-mg-pr",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
+            return halt;
+
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
             EmitMgError(rootId, mgPath, $"rootId must be positive (got {rootId})");

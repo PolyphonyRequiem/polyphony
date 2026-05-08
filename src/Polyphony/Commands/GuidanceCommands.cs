@@ -29,10 +29,14 @@ public sealed class GuidanceCommands(IWorkItemRepository repository)
     [Command("extract")]
     [VerbResult(typeof(GuidanceExtractResult))]
     public async Task<int> Extract(
-        int workItem,
+        int workItem = RequiredInput.MissingInt,
         string policy = ".conductor/policy.yaml",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("guidance extract",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var item = await repository.GetByIdAsync(workItem, ct);
         if (item is null)
         {

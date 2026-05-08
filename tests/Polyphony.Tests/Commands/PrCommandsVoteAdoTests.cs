@@ -97,11 +97,8 @@ public sealed class PrCommandsVoteAdoTests : CommandTestBase
     // ─── Argument validation (no ADO call expected) ──────────────────────
 
     [Theory]
-    [InlineData("",       Project, Repo)]
     [InlineData("   ",    Project, Repo)]
-    [InlineData(Org,      "",      Repo)]
-    [InlineData(Org,      Project, "")]
-    public async Task VoteAdo_EmptyRequiredArgument_EmitsInvalidArgument(
+    public async Task VoteAdo_WhitespaceRequiredArgument_EmitsInvalidArgument(
         string organization, string project, string repository)
     {
         var (cmd, ado) = CreateCommand();
@@ -114,6 +111,29 @@ public sealed class PrCommandsVoteAdoTests : CommandTestBase
         var result = Parse(output);
         result.Submitted.ShouldBeFalse();
         result.ErrorCode.ShouldBe("invalid_argument");
+        ado.SetVoteCallCount.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData("",   Project, Repo,    "--organization")]
+    [InlineData(Org,  "",      Repo,    "--project")]
+    [InlineData(Org,  Project, "",      "--repository")]
+    public async Task VoteAdo_EmptyRequiredArgument_EmitsInvalidArgument(
+        string organization, string project, string repository, string missingFlag)
+    {
+        var (cmd, ado) = CreateCommand();
+        ado.SetVoteResult = true; // would succeed if invoked
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.VoteAdo(organization, project, repository, PrId, ReviewerId, "approve"));
+
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr vote-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
         ado.SetVoteCallCount.ShouldBe(0);
     }
 
@@ -136,14 +156,15 @@ public sealed class PrCommandsVoteAdoTests : CommandTestBase
     {
         var (cmd, ado) = CreateCommand();
 
-        var (_, output) = await CaptureConsoleAsync(
+        var (exit, output) = await CaptureConsoleAsync(
             () => cmd.VoteAdo(Org, Project, Repo, PrId, "", "approve"));
-        var result = Parse(output);
 
-        result.Submitted.ShouldBeFalse();
-        result.ErrorCode.ShouldBe("invalid_argument");
-        result.Error.ShouldNotBeNull();
-        result.Error!.ShouldContain("reviewerId");
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Verb.ShouldBe("pr vote-ado");
+        envelope.MissingArgs.ShouldContain("--reviewer-id");
         ado.SetVoteCallCount.ShouldBe(0);
     }
 
@@ -152,7 +173,6 @@ public sealed class PrCommandsVoteAdoTests : CommandTestBase
     [InlineData("approved")]            // wrong tense (the ADO state, not the verb name)
     [InlineData("comment")]             // gh's vocabulary, not ours
     [InlineData("yes")]
-    [InlineData("")]
     public async Task VoteAdo_UnknownVoteName_EmitsInvalidVote(string voteName)
     {
         var (cmd, ado) = CreateCommand();
@@ -164,6 +184,23 @@ public sealed class PrCommandsVoteAdoTests : CommandTestBase
         result.Submitted.ShouldBeFalse();
         result.ErrorCode.ShouldBe("invalid_vote");
         result.VoteValue.ShouldBe(0);
+        ado.SetVoteCallCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task VoteAdo_EmptyVoteName_RoutesRequiredInputHalt()
+    {
+        var (cmd, ado) = CreateCommand();
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.VoteAdo(Org, Project, Repo, PrId, ReviewerId, ""));
+
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Verb.ShouldBe("pr vote-ado");
+        envelope.MissingArgs.ShouldContain("--vote");
         ado.SetVoteCallCount.ShouldBe(0);
     }
 

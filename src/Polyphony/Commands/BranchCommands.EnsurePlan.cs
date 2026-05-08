@@ -27,12 +27,17 @@ public sealed partial class BranchCommands
     [Command("ensure-plan")]
     [VerbResult(typeof(BranchEnsurePlanResult))]
     public async Task<int> EnsurePlan(
-        int rootId,
-        int itemId,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
         int parentItemId = 0,
         string remote = "origin",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch ensure-plan",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         // ── 1. Validate inputs up front so bad CLI args produce ConfigError,
         //      not a misleading CacheError later. ──────────────────────────
         if (!RootId.TryParse(rootId, out var root))

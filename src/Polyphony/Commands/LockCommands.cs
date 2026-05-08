@@ -47,12 +47,16 @@ public sealed class LockCommands(
     [Command("acquire")]
     [VerbResult(typeof(AcquireLockResult))]
     public async Task<int> Acquire(
-        int rootId,
+        int rootId = RequiredInput.MissingInt,
         int ttlHours = 24,
         string by = "",
         string path = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("lock acquire",
+            ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (rootId <= 0)
         {
             Emit(new AcquireLockResult
@@ -135,11 +139,16 @@ public sealed class LockCommands(
     [Command("release")]
     [VerbResult(typeof(ReleaseLockResult))]
     public async Task<int> Release(
-        int rootId,
-        string lockToken,
+        int rootId = RequiredInput.MissingInt,
+        string lockToken = "",
         string path = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("lock release",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--lock-token", string.IsNullOrEmpty(lockToken))) is { } halt)
+            return halt;
+
         if (rootId <= 0)
         {
             Emit(new ReleaseLockResult { Path = path, Released = false, Error = "rootId must be positive" });
@@ -199,10 +208,14 @@ public sealed class LockCommands(
     [Command("force-release")]
     [VerbResult(typeof(ForceReleaseLockResult))]
     public async Task<int> ForceRelease(
-        int rootId,
+        int rootId = RequiredInput.MissingInt,
         string path = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("lock force-release",
+            ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (rootId <= 0)
         {
             Emit(new ForceReleaseLockResult
@@ -241,10 +254,14 @@ public sealed class LockCommands(
     [Command("status")]
     [VerbResult(typeof(LockStatusResult))]
     public async Task<int> Status(
-        int rootId,
+        int rootId = RequiredInput.MissingInt,
         string path = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("lock status",
+            ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (rootId <= 0)
         {
             Emit(new LockStatusResult

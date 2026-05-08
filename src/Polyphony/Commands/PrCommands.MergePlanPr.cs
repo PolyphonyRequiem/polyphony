@@ -66,9 +66,9 @@ public sealed partial class PrCommands
     [Command("merge-plan-pr")]
     [VerbResult(typeof(PrMergePlanPrResult))]
     public async Task<int> MergePlanPr(
-        int rootId,
-        int itemId,
-        int prNumber,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
+        int prNumber = RequiredInput.MissingInt,
         int parentItemId = 0,
         string ancestorIds = "",
         string manifestPath = RunManifestStore.DefaultRelativePath,
@@ -77,6 +77,12 @@ public sealed partial class PrCommands
         string by = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr merge-plan-pr",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt),
+            ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         // ── 1. Validate inputs + derive head/base. ──────────────────────────
         if (!Branching.RootId.TryParse(rootId, out var root))
             return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",

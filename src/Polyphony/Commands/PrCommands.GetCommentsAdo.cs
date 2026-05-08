@@ -48,14 +48,21 @@ public sealed partial class PrCommands
     [Command("get-comments-ado")]
     [VerbResult(typeof(PrGetCommentsAdoResult))]
     public async Task<int> GetCommentsAdo(
-        string organization,
-        string project,
-        string repository,
-        int prNumber,
+        string organization = "",
+        string project = "",
+        string repository = "",
+        int prNumber = RequiredInput.MissingInt,
         bool includeResolved = false,
         string since = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr get-comments-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository", string.IsNullOrEmpty(repository)),
+            ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var prUrl = BuildAdoPrUrl(organization, project, repository, prNumber);
         var slug = BuildAdoSlug(organization, project, repository);
 

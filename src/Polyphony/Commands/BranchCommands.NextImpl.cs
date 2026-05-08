@@ -26,11 +26,15 @@ public sealed partial class BranchCommands
     [Command("next-impl")]
     [VerbResult(typeof(BranchNextImplResult))]
     public async Task<int> NextImpl(
-        int workItem,
+        int workItem = RequiredInput.MissingInt,
         string pgName = "",
         int pgNumber = 0,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch next-impl",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var resolvedMergeGroup = string.IsNullOrEmpty(pgName) && pgNumber > 0
             ? $"PG-{pgNumber}"
             : pgName;

@@ -34,10 +34,15 @@ public sealed partial class PlanCommands
     [Command("derive-ancestor-chain")]
     [VerbResult(typeof(PlanDeriveAncestorChainResult))]
     public async Task<int> DeriveAncestorChain(
-        int rootId,
-        int itemId,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan derive-ancestor-chain",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (rootId <= 0)
         {
             EmitChainError(rootId, itemId, $"--root-id must be positive (got {rootId})");

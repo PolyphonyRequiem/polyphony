@@ -105,13 +105,10 @@ public sealed class PrCommandsPostCommentAdoTests : CommandTestBase
     // ─── Argument validation (no ADO call expected) ──────────────────────
 
     [Theory]
-    [InlineData("",       Project, Repo)]
     [InlineData("   ",    Project, Repo)]
-    [InlineData(Org,      "",      Repo)]
     [InlineData(Org,      "   ",   Repo)]
-    [InlineData(Org,      Project, "")]
     [InlineData(Org,      Project, "   ")]
-    public async Task PostCommentAdo_EmptyRequiredArgument_EmitsInvalidArgument(
+    public async Task PostCommentAdo_WhitespaceRequiredArgument_EmitsInvalidArgument(
         string organization, string project, string repository)
     {
         var (cmd, ado) = CreateCommand();
@@ -126,6 +123,29 @@ public sealed class PrCommandsPostCommentAdoTests : CommandTestBase
         result.ErrorCode.ShouldBe("invalid_argument");
         result.Error.ShouldNotBeNull();
         result.Error!.ShouldContain("organization");
+        ado.CreateThreadCallCount.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData("",   Project, Repo,    "--organization")]
+    [InlineData(Org,  "",      Repo,    "--project")]
+    [InlineData(Org,  Project, "",      "--repository")]
+    public async Task PostCommentAdo_EmptyRequiredArgument_EmitsInvalidArgument(
+        string organization, string project, string repository, string missingFlag)
+    {
+        var (cmd, ado) = CreateCommand();
+        ado.CreateThreadResult = new AdoCreateThreadResult(1, 2);
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.PostCommentAdo(organization, project, repository, PrId, Body));
+
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr post-comment-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
         ado.CreateThreadCallCount.ShouldBe(0);
     }
 
@@ -151,10 +171,9 @@ public sealed class PrCommandsPostCommentAdoTests : CommandTestBase
     }
 
     [Theory]
-    [InlineData("")]
     [InlineData("   ")]
     [InlineData("\t\n")]
-    public async Task PostCommentAdo_EmptyBody_EmitsInvalidArgument(string body)
+    public async Task PostCommentAdo_WhitespaceBody_EmitsInvalidArgument(string body)
     {
         var (cmd, ado) = CreateCommand();
 
@@ -171,32 +190,56 @@ public sealed class PrCommandsPostCommentAdoTests : CommandTestBase
     }
 
     [Fact]
+    public async Task PostCommentAdo_EmptyBody_RoutesRequiredInputHalt()
+    {
+        var (cmd, ado) = CreateCommand();
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.PostCommentAdo(Org, Project, Repo, PrId, ""));
+
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Verb.ShouldBe("pr post-comment-ado");
+        envelope.MissingArgs.ShouldContain("--body");
+        ado.CreateThreadCallCount.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task PostCommentAdo_InvalidArgument_StillEmitsRepoSlugAndPrUrlWhenPossible()
     {
-        // body is empty, but the other args are valid — slug/url should still
-        // be populated for traceability.
+        // Move #2: body is now a halt-checked required input, so empty body
+        // short-circuits before slug/url are computed; verify the halt envelope
+        // shape instead.
         var (cmd, _) = CreateCommand();
 
-        var (_, output) = await CaptureConsoleAsync(
+        var (exit, output) = await CaptureConsoleAsync(
             () => cmd.PostCommentAdo(Org, Project, Repo, PrId, ""));
-        var result = Parse(output);
 
-        result.RepoSlug.ShouldBe("myorg/myproj/myrepo");
-        result.PrUrl.ShouldBe("https://dev.azure.com/myorg/myproj/_git/myrepo/pullrequest/42");
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Verb.ShouldBe("pr post-comment-ado");
+        envelope.MissingArgs.ShouldContain("--body");
     }
 
     [Fact]
     public async Task PostCommentAdo_InvalidArgument_RepoSlugBlankWhenSlugComponentMissing()
     {
+        // Move #2: empty project halts before slug/url are computed.
         var (cmd, _) = CreateCommand();
 
-        var (_, output) = await CaptureConsoleAsync(
+        var (exit, output) = await CaptureConsoleAsync(
             () => cmd.PostCommentAdo(Org, "", Repo, PrId, Body));
-        var result = Parse(output);
 
-        result.Posted.ShouldBeFalse();
-        result.RepoSlug.ShouldBe(string.Empty);
-        result.PrUrl.ShouldBe(string.Empty);
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Verb.ShouldBe("pr post-comment-ado");
+        envelope.MissingArgs.ShouldContain("--project");
     }
 
     // ─── ADO error envelopes ─────────────────────────────────────────────
@@ -440,11 +483,7 @@ public sealed class PrCommandsPostCommentAdoTests : CommandTestBase
             (new FakeAdoClient { CreateThreadResult = new AdoCreateThreadResult(1, 2) },
                 () => cmd.PostCommentAdo(Org, Project, Repo, PrId, Body)),
             (new FakeAdoClient(),
-                () => cmd.PostCommentAdo("", Project, Repo, PrId, Body)),
-            (new FakeAdoClient(),
                 () => cmd.PostCommentAdo(Org, Project, Repo, 0, Body)),
-            (new FakeAdoClient(),
-                () => cmd.PostCommentAdo(Org, Project, Repo, PrId, "")),
             (new FakeAdoClient { CreateThreadResult = null },
                 () => cmd.PostCommentAdo(Org, Project, Repo, PrId, Body)),
             (new FakeAdoClient { ThrowOnCreateThread = new TimeoutException() },

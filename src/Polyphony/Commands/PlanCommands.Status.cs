@@ -58,13 +58,17 @@ public sealed partial class PlanCommands
     [Command("status")]
     [VerbResult(typeof(PlanStatusResult))]
     public async Task<int> Status(
-        int root,
+        int root = RequiredInput.MissingInt,
         string manifest = "",
         string repo = "",
         bool includeNa = false,
         bool json = false,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan status",
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         if (root <= 0)
         {
             EmitStatus(ErrorResult(root, "invalid_argument", $"--root must be positive (got {root})"), json, includeNa);

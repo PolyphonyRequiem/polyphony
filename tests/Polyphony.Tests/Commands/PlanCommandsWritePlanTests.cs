@@ -66,10 +66,13 @@ public sealed class PlanCommandsWritePlanTests : CommandTestBase, IDisposable
         var cmd = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(() =>
             cmd.WritePlan(123, "", _tempDir));
-        exit.ShouldBe(ExitCodes.Success);
-        var result = Parse(output);
-        result.Error.ShouldNotBeNull();
-        result.Error.ShouldContain("--content-json must be provided");
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("plan write-plan");
+        envelope.MissingArgs.ShouldContain("--content-json");
     }
 
     [Fact]

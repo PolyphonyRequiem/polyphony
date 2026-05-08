@@ -61,18 +61,26 @@ public sealed partial class PrCommands
     [Command("merge-plan-ado")]
     [VerbResult(typeof(PrMergePlanAdoResult))]
     public async Task<int> MergePlanAdo(
-        string organization,
-        string project,
-        string repository,
-        int rootId,
-        int itemId,
-        int prNumber,
+        string organization = "",
+        string project = "",
+        string repository = "",
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
+        int prNumber = RequiredInput.MissingInt,
         int parentItemId = 0,
         string manifestPath = RunManifestStore.DefaultRelativePath,
         int lockTtlHours = 24,
         string by = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr merge-plan-ado",
+            ("--organization", string.IsNullOrEmpty(organization)),
+            ("--project", string.IsNullOrEmpty(project)),
+            ("--repository", string.IsNullOrEmpty(repository)),
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt),
+            ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
+            return halt;
         var slug = BuildAdoSlug(organization, project, repository);
         var prUrl = BuildAdoPrUrl(organization, project, repository, prNumber);
 

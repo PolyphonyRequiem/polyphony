@@ -159,15 +159,21 @@ public sealed class PrCommandsMergePlanAdoTests : CommandTestBase, IDisposable
     // ─── Input validation ───────────────────────────────────────────────
 
     [Theory]
-    [InlineData("",   "p", "r")]
-    [InlineData("o",  "",  "r")]
-    [InlineData("o",  "p", "")]
-    public async Task EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
+    [InlineData("",   "p", "r", "--organization")]
+    [InlineData("o",  "",  "r", "--project")]
+    [InlineData("o",  "p", "",  "--repository")]
+    public async Task EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository, string missingFlag)
     {
         var (cmd, _, _) = CreateCommand();
-        var (_, output) = await CaptureConsoleAsync(
+        var (exit, output) = await CaptureConsoleAsync(
             () => cmd.MergePlanAdo(organization, project, repository, rootId: 100, itemId: 100, prNumber: 42));
-        Parse(output).ErrorCode.ShouldBe("invalid_argument");
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr merge-plan-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
     }
 
     [Fact]

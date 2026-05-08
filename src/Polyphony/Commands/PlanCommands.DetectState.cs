@@ -48,12 +48,17 @@ public sealed partial class PlanCommands
     [Command("detect-state")]
     [VerbResult(typeof(PlanDetectStateResult))]
     public async Task<int> DetectState(
-        int rootId,
-        int itemId,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
         string manifestPath = ".polyphony/run.yaml",
         string plannedTag = PlannedTagDefault,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("plan detect-state",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         // ── 1. Validate. ──────────────────────────────────────────────────
         if (!RootId.TryParse(rootId, out var root))
         {

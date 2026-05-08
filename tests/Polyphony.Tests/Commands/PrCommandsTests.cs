@@ -52,10 +52,13 @@ public sealed class PrCommandsTests : CommandTestBase
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.CreateFeaturePr(workItem: 100, featureBranch: "", targetBranch: "main"));
-        exit.ShouldBe(ExitCodes.ConfigError);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrCreateFeatureResult)!;
-        result.Error.ShouldNotBeNullOrEmpty();
-        result.Created.ShouldBeFalse();
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr create-feature-pr");
+        envelope.MissingArgs.ShouldContain("--feature-branch");
     }
 
     [Fact]

@@ -19,8 +19,12 @@ public sealed class HierarchyCommand(HierarchyWalker walker)
     /// <param name="config">Path to .conductor/process-config.yaml</param>
     [Command("hierarchy")]
     [VerbResult(typeof(HierarchyResult))]
-    public async Task<int> Hierarchy(int workItem, int depth = 3, string config = ".conductor/process-config.yaml", CancellationToken ct = default)
+    public async Task<int> Hierarchy(int workItem = RequiredInput.MissingInt, int depth = 3, string config = ".conductor/process-config.yaml", CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("hierarchy",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var result = await walker.WalkAsync(workItem, depth, ct);
 
         if (result is null)

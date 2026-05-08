@@ -47,13 +47,19 @@ public sealed partial class PrCommands
     [Command("validate-plan-diff")]
     [VerbResult(typeof(PrValidatePlanDiffResult))]
     public async Task<int> ValidatePlanDiff(
-        int rootId,
-        int itemId,
-        int prNumber,
+        int rootId = RequiredInput.MissingInt,
+        int itemId = RequiredInput.MissingInt,
+        int prNumber = RequiredInput.MissingInt,
         int parentItemId = 0,
         string ancestorIds = "",
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("pr validate-plan-diff",
+            ("--root-id", rootId == RequiredInput.MissingInt),
+            ("--item-id", itemId == RequiredInput.MissingInt),
+            ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         // ── 1. Validate inputs. ─────────────────────────────────────────
         if (rootId <= 0)
             return EmitValidateError(rootId, itemId, parentItemId, prNumber,

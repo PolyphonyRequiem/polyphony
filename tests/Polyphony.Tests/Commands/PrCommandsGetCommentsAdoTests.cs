@@ -311,13 +311,10 @@ public sealed class PrCommandsGetCommentsAdoTests : CommandTestBase
     // ─── Argument validation ─────────────────────────────────────────────
 
     [Theory]
-    [InlineData("",       Project, Repo)]
     [InlineData("   ",    Project, Repo)]
-    [InlineData(Org,      "",      Repo)]
     [InlineData(Org,      "   ",   Repo)]
-    [InlineData(Org,      Project, "")]
     [InlineData(Org,      Project, "   ")]
-    public async Task GetCommentsAdo_EmptyRequiredArgument_EmitsInvalidArgument(
+    public async Task GetCommentsAdo_WhitespaceRequiredArgument_EmitsInvalidArgument(
         string organization, string project, string repository)
     {
         var (cmd, ado) = CreateCommand();
@@ -331,6 +328,28 @@ public sealed class PrCommandsGetCommentsAdoTests : CommandTestBase
         result.Error.ShouldNotBeNull();
         result.Error!.ShouldContain("organization");
         result.Count.ShouldBe(0);
+        ado.ListThreadsCallCount.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData("",       Project, Repo,    "--organization")]
+    [InlineData(Org,      "",      Repo,    "--project")]
+    [InlineData(Org,      Project, "",      "--repository")]
+    public async Task GetCommentsAdo_EmptyRequiredArgument_EmitsInvalidArgument(
+        string organization, string project, string repository, string missingFlag)
+    {
+        var (cmd, ado) = CreateCommand();
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.GetCommentsAdo(organization, project, repository, PrId));
+
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr get-comments-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
         ado.ListThreadsCallCount.ShouldBe(0);
     }
 
@@ -357,14 +376,19 @@ public sealed class PrCommandsGetCommentsAdoTests : CommandTestBase
     [Fact]
     public async Task GetCommentsAdo_InvalidArgument_RepoSlugBlankWhenSlugComponentMissing()
     {
+        // With the Move #2 halt contract, an empty required arg short-circuits
+        // before slug/url are computed; verify the halt envelope shape.
         var (cmd, _) = CreateCommand();
 
-        var (_, output) = await CaptureConsoleAsync(
+        var (exit, output) = await CaptureConsoleAsync(
             () => cmd.GetCommentsAdo(Org, "", Repo, PrId));
-        var result = Parse(output);
 
-        result.RepoSlug.ShouldBe(string.Empty);
-        result.PrUrl.ShouldBe(string.Empty);
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Verb.ShouldBe("pr get-comments-ado");
+        envelope.MissingArgs.ShouldContain("--project");
     }
 
     // ─── ADO error envelopes ─────────────────────────────────────────────
@@ -559,14 +583,15 @@ public sealed class PrCommandsGetCommentsAdoTests : CommandTestBase
     [Fact]
     public async Task GetCommentsAdo_AlwaysReturnsExitCodeSuccess_AllPaths()
     {
+        // Move #2: paths that pass an empty required arg now halt with
+        // RoutingFailure before reaching the verb body, so they're excluded
+        // here — see GetCommentsAdo_EmptyRequiredArgument_EmitsInvalidArgument.
         var (cmd, _) = CreateCommand();
 
         var paths = new (FakeAdoClient Ado, Func<Task<int>> Invoke)[]
         {
             (new FakeAdoClient { Threads = new List<AdoPullRequestThread>() },
                 () => cmd.GetCommentsAdo(Org, Project, Repo, PrId)),
-            (new FakeAdoClient(),
-                () => cmd.GetCommentsAdo("", Project, Repo, PrId)),
             (new FakeAdoClient(),
                 () => cmd.GetCommentsAdo(Org, Project, Repo, 0)),
             (new FakeAdoClient(),

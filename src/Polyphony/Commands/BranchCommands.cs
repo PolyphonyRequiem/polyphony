@@ -38,8 +38,12 @@ public sealed partial class BranchCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("check-deps")]
     [VerbResult(typeof(BranchCheckDepsResult))]
-    public async Task<int> CheckDeps(int workItem, CancellationToken ct = default)
+    public async Task<int> CheckDeps(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch check-deps",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         BranchCheckDepsResult result;
         try
         {
@@ -243,12 +247,16 @@ public sealed partial class BranchCommands(
     [Command("close-scope")]
     [VerbResult(typeof(BranchCloseScopeResult))]
     public async Task<int> CloseScope(
-        int workItem,
+        int workItem = RequiredInput.MissingInt,
         string pgName = "",
         int pgNumber = 0,
         int prNumber = 0,
         CancellationToken ct = default)
     {
+        if (RequiredInput.HaltIfMissing("branch close-scope",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
+
         var resolvedMergeGroup = string.IsNullOrEmpty(pgName) && pgNumber > 0
             ? $"PG-{pgNumber}"
             : pgName;

@@ -67,11 +67,8 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
     // ─── Input validation ────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("",     "p", "r")]
-    [InlineData("o",    "",  "r")]
-    [InlineData("o",    "p", "")]
     [InlineData("   ",  "p", "r")]
-    public async Task OpenMgAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
+    public async Task OpenMgAdo_WhitespaceIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
     {
         var (cmd, _, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
@@ -80,6 +77,24 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
         result.Error!.ShouldContain("organization");
+    }
+
+    [Theory]
+    [InlineData("",  "p", "r", "--organization")]
+    [InlineData("o", "",  "r", "--project")]
+    [InlineData("o", "p", "",  "--repository")]
+    public async Task OpenMgAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository, string missingFlag)
+    {
+        var (cmd, _, _) = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.OpenMgAdo(organization, project, repository, rootId: 100, mgPath: "core"));
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr open-mg-ado");
+        envelope.MissingArgs.ShouldContain(missingFlag);
     }
 
     [Theory]
@@ -98,7 +113,6 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
 
     [Theory]
     [InlineData("BAD")]
-    [InlineData("")]
     [InlineData("UPPER_CASE")]
     [InlineData("a__b")]
     [InlineData("1bad-start")]
@@ -110,6 +124,20 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
         result.Error!.ShouldContain("merge-group path");
+    }
+
+    [Fact]
+    public async Task OpenMgAdo_EmptyMgPath_RoutesRequiredInputHalt()
+    {
+        var (cmd, _, _) = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: ""));
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Verb.ShouldBe("pr open-mg-ado");
+        envelope.MissingArgs.ShouldContain("--mg-path");
     }
 
     [Fact]
