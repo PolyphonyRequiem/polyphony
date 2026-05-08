@@ -89,7 +89,7 @@ public sealed partial class PlanCommands
         catch (ExternalToolTimeoutException ex)
         {
             EmitError(prUrl, parentItemId,
-                $"gh pr view timed out after {ex.Attempts} attempt(s)",
+                ex.FormatErrorMessage("gh pr view"),
                 "gh_timeout", slug, prNumber);
             return ExitCodes.Success;
         }
@@ -163,7 +163,7 @@ public sealed partial class PlanCommands
         catch (ExternalToolTimeoutException ex)
         {
             EmitError(prUrl, parentItemId,
-                $"gh pr diff timed out after {ex.Attempts} attempt(s)",
+                ex.FormatErrorMessage("gh pr diff"),
                 "gh_timeout", slug, prNumber);
             return ExitCodes.Success;
         }

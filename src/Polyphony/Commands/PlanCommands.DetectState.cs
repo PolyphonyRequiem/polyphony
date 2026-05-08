@@ -113,7 +113,7 @@ public sealed partial class PlanCommands
         catch (ExternalToolTimeoutException ex)
         {
             EmitDetectStateError(rootId, itemId, planBranch,
-                $"gh pr list timed out after {ex.Attempts} attempt(s)");
+                ex.FormatErrorMessage("gh pr list"));
             return ExitCodes.Success;
         }
         catch (ExternalToolException ex)
@@ -148,7 +148,7 @@ public sealed partial class PlanCommands
         catch (ExternalToolTimeoutException ex)
         {
             EmitDetectStateError(rootId, itemId, planBranch,
-                $"gh pr view timed out after {ex.Attempts} attempt(s)");
+                ex.FormatErrorMessage("gh pr view"));
             return ExitCodes.Success;
         }
         catch (ExternalToolException ex)

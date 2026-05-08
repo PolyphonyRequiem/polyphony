@@ -81,7 +81,7 @@ public sealed partial class PrCommands
         catch (OperationCanceledException) { throw; }
         catch (ExternalToolTimeoutException ex)
         {
-            EmitPollError(prUrl, $"gh pr view timed out after {ex.Attempts} attempt(s)", slug, prNumber);
+            EmitPollError(prUrl, ex.FormatErrorMessage("gh pr view"), slug, prNumber);
             return ExitCodes.Success;
         }
         catch (Exception ex)

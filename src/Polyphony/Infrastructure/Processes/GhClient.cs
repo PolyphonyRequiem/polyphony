@@ -77,7 +77,7 @@ public sealed class GhClient : IGhClient
         {
             // Auth probe is best-effort: surface "not authenticated" with the timeout
             // detail so preflight can route to remediation rather than crashing.
-            return new GhAuthStatus(false, $"gh auth status timed out after {ex.Attempts} attempt(s)");
+            return new GhAuthStatus(false, ex.FormatErrorMessage("gh auth status"));
         }
     }
 
@@ -372,7 +372,7 @@ public sealed class GhClient : IGhClient
                 GhEvidenceFloorOutcome.GhFailed,
                 CommitCount: 0,
                 Body: string.Empty,
-                Detail: $"gh pr view timed out after {ex.Attempts} attempt(s)");
+                Detail: ex.FormatErrorMessage("gh pr view"));
         }
 
         if (result.Succeeded)

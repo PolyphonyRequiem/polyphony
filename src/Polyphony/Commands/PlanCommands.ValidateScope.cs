@@ -86,7 +86,7 @@ public sealed partial class PlanCommands
         catch (ExternalToolTimeoutException ex)
         {
             EmitScopeError(prNumber, "gh_timeout",
-                $"gh pr view timed out after {ex.Attempts} attempt(s).");
+                ex.FormatErrorMessage("gh pr view"));
             return ExitCodes.Success;
         }
         catch (ExternalToolException ex)
@@ -119,7 +119,7 @@ public sealed partial class PlanCommands
         catch (ExternalToolTimeoutException ex)
         {
             EmitScopeError(prNumber, "gh_timeout",
-                $"gh pr view --json files timed out after {ex.Attempts} attempt(s).");
+                ex.FormatErrorMessage("gh pr view --json files"));
             return ExitCodes.Success;
         }
         catch (ExternalToolException ex)

@@ -84,6 +84,45 @@ public sealed class ExternalToolTimeoutException : Exception
     /// </summary>
     internal const int StderrTailLimitChars = 4096;
 
+    /// <summary>
+    /// Format a user-facing error message for a routing envelope
+    /// <c>error_message</c> field, using a caller-supplied short tool
+    /// description (e.g. <c>"gh pr view"</c>) instead of the full
+    /// argument list. Includes attempt count, per-attempt timeout, the
+    /// last attempt's wall-clock elapsed, and the redacted, tail-truncated
+    /// last-attempt stderr (or a hint to set <c>GH_DEBUG=api</c> when no
+    /// stderr was captured).
+    ///
+    /// Verbs that catch this exception should prefer this method over
+    /// constructing their own ad-hoc terse string — the goal is for the
+    /// operator gate prompt to carry actionable diagnostic context, not
+    /// just "timed out after N attempts".
+    /// </summary>
+    public string FormatErrorMessage(string toolDescription)
+    {
+        var sb = new StringBuilder();
+        sb.Append(toolDescription)
+          .Append(" timed out after ").Append(Attempts)
+          .Append(" attempt(s) of ").Append(TimeoutPerAttempt.TotalSeconds.ToString("0.#")).Append("s each");
+        if (LastElapsed > TimeSpan.Zero)
+        {
+            sb.Append(" (last attempt ").Append(LastElapsed.TotalSeconds.ToString("0.#")).Append("s)");
+        }
+        sb.Append('.');
+
+        if (string.IsNullOrWhiteSpace(LastBufferedStderr))
+        {
+            sb.Append(" No stderr was captured before kill — set GH_DEBUG=api on the parent shell to surface gh's HTTP trace next run.");
+        }
+        else
+        {
+            sb.AppendLine();
+            sb.AppendLine("Last attempt stderr (tail):");
+            sb.Append(TakeTail(RedactTokens(LastBufferedStderr), StderrTailLimitChars));
+        }
+        return sb.ToString();
+    }
+
     private static string BuildMessage(
         string exe,
         IReadOnlyList<string> args,
