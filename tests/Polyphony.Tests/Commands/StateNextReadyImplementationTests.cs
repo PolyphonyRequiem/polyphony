@@ -292,19 +292,20 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
             .ShouldContain("gh pr list", Case.Sensitive);
     }
 
-    // ─── MG roll-up case (PR #5 will tighten) ──────────────────────────
+    // ─── MG roll-up case (PR #5) ───────────────────────────────────────
 
     [Fact]
-    public async Task NextReady_MgItemSelfPrMerged_ChildrenUnmerged_StillSatisfied_DocumentsPr5Deferral()
+    public async Task NextReady_MgItemSelfPrMerged_ChildrenUnmerged_DemotedByChildren()
     {
-        // PR #4 observes the per-item impl PR ONLY. For an MG-style item
-        // (apex with implementable children) whose own impl PR
-        // (impl/3043-3043) is merged, this composer reports Satisfied
-        // even when child impl PRs are not yet merged. PR #5's
-        // cross-item rollup will tighten this to gate on the worst
-        // child's disposition (closed-loop §3.1 row 5). Until then,
-        // lock in the per-item-only behaviour so the rollup PR has a
-        // clear regression to flip.
+        // PR #5 cross-item rollup: an MG-style item (apex with
+        // implementable children) whose own impl PR (impl/3043-3043)
+        // is merged is NOT Satisfied for implementation_merged when
+        // any child impl PR is unmerged or absent. The composer takes
+        // the worst-of (parent self, every implementable child) →
+        // children with no impl PR drop the joint disposition to
+        // Needed (closed-loop §3.1 row 5). The reason string surfaces
+        // the offending child's id so callers can drill down without
+        // re-deriving the rollup themselves.
         await SeedApexWithChildrenAsync(childCount: 3);
         var runner = new FakeProcessRunner();
         StubImplPrList(runner, prNumber: 412);
@@ -316,15 +317,133 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
-        // PR #4: per-item observation says Satisfied. PR #5 will introduce
-        // a cross-item gate that demotes this when any impl child is
-        // unmerged — at that point this assertion should flip to
-        // Fulfilling and the test rename to ...DemotedByChildren.
-        result.Satisfied.ShouldContain(RequirementKind.ImplementationMerged);
+        // Children have no impl PR (catch-all gh pr list returns []),
+        // so each child's reduced impl_merged is Needed → worst-of
+        // demotes the parent to Needed even though its own impl PR
+        // merged.
+        result.Needed.ShouldContain(RequirementKind.ImplementationMerged);
 
         result.ObservationReasons!.ShouldContainKey(RequirementKind.ImplementationMerged);
-        result.ObservationReasons![RequirementKind.ImplementationMerged].ShouldContain("merged");
+        var reason = result.ObservationReasons![RequirementKind.ImplementationMerged];
+        reason.ShouldContain("merged");
+        reason.ShouldContain("child #");
     }
+
+    [Fact]
+    public async Task NextReady_MgWithTwoChildren_AllImplMerged_ImplementationMergedSatisfied()
+    {
+        // Closed-loop §3.1 row 5 happy path: MG-style apex with two
+        // implementable children, all three impl PRs merged → parent's
+        // worst-of stays at Satisfied → observed flows through the
+        // reducer untouched and result.Satisfied carries
+        // implementation_merged. Pair to the existing
+        // ChildrenUnmerged_DemotedByChildren test (which validates the
+        // demotion direction) with N=2.
+        await SeedApexWithChildrenAsync(childCount: 2);
+        var runner = new FakeProcessRunner();
+        StubImplPrList(runner, prNumber: 412);
+        StubImplPrPoll(runner, prNumber: 412, state: "MERGED");
+        StubChildImplPrMerged(runner, childId: ApexId + 100, prNumber: 510);
+        StubChildImplPrMerged(runner, childId: ApexId + 101, prNumber: 511);
+        BindBaselineAfterImpl(runner);
+
+        var cmd = CreateCommand(runner);
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        exit.ShouldBe(ExitCodes.Success);
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
+        result.Satisfied.ShouldContain(RequirementKind.ImplementationMerged);
+        result.Needed.ShouldNotContain(RequirementKind.ImplementationMerged);
+        result.Fulfilling.ShouldNotContain(RequirementKind.ImplementationMerged);
+
+        var reason = result.ObservationReasons![RequirementKind.ImplementationMerged];
+        reason.ShouldContain("merged");
+        // No child # marker because no child weakened the disposition —
+        // the rolled-up reason is the parent's own self reason verbatim.
+        reason.ShouldNotContain("child #");
+    }
+
+    [Fact]
+    public async Task NextReady_MgWithTwoChildren_OneImplOpen_ImplementationMergedNotSatisfied_CitesOpenChild()
+    {
+        // PR #5 mixed-children path with N=2 (the existing
+        // DemotedByChildren test only exercised "all unmerged"). Parent
+        // self merged + one child merged + one child open: worst-of
+        // produces Fulfilling (the Order rank for OPEN in
+        // MapImplementationMerged). The exact downgraded disposition
+        // is implementation detail — what callers depend on is "not
+        // Satisfied" + a structured pointer to the offending child.
+        await SeedApexWithChildrenAsync(childCount: 2);
+        var (mergedChildId, openChildId) = (ApexId + 100, ApexId + 101);
+        var runner = new FakeProcessRunner();
+        StubImplPrList(runner, prNumber: 412);
+        StubImplPrPoll(runner, prNumber: 412, state: "MERGED");
+        StubChildImplPrMerged(runner, childId: mergedChildId, prNumber: 510);
+        StubChildImplPrOpen(runner, childId: openChildId, prNumber: 511);
+        BindBaselineAfterImpl(runner);
+
+        var cmd = CreateCommand(runner);
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        exit.ShouldBe(ExitCodes.Success);
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
+        result.Satisfied.ShouldNotContain(RequirementKind.ImplementationMerged);
+
+        var reason = result.ObservationReasons![RequirementKind.ImplementationMerged];
+        reason.ShouldContain($"child #{openChildId}");
+        reason.ShouldNotContain($"child #{mergedChildId}");
+    }
+
+    /// <summary>Stub a merged impl PR for one specific child id. The
+    /// canonical impl branch for a child whose root is
+    /// <see cref="ApexId"/> is <c>impl/{ApexId}-{childId}</c>; the head
+    /// filter disambiguates from the apex's own
+    /// <c>impl/{ApexId}-{ApexId}</c> matcher and from the catch-all.</summary>
+    private static void StubChildImplPrMerged(FakeProcessRunner runner, int childId, int prNumber)
+    {
+        var branch = $"impl/{ApexId}-{childId}";
+        runner.When(
+            (e, a) => e == "gh"
+                && a.Count >= 4 && a[0] == "pr" && a[1] == "list"
+                && HasHeadFilter(a, branch),
+            new ProcessResult(0,
+                $$"""[{"number":{{prNumber}},"headRefName":"{{branch}}","url":"https://gh/pr/{{prNumber}}"}]""",
+                ""));
+        runner.WhenStartsWith("gh", ["pr", "view", prNumber.ToString()],
+            new ProcessResult(0, ChildImplPrPollJson(prNumber, "MERGED", branch), ""));
+    }
+
+    /// <summary>Stub an open impl PR for one specific child id — sister
+    /// helper to <see cref="StubChildImplPrMerged"/>.</summary>
+    private static void StubChildImplPrOpen(FakeProcessRunner runner, int childId, int prNumber)
+    {
+        var branch = $"impl/{ApexId}-{childId}";
+        runner.When(
+            (e, a) => e == "gh"
+                && a.Count >= 4 && a[0] == "pr" && a[1] == "list"
+                && HasHeadFilter(a, branch),
+            new ProcessResult(0,
+                $$"""[{"number":{{prNumber}},"headRefName":"{{branch}}","url":"https://gh/pr/{{prNumber}}"}]""",
+                ""));
+        runner.WhenStartsWith("gh", ["pr", "view", prNumber.ToString()],
+            new ProcessResult(0, ChildImplPrPollJson(prNumber, "OPEN", branch), ""));
+    }
+
+    private static string ChildImplPrPollJson(int prNumber, string state, string branch) => $$"""
+        {
+          "number": {{prNumber}},
+          "state": "{{state}}",
+          "reviewDecision": "",
+          "mergeable": "MERGEABLE",
+          "headRefName": "{{branch}}",
+          "headRefOid": "abc123",
+          "baseRefName": "mg/{{ApexId}}_root",
+          "mergedAt": null,
+          "mergeCommit": null,
+          "body": "",
+          "reviews": []
+        }
+        """;
 
     /// <summary>Register the plan-kind / twig baseline AFTER an impl-PR
     /// matcher so the impl-specific responder wins the first-match

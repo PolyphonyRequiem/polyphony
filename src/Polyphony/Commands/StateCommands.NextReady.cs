@@ -1,9 +1,12 @@
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Sdlc;
 using Polyphony.Sdlc.Observers;
+using Polyphony.Tagging;
+using Twig.Domain.Aggregates;
 
 namespace Polyphony.Commands;
 
@@ -52,10 +55,31 @@ public sealed partial class StateCommands
         }
 
         var children = await repository.GetChildrenAsync(workItem, ct).ConfigureAwait(false);
-        var resolved = RequirementInputResolver.Resolve(typeConfig, children.Count);
+
+        // PR #5 (apex_facets threading, closes #215): honour the
+        // polyphony:facets=... tag stamped by `plan seed-children` on
+        // an architect-declared indivisible apex (closed-loop §3.4 +
+        // PR #214). Mirrors the helper used by EdgesCommands.Check and
+        // WorklistCommands.Build so the three consumers stay on a
+        // single facet-resolution path. Malformed-tag failure surfaces
+        // through the existing EmitNextReadyError path rather than the
+        // CollectionFailureException pattern the worklist verbs use —
+        // next-ready is a routing-style verb and must always exit 0.
+        IReadOnlyList<string>? overrideFacets;
+        try
+        {
+            overrideFacets = ExtractFacetOverride(item);
+        }
+        catch (InvalidOperationException ex)
+        {
+            EmitNextReadyError(workItem, workItemType, ex.Message);
+            return ExitCodes.ConfigError;
+        }
+
+        var resolved = RequirementInputResolver.Resolve(typeConfig, children.Count, overrideFacets);
 
         var derivation = RequirementSetDeriver.Derive(
-            typeConfig.Facets,
+            resolved.Facets,
             resolved.Decomposable,
             resolved.FacetOrder,
             resolved.ActionableExecutor);
@@ -77,9 +101,25 @@ public sealed partial class StateCommands
             return ExitCodes.Success;
         }
 
-        // Compute observable state and reduce.
-        var (observed, reasons) = await ComputeObservedAsync(workItem, item, children, ct).ConfigureAwait(false);
+        // Compute observable state and reduce. PR #5 adds cross-item
+        // rollup over direct children inside ComputeObservedAsync (and a
+        // post-reduce demotion of item_satisfied below) — both reasons
+        // are surfaced via the same per-kind reasons dictionary.
+        var (observed, reasons, scope) = await ComputeObservedAsync(workItem, item, children, ct).ConfigureAwait(false);
         var reduced = RequirementSetReducer.Apply(derived, observed);
+
+        // PR #5 cross-item rollup for item_satisfied: the within-item
+        // reducer can promote item_satisfied to Satisfied as soon as
+        // every parent facet is Satisfied, but for a parent with
+        // children that is the wrong answer — the item is not done
+        // until every child's item_satisfied is also Satisfied
+        // (closed-loop §3.1 row 6, terminal-rollup edges in
+        // CrossItemEdgeDeriver). Apply the demotion here, after the
+        // reducer, instead of teaching the reducer about cross-item
+        // edges — same shape PR #6's lifecycle-router will need when
+        // it wires terminal kinds. Documented as an extension point
+        // for PR #6 in the PR body.
+        reduced = ApplyChildItemSatisfiedRollup(reduced, scope, reasons);
 
         var status = ClassifyStatus(reduced);
         EmitNextReadyResult(workItem, workItemType, reduced, resolved, status, reasons);
@@ -179,22 +219,35 @@ public sealed partial class StateCommands
         return "blocked";
     }
 
-    private async Task<(ObservedRequirementState Observed, IReadOnlyDictionary<string, string> Reasons)> ComputeObservedAsync(
+    private async Task<(ObservedRequirementState Observed, Dictionary<string, string> Reasons, NextReadyObservationScope Scope)> ComputeObservedAsync(
         int workItem,
         Twig.Domain.Aggregates.WorkItem item,
         IReadOnlyList<Twig.Domain.Aggregates.WorkItem> children,
         CancellationToken ct)
     {
-        _ = children;  // PR #4: legacy children-state heuristic removed; cross-item rollup is PR #5's job.
         var reasons = new Dictionary<string, string>(StringComparer.Ordinal);
 
         // ── Plan-kind observers (PR #2 — wired here). Build the per-item
         // observation scope ONCE so plan_authored / plan_reviewed /
         // plan_promoted share the underlying gh/git I/O. Sibling observers
-        // (PR #3 ChildrenSeeded, PR #4 Implementation) plug in by extending
-        // NextReadyObservationScope and adding their own composer methods —
-        // see the XML doc on NextReadyObservationScope for the contract.
+        // (PR #3 ChildrenSeeded, PR #4 Implementation, …) plug in by
+        // extending NextReadyObservationScope and adding their own composer
+        // methods — see the XML doc on NextReadyObservationScope for the
+        // contract. PR #5 cross-item rollup follows a slightly different
+        // recipe (recursive call into THIS method for each child) — see
+        // BuildChildRollupSnapshotsAsync below.
         var scope = await BuildObservationScopeAsync(workItem, item, ct).ConfigureAwait(false);
+
+        // PR #5: fetch direct-child reduced dispositions for the kinds
+        // that roll up (item_satisfied, implementation_merged). Top-level
+        // call uses the default depth budget; recursion below will pass a
+        // decremented budget. The visited set defends against synthetic
+        // cycles (well-formed parent-child trees can't cycle, but we
+        // treat the data defensively — same posture as ResolveRootIdAsync).
+        await BuildChildRollupSnapshotsAsync(
+            scope, children, ct,
+            depthRemaining: ResolveMaxRollupDepth() - 1,
+            ancestors: new HashSet<int> { workItem }).ConfigureAwait(false);
 
         var (planAuthoredDisp, planAuthoredReason) = ComposePlanAuthored(scope);
         reasons[RequirementKind.PlanAuthored] = planAuthoredReason;
@@ -215,20 +268,20 @@ public sealed partial class StateCommands
         var (childrenSeededDisp, childrenSeededReason) = ComposeChildrenSeeded(scope);
         reasons[RequirementKind.ChildrenSeeded] = childrenSeededReason;
 
-        // ── PR #4 implementation_merged observer: read the impl PR for
-        // the canonical impl/{root}-{item} branch (gh pr list + gh pr
-        // view). Replaces the pre-PR-#4 "item.State + child.State"
-        // heuristic which had no closed-loop after a merge and no PR
-        // introspection at all. Per-item only in PR #4 — cross-item
-        // rollup (the MG-PR roll-up case from closed-loop §3.1 row 5) is
-        // deferred to PR #5's reducer.
+        // ── PR #4 implementation_merged observer (per-item) + PR #5
+        // cross-item rollup over implementable children. ComposeImplementationMerged
+        // takes the worst-of disposition: parent's own impl PR AND every
+        // implementable child's reduced impl_merged — closed-loop §3.1
+        // row 5 (MG roll-up). When the parent has no implementable
+        // children, the rollup is a no-op and the per-item disposition
+        // stands.
         var (implMergedDisp, implMergedReason) = ComposeImplementationMerged(scope);
         reasons[RequirementKind.ImplementationMerged] = implMergedReason;
 
         var observed = BuildObservedFromSignals(
             planAuthoredDisp, planReviewedDisp, planPromotedDisp,
             childrenSeededDisp, implMergedDisp);
-        return (observed, reasons);
+        return (observed, reasons, scope);
     }
 
     /// <summary>
@@ -583,16 +636,90 @@ public sealed partial class StateCommands
     /// spec.
     /// </summary>
     /// <remarks>
-    /// PR #4 scope: per-item impl PR only. For an MG item that has its
-    /// own impl PR merged but unmerged impl-children, this composer will
-    /// still report <see cref="Disposition.Satisfied"/> — the cross-item
-    /// rollup that should tighten that to the worst child disposition is
-    /// PR #5's job (see closed-loop §3.1 row 5). The reason string does
-    /// not currently distinguish "self-PR merged" from "self + all
-    /// children merged" — PR #5 will introduce the rollup signal and can
-    /// extend this composer to surface the joint disposition.
+    /// PR #5 cross-item rollup: when <see cref="NextReadyObservationScope.ChildSnapshots"/>
+    /// includes any child carrying an <c>implementation_merged</c>
+    /// requirement, the parent's disposition becomes the worst-of
+    /// (parent's per-item observation, every implementable child's
+    /// reduced impl disposition). Closed-loop §3.1 row 5: an MG item
+    /// whose own impl PR is merged but with unmerged child impl PRs is
+    /// not Satisfied. Truncation (depth cap) and child-fetch errors
+    /// downgrade the rollup to Needed with a structured reason rather
+    /// than silently passing through the per-item disposition — silent
+    /// fallback would re-introduce the lie this PR set is fixing.
     /// </remarks>
     private static (string Disposition, string Reason) ComposeImplementationMerged(NextReadyObservationScope scope)
+    {
+        var (selfDisposition, selfReason) = ComposeImplementationMergedSelf(scope);
+
+        // No rollup needed when the parent has no children OR when the
+        // children rollup did not run (top-level cap, fetch error). The
+        // truncation/error cases still surface in the reason via the
+        // dedicated branches below so the caller knows the rollup is
+        // incomplete.
+        if (scope.ChildRollupFetchError is not null)
+        {
+            return (Disposition.Needed,
+                $"{selfReason}; cross-item rollup unavailable: {scope.ChildRollupFetchError}");
+        }
+        if (scope.ChildRollupTruncated)
+        {
+            return (Disposition.Needed,
+                $"{selfReason}; cross-item rollup truncated at depth cap");
+        }
+        if (scope.ChildSnapshots is null || scope.ChildSnapshots.Count == 0)
+        {
+            return (selfDisposition, selfReason);
+        }
+
+        // Worst-of across implementable children only. Children without
+        // an implementation_merged requirement (pure-planner types) do
+        // not contribute — same posture as CrossItemEdgeDeriver's
+        // terminal-rollup which only emits edges for kinds that exist
+        // on both endpoints.
+        var worstDisposition = selfDisposition;
+        ChildRollupSnapshot? worstChild = null;
+        var anyImplementableChild = false;
+        foreach (var snap in scope.ChildSnapshots)
+        {
+            if (snap.Error is not null)
+            {
+                // Treat error as worst-case — same posture as fetch
+                // errors above. Surface the child id in the reason so
+                // the caller can drill down.
+                return (Disposition.Needed,
+                    $"{selfReason}; child #{snap.ChildId} rollup error: {snap.Error}");
+            }
+            if (!snap.HasImplementationMergedKind) continue;
+            anyImplementableChild = true;
+            if (Disposition.Order(snap.ImplementationMergedDisposition) < Disposition.Order(worstDisposition))
+            {
+                worstDisposition = snap.ImplementationMergedDisposition;
+                worstChild = snap;
+            }
+        }
+
+        if (!anyImplementableChild || worstChild is null)
+        {
+            // No child weakened the disposition — pass through.
+            return (selfDisposition, selfReason);
+        }
+
+        var rolledReason = worstDisposition switch
+        {
+            Disposition.Needed => $"{selfReason}; child #{worstChild.ChildId} impl needed",
+            Disposition.Ready => $"{selfReason}; child #{worstChild.ChildId} impl ready (no PR)",
+            Disposition.Fulfilling => $"{selfReason}; child #{worstChild.ChildId} impl fulfilling",
+            _ => $"{selfReason}; child #{worstChild.ChildId} impl {worstDisposition}",
+        };
+        return (worstDisposition, rolledReason);
+    }
+
+    /// <summary>
+    /// PR #4's per-item composer extracted out so PR #5's
+    /// <see cref="ComposeImplementationMerged"/> can call it to compute
+    /// the parent's own disposition before rolling up children.
+    /// </summary>
+    private static (string Disposition, string Reason) ComposeImplementationMergedSelf(NextReadyObservationScope scope)
     {
         if (scope.ImplPrFetchError is not null)
         {
@@ -654,5 +781,383 @@ public sealed partial class StateCommands
         if (childrenSeeded != Disposition.Needed) dict[RequirementKind.ChildrenSeeded] = childrenSeeded;
         if (implementationMerged != Disposition.Needed) dict[RequirementKind.ImplementationMerged] = implementationMerged;
         return new ObservedRequirementState { Observed = dict };
+    }
+
+    // ── PR #5 cross-item rollup ────────────────────────────────────────
+
+    /// <summary>Default cap on the recursive depth used by
+    /// <see cref="BuildChildRollupSnapshotsAsync"/>. Overridable via the
+    /// <c>POLYPHONY_NEXTREADY_ROLLUP_DEPTH</c> environment variable.
+    /// Five levels is enough for every tree shape the dogfood corpus has
+    /// produced (apex → MG → leaves is depth 3; the cap leaves headroom
+    /// for nested MGs without exposing the verb to runaway gh calls on
+    /// adversarial fixtures). When the cap is reached at a parent that
+    /// still has children, the parent's
+    /// <see cref="NextReadyObservationScope.ChildRollupTruncated"/> flag
+    /// is set and downstream composers degrade to Needed with a
+    /// "rollup truncated" reason rather than silently passing through
+    /// the per-item disposition.</summary>
+    private const int DefaultMaxRollupDepth = 5;
+
+    private static int ResolveMaxRollupDepth()
+    {
+        var raw = Environment.GetEnvironmentVariable("POLYPHONY_NEXTREADY_ROLLUP_DEPTH");
+        if (int.TryParse(raw, out var v) && v > 0 && v <= 64) return v;
+        return DefaultMaxRollupDepth;
+    }
+
+    /// <summary>
+    /// PR #5 cross-item rollup: for each direct child of the parent
+    /// item, recursively run the same per-item observation pipeline and
+    /// reduce the resulting requirement set. The reduced
+    /// <c>item_satisfied</c> and <c>implementation_merged</c>
+    /// dispositions are captured into a <see cref="ChildRollupSnapshot"/>
+    /// and stashed on the parent's
+    /// <see cref="NextReadyObservationScope.ChildSnapshots"/> for the
+    /// composers / post-reduce demotion to consume.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Three failure modes that must never escape:
+    /// </para>
+    /// <list type="number">
+    ///   <item><description><b>Cycle</b>: a child's id appears in
+    ///     <paramref name="ancestors"/>. Real ADO trees can't cycle
+    ///     (parent_id is single-valued), but seeded fixtures can; we
+    ///     defend by recording the cycle on the snapshot and
+    ///     short-circuiting the recursion.</description></item>
+    ///   <item><description><b>Depth cap</b>: <paramref name="depthRemaining"/>
+    ///     is zero on entry to a non-empty children list. Mark
+    ///     <see cref="NextReadyObservationScope.ChildRollupTruncated"/>
+    ///     on the parent and return without recursing — the
+    ///     impl/item_satisfied composers degrade to Needed with a
+    ///     structured reason.</description></item>
+    ///   <item><description><b>Per-child fault</b>: type missing,
+    ///     derivation invalid, observation throws — captured into the
+    ///     snapshot's <see cref="ChildRollupSnapshot.Error"/> and
+    ///     surfaced as the worst-case disposition for that child.</description></item>
+    /// </list>
+    /// <para>
+    /// Children are observed in parallel via <see cref="Task.WhenAll(IEnumerable{Task})"/>
+    /// — each child holds an independent set of gh / git / twig
+    /// shell-outs, no shared mutable state. The visited set is cloned
+    /// per-branch so concurrent recursion can't race; the trade-off
+    /// (sibling subtrees that re-observe the same descendant) is
+    /// acceptable because real trees don't share descendants across
+    /// siblings (parent_id is single-valued).
+    /// </para>
+    /// </remarks>
+    private async Task BuildChildRollupSnapshotsAsync(
+        NextReadyObservationScope parentScope,
+        IReadOnlyList<Twig.Domain.Aggregates.WorkItem> children,
+        CancellationToken ct,
+        int depthRemaining,
+        IReadOnlySet<int> ancestors)
+    {
+        if (children.Count == 0)
+        {
+            parentScope.ChildSnapshots = Array.Empty<ChildRollupSnapshot>();
+            return;
+        }
+        if (depthRemaining < 0)
+        {
+            parentScope.ChildRollupTruncated = true;
+            return;
+        }
+
+        var ordered = children.OrderBy(c => c.Id).ToArray();
+        var tasks = ordered
+            .Select(child => ComputeChildSnapshotAsync(child, ct, depthRemaining, ancestors))
+            .ToArray();
+
+        ChildRollupSnapshot[] snapshots;
+        try
+        {
+            snapshots = await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // ComputeChildSnapshotAsync swallows internally — any escape
+            // here is a bug, but keep the verb's exit-0 contract intact.
+            parentScope.ChildRollupFetchError = $"child rollup faulted: {ex.Message}";
+            return;
+        }
+        parentScope.ChildSnapshots = snapshots;
+    }
+
+    private async Task<ChildRollupSnapshot> ComputeChildSnapshotAsync(
+        Twig.Domain.Aggregates.WorkItem child,
+        CancellationToken ct,
+        int depthRemaining,
+        IReadOnlySet<int> ancestors)
+    {
+        if (ancestors.Contains(child.Id))
+        {
+            return new ChildRollupSnapshot
+            {
+                ChildId = child.Id,
+                ItemSatisfiedDisposition = Disposition.Needed,
+                ImplementationMergedDisposition = Disposition.Needed,
+                HasImplementationMergedKind = false,
+                Error = $"cycle detected — child #{child.Id} also appears as an ancestor",
+            };
+        }
+
+        try
+        {
+            var typeName = child.Type.Value ?? "";
+            if (string.IsNullOrEmpty(typeName) || !processConfig.Types.TryGetValue(typeName, out var typeConfig))
+            {
+                return new ChildRollupSnapshot
+                {
+                    ChildId = child.Id,
+                    ItemSatisfiedDisposition = Disposition.Needed,
+                    ImplementationMergedDisposition = Disposition.Needed,
+                    HasImplementationMergedKind = false,
+                    Error = $"type '{typeName}' not found in process config",
+                };
+            }
+
+            var grandchildren = await repository.GetChildrenAsync(child.Id, ct).ConfigureAwait(false);
+
+            IReadOnlyList<string>? overrideFacets;
+            try
+            {
+                overrideFacets = ExtractFacetOverride(child);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return new ChildRollupSnapshot
+                {
+                    ChildId = child.Id,
+                    ItemSatisfiedDisposition = Disposition.Needed,
+                    ImplementationMergedDisposition = Disposition.Needed,
+                    HasImplementationMergedKind = false,
+                    Error = ex.Message,
+                };
+            }
+
+            var resolved = RequirementInputResolver.Resolve(typeConfig, grandchildren.Count, overrideFacets);
+            var derivation = RequirementSetDeriver.Derive(
+                resolved.Facets,
+                resolved.Decomposable,
+                resolved.FacetOrder,
+                resolved.ActionableExecutor);
+
+            if (!derivation.IsValid || derivation.Set is null)
+            {
+                return new ChildRollupSnapshot
+                {
+                    ChildId = child.Id,
+                    ItemSatisfiedDisposition = Disposition.Needed,
+                    ImplementationMergedDisposition = Disposition.Needed,
+                    HasImplementationMergedKind = false,
+                    Error = "derivation failed: " + string.Join("; ", derivation.Errors),
+                };
+            }
+
+            var derived = derivation.Set;
+
+            // Pure container: no own-work requirements. Treat as
+            // Satisfied for rollup purposes — there is nothing the
+            // child can fail at. Mirrors the "empty" status path in
+            // NextReady.
+            if (derived.Items.Count == 0)
+            {
+                return new ChildRollupSnapshot
+                {
+                    ChildId = child.Id,
+                    ItemSatisfiedDisposition = Disposition.Satisfied,
+                    ImplementationMergedDisposition = Disposition.Satisfied,
+                    HasImplementationMergedKind = false,
+                };
+            }
+
+            // Recurse: build child observation, including grandchild
+            // rollup if depth permits.
+            var childScope = await BuildObservationScopeAsync(child.Id, child, ct).ConfigureAwait(false);
+            var nextAncestors = new HashSet<int>(ancestors) { child.Id };
+            await BuildChildRollupSnapshotsAsync(
+                childScope, grandchildren, ct,
+                depthRemaining: depthRemaining - 1,
+                ancestors: nextAncestors).ConfigureAwait(false);
+
+            var (planAuthoredDisp, _) = ComposePlanAuthored(childScope);
+            var (planReviewedDisp, _) = ComposePlanReviewed(childScope);
+            var (planPromotedDisp, _) = ComposePlanPromoted(childScope);
+            var (childrenSeededDisp, _) = ComposeChildrenSeeded(childScope);
+            var (implMergedDisp, _) = ComposeImplementationMerged(childScope);
+
+            var childObserved = BuildObservedFromSignals(
+                planAuthoredDisp, planReviewedDisp, planPromotedDisp,
+                childrenSeededDisp, implMergedDisp);
+            var childReduced = RequirementSetReducer.Apply(derived, childObserved);
+
+            // Mirror the post-reduce demotion the parent applies to
+            // itself — without this, a non-leaf child with grandchildren
+            // would report Satisfied for item_satisfied as soon as its
+            // own facets were Satisfied, even if its grandchildren were
+            // still in flight (the same closed-loop bug, one level down).
+            var dummyReasons = new Dictionary<string, string>(StringComparer.Ordinal);
+            childReduced = ApplyChildItemSatisfiedRollup(childReduced, childScope, dummyReasons);
+
+            var itemSatisfiedDisp = FindDisposition(childReduced, RequirementKind.ItemSatisfied)
+                ?? Disposition.Needed;
+            var implReduced = FindDisposition(childReduced, RequirementKind.ImplementationMerged);
+
+            return new ChildRollupSnapshot
+            {
+                ChildId = child.Id,
+                ItemSatisfiedDisposition = itemSatisfiedDisp,
+                ImplementationMergedDisposition = implReduced ?? Disposition.Needed,
+                HasImplementationMergedKind = implReduced is not null,
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ChildRollupSnapshot
+            {
+                ChildId = child.Id,
+                ItemSatisfiedDisposition = Disposition.Needed,
+                ImplementationMergedDisposition = Disposition.Needed,
+                HasImplementationMergedKind = false,
+                Error = $"child observation failed: {ex.Message}",
+            };
+        }
+    }
+
+    private static string? FindDisposition(RequirementSet set, string kind)
+    {
+        foreach (var req in set.Items)
+        {
+            if (string.Equals(req.Kind, kind, StringComparison.Ordinal)) return req.Disposition;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// PR #5 post-reduce demotion of <c>item_satisfied</c> based on
+    /// direct children's reduced <c>item_satisfied</c> dispositions.
+    /// Implements the terminal-rollup edge from
+    /// <see cref="CrossItemEdgeDeriver"/> — the within-item reducer
+    /// only knows about within-item edges, so we fold the cross-item
+    /// signal in here. The reason for the demotion is appended to the
+    /// per-kind reasons dictionary so the envelope shows why the
+    /// disposition is below what the within-item reducer alone would
+    /// have produced.
+    /// </summary>
+    /// <remarks>
+    /// Truncation and child-fetch errors at the parent level demote
+    /// <c>item_satisfied</c> to Needed unconditionally — silent
+    /// fallback would re-introduce the lie this PR set is fixing.
+    /// </remarks>
+    private static RequirementSet ApplyChildItemSatisfiedRollup(
+        RequirementSet reduced,
+        NextReadyObservationScope scope,
+        IDictionary<string, string> reasons)
+    {
+        var idx = -1;
+        for (var i = 0; i < reduced.Items.Count; i++)
+        {
+            if (string.Equals(reduced.Items[i].Kind, RequirementKind.ItemSatisfied, StringComparison.Ordinal))
+            {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0) return reduced;
+
+        var current = reduced.Items[idx].Disposition;
+
+        string? newDisposition = null;
+        string? rollupReason = null;
+
+        if (scope.ChildRollupFetchError is not null)
+        {
+            newDisposition = Disposition.Needed;
+            rollupReason = $"cross-item rollup unavailable: {scope.ChildRollupFetchError}";
+        }
+        else if (scope.ChildRollupTruncated)
+        {
+            newDisposition = Disposition.Needed;
+            rollupReason = "cross-item rollup truncated at depth cap";
+        }
+        else if (scope.ChildSnapshots is { Count: > 0 } snaps)
+        {
+            var worst = current;
+            ChildRollupSnapshot? worstChild = null;
+            foreach (var snap in snaps)
+            {
+                if (snap.Error is not null)
+                {
+                    newDisposition = Disposition.Needed;
+                    rollupReason = $"child #{snap.ChildId} rollup error: {snap.Error}";
+                    worstChild = snap;
+                    break;
+                }
+                if (Disposition.Order(snap.ItemSatisfiedDisposition) < Disposition.Order(worst))
+                {
+                    worst = snap.ItemSatisfiedDisposition;
+                    worstChild = snap;
+                }
+            }
+            if (newDisposition is null && worstChild is not null && !string.Equals(worst, current, StringComparison.Ordinal))
+            {
+                newDisposition = worst;
+                rollupReason = worst switch
+                {
+                    Disposition.Needed => $"blocked on child #{worstChild.ChildId} item_satisfied=needed",
+                    Disposition.Fulfilling => $"awaiting child #{worstChild.ChildId} item_satisfied=fulfilling",
+                    Disposition.Ready => $"awaiting child #{worstChild.ChildId} item_satisfied=ready",
+                    _ => $"rolled up child #{worstChild.ChildId} item_satisfied={worst}",
+                };
+            }
+        }
+
+        if (newDisposition is null) return reduced;
+
+        var items = reduced.Items.ToArray();
+        items[idx] = items[idx] with { Disposition = newDisposition };
+        if (rollupReason is not null)
+        {
+            reasons[RequirementKind.ItemSatisfied] = rollupReason;
+        }
+        return new RequirementSet(items, reduced.Edges);
+    }
+
+    /// <summary>
+    /// Mirror of the <c>ExtractFacetOverride</c> helper used by
+    /// <see cref="EdgesCommands"/> and <see cref="WorklistCommands"/>:
+    /// pulls the per-item facet override from the
+    /// <c>polyphony:facets=...</c> tag stamped by
+    /// <c>plan seed-children</c> for an indivisible apex
+    /// (closed-loop §3.4 + PR #214). Returns <c>null</c> when no
+    /// override tag is present (the resolver then falls back to the
+    /// type-config default). Throws <see cref="InvalidOperationException"/>
+    /// on a malformed override — silent fallback would route the apex
+    /// to the wrong facet set, the exact failure mode this PR set is
+    /// fixing.
+    /// </summary>
+    /// <remarks>
+    /// Duplicating the helper across three verbs is intentional for now
+    /// — pulling it into a shared location couples the routing-style
+    /// (next-ready, exit 0 with envelope) and worklist-style (build,
+    /// throw <c>CollectionFailureException</c>) error postures. When
+    /// (and only when) a fourth consumer needs the same logic, factor
+    /// it into <c>Polyphony.Sdlc</c> with explicit error-routing
+    /// callbacks.
+    /// </remarks>
+    private static IReadOnlyList<string>? ExtractFacetOverride(Twig.Domain.Aggregates.WorkItem item)
+    {
+        item.Fields.TryGetValue("System.Tags", out var raw);
+        var tags = TagSet.Parse(raw);
+        var parsed = FacetTagParser.TryExtract(tags);
+        if (parsed is null) return null;
+        if (!parsed.IsValid)
+        {
+            throw new InvalidOperationException(
+                $"Item {item.Id} has malformed polyphony:facets tag — unknown facet(s): {string.Join(", ", parsed.UnknownFacets)}.");
+        }
+        return parsed.Facets.Count == 0 ? null : parsed.Facets;
     }
 }
