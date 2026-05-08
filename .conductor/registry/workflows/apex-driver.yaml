@@ -137,22 +137,24 @@ workflow:
         sub-workflows verbatim; apex-driver itself is platform-agnostic.
     organization:
       type: string
-      required: false
-      default: ""
+      required: true
       description: >-
-        ADO organization name. Required by feature-pr / plan-level on
-        the ADO leg (platform=ado); ignored on github. Threaded through
-        the wave/item dispatch fan-out so per-item lifecycles see it
-        without each caller having to special-case.
+        ADO organization name. Required by every preflight step that
+        touches ADO (manifest-bootstrap, feature-pr, plan-level).
+        Threaded through the wave/item dispatch fan-out so per-item
+        lifecycles see it without each caller having to special-case.
+        Declared `required: true` (not `default: ""`) so conductor
+        rejects the run at the door rather than letting downstream
+        scripts fail with cryptic "empty value" errors. When a github
+        leg ships, callers on that leg can pass `--input organization=n/a`
+        until we split this into per-platform required-ness.
     project:
       type: string
-      required: false
-      default: ""
+      required: true
       description: ADO project name (see `organization`).
     repository:
       type: string
-      required: false
-      default: ""
+      required: true
       description: ADO repository identifier (GUID or name) (see `organization`).
 
 tools:
