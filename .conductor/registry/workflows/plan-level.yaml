@@ -1101,7 +1101,7 @@ agents:
       - "pr"
       - "poll-status"
       - "--pr-url"
-      - "{{ open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url }}"
+      - "{{ open_plan_pr.output.pr_url if (open_plan_pr is defined and open_plan_pr.output.pr_url is defined) else state_detector.output.pr_url }}"
       - "--include-metadata"
     routes:
       - to: poll_error_gate
@@ -1188,7 +1188,7 @@ agents:
       - "plan"
       - "extract-parent-patch"
       - "--pr-url"
-      - "{{ state_detector.output.parent_change_pending_children[0].pr_url if (state_detector.output.parent_change_pending_children is defined and state_detector.output.parent_change_pending_children|length > 0) else (open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url)) }}"
+      - "{{ state_detector.output.parent_change_pending_children[0].pr_url if (state_detector.output.parent_change_pending_children is defined and state_detector.output.parent_change_pending_children|length > 0) else (open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado is defined and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if (open_plan_pr is defined and open_plan_pr.output.pr_url is defined) else state_detector.output.pr_url)) }}"
       - "--root-id"
       - "{{ root_resolver.output.resolved_root_id }}"
       - "--parent-item-id"
@@ -1258,8 +1258,8 @@ agents:
       The plan PR is open and the polyphony plan_reviewer has posted an
       advisory comment. Human review is required before merging.
 
-      - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url) }}
-      - **Branch:** `{{ ensure_plan_branch.output.branch if ensure_plan_branch.output.branch is defined else state_detector.output.plan_branch }}`
+      - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado is defined and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if (open_plan_pr is defined and open_plan_pr.output.pr_url is defined) else state_detector.output.pr_url) }}
+      - **Branch:** `{{ ensure_plan_branch.output.branch if (ensure_plan_branch is defined and ensure_plan_branch.output.branch is defined) else state_detector.output.plan_branch }}`
 
       Review the PR on GitHub/ADO. Approve to proceed with merge + seeding,
       or request changes to send the architect back for revision. Then
@@ -1311,8 +1311,8 @@ agents:
       keep waiting (the counter resets), bypass review and merge anyway,
       or abort.
 
-      - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url) }}
-      - **Branch:** `{{ ensure_plan_branch.output.branch if ensure_plan_branch.output.branch is defined else state_detector.output.plan_branch }}`
+      - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado is defined and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if (open_plan_pr is defined and open_plan_pr.output.pr_url is defined) else state_detector.output.pr_url) }}
+      - **Branch:** `{{ ensure_plan_branch.output.branch if (ensure_plan_branch is defined and ensure_plan_branch.output.branch is defined) else state_detector.output.plan_branch }}`
 
       ---
 
@@ -1415,7 +1415,7 @@ agents:
       The architect has produced **{{ revise_counter.output.max_revisions }}**
       revisions but reviewers are still requesting changes.
 
-      - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if open_plan_pr.output.pr_url is defined else state_detector.output.pr_url) }}
+      - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado is defined and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if (open_plan_pr is defined and open_plan_pr.output.pr_url is defined) else state_detector.output.pr_url) }}
 
       Decide what to do:
 
@@ -1463,7 +1463,7 @@ agents:
     args:
       - "plan"
       - "validate-scope"
-      - "{{ poll_status.output.pr_number if poll_status.output.pr_number is defined else open_plan_pr.output.pr_number }}"
+      - "{{ poll_status.output.pr_number if (poll_status is defined and poll_status.output.pr_number is defined) else open_plan_pr.output.pr_number }}"
       - "--child-scope"
       - "{{ workflow.input.child_scope_globs }}"
     routes:
@@ -1553,7 +1553,7 @@ agents:
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
       - "--pr-number"
-      - "{{ poll_status.output.pr_number if poll_status.output.pr_number is defined else open_plan_pr.output.pr_number }}"
+      - "{{ poll_status.output.pr_number if (poll_status is defined and poll_status.output.pr_number is defined) else open_plan_pr.output.pr_number }}"
       - "--parent-item-id"
       - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
     routes:
@@ -1596,7 +1596,7 @@ agents:
     args:
       - "plan"
       - "extract-renegotiation-flag"
-      - "{{ poll_status.output.pr_number if poll_status.output.pr_number is defined else open_plan_pr.output.pr_number }}"
+      - "{{ poll_status.output.pr_number if (poll_status is defined and poll_status.output.pr_number is defined) else open_plan_pr.output.pr_number }}"
     routes:
       - to: cascade_remedy
 
@@ -1958,7 +1958,7 @@ agents:
       - "--repository-id"
       - "{{ workflow.input.repository }}"
       - "--pr-number"
-      - "{{ open_plan_pr_ado.output.pr_number if open_plan_pr_ado.output.pr_number is defined else state_detector.output.pr_number }}"
+      - "{{ open_plan_pr_ado.output.pr_number if (open_plan_pr_ado is defined and open_plan_pr_ado.output.pr_number is defined) else state_detector.output.pr_number }}"
       - "--include-metadata"
     routes:
       - to: poll_error_gate
@@ -2001,7 +2001,7 @@ agents:
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
       - "--pr-number"
-      - "{{ poll_status_ado.output.pr_number if poll_status_ado.output.pr_number is defined else open_plan_pr_ado.output.pr_number }}"
+      - "{{ poll_status_ado.output.pr_number if (poll_status_ado is defined and poll_status_ado.output.pr_number is defined) else open_plan_pr_ado.output.pr_number }}"
       - "--parent-item-id"
       - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
     routes:
