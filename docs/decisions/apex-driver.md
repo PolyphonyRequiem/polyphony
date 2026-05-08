@@ -102,7 +102,7 @@ JSON envelope, and a one-line YAML route block.
 Each item dispatched in parallel within the same wave gets its own
 worktree at `<repo-parent>/<repo-name>-item-<work_item_id>` on a
 branch named `sdlc/apex/<work_item_id>`. Branches fork from the apex
-feature branch (`feature/apex-<apex_id>`), not from `main`, so the
+feature branch (`feature/<apex_id>`), not from `main`, so the
 per-item branch already contains the integrated work of prior waves.
 
 `worktree-manager.ps1` handles spawn (`git worktree add -b …`) and
@@ -111,7 +111,7 @@ no-op when the worktree exists; teardown is a no-op when it doesn't.
 This is what makes re-entry safe.
 
 After each wave's items complete, `wave-integrator.ps1` merges the
-per-item branches into `feature/apex-<apex_id>` in **topological
+per-item branches into `feature/<apex_id>` in **topological
 order** (read from `polyphony edges check`). Default merge strategy
 is `--no-ff` — every per-item merge produces an explicit merge
 commit, so the apex feature branch keeps an auditable record of

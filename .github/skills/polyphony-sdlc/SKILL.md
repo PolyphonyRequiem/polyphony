@@ -566,7 +566,9 @@ organized per YAML:
   `spawn_worktree`; the M4 catch-all is the last entry and falls
   through to `terminal_classify_error`.
 - `spawn_worktree` invokes `worktree-manager.ps1` with
-  `-Operation spawn` and base branch `feature/apex-{apex_id}`.
+  `-Operation spawn` and base branch `feature/{apex_id}` (canonical
+  branch-model name; pre-PR-176 the apex pipeline used a `feature/apex-`
+  sub-prefix that bypassed `BranchNameBuilder`).
 - `spawn_worktree` branch-on-routers each of the four dispatchable
   verdicts (`plan-level` → `plan_level_dispatch`, `actionable` →
   `actionable_dispatch`, `implement-pg` → `implement_pg_dispatch`,
@@ -637,7 +639,7 @@ organized per YAML:
   (`success=false` + `error_code=polyphony_unavailable`) when
   `polyphony` is unavailable. Envelope carries `success`,
   `wave_index`, `apex_id`, `feature_branch` (defaults to
-  `feature/apex-{apex_id}`), `merge_strategy` (defaults to `no-ff`),
+  `feature/{apex_id}`), `merge_strategy` (defaults to `no-ff`),
   `branches_integrated`, `skipped`, `conflicts`. Always exits 0.
 
 ### Direct Sub-Workflow Invocation

@@ -103,14 +103,16 @@ public sealed class WaveIntegratorScriptTests
     {
         if (!PwshAvailable) return;
 
-        // The default feature branch is feature/apex-<ApexId>; this is
-        // an apex-driver contract that worktree-manager.ps1 + the
-        // workflow itself rely on.
+        // The default feature branch is feature/<ApexId> per the
+        // branch-model spec; this is an apex-driver contract that
+        // worktree-manager.ps1 + the workflow itself rely on. Pre-PR-176
+        // the script defaulted to feature/apex-<ApexId>; that apex-
+        // sub-prefix was a YAML/script drift bypassing BranchNameBuilder.
         var (_, stdout, _) = await RunScriptAsync(
             "-ApexId 9876 -WaveIndex 0 -PolyphonyExe nonexistent_polyphony_xyz");
 
         using var doc = JsonDocument.Parse(stdout);
-        doc.RootElement.GetProperty("feature_branch").GetString().ShouldBe("feature/apex-9876");
+        doc.RootElement.GetProperty("feature_branch").GetString().ShouldBe("feature/9876");
     }
 
     [Fact]

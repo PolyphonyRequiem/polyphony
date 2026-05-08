@@ -65,7 +65,7 @@
 
 .PARAMETER FeatureBranch
     Override for the apex feature branch. Defaults to
-    `feature/apex-<ApexId>`.
+    `feature/<ApexId>` per the branch-model spec.
 
 .PARAMETER MergeStrategy
     One of `no-ff` (default — preserve merge commits per child),
@@ -100,7 +100,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrWhiteSpace($FeatureBranch)) {
-    $FeatureBranch = "feature/apex-$ApexId"
+    $FeatureBranch = "feature/$ApexId"
 }
 
 $envelope = [ordered]@{

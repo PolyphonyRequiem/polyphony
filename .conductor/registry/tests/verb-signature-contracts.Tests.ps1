@@ -9,7 +9,7 @@
     helper PowerShell scripts. Designed to catch the class of bug
     that took down the dogfood run against ADO Epic #3043:
 
-      • Workflow agent passes `feature/apex-N` positionally to
+      • Workflow agent passes `feature/N` positionally to
         `polyphony branch ensure-feature` — verb wants `--branch`.
       • Workflow agent passes `N --json` positionally to
         `polyphony worklist build` — verb wants `--root-id N --json`.
@@ -72,13 +72,16 @@ Describe 'apex-driver.yaml :: preflight_ensure_branch invokes branch ensure-feat
         $args = Get-AgentArgs $script:ApexYaml 'preflight_ensure_branch'
         $args | Should -Contain '--branch'
         # The branch value should immediately follow the --branch flag.
+        # Per branch-model spec: feature/{apex_id} (no apex- prefix; the
+        # apex- sub-prefix was a YAML-side drift fixed in PR #176).
         $idx = [Array]::IndexOf($args, '--branch')
-        $args[$idx + 1] | Should -Match '^feature/apex-'
+        $args[$idx + 1] | Should -Match '^feature/\{\{ workflow\.input\.apex_id \}\}$'
     }
     It 'does not pass the branch positionally (regression — pre-fix bug)' {
         $args = Get-AgentArgs $script:ApexYaml 'preflight_ensure_branch'
-        # If the third arg is a feature/apex-... string and there is no --branch, it's the old broken shape.
-        if ($args[2] -match '^feature/apex-') {
+        # If the third arg is a feature/... string and there is no --branch,
+        # it's the old broken shape.
+        if ($args[2] -match '^feature/') {
             throw "preflight_ensure_branch is passing branch positionally — verb requires --branch flag"
         }
     }
