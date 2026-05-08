@@ -106,6 +106,21 @@ public sealed record GhPullRequestReview(
     DateTimeOffset? SubmittedAt);
 
 /// <summary>
+/// Single PR-level (issue) comment, returned by <c>gh pr view --json comments</c>.
+/// Top-level only — review (inline diff) comments are NOT in this list.
+/// Used by <c>polyphony pr poll-status</c> to recognize magic-comment
+/// approvals (<c>polyphony:approve</c> / <c>polyphony:request-changes</c>)
+/// from the PR author when GitHub blocks self-review.
+/// </summary>
+/// <param name="AuthorLogin">Comment author's GitHub login (or empty when gh omits it).</param>
+/// <param name="Body">Raw comment body markdown.</param>
+/// <param name="CreatedAt">When the comment was posted; null when gh omits it.</param>
+public sealed record GhPullRequestComment(
+    string AuthorLogin,
+    string Body,
+    DateTimeOffset? CreatedAt);
+
+/// <summary>
 /// Rich state snapshot returned by <see cref="IGhClient.GetPullRequestPollDataAsync"/>.
 /// Captures everything <c>polyphony pr poll-status</c> needs to compose
 /// a platform-neutral status without making multiple gh calls.
@@ -121,6 +136,8 @@ public sealed record GhPullRequestReview(
 /// <param name="MergedAt">When the PR was merged; null when not merged.</param>
 /// <param name="Body">PR description body — used to parse plan-PR front-matter.</param>
 /// <param name="Reviews">All reviews on the PR (oldest first per gh's ordering).</param>
+/// <param name="AuthorLogin">PR author's GitHub login (or empty when gh omits it). Used to filter magic-comment approvals.</param>
+/// <param name="Comments">All top-level PR comments (issue comments). Empty when gh omits the field. Review (inline) comments are NOT included.</param>
 public sealed record GhPullRequestPollData(
     int Number,
     string State,
@@ -132,7 +149,9 @@ public sealed record GhPullRequestPollData(
     string? MergeCommitSha,
     DateTimeOffset? MergedAt,
     string Body,
-    IReadOnlyList<GhPullRequestReview> Reviews);
+    IReadOnlyList<GhPullRequestReview> Reviews,
+    string AuthorLogin,
+    IReadOnlyList<GhPullRequestComment> Comments);
 
 /// <summary>
 /// One file changed in a pull request, as reported by

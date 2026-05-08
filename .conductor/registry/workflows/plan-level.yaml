@@ -1265,6 +1265,12 @@ agents:
       or request changes to send the architect back for revision. Then
       return here and click **Continue**.
 
+      **GitHub note:** if you opened the PR yourself, GitHub blocks
+      self-approval. Post a top-level comment containing
+      `polyphony:approve` (or `polyphony:request-changes`) on the PR
+      instead — `polyphony pr poll-status` recognizes these as your
+      vote. See issue #207 for context.
+
       ---
 
       Choose an action:
