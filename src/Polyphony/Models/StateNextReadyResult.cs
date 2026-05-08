@@ -55,6 +55,20 @@ public sealed record StateNextReadyResult
     /// <summary>True when any deriver input was resolved by inference rather than explicit config.</summary>
     public required bool AnyInputInferred { get; init; }
 
+    /// <summary>
+    /// Per-kind diagnostic reasons captured by the observers for the
+    /// kinds with an observable signal (today: <c>plan_authored</c>,
+    /// <c>plan_reviewed</c>, <c>plan_promoted</c> — wired in the closed-loop
+    /// PR #2). Maps a <see cref="Sdlc.RequirementKind"/> string to a
+    /// short human-readable reason such as
+    /// <c>"plan PR #204 merged"</c> or <c>"gh pr list failed: timed out"</c>.
+    /// Omitted from JSON when null or empty (no observed kinds, e.g.
+    /// the verb errored out before reaching the observers). Sibling
+    /// observers (PR #3 ChildrenSeeded, PR #4 Implementation) extend
+    /// this dictionary as they ship.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? ObservationReasons { get; init; }
+
     /// <summary>Error message when <see cref="Status"/> is <c>error</c>; null otherwise.</summary>
     public string? Error { get; init; }
 }

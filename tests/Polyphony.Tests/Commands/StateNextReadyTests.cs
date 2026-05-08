@@ -3,6 +3,7 @@ using Polyphony.Commands;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Sdlc;
+using Polyphony.Sdlc.Observers;
 using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
@@ -29,10 +30,28 @@ public sealed class StateNextReadyTests : CommandTestBase
     {
         var config = configOverride ?? Config;
         var runner = new FakeProcessRunner();
+        // Default: every git/gh shell-out resolves to a "no signal" response
+        // so the plan-kind observers degrade cleanly to Needed without
+        // requiring per-test stubs. Tests that exercise specific observed
+        // states use their own runner.
+        StubBaselineNoSignal(runner);
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return new StateCommands(twig, git, gh, runner, Repository, config);
+        var planObserver = new PlanObserver(git, gh, twig);
+        return new StateCommands(twig, git, gh, runner, Repository, config, planObserver);
+    }
+
+    private static void StubBaselineNoSignal(FakeProcessRunner runner)
+    {
+        // git remote get-url origin → empty stdout; PlanObserver returns "" slug.
+        runner.WhenStartsWith("git", ["remote", "get-url"], new ProcessResult(0, "", ""));
+        // git ls-remote → empty stdout; PlanObserver returns false.
+        runner.WhenStartsWith("git", ["ls-remote"], new ProcessResult(0, "", ""));
+        // gh pr list → no PRs.
+        runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(0, "[]", ""));
+        // twig show → empty payload (legacy children_seeded path doesn't call this; harmless safety net).
+        runner.WhenStartsWith("twig", ["show"], new ProcessResult(0, """{"id":0,"tags":""}""", ""));
     }
 
     [Fact]

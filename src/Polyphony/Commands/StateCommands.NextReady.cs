@@ -1,7 +1,9 @@
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Infrastructure.Processes;
 using Polyphony.Sdlc;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -17,7 +19,10 @@ public sealed partial class StateCommands
     /// Compute the next-ready requirements for a work item.
     /// </summary>
     /// <param name="workItem">ADO work item ID to inspect.</param>
-    /// <param name="planRoot">Directory glob root for filesystem plan discovery (default <c>docs/projects</c>).</param>
+    /// <param name="planRoot">Reserved — formerly drove filesystem plan
+    /// discovery before <see cref="PlanObserver"/> took over the
+    /// plan_authored signal. Accepted for backward-compatibility with
+    /// existing workflow callers; ignored by the verb.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("next-ready")]
     [VerbResult(typeof(StateNextReadyResult))]
@@ -26,6 +31,7 @@ public sealed partial class StateCommands
         string planRoot = "docs/projects",
         CancellationToken ct = default)
     {
+        _ = planRoot;
         if (RequiredInput.HaltIfMissing("state next-ready",
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
             return halt;
@@ -72,11 +78,11 @@ public sealed partial class StateCommands
         }
 
         // Compute observable state and reduce.
-        var observed = await ComputeObservedAsync(workItem, item, children, planRoot, ct).ConfigureAwait(false);
+        var (observed, reasons) = await ComputeObservedAsync(workItem, item, children, ct).ConfigureAwait(false);
         var reduced = RequirementSetReducer.Apply(derived, observed);
 
         var status = ClassifyStatus(reduced);
-        EmitNextReadyResult(workItem, workItemType, reduced, resolved, status);
+        EmitNextReadyResult(workItem, workItemType, reduced, resolved, status, reasons);
         return ExitCodes.Success;
     }
 
@@ -85,7 +91,8 @@ public sealed partial class StateCommands
         string workItemType,
         RequirementSet set,
         ResolvedRequirementInputs resolved,
-        string status)
+        string status,
+        IReadOnlyDictionary<string, string>? observationReasons = null)
     {
         var byDisp = set.Items
             .GroupBy(r => r.Disposition, StringComparer.Ordinal)
@@ -103,6 +110,7 @@ public sealed partial class StateCommands
             Needed = byDisp.GetValueOrDefault(Disposition.Needed) ?? [],
             ResolvedInputs = resolved,
             AnyInputInferred = resolved.AnyInferred,
+            ObservationReasons = observationReasons is { Count: > 0 } ? observationReasons : null,
         };
 
         Console.WriteLine(JsonSerializer.Serialize(
@@ -171,19 +179,34 @@ public sealed partial class StateCommands
         return "blocked";
     }
 
-    private async Task<ObservedRequirementState> ComputeObservedAsync(
+    private async Task<(ObservedRequirementState Observed, IReadOnlyDictionary<string, string> Reasons)> ComputeObservedAsync(
         int workItem,
         Twig.Domain.Aggregates.WorkItem item,
         IReadOnlyList<Twig.Domain.Aggregates.WorkItem> children,
-        string planRoot,
         CancellationToken ct)
     {
-        var (planStatus, _, _) = DiscoverPlan(workItem, "", planRoot);
-        var planAuthoredDisposition = planStatus == "complete"
-            ? Disposition.Satisfied
-            : Disposition.Needed;
+        var reasons = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        // children_seeded: every non-Done child has tasks of its own.
+        // ── Plan-kind observers (PR #2 — wired here). Build the per-item
+        // observation scope ONCE so plan_authored / plan_reviewed /
+        // plan_promoted share the underlying gh/git I/O. Sibling observers
+        // (PR #3 ChildrenSeeded, PR #4 Implementation) plug in by extending
+        // NextReadyObservationScope and adding their own composer methods —
+        // see the XML doc on NextReadyObservationScope for the contract.
+        var scope = await BuildObservationScopeAsync(workItem, item, ct).ConfigureAwait(false);
+
+        var (planAuthoredDisp, planAuthoredReason) = ComposePlanAuthored(scope);
+        reasons[RequirementKind.PlanAuthored] = planAuthoredReason;
+
+        var (planReviewedDisp, planReviewedReason) = ComposePlanReviewed(scope);
+        reasons[RequirementKind.PlanReviewed] = planReviewedReason;
+
+        var (planPromotedDisp, planPromotedReason) = ComposePlanPromoted(scope);
+        reasons[RequirementKind.PlanPromoted] = planPromotedReason;
+
+        // ── Legacy children_seeded observer (PR #3 will replace with
+        // PlanObserver.ObserveChildrenSeededAsync — the polyphony:planned
+        // tag check). Today: heuristic from cached child set.
         var childCount = children.Count;
         var anyChildMissingTasks = childCount > 0 && children.Any(c => c.State != "Done");
         var allChildrenDone = childCount > 0 && children.All(c => c.State == "Done");
@@ -194,10 +217,9 @@ public sealed partial class StateCommands
             _ => Disposition.Fulfilling,
         };
 
-        // implementation_merged: best-effort from item state + child state.
-        // Authoritative PR/branch inspection lives in state detect; here we
-        // approximate from observable work-item state. State detect will
-        // overlay its richer signal via BuildObservedFromDetectSignals.
+        // ── Legacy implementation_merged observer (PR #4 will replace with
+        // an ImplementationObserver reading impl-PR / MG-PR state).
+        // Today: best-effort from item state + child state.
         var implDisposition = (item.State, childCount, allChildrenDone) switch
         {
             ("Done", _, _) => Disposition.Satisfied,
@@ -206,21 +228,248 @@ public sealed partial class StateCommands
             _ => Disposition.Needed,
         };
 
-        await Task.CompletedTask.ConfigureAwait(false);  // async-shape for future I/O
-        return BuildObservedFromSignals(planAuthoredDisposition, seedDisposition, implDisposition);
+        var observed = BuildObservedFromSignals(
+            planAuthoredDisp, planReviewedDisp, planPromotedDisp,
+            seedDisposition, implDisposition);
+        return (observed, reasons);
     }
 
-    /// <summary>Build an <see cref="ObservedRequirementState"/> from the three
-    /// signal dispositions we currently track. Plan_reviewed, plan_promoted,
-    /// action_satisfied, and evidence_accepted have no observable signals yet
-    /// (Phase 3 / Phase 6 work) and default to <see cref="Disposition.Needed"/>.</summary>
+    /// <summary>
+    /// Build the per-item <see cref="NextReadyObservationScope"/> for the
+    /// PR #2 plan-kind observers. Fetches each shared signal exactly once
+    /// and degrades to "no signal" (with the error captured on the scope)
+    /// on any failure — never throws past the scope. <c>state next-ready</c>
+    /// is a routing-style verb and must always exit 0 with a structured
+    /// envelope.
+    /// </summary>
+    private async Task<NextReadyObservationScope> BuildObservationScopeAsync(
+        int workItem,
+        Twig.Domain.Aggregates.WorkItem item,
+        CancellationToken ct)
+    {
+        var rootId = await ResolveRootIdAsync(item, ct).ConfigureAwait(false);
+        var planBranch = PlanObserver.ResolvePlanBranch(rootId, workItem);
+
+        var scope = new NextReadyObservationScope
+        {
+            ItemId = workItem,
+            RootId = rootId,
+            PlanBranch = planBranch,
+        };
+
+        // PlanObserver.TryResolveSlugAsync swallows internally, but defend
+        // again here so a future tightening of the observer does not break
+        // the verb's "always exit 0" contract.
+        try
+        {
+            scope.Slug = await planObserver.TryResolveSlugAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            scope.Slug = string.Empty;
+        }
+
+        if (string.IsNullOrEmpty(planBranch))
+        {
+            // Non-positive root or item id — nothing more to observe. Plan
+            // composers will degrade with the empty plan branch.
+            return scope;
+        }
+
+        try
+        {
+            scope.BranchExistsOnOrigin = await planObserver.CheckPlanBranchExistsAsync(planBranch, ct)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            scope.BranchExistsOnOrigin = false;
+        }
+
+        if (string.IsNullOrEmpty(scope.Slug))
+        {
+            // Without a slug we cannot list PRs; record the gap as a
+            // structured fetch error so plan composers say "could not
+            // resolve repo slug" rather than "no PR opened".
+            scope.PlanPrFetchError = "could not resolve repo slug from origin remote";
+            return scope;
+        }
+
+        try
+        {
+            scope.LatestPlanPr = await planObserver.GetLatestPlanPrAsync(scope.Slug, planBranch, ct)
+                .ConfigureAwait(false);
+        }
+        catch (ExternalToolTimeoutException ex)
+        {
+            scope.PlanPrFetchError = ex.FormatErrorMessage("gh pr list");
+        }
+        catch (ExternalToolException ex)
+        {
+            scope.PlanPrFetchError = $"gh pr list failed: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            scope.PlanPrFetchError = $"gh pr list failed: {ex.Message}";
+        }
+
+        if (scope.LatestPlanPr is null) return scope;
+
+        try
+        {
+            scope.PlanPrPoll = await planObserver.GetPlanPrPollAsync(scope.Slug, scope.LatestPlanPr.Number, ct)
+                .ConfigureAwait(false);
+        }
+        catch (ExternalToolTimeoutException ex)
+        {
+            scope.PlanPrPollError = ex.FormatErrorMessage("gh pr view");
+        }
+        catch (ExternalToolException ex)
+        {
+            scope.PlanPrPollError = $"gh pr view failed: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            scope.PlanPrPollError = $"gh pr view failed: {ex.Message}";
+        }
+
+        return scope;
+    }
+
+    /// <summary>
+    /// Walk <see cref="Twig.Domain.Aggregates.WorkItem.ParentId"/> from
+    /// <paramref name="item"/> until we hit a node with no parent — that
+    /// is the root for branch-naming purposes. Returns <paramref name="item"/>'s
+    /// own id when it is already the root, when the chain breaks, or when
+    /// we exceed an internal cycle cap (50 ancestors). The cap matches
+    /// <c>plan derive-ancestor-chain</c>'s posture.
+    /// </summary>
+    private async Task<int> ResolveRootIdAsync(Twig.Domain.Aggregates.WorkItem item, CancellationToken ct)
+    {
+        const int AncestorWalkLimit = 50;
+
+        var cursor = item;
+        var visited = new HashSet<int> { item.Id };
+        for (var step = 0; step < AncestorWalkLimit; step++)
+        {
+            var parentId = cursor.ParentId;
+            if (parentId is null || parentId == 0) return cursor.Id;
+            if (!visited.Add(parentId.Value))
+            {
+                // Cycle — fall back to the highest id we have walked. The
+                // safe choice for branch naming is the current cursor (the
+                // last well-formed link before the cycle closes).
+                return cursor.Id;
+            }
+            var parent = await repository.GetByIdAsync(parentId.Value, ct).ConfigureAwait(false);
+            if (parent is null) return cursor.Id;
+            cursor = parent;
+        }
+        // Reached the cap without finding a top — degrade to the deepest
+        // ancestor we did reach. Branch naming will still produce a valid
+        // plan/{root}-{item} string.
+        return cursor.Id;
+    }
+
+    /// <summary>
+    /// Map the plan-kind shared signals on <paramref name="scope"/> to a
+    /// (Disposition, Reason) tuple for the <c>plan_authored</c>
+    /// requirement. Failed I/O (recorded on
+    /// <see cref="NextReadyObservationScope.PlanPrFetchError"/> /
+    /// <see cref="NextReadyObservationScope.PlanPrPollError"/>) forces
+    /// Needed with the captured error in the reason — distinguishing
+    /// "couldn't observe" from "observed: no PR" per the closed-loop spec.
+    /// </summary>
+    private static (string Disposition, string Reason) ComposePlanAuthored(NextReadyObservationScope scope)
+    {
+        if (scope.PlanPrFetchError is not null)
+        {
+            return (Disposition.Needed, scope.PlanPrFetchError);
+        }
+        if (scope.LatestPlanPr is not null && scope.PlanPrPollError is not null)
+        {
+            return (Disposition.Needed, scope.PlanPrPollError);
+        }
+
+        var prState = scope.PlanPrPoll?.State?.ToUpperInvariant();
+        var observation = PlanObserver.MapPlanAuthored(
+            scope.PlanBranch, scope.BranchExistsOnOrigin, scope.LatestPlanPr, prState);
+        return ValidateDisposition(observation.Disposition, observation.Reason);
+    }
+
+    private static (string Disposition, string Reason) ComposePlanReviewed(NextReadyObservationScope scope)
+    {
+        if (scope.PlanPrFetchError is not null)
+        {
+            return (Disposition.Needed, scope.PlanPrFetchError);
+        }
+        if (scope.LatestPlanPr is not null && scope.PlanPrPollError is not null)
+        {
+            return (Disposition.Needed, scope.PlanPrPollError);
+        }
+
+        var observation = PlanObserver.MapPlanReviewed(scope.LatestPlanPr, scope.PlanPrPoll);
+        return ValidateDisposition(observation.Disposition, observation.Reason);
+    }
+
+    private static (string Disposition, string Reason) ComposePlanPromoted(NextReadyObservationScope scope)
+    {
+        if (scope.PlanPrFetchError is not null)
+        {
+            return (Disposition.Needed, scope.PlanPrFetchError);
+        }
+        if (scope.LatestPlanPr is not null && scope.PlanPrPollError is not null)
+        {
+            return (Disposition.Needed, scope.PlanPrPollError);
+        }
+
+        var prState = scope.PlanPrPoll?.State?.ToUpperInvariant();
+        var observation = PlanObserver.MapPlanPromoted(scope.LatestPlanPr, prState);
+        return ValidateDisposition(observation.Disposition, observation.Reason);
+    }
+
+    /// <summary>
+    /// Guard against an observer ever returning a string that is not one of
+    /// the four canonical <see cref="Disposition"/> values. Per the
+    /// closed-loop spec we throw rather than silently swallow — silent
+    /// fallback would re-introduce the exact "everything Needed" lie the
+    /// PR set is fixing.
+    /// </summary>
+    private static (string Disposition, string Reason) ValidateDisposition(string disposition, string reason)
+    {
+        if (!Disposition.IsValid(disposition))
+        {
+            throw new InvalidOperationException(
+                $"Observer returned unknown disposition '{disposition}'. " +
+                "Valid values: needed, ready, fulfilling, satisfied.");
+        }
+        if (disposition == Disposition.Ready)
+        {
+            throw new InvalidOperationException(
+                "Observer returned disposition 'ready'; readiness is reducer-derived, " +
+                "observers must emit only needed/fulfilling/satisfied.");
+        }
+        return (disposition, reason);
+    }
+
+    /// <summary>Build an <see cref="ObservedRequirementState"/> from the
+    /// composed signal dispositions. Kinds at <see cref="Disposition.Needed"/>
+    /// are omitted because the reducer treats absence as Needed by default;
+    /// stronger dispositions are surfaced explicitly so the reducer can
+    /// promote downstream gates. After PR #4 lands this becomes the only
+    /// composer of observed plan/seed/impl signals — the per-kind reasons
+    /// dictionary travels alongside via <c>ComputeObservedAsync</c>.</summary>
     private static ObservedRequirementState BuildObservedFromSignals(
         string planAuthored,
+        string planReviewed,
+        string planPromoted,
         string childrenSeeded,
         string implementationMerged)
     {
         var dict = new Dictionary<string, string>(StringComparer.Ordinal);
         if (planAuthored != Disposition.Needed) dict[RequirementKind.PlanAuthored] = planAuthored;
+        if (planReviewed != Disposition.Needed) dict[RequirementKind.PlanReviewed] = planReviewed;
+        if (planPromoted != Disposition.Needed) dict[RequirementKind.PlanPromoted] = planPromoted;
         if (childrenSeeded != Disposition.Needed) dict[RequirementKind.ChildrenSeeded] = childrenSeeded;
         if (implementationMerged != Disposition.Needed) dict[RequirementKind.ImplementationMerged] = implementationMerged;
         return new ObservedRequirementState { Observed = dict };

@@ -20,7 +20,8 @@ public sealed class StateValidateInputsTests
         gh: null!,
         runner: null!,
         repository: null!,
-        processConfig: null!);
+        processConfig: null!,
+        planObserver: null!);
 
     [Fact]
     public async Task ValidateInputs_MissingWorkflowYamlArg_EmitsHaltEnvelope()

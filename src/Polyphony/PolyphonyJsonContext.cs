@@ -120,6 +120,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(RetiredMergeGroupRecord))]
 [JsonSerializable(typeof(MergedPlanPrEntry))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSerializable(typeof(IReadOnlyDictionary<string, string>))]
 [JsonSerializable(typeof(RunLock))]
 [JsonSerializable(typeof(AcquireLockResult))]
 [JsonSerializable(typeof(ReleaseLockResult))]
