@@ -4,6 +4,7 @@ using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
+using Polyphony.Postconditions;
 
 namespace Polyphony.Commands;
 
@@ -16,6 +17,14 @@ namespace Polyphony.Commands;
 /// but never committed it. The verb is idempotent and routing-style so
 /// the workflow can call it on every preflight without checking
 /// precursor state.</para>
+///
+/// <para>Idempotency on resume: when local HEAD already holds the manifest
+/// at the expected content, <c>git add</c> stages nothing. We then defer
+/// to <see cref="IPostconditionVerifier"/> to confirm origin actually
+/// holds the same blob. If origin is missing it (prior run interrupted
+/// between commit and push, force-reset of origin, etc.), we push HEAD
+/// without committing — the local commit is already correct. This
+/// closes bug #192.</para>
 /// </summary>
 public sealed partial class ManifestCommands
 {
@@ -23,23 +32,26 @@ public sealed partial class ManifestCommands
     /// Validate the manifest at <paramref name="path"/> matches
     /// <paramref name="rootId"/>, ensure the worktree is on
     /// <c>feature/{rootId}</c>, then stage, commit, and push the
-    /// manifest to <c>origin/feature/{rootId}</c>. No-op when the
-    /// manifest at HEAD already matches the on-disk file.
+    /// manifest to <c>origin/feature/{rootId}</c>. No-op when both
+    /// HEAD and origin already match the on-disk file.
     /// </summary>
-    /// <param name="rootId">Apex (run-root) work-item id. Must equal the manifest's <c>root_id</c>.</param>
+    /// <param name="rootId">Apex (run-root) work-item id. Must equal the manifest's <c>root_id</c>. Sentinel default 0 caught in-body and surfaced as <c>invalid_inputs</c>.</param>
     /// <param name="message">Commit message. Defaults to <c>manifest: bootstrap (root {rootId})</c>.</param>
     /// <param name="path">Path to the manifest. Defaults to <c>.polyphony/run.yaml</c>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("commit-and-push")]
     [VerbResult(typeof(ManifestCommitAndPushResult))]
     public async Task<int> CommitAndPush(
-        int rootId,
+        int rootId = 0,
         string message = "",
         string path = RunManifestStore.DefaultRelativePath,
         CancellationToken ct = default)
     {
         // 1. Input validation. Routing-style: emit an envelope and exit 0
         //    so the workflow can route on `error_code`, not on exit code.
+        //    Sentinel default (rootId == 0) is the Move #2 verb-layer
+        //    convention — the verb owns "missing required input" and
+        //    surfaces it loudly instead of relying on the framework.
         if (!RootId.TryParse(rootId, out var root))
         {
             EmitError(rootId, path, branch: string.Empty,
@@ -126,8 +138,45 @@ public sealed partial class ManifestCommands
 
             if (!manifestStaged)
             {
-                EmitNoOp(rootId, path, expectedBranch);
-                return ExitCodes.Success;
+                // 6a. Local HEAD already holds the manifest, but that
+                //     alone doesn't satisfy the post-condition (issue
+                //     #192). Defer to IPostconditionVerifier to check
+                //     origin/{branch}. The expected content is the
+                //     on-disk file — which equals HEAD here, since
+                //     `git add` produced no staging delta.
+                var expectedContent = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
+                var outcome = await postconditions.VerifyAsync(
+                    expectedBranch,
+                    [new PostconditionExpectation(path, expectedContent)],
+                    ct: ct).ConfigureAwait(false);
+
+                switch (outcome)
+                {
+                    case PostconditionOutcome.Satisfied:
+                        EmitNoOp(rootId, path, expectedBranch);
+                        return ExitCodes.Success;
+
+                    case PostconditionOutcome.NeedsPush:
+                    case PostconditionOutcome.Conflict:
+                        // Push HEAD; no commit needed because HEAD already
+                        // holds the right blob. Conflict (origin diverged)
+                        // is treated the same as missing — let the push
+                        // fail loudly with non-fast-forward, which the
+                        // catch block surfaces as `git_failed`. A future
+                        // consumer that wants force-push-with-lease can
+                        // branch on Conflict here.
+                        await git.PushAsync(expectedBranch, ct: ct).ConfigureAwait(false);
+                        var headSha = await git.RevParseLocalBranchAsync(expectedBranch, ct).ConfigureAwait(false);
+                        EmitSuccess(rootId, path, expectedBranch, headSha);
+                        return ExitCodes.Success;
+
+                    default:
+                        // Compiler can't prove the discriminated union is
+                        // exhaustive across an external assembly boundary;
+                        // fail loudly if a new case is ever added.
+                        throw new InvalidOperationException(
+                            $"Unhandled PostconditionOutcome: {outcome.GetType().Name}");
+                }
             }
 
             // 7. Commit + push. Errors propagate as ExternalToolException

@@ -18,23 +18,30 @@ public sealed record PlanCommitAndPushResult
     /// <summary>True when a commit was created and pushed; false on no-op or error.</summary>
     public required bool Pushed { get; init; }
 
-    /// <summary>
-    /// Number of paths staged-for-commit before the commit ran. Zero on no-op.
-    /// </summary>
+    /// <summary>Number of paths staged-for-commit before the commit ran. Zero on no-op.</summary>
     public int FilesStaged { get; init; }
 
-    /// <summary>
-    /// HEAD SHA after the push completed. Null on no-op or error.
-    /// </summary>
+    /// <summary>HEAD SHA after the push completed. Null on no-op or error.</summary>
     public string? CommitSha { get; init; }
 
     /// <summary>
     /// Why no commit was produced — <c>"no_changes"</c> when staging the
-    /// requested paths left nothing for git to commit. Null when a commit
-    /// was created.
+    /// requested paths left nothing for git to commit AND origin already
+    /// holds them. Null when a commit was created or when the verb pushed
+    /// HEAD to recover from a stale remote.
     /// </summary>
     public string? NoOpReason { get; init; }
 
-    /// <summary>Error message on failure; null on success or no-op.</summary>
+    /// <summary>
+    /// Stable error classifier for routing. One of:
+    /// <list type="bullet">
+    ///   <item><c>invalid_inputs</c> — missing/blank <c>--branch</c>, <c>--message</c>, or <c>--paths</c>.</item>
+    ///   <item><c>git_failed</c> — checkout/stage/commit/push exited non-zero.</item>
+    /// </list>
+    /// Null on success or no-op.
+    /// </summary>
+    public string? ErrorCode { get; init; }
+
+    /// <summary>Human-readable error message; null on success or no-op.</summary>
     public string? Error { get; init; }
 }

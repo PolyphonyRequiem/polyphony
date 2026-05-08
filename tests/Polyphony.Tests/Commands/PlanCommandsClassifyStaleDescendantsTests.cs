@@ -29,7 +29,7 @@ public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner)), runner);
+        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier()), runner);
     }
 
     private static PlanClassifyStaleDescendantsResult Parse(string output) =>

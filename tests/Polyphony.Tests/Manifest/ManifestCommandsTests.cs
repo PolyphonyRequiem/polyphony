@@ -35,7 +35,8 @@ public sealed class ManifestCommandsTests : IDisposable
     // immediately and surface as a test failure rather than a false pass.
     private static ManifestCommands NewCommand() =>
         new(new Polyphony.Infrastructure.Processes.GitClient(
-            new Polyphony.Tests.Infrastructure.Processes.FakeProcessRunner()));
+                new Polyphony.Tests.Infrastructure.Processes.FakeProcessRunner()),
+            new Polyphony.Tests.TestFixtures.FakePostconditionVerifier());
 
     /// <summary>
     /// Runs an async command while capturing stdout. Mirrors
