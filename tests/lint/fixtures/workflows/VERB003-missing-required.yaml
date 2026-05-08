@@ -1,0 +1,18 @@
+# VERB003 — `command: polyphony` calls a known verb but does not thread one
+# of its required inputs. CLI would exit with "missing required argument"
+# at runtime. `branch check-deps` requires --work-item (and accepts no
+# other inputs), so an empty arg list after the verb path triggers VERB003.
+
+workflow:
+  name: verb003-missing-required
+  entry_point: missing_required
+
+agents:
+  - name: missing_required
+    type: script
+    command: polyphony
+    args:
+      - "branch"
+      - "check-deps"
+    routes:
+      - to: $end

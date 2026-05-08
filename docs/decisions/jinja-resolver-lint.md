@@ -373,6 +373,68 @@ kebab-case/order). A real-verb shape is pinned end-to-end in
 This amendment lands the contract; the lint that consumes it ships
 in the next PR.
 
+## Amendment 2026-05-08 — verb invocation diagnostics (CR+CRL)
+
+The lint now consumes the `inputs[]` block introduced by the
+preceding amendment and validates every `command: polyphony` step
+against the authoritative verb signature. Three new diagnostic codes:
+
+| Code     | Severity | Fires when                                                         |
+|----------|----------|--------------------------------------------------------------------|
+| VERB001  | error    | The invoked verb (e.g. `polyphony plan unknown-verb`) is not in the registry. |
+| VERB002  | error    | A `--flag` is passed that does not appear in the verb's `inputs[]`.|
+| VERB003  | error    | A `required: true` input is not threaded by either flag or positional. |
+
+This closes the silent-fail signature-drift class that motivated PRs
+#157 / #158 / #159 / #190 and issue #191 — polyphony exits 0 on
+unrecognized args (CAF behavior); conductor sees ✓; the workflow
+proceeds with garbage. The lint now catches the drift at PR time.
+
+### Two-pass positional-binding algorithm
+
+ConsoleAppFramework v5 supports both `--flag value` and bare
+positional binding. Required parameters can be passed positionally in
+declared order; the `--name value` form can refer to any param by
+name. The lint mirrors that:
+
+1. **Pass 1 — flags.** Walk `args[]` and pair every `--flag VALUE`
+   token with its corresponding entry in `inputs[]`. Unknown flag →
+   VERB002. Mark each matched slot as "threaded".
+2. **Pass 2 — positionals.** Walk `args[]` again, skipping the flag
+   pairs from pass 1, and bind each bare positional to the next
+   un-threaded slot in declaration order.
+3. **Validate.** Any `required: true` slot still un-threaded after
+   both passes → VERB003.
+
+The first naive single-pass implementation flagged 10 false positives
+on the live corpus (workflow patterns like
+`polyphony branch ensure-evidence-branch <int>` that pass required
+ints positionally). The two-pass form reduced this to 2 real findings
+on first run.
+
+### Real drifts caught and fixed in the same PR
+
+The lint's first run against the live corpus surfaced **2 production
+drifts** in `plan-level.yaml`:
+
+- `merge_plan_pr` — required `int prNumber` (3rd positional) was not
+  threaded.
+- `merge_plan_pr_ado` — same drift on the ADO leg.
+
+Both would have failed at runtime with CAF's "missing required
+argument" error. Per the established directive (lint and the bugs it
+catches ship together; no allowlist deferral), both YAML steps were
+fixed in the same PR. Each now threads `--pr-number` with the
+canonical `{{ poll_status.output.pr_number if … is defined else
+open_plan_pr.output.pr_number }}` pattern used elsewhere in the file.
+
+### Suppression key
+
+VERB diagnostics use `<step_name>::<code>` (e.g.
+`merge_plan_pr::VERB003`) for allowlist entries — distinct from JINJA
+codes which key on `<step_id>.output<path>`. No allowlist entries are
+needed at lint introduction; the corpus is clean.
+
 ## Rubber-duck findings deferred
 
 | Finding | Disposition |

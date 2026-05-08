@@ -1,0 +1,19 @@
+# VERB003 negative — required input threaded POSITIONALLY (no --flag).
+# ConsoleAppFramework binds positional args to declared params in order, so
+# `polyphony branch check-deps <int>` satisfies the required `int workItem`
+# slot. The lint must NOT emit VERB003 here.
+
+workflow:
+  name: verb003-positional-binding
+  entry_point: positional_ok
+
+agents:
+  - name: positional_ok
+    type: script
+    command: polyphony
+    args:
+      - "branch"
+      - "check-deps"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: $end

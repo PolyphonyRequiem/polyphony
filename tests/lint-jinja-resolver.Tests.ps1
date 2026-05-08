@@ -139,7 +139,7 @@ agents:
   - name: derive_chain
     type: script
     command: polyphony
-    args: ["plan", "derive-ancestor-chain", "{{ workflow.input.work_item_id }}"]
+    args: ["plan", "derive-ancestor-chain", "{{ workflow.input.work_item_id }}", "{{ workflow.input.work_item_id }}"]
     routes:
       - to: c
   - name: c
@@ -185,7 +185,7 @@ agents:
   - name: derive_chain
     type: script
     command: polyphony
-    args: ["plan", "derive-ancestor-chain", "{{ workflow.input.work_item_id }}"]
+    args: ["plan", "derive-ancestor-chain", "{{ workflow.input.work_item_id }}", "{{ workflow.input.work_item_id }}"]
     routes:
       - to: c
   - name: c
@@ -316,7 +316,7 @@ agents:
   - name: derive_chain
     type: script
     command: polyphony
-    args: ["plan", "derive-ancestor-chain", "{{ workflow.input.work_item_id }}"]
+    args: ["plan", "derive-ancestor-chain", "{{ workflow.input.work_item_id }}", "{{ workflow.input.work_item_id }}"]
     routes:
       - to: c
         when: "{{ derive_chain.output.exit_code == 0 }}"
@@ -413,6 +413,46 @@ suppress:
             $r.ExitCode | Should -Be 0
             $r.Output | Should -Match 'allowlist suppressed:\s+1'
         } finally { Remove-Item -LiteralPath $alPath -Force }
+    }
+}
+
+Describe 'lint-jinja-resolver.ps1 — verb invocation diagnostics (CR+CRL)' {
+
+    Context 'VERB001 — unknown verb' {
+        It 'flags a polyphony invocation whose verb path is not in the registry' {
+            $r = Invoke-Lint -WorkflowsDir $script:SyntheticDir -OnlyFile 'VERB001-unknown-verb.yaml'
+            $r.ExitCode | Should -Be 1
+            $r.Output | Should -Match 'VERB001'
+            $r.Output | Should -Match "unknown polyphony verb 'plan this-verb-does-not-exist'"
+        }
+    }
+
+    Context 'VERB002 — unknown CLI flag' {
+        It 'flags a flag that does not appear in the verb inputs[]' {
+            $r = Invoke-Lint -WorkflowsDir $script:SyntheticDir -OnlyFile 'VERB002-unknown-flag.yaml'
+            $r.ExitCode | Should -Be 1
+            $r.Output | Should -Match 'VERB002'
+            $r.Output | Should -Match "unknown flag '--bogus-flag'"
+            $r.Output | Should -Match "branch close-scope"
+        }
+    }
+
+    Context 'VERB003 — missing required input' {
+        It 'flags a required input that is threaded by neither --flag nor positional' {
+            $r = Invoke-Lint -WorkflowsDir $script:SyntheticDir -OnlyFile 'VERB003-missing-required.yaml'
+            $r.ExitCode | Should -Be 1
+            $r.Output | Should -Match 'VERB003'
+            $r.Output | Should -Match "does not thread required input '--work-item'"
+        }
+
+        It 'does NOT flag when the required input is supplied positionally (CAF binding semantics)' {
+            # ConsoleAppFramework binds positional args to declared params in
+            # order. The lint must mirror that: a single bare positional after
+            # the verb path satisfies the first required slot.
+            $r = Invoke-Lint -WorkflowsDir $script:SyntheticDir -OnlyFile 'VERB003-positional-ok.yaml'
+            $r.ExitCode | Should -Be 0
+            $r.Output | Should -Not -Match 'VERB003'
+        }
     }
 }
 

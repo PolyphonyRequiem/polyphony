@@ -1,0 +1,22 @@
+# VERB002 — `command: polyphony` calls a known verb with a flag that is not
+# in inputs[]. Catches typos and signature drift (PR #159 audit class).
+# `branch close-scope` accepts --work-item / --pg-name / --pg-number /
+# --pr-number; the `--bogus-flag` here is unknown.
+
+workflow:
+  name: verb002-unknown-flag
+  entry_point: bad_flag
+
+agents:
+  - name: bad_flag
+    type: script
+    command: polyphony
+    args:
+      - "branch"
+      - "close-scope"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+      - "--bogus-flag"
+      - "value"
+    routes:
+      - to: $end
