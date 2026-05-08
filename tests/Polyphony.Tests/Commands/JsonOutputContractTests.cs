@@ -1330,10 +1330,19 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         var config = CreateConfigBuilder().Build();
         var runner = new FakeProcessRunner();
+        // Baseline shell-out stubs: PlanObserver issues git remote get-url
+        // and (potentially) git ls-remote / gh pr list during NextReady.
+        // Returning empty payloads degrades the plan-kind observers to
+        // Needed without disturbing the JSON-shape contract these tests
+        // verify.
+        runner.WhenStartsWith("git", ["remote", "get-url"], new ProcessResult(0, "", ""));
+        runner.WhenStartsWith("git", ["ls-remote"], new ProcessResult(0, "", ""));
+        runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(0, "[]", ""));
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return new StateCommands(twig, git, gh, runner, Repository, config);
+        var planObserver = new Polyphony.Sdlc.Observers.PlanObserver(git, gh, twig);
+        return new StateCommands(twig, git, gh, runner, Repository, config, planObserver);
     }
 
     private EdgesCommands CreateEdgesCommands()

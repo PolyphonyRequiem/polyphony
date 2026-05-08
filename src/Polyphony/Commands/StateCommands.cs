@@ -3,6 +3,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Sdlc.Observers;
 using Polyphony.Versioning;
 using Twig.Domain.Interfaces;
 
@@ -30,7 +31,8 @@ public sealed partial class StateCommands(
     IGhClient gh,
     IProcessRunner runner,
     IWorkItemRepository repository,
-    ProcessConfig processConfig)
+    ProcessConfig processConfig,
+    PlanObserver planObserver)
 {
     private const string DotnetExe = "dotnet";
 

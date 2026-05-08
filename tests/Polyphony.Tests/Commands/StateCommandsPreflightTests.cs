@@ -17,7 +17,8 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new StateCommands(twig, git, gh, runner, Repository, Config), runner);
+        var planObserver = new Polyphony.Sdlc.Observers.PlanObserver(git, gh, twig);
+        return (new StateCommands(twig, git, gh, runner, Repository, Config, planObserver), runner);
     } // End of CreateCommand
 
     // (Removed duplicate orphaned block)
