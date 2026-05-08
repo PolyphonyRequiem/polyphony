@@ -185,7 +185,7 @@ blob at a specific path**. Examples:
   `origin/{branch}`; if the local commit was created in a prior run but
   never pushed (crash, transient network failure, retry), the next run
   silently no-ops on `git add` and the manifest never reaches origin.
-  Bug #192 was this exact pattern.
+  Issue #192 was this exact pattern.
 - `plan commit-and-push` — same Class B bug shape for plan files.
 
 Without an explicit remote-side check, the verb stages, sees nothing
