@@ -273,6 +273,24 @@ shouldn't accumulate into a parallel source of truth — the cap is the
 forcing function. Hitting the cap means clean up suppressions or
 raise the limit by ADR amendment.
 
+## Amendment 2026-05-08 — CI gate flipped to live registry
+
+When this ADR was written, #173 (the verb-output schema registry) had not
+yet shipped, so CI ran `lint-jinja-resolver.ps1` against the checked-in
+fixture under `tests/lint/fixtures/verb-output-schemas.json` as a
+stopgap. #173 shipped as PR #184 on 2026-05-07; the CI gate now lints
+against the live `artifacts/verb-output-schemas.json` generated at build
+time by `Polyphony.SchemaExporter`.
+
+The fixture file remains in place and is still used by the Pester unit
+suite (`tests/lint-jinja-resolver.Tests.ps1`, opt-in via
+`-UseFixtureRegistry`) for hermetic synthetic-input testing. Only the
+real-workflow CI gate flipped.
+
+This closes the loop the original ADR's "Locked registry fixture vs.
+live registry" finding accepted as a documented gap — the gap was
+specifically about CI freshness, and is now closed.
+
 ## Rubber-duck findings deferred
 
 | Finding | Disposition |

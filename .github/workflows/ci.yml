@@ -81,16 +81,22 @@ jobs:
 
       - name: Lint workflow YAMLs (Jinja2 resolver)
         # Resolves every `{{ <step>.output.<path> }}` reference in workflow
-        # YAMLs against the verb-output schema registry (#173). Catches
-        # five classes of bug: missing fields (JINJA001), unguarded
+        # YAMLs against the verb-output schema registry (#173 / PR #184).
+        # Catches five classes of bug: missing fields (JINJA001), unguarded
         # omit-when-null refs (JINJA002), unknown step ids (JINJA003),
         # non-polyphony refs that bypass schema (JINJA004; surfaced under
         # -Pedantic only), and invalid path traversal (JINJA005).
-        # Uses the checked-in registry fixture until #173 lands on main —
-        # see ADR docs/decisions/jinja-resolver-lint.md § "Fixture drift".
+        #
+        # Lints against the LIVE registry generated at build time
+        # (`artifacts/verb-output-schemas.json` — written by the
+        # Polyphony.SchemaExporter MSBuild step). The Pester unit suite
+        # below uses the checked-in fixture under `tests/lint/fixtures/`
+        # for hermetic synthetic-input tests (see ADR § "Locked registry
+        # fixture vs. live registry"); only the real-workflow gate flips
+        # to the live artifact.
         shell: pwsh
         working-directory: polyphony
-        run: pwsh -NoProfile -File tests/lint-jinja-resolver.ps1 -UseFixtureRegistry -Format github
+        run: pwsh -NoProfile -File tests/lint-jinja-resolver.ps1 -Format github
 
       - name: Test (Pester) — Jinja2 resolver lint
         shell: pwsh
