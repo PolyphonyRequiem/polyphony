@@ -1,8 +1,11 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Polyphony/Polyphony.csproj" />
+    <Project Path="src/Polyphony.SchemaGenerator/Polyphony.SchemaGenerator.csproj" />
+    <Project Path="src/Polyphony.SchemaExporter/Polyphony.SchemaExporter.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Polyphony.Tests/Polyphony.Tests.csproj" />
+    <Project Path="tests/Polyphony.SchemaGenerator.Tests/Polyphony.SchemaGenerator.Tests.csproj" />
   </Folder>
 </Solution>
