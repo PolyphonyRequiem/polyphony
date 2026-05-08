@@ -183,7 +183,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ApexYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ApexYaml.workflow.name        | Should -Be 'apex-driver'
         $script:ApexYaml.workflow.entry_point | Should -Be 'preflight_sync'
-        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '1.0.1'
+        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '1.2.0'
         $script:ApexYaml.tools                | Should -Contain 'twig'
         $script:ApexYaml.agents.Count         | Should -BeGreaterThan 10
     }
