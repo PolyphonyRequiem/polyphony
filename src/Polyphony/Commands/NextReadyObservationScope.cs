@@ -1,6 +1,72 @@
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Sdlc;
 
 namespace Polyphony.Commands;
+
+/// <summary>
+/// One direct child's contribution to the parent's cross-item rollup
+/// (closed-loop PR #5). Carries only the dispositions the parent cares
+/// about (<c>item_satisfied</c> and <c>implementation_merged</c> as of
+/// PR #5) plus a structured error string when the child's observation
+/// could not be computed — <c>state next-ready</c> is a routing-style
+/// verb and must always exit 0 with an envelope, never throw across a
+/// child boundary.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The rollup is intentionally narrow: only the kinds whose parent
+/// disposition genuinely depends on children flow through here. Per-item
+/// kinds (<c>plan_authored</c>, <c>plan_reviewed</c>, <c>plan_promoted</c>,
+/// <c>children_seeded</c>) are NOT rolled up — they are observed on the
+/// parent only.
+/// </para>
+/// <para>
+/// <see cref="ItemSatisfiedDisposition"/> is the child's <em>reduced</em>
+/// disposition (after <see cref="RequirementSetReducer.Apply"/>): for a
+/// leaf this is computed purely from within-item edges; for a non-leaf
+/// it is itself rolled up recursively up to <c>POLYPHONY_NEXTREADY_ROLLUP_DEPTH</c>
+/// (default 5).
+/// </para>
+/// </remarks>
+internal sealed class ChildRollupSnapshot
+{
+    /// <summary>Direct-child work item id. Useful for diagnostics and
+    /// for rendering the parent's rolled-up reason string ("blocked on
+    /// child #N" rather than just "blocked on a child").</summary>
+    public required int ChildId { get; init; }
+
+    /// <summary>Reduced disposition of the child's <c>item_satisfied</c>
+    /// requirement (post-reducer). When the child has no
+    /// <c>item_satisfied</c> requirement (impossible in practice — every
+    /// item carries the synthetic terminal — but defensive), this stays
+    /// at <see cref="Disposition.Needed"/>.</summary>
+    public required string ItemSatisfiedDisposition { get; init; }
+
+    /// <summary>Reduced disposition of the child's
+    /// <c>implementation_merged</c> requirement (post-reducer). When the
+    /// child has no <c>implementation_merged</c> requirement (e.g. a
+    /// pure <c>plannable</c>-only type), this is the empty string and
+    /// the parent's MG rollup ignores it. Carrying the kind's presence
+    /// inline avoids a second lookup at compose time.</summary>
+    public required string ImplementationMergedDisposition { get; init; }
+
+    /// <summary>Whether the child has an <c>implementation_merged</c>
+    /// requirement at all. <see langword="false"/> means the child is a
+    /// pure-planner type and contributes nothing to the MG rollup.
+    /// Tracked separately from <see cref="ImplementationMergedDisposition"/>
+    /// because the absence of the kind is semantically distinct from
+    /// "kind present, still Needed".</summary>
+    public required bool HasImplementationMergedKind { get; init; }
+
+    /// <summary>Structured error captured when the child's observation
+    /// pipeline could not run (type missing from process config,
+    /// derivation invalid, cycle detected via the parent-walk visited
+    /// set, depth cap exceeded). When non-null, the parent's rollup
+    /// degrades to <see cref="Disposition.Needed"/> for the affected
+    /// kind with the error surfaced in the reason string — same posture
+    /// as PR #2/#3/#4's per-item fetch errors.</summary>
+    public string? Error { get; init; }
+}
 
 /// <summary>
 /// Per-item observation context shared by every requirement-kind composer
@@ -43,6 +109,19 @@ namespace Polyphony.Commands;
 /// by design — <see cref="StateCommands.BuildObservationScopeAsync"/>
 /// fills them in piecewise as it issues each I/O call, then the scope is
 /// frozen by being passed to the (read-only) composers.
+/// </para>
+/// <para>
+/// <b>PR #5 (cross-item rollup) breaks the per-item plug-in shape</b> —
+/// a parent's <c>implementation_merged</c> and <c>item_satisfied</c>
+/// dispositions can no longer be composed from per-item signals alone;
+/// they need direct children's <em>reduced</em> dispositions. The new
+/// <see cref="ChildSnapshots"/> field carries those, populated by
+/// <see cref="StateCommands.BuildChildRollupSnapshotsAsync"/> via a
+/// bounded recursive call that re-uses the same per-item composer
+/// pipeline (re-entrant, depth-capped, parallel per child). The
+/// per-item plug-in recipe documented above still applies for
+/// <em>per-item</em> kinds; the cross-item kinds use the additional
+/// rollup hook described on <see cref="ChildSnapshots"/>.
 /// </para>
 /// </remarks>
 internal sealed class NextReadyObservationScope
@@ -154,4 +233,36 @@ internal sealed class NextReadyObservationScope
     /// used to fetch <see cref="ImplPrPoll"/>, or null on success. Same
     /// semantics as <see cref="PlanPrPollError"/>.</summary>
     public string? ImplPrPollError { get; set; }
+
+    // ── Cross-item rollup signals (PR #5) ───────────────────────────────
+
+    /// <summary>Reduced dispositions of the work item's direct children,
+    /// one entry per child in id-ascending order. Populated by
+    /// <see cref="StateCommands.BuildChildRollupSnapshotsAsync"/> when
+    /// the parent has children AND the recursion depth has not yet hit
+    /// the cap (default 5, overridable via the
+    /// <c>POLYPHONY_NEXTREADY_ROLLUP_DEPTH</c> environment variable).
+    /// Empty list when the parent has no children OR when the depth cap
+    /// was reached (the latter case sets
+    /// <see cref="ChildRollupTruncated"/>). Null only on the deepest
+    /// recursion frame — observers should treat null and empty
+    /// identically.</summary>
+    public IReadOnlyList<ChildRollupSnapshot>? ChildSnapshots { get; set; }
+
+    /// <summary>True when the recursion was halted at this frame because
+    /// the depth cap was reached. The parent's
+    /// <c>implementation_merged</c> rollup degrades to a Needed
+    /// disposition with a "rollup truncated" reason, rather than
+    /// silently ignoring the missing children — silent fallback would
+    /// re-introduce the exact "everything Satisfied" lie the closed-loop
+    /// PRs are fixing.</summary>
+    public bool ChildRollupTruncated { get; set; }
+
+    /// <summary>Captured error message from the
+    /// <see cref="Twig.Domain.Interfaces.IWorkItemRepository.GetChildrenAsync"/>
+    /// call used to enumerate direct children, or null on success. When
+    /// non-null, <see cref="ChildSnapshots"/> stays null and the
+    /// rollup composers degrade to Needed with the error surfaced in
+    /// the reason string.</summary>
+    public string? ChildRollupFetchError { get; set; }
 }
