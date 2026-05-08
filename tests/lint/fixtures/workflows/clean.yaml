@@ -16,6 +16,7 @@ agents:
       - "plan"
       - "derive-ancestor-chain"
       - "{{ workflow.input.work_item_id }}"
+      - "{{ workflow.input.work_item_id }}"
     routes:
       - to: print_root
         when: "{{ derive_chain.output.error is not defined or derive_chain.output.error == '' }}"

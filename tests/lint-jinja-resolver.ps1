@@ -247,6 +247,7 @@ function Get-StepsFromYaml {
         $type = if ($a.ContainsKey('type')) { [string]$a['type'] } else { 'agent' }
         $verb = $null
         $isPoly = $false
+        $rawArgs = @()
 
         if ($type -eq 'script' -and $a.ContainsKey('command')) {
             $cmd = [string]$a['command']
@@ -255,6 +256,7 @@ function Get-StepsFromYaml {
                 # top-level (no group) -- detect by checking the registry, but for
                 # now compose both candidates and the resolver tries them.
                 $argTokens = @($a['args'] | ForEach-Object { [string]$_ })
+                $rawArgs = $argTokens
                 $positional = @($argTokens | Where-Object { $_ -and -not $_.StartsWith('-') -and -not $_.StartsWith('{{') -and -not $_.StartsWith('"{{') })
                 if ($positional.Count -ge 2) {
                     $verb = "$($positional[0]) $($positional[1])"
@@ -280,6 +282,7 @@ function Get-StepsFromYaml {
             Type        = $type
             Verb        = $verb
             IsPolyphony = $isPoly
+            RawArgs     = $rawArgs
             Line        = $line
             Order       = $order++
         })
@@ -893,6 +896,158 @@ function Get-JinjaFields {
     return ,$fields
 }
 
+function Test-VerbInvocation {
+    <#
+        Cross-reference linter for `command: polyphony` step args (PR #196 contract).
+
+        For each polyphony step in a workflow, validate the args against the
+        verb's `inputs[]` declared by the source generator. Emits:
+
+          VERB001  error  unknown verb (verb path doesn't appear in the registry)
+          VERB002  error  unknown CLI flag (--foo not in inputs[] for the verb)
+          VERB003  error  required input not threaded (no --required-flag entry)
+
+        These catch the same class of silent-fail signature drift that PR #159's
+        manual audit found across `branch ensure-feature` / `worklist build` /
+        `wave-integrator.ps1`'s `edges check` call sites — the case where the CLI
+        exits 0 because ConsoleAppFramework's required-arg path bypasses the
+        routing-style envelope (#191).
+
+        Limitations:
+          - Does not enforce flag *value* shape (string vs. int vs. JSON).
+          - Does not attempt to resolve `--flag` `"{{ jinja }}"` value rendering.
+          - A flag with no following value is treated as a boolean toggle, which
+            matches ConsoleAppFramework's bool param convention.
+          - Top-level (groupless) verbs are detected by registry presence: if
+            "<a> <b>" is not in the registry but "<a>" is, "<a>" is the verb.
+
+        Returns an array of diagnostic objects with shape
+        { Code, Severity, Message, Snippet }.
+    #>
+    param(
+        [Parameter(Mandatory)] $Step,
+        [Parameter(Mandatory)] $Registry
+    )
+
+    $diags = New-Object System.Collections.Generic.List[object]
+    if (-not $Step.IsPolyphony) { return ,$diags }
+    $args = @($Step.RawArgs)
+    if ($args.Count -eq 0) { return ,$diags }
+
+    # ── Resolve the verb path (1 or 2 positional tokens) ───────────────
+    $verbPath = $null
+    $argStart = 0
+    if ($args.Count -ge 2 -and -not $args[0].StartsWith('-') -and -not $args[1].StartsWith('-')) {
+        $candidate2 = "$($args[0]) $($args[1])"
+        if ($Registry.verbs.PSObject.Properties.Name -contains $candidate2) {
+            $verbPath = $candidate2
+            $argStart = 2
+        }
+    }
+    if (-not $verbPath -and $args.Count -ge 1 -and -not $args[0].StartsWith('-')) {
+        $candidate1 = $args[0]
+        if ($Registry.verbs.PSObject.Properties.Name -contains $candidate1) {
+            $verbPath = $candidate1
+            $argStart = 1
+        }
+    }
+
+    if (-not $verbPath) {
+        # Best-effort guess for the message: prefer the 2-token form when we
+        # have one, otherwise the single-token form.
+        $guess = if ($args.Count -ge 2 -and -not $args[0].StartsWith('-') -and -not $args[1].StartsWith('-')) {
+            "$($args[0]) $($args[1])"
+        } elseif ($args.Count -ge 1 -and -not $args[0].StartsWith('-')) {
+            $args[0]
+        } else {
+            '<no positional args>'
+        }
+        $diags.Add([PSCustomObject]@{
+            Code     = 'VERB001'
+            Severity = 'error'
+            Message  = "step '$($Step.Name)' invokes unknown polyphony verb '$guess' (not in registry; was the verb renamed or removed?)"
+            Snippet  = "command: polyphony, args: [$($args -join ', ')]"
+        })
+        return ,$diags
+    }
+
+    $verbEntry = $Registry.verbs.$verbPath
+    $declaredInputs = @{}
+    $orderedInputNames = New-Object System.Collections.Generic.List[string]
+    foreach ($inp in @($verbEntry.inputs)) {
+        $declaredInputs[$inp.name] = $inp
+        $orderedInputNames.Add($inp.name)
+    }
+
+    # ── Pass 1: collect every --flag NAME and mark its slot threaded.
+    # ConsoleAppFramework supports both `--name value` and bare positional
+    # binding for the same parameter; we process named flags first so that
+    # pass 2's positional walk correctly skips any slots already named.
+    $threaded = New-Object System.Collections.Generic.HashSet[string]
+    $unknownFlags = New-Object System.Collections.Generic.List[object]
+    for ($i = $argStart; $i -lt $args.Count; $i++) {
+        $tok = $args[$i]
+        if (-not $tok.StartsWith('--')) { continue }
+        $flag = $tok.Substring(2)
+        if (-not $declaredInputs.ContainsKey($flag)) {
+            $unknownFlags.Add([PSCustomObject]@{ Index = $i; Token = $tok; Flag = $flag })
+            if ($i + 1 -lt $args.Count -and -not $args[$i + 1].StartsWith('--')) { $i++ }
+            continue
+        }
+        [void]$threaded.Add($flag)
+        if ($i + 1 -lt $args.Count -and -not $args[$i + 1].StartsWith('--')) { $i++ }
+    }
+
+    # ── Pass 2: walk bare positionals in order; each binds to the next
+    # un-threaded input slot in declaration order.
+    $positionalQueue = New-Object System.Collections.Generic.Queue[string]
+    foreach ($n in $orderedInputNames) {
+        if (-not $threaded.Contains($n)) { $positionalQueue.Enqueue($n) }
+    }
+    for ($i = $argStart; $i -lt $args.Count; $i++) {
+        $tok = $args[$i]
+        if ($tok.StartsWith('--')) {
+            # Skip the flag's value too so we don't mistake it for a positional.
+            if ($i + 1 -lt $args.Count -and -not $args[$i + 1].StartsWith('--')) { $i++ }
+            continue
+        }
+        # Bare positional → bind to next un-threaded slot.
+        if ($positionalQueue.Count -gt 0) {
+            $slotName = $positionalQueue.Dequeue()
+            [void]$threaded.Add($slotName)
+        }
+        # If queue is exhausted we silently ignore extras — could be a verb
+        # whose signature accepts more positionals than the registry knows
+        # about (variadic / params shape) or operator-side error we can't
+        # diagnose here; the CLI will surface it at runtime.
+    }
+
+    # ── Emit unknown-flag diagnostics now (after we've used them above).
+    foreach ($u in $unknownFlags) {
+        $diags.Add([PSCustomObject]@{
+            Code     = 'VERB002'
+            Severity = 'error'
+            Message  = "step '$($Step.Name)' calls '$verbPath' with unknown flag '--$($u.Flag)' (not in inputs[]; possible typo or signature drift)"
+            Snippet  = "args[$($u.Index)]: $($u.Token)"
+        })
+    }
+
+    # ── Required-input coverage ────────────────────────────────────────
+    foreach ($name in $orderedInputNames) {
+        $inp = $declaredInputs[$name]
+        if ($inp.required -eq $true -and -not $threaded.Contains($name)) {
+            $diags.Add([PSCustomObject]@{
+                Code     = 'VERB003'
+                Severity = 'error'
+                Message  = "step '$($Step.Name)' calls '$verbPath' but does not thread required input '--$name' ($($inp.clr_type))"
+                Snippet  = "command: polyphony, verb: $verbPath"
+            })
+        }
+    }
+
+    return ,$diags
+}
+
 # ── Diagnostic emission ────────────────────────────────────────────────
 function Emit-Diagnostic {
     param(
@@ -965,6 +1120,21 @@ foreach ($file in $yamlFiles) {
     foreach ($s in $steps) { $stepLookup[$s.Name] = $s }
 
     $workflowName = if ($yaml.ContainsKey('workflow') -and $yaml['workflow'].ContainsKey('name')) { [string]$yaml['workflow']['name'] } else { $file.BaseName }
+
+    # ── VERB001/002/003: cross-reference workflow `command:` lines ────
+    foreach ($s in $steps) {
+        if (-not $s.IsPolyphony) { continue }
+        $verbDiags = Test-VerbInvocation -Step $s -Registry $registry
+        foreach ($d in $verbDiags) {
+            $referenceText = "$($s.Name)::$($d.Code)"
+            if (Test-Suppressed -Entries $allowlist -RelFile $rel -Code $d.Code -Reference $referenceText) {
+                $totalSuppressedAllowlist++
+                continue
+            }
+            if ($d.Severity -eq 'error') { $totalErrors++ } else { $totalWarnings++ }
+            Emit-Diagnostic -Format $Format -RelFile $rel -Line $s.Line -Code $d.Code -Severity $d.Severity -Message $d.Message -Snippet $d.Snippet
+        }
+    }
 
     $fields = Get-JinjaFields -Yaml $yaml -RawLines $rawLines
 

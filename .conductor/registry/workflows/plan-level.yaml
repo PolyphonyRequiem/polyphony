@@ -1526,6 +1526,8 @@ agents:
       - "{{ root_resolver.output.resolved_root_id }}"
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
+      - "--pr-number"
+      - "{{ poll_status.output.pr_number if poll_status.output.pr_number is defined else open_plan_pr.output.pr_number }}"
       - "--parent-item-id"
       - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
     routes:
@@ -1966,6 +1968,8 @@ agents:
       - "{{ root_resolver.output.resolved_root_id }}"
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
+      - "--pr-number"
+      - "{{ poll_status_ado.output.pr_number if poll_status_ado.output.pr_number is defined else open_plan_pr_ado.output.pr_number }}"
       - "--parent-item-id"
       - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
     routes:

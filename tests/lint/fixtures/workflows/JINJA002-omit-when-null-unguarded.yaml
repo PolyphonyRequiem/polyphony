@@ -14,6 +14,7 @@ agents:
       - "plan"
       - "derive-ancestor-chain"
       - "{{ workflow.input.work_item_id }}"
+      - "{{ workflow.input.work_item_id }}"
     routes:
       - to: consumer
 

@@ -1,0 +1,18 @@
+# VERB001 — `command: polyphony` invokes a verb that does not exist in the
+# registry. The polyphony CLI would exit with "unknown command" at runtime;
+# the lint catches it at PR time.
+
+workflow:
+  name: verb001-unknown-verb
+  entry_point: bogus_verb
+
+agents:
+  - name: bogus_verb
+    type: script
+    command: polyphony
+    args:
+      - "plan"
+      - "this-verb-does-not-exist"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: $end
