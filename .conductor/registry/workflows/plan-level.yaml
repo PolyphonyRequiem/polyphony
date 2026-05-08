@@ -8,7 +8,7 @@
 #   1. resolve root + derive ancestor chain
 #   2. detect-state — find out where this plan tree branch already is
 #   3. branch on state:
-#        not_started     → architect → write_plan → ensure_plan_branch →
+#        not_started     → architect → ensure_plan_branch → write_plan →
 #                          commit_and_push → open_plan_pr → plan_reviewer →
 #                          poll_status → route on review state
 #        awaiting_review → poll_status → route on review state
@@ -612,10 +612,10 @@ agents:
         @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
     routes:
       # Policy mode=auto: skip gate entirely regardless of questions.
-      - to: write_plan
+      - to: ensure_plan_branch
         when: "{{ open_questions_policy.output.mode == 'auto' }}"
       # Cap reached: auto-proceed (fail honestly, don't loop forever).
-      - to: write_plan
+      - to: ensure_plan_branch
         when: "{{ open_questions_counter.output.cap_reached == true }}"
       # Mode=manual: gate on ANY question present.
       - to: open_questions_gate
@@ -623,8 +623,8 @@ agents:
       # Mode=warning: gate only when questions at or above min_severity exist.
       - to: open_questions_gate
         when: "{{ open_questions_policy.output.mode == 'warning' and architect.output.open_questions | selectattr('severity', 'in', open_questions_policy.output.severities_at_or_above) | list | length > 0 }}"
-      # Else: no gating questions — proceed to write_plan.
-      - to: write_plan
+      # Else: no gating questions — proceed to ensure_plan_branch.
+      - to: ensure_plan_branch
 
   # ── Open questions gate ──────────────────────────────────────────────────
   - name: open_questions_gate
@@ -661,7 +661,7 @@ agents:
         prompt_for: answers
       - label: "⏩ Proceed"
         value: proceed
-        route: write_plan
+        route: ensure_plan_branch
 
   # ── Open questions answer counter increment ────────────────────────────
   - name: open_questions_answer_counter
@@ -686,11 +686,13 @@ agents:
   # ── Write plan to disk ─────────────────────────────────────────────────
   #
   # Persists architect.output.plan to plans/plan-{item_id}.md. Pure I/O —
-  # no git ops, no PR ops. ensure_plan_branch (next) owns branch state;
-  # commit_and_push (after that) owns commit + push.
+  # no git ops, no PR ops. ensure_plan_branch (previous) has already
+  # checked out the plan branch so the file lands on the right ref;
+  # commit_and_push (next) owns commit + push.
   #
   # Invariants:
-  #   Pre:  architect.output.plan is non-empty.
+  #   Pre:  architect.output.plan is non-empty; worktree is on the plan
+  #         branch (ensure_plan_branch ran first).
   #   Post: plans/plan-{item_id}.md exists with the plan markdown; output.path
   #         is the absolute path; output.unchanged indicates noop on resume.
   - name: write_plan
@@ -707,7 +709,7 @@ agents:
     routes:
       - to: write_plan_error_gate
         when: "{{ write_plan.output.error is defined and write_plan.output.error }}"
-      - to: ensure_plan_branch
+      - to: commit_and_push
 
   # ── Write plan error gate ──────────────────────────────────────────────
   - name: write_plan_error_gate
@@ -732,7 +734,9 @@ agents:
   # ── Ensure plan branch ────────────────────────────────────────────────
   #
   # Idempotently creates (or fast-forwards to) the plan branch and checks
-  # it out. Branch grammar from the Rev 4 ADR:
+  # it out. Runs BEFORE write_plan so the architect's plan file lands on
+  # the plan branch (not the upstream branch as untracked, which would
+  # block the subsequent checkout). Branch grammar from the Rev 4 ADR:
   #   plan/{root_id}                  — root plan (base = feature/{root_id})
   #   plan/{root_id}-{item_id}        — descendant plan (base = parent plan branch)
   #
@@ -755,7 +759,7 @@ agents:
     routes:
       - to: ensure_plan_branch_error_gate
         when: "{{ ensure_plan_branch.output.error is defined and ensure_plan_branch.output.error }}"
-      - to: commit_and_push
+      - to: write_plan
 
   # ── Ensure plan branch error gate ─────────────────────────────────────
   - name: ensure_plan_branch_error_gate
