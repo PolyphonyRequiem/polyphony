@@ -1,0 +1,26 @@
+# JINJA002 — references an omit-when-null field without a guard.
+# `error` is a string? with WhenWritingNull → can_omit_when_null=true → must
+# be guarded. The reference here is bare → JINJA002 warning.
+
+workflow:
+  name: jinja002-omit-when-null-unguarded
+  entry_point: derive_chain
+
+agents:
+  - name: derive_chain
+    type: script
+    command: polyphony
+    args:
+      - "plan"
+      - "derive-ancestor-chain"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: consumer
+
+  - name: consumer
+    type: agent
+    model: claude-haiku-4.5
+    prompt: |
+      Error was: {{ derive_chain.output.error }}.
+    routes:
+      - to: $end

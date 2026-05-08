@@ -79,6 +79,26 @@ jobs:
           $result = Invoke-Pester -Path .conductor/registry/tests/lint-strict-undefined.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
 
+      - name: Lint workflow YAMLs (Jinja2 resolver)
+        # Resolves every `{{ <step>.output.<path> }}` reference in workflow
+        # YAMLs against the verb-output schema registry (#173). Catches
+        # five classes of bug: missing fields (JINJA001), unguarded
+        # omit-when-null refs (JINJA002), unknown step ids (JINJA003),
+        # non-polyphony refs that bypass schema (JINJA004; surfaced under
+        # -Pedantic only), and invalid path traversal (JINJA005).
+        # Uses the checked-in registry fixture until #173 lands on main —
+        # see ADR docs/decisions/jinja-resolver-lint.md § "Fixture drift".
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-jinja-resolver.ps1 -UseFixtureRegistry -Format github
+
+      - name: Test (Pester) — Jinja2 resolver lint
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path tests/lint-jinja-resolver.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
+
       - name: E2E (actionable.yaml)
         # Phase 6 PR #8 — graph-walk + agent-prompt-threading +
         # router-script behavior tests for actionable.yaml. Goes
