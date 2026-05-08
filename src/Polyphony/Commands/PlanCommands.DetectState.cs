@@ -6,6 +6,7 @@ using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -30,6 +31,8 @@ public sealed partial class PlanCommands
     private static readonly System.Text.RegularExpressions.Regex GitHubSlugRegexDetect =
         new(@"github\.com[:/]([^/]+/[^/.]+?)(?:\.git)?/?$",
             System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private readonly PlanObserver observer = new(git, gh, twig);
 
     /// <summary>
     /// Detect the current plan-workflow state for a work item.
@@ -79,7 +82,7 @@ public sealed partial class PlanCommands
         var manifestRef = $"origin/{featureBranch}";
 
         // ── 2. Slug. ──────────────────────────────────────────────────────
-        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
+        var slug = await observer.TryResolveSlugAsync(ct).ConfigureAwait(false);
         if (string.IsNullOrEmpty(slug))
         {
             EmitDetectStateError(rootId, itemId, planBranch,
@@ -91,9 +94,8 @@ public sealed partial class PlanCommands
         bool branchExists;
         try
         {
-            var heads = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{planBranch}", ct)
+            branchExists = await observer.CheckPlanBranchExistsOrThrowAsync(planBranch, ct)
                 .ConfigureAwait(false);
-            branchExists = heads.Count > 0;
         }
         catch (ExternalToolException ex)
         {
@@ -102,13 +104,11 @@ public sealed partial class PlanCommands
         }
 
         // ── 4. Latest PR for this branch. ─────────────────────────────────
-        IReadOnlyList<PullRequestSummary> prs;
+        PullRequestSummary? latestPr;
         try
         {
-            prs = await gh.ListPullRequestsAsync(
-                slug,
-                new PrListFilters(Head: planBranch, State: "all", Limit: 50),
-                ct).ConfigureAwait(false);
+            latestPr = await observer.GetLatestPlanPrAsync(slug, planBranch, ct)
+                .ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
         {
@@ -121,8 +121,6 @@ public sealed partial class PlanCommands
             EmitDetectStateError(rootId, itemId, planBranch, $"gh pr list failed: {ex.Message}");
             return ExitCodes.Success;
         }
-
-        var latestPr = prs.OrderByDescending(p => p.Number).FirstOrDefault();
 
         // ── 5. No PR → not_started. ───────────────────────────────────────
         if (latestPr is null)
@@ -142,7 +140,7 @@ public sealed partial class PlanCommands
         GhPullRequestPollData? pollData;
         try
         {
-            pollData = await gh.GetPullRequestPollDataAsync(slug, latestPr.Number, ct)
+            pollData = await observer.GetPlanPrPollAsync(slug, latestPr.Number, ct)
                 .ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
@@ -223,7 +221,7 @@ public sealed partial class PlanCommands
         }
 
         // MERGED — discriminate complete vs merged_unseeded via the planned tag.
-        var seeded = await IsParentSeededAsync(itemId, plannedTag, ct).ConfigureAwait(false);
+        var seeded = await observer.IsParentSeededAsync(itemId, plannedTag, ct).ConfigureAwait(false);
         if (!seeded)
         {
             EmitDetectState(new PlanDetectStateResult
@@ -447,41 +445,6 @@ public sealed partial class PlanCommands
         return stale;
     }
 
-    private async Task<bool> IsParentSeededAsync(int itemId, string plannedTag, CancellationToken ct)
-    {
-        try
-        {
-            var json = await twig.ShowAsync(itemId, ct).ConfigureAwait(false);
-            if (json is null) return false;
-
-            // twig show emits {"id":N,"tags":"a;b;c", ...}. Tags are a
-            // semicolon-separated string in System.Tags' canonical form.
-            var tags = json["tags"]?.GetValue<string?>() ?? string.Empty;
-            return tags
-                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Any(t => string.Equals(t, plannedTag, StringComparison.Ordinal));
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task<string> TryResolveSlugAsync(CancellationToken ct)
-    {
-        try
-        {
-            var url = await git.GetRemoteUrlAsync("origin", ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(url)) return string.Empty;
-            var match = GitHubSlugRegexDetect.Match(url);
-            return match.Success ? match.Groups[1].Value : string.Empty;
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-
     private static void EmitDetectState(PlanDetectStateResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
             result, PolyphonyJsonContext.Default.PlanDetectStateResult));
@@ -496,4 +459,26 @@ public sealed partial class PlanCommands
             BranchExistsOnOrigin = false,
             Error = error,
         });
+
+    /// <summary>
+    /// Resolve the GitHub <c>owner/repo</c> slug from
+    /// <c>git remote get-url origin</c>. Used by other <see cref="PlanCommands"/>
+    /// partials (status, validate-scope, classify-stale-descendants, etc.).
+    /// The detect-state verb itself delegates to
+    /// <see cref="PlanObserver.TryResolveSlugAsync"/> for the same logic.
+    /// </summary>
+    private async Task<string> TryResolveSlugAsync(CancellationToken ct)
+    {
+        try
+        {
+            var url = await git.GetRemoteUrlAsync("origin", ct).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(url)) return string.Empty;
+            var match = GitHubSlugRegexDetect.Match(url);
+            return match.Success ? match.Groups[1].Value : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 }
