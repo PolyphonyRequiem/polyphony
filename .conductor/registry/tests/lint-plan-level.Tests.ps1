@@ -856,4 +856,42 @@ agents:
             ($output -join "`n") | Should -Match 'missing-warning-mode-route'
         }
     }
+
+    Context 'parent_item_id default-filter form (regression: dogfood apex #3043, 2026-05-08)' {
+
+        BeforeEach {
+            $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-plan-level-pid-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+            $script:WorkflowsDir = Join-Path $script:TempRoot 'workflows'
+            $script:TestsDir = Join-Path $script:TempRoot 'tests'
+            $script:RealYaml = Join-Path $PSScriptRoot '..' 'workflows' 'plan-level.yaml'
+            New-Item $script:WorkflowsDir -ItemType Directory -Force | Out-Null
+            New-Item $script:TestsDir -ItemType Directory -Force | Out-Null
+            Copy-Item $script:LintScript (Join-Path $script:TestsDir 'lint-plan-level.ps1')
+        }
+
+        AfterEach {
+            Remove-Item $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Real plan-level.yaml uses the two-arg default(0, true) form for every parent_item_id reference' {
+            $content = Get-Content $script:RealYaml -Raw
+            # No bare default(0) form should remain — every reference uses default(0, true).
+            $bareMatches = [regex]::Matches($content, 'parent_item_id\s*\|\s*default\(\s*0\s*\)')
+            $bareMatches.Count | Should -Be 0
+            # And the two-arg form IS present (sanity check that we have references at all).
+            $twoArgMatches = [regex]::Matches($content, 'parent_item_id\s*\|\s*default\(\s*0\s*,\s*true\s*\)')
+            $twoArgMatches.Count | Should -BeGreaterThan 0
+        }
+
+        It 'Lint fails when plan-level.yaml regresses to bare default(0)' {
+            $content = Get-Content $script:RealYaml -Raw
+            # Mutate every two-arg form back to the bare form.
+            $mutated = $content -replace 'parent_item_id\s*\|\s*default\(\s*0\s*,\s*true\s*\)', 'parent_item_id | default(0)'
+            Set-Content (Join-Path $script:WorkflowsDir 'plan-level.yaml') $mutated
+            $lintScript = Join-Path $script:TestsDir 'lint-plan-level.ps1'
+            $output = pwsh -NoProfile -File $lintScript 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'parent-item-id-bare-default'
+        }
+    }
 }

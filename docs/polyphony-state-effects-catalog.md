@@ -158,6 +158,31 @@ introduce new dependencies.
   runtime. Pinned by lint check `open-questions-policy-bad-type-field`
   in `lint-plan-level.ps1` as of this PR.
 
+### `polyphony plan derive-ancestor-chain --root-id R --item-id I`
+- **Purpose**: derive the parent-chain (ancestors from root → leaf) for
+  an item under a given apex root. Workflows feed the result into
+  recursive planning to know who the parent plan branch is.
+- **Pre**: ADO reachable; `R > 0`, `I > 0`.
+- **Post**: emits `{root_id, item_id, is_root_plan, parent_item_id,
+  ancestor_ids, ancestor_chain, depth}`. On error, `{error}` is added.
+- **Side effects**: none (read-only — walks the work-item tree).
+- **Idempotent**: yes.
+- **Wire-shape gotcha**: `parent_item_id` is `int?` and is **always
+  emitted** (per-property `[JsonIgnore(Condition = Never)]` overrides the
+  `PolyphonyJsonContext` default of `WhenWritingNull`). The field is
+  `null` for the root-plan case (`item_id == root_id`) and for direct
+  children of root, and an integer for deeper descendants.
+
+  Bug #8 (dogfood apex #3043, 2026-05-08) had the field elided on the
+  root path; conductor's `strict_undefined` then raised
+  `'dict object' has no attribute 'parent_item_id'` when the workflow
+  tried to thread it into the recursive `for_each` step. Even after the
+  field is always emitted, Jinja's bare `default(0)` filter does NOT
+  substitute on `None` — only on `Undefined`. Workflow MUST use
+  `default(0, true)` (two-arg, `boolean=True`) to coerce both. Pinned
+  by lint check `parent-item-id-bare-default` in `lint-plan-level.ps1`
+  as of this PR.
+
 ### `polyphony policy resolve --domain <d> --scope <s> [--path P]`
 - **Purpose**: resolve effective policy for a `(scope, domain)` pair by
   layering most-specific-wins (`type:Name` > `root` > `defaults`).
@@ -267,6 +292,24 @@ introduce new dependencies.
   agree. A general remedy would be a registry of conductor-honored
   Jinja functions/filters that lints can validate against — also
   rolls into [#163](https://github.com/PolyphonyRequiem/polyphony/issues/163).
+- **`DefaultIgnoreCondition.WhenWritingNull` breaks `strict_undefined`
+  Jinja consumers**: `PolyphonyJsonContext` defaults to
+  `JsonIgnoreCondition.WhenWritingNull`, so any nullable verb-output
+  field (`int?`, `string?`, etc.) is silently elided when its value is
+  null. Conductor renders agent prompts with `strict_undefined`, which
+  raises on attribute access for missing dict keys *before* any
+  `default()` filter can apply. Bug #8 (dogfood apex #3043,
+  2026-05-08) was the first instance: `plan derive-ancestor-chain`'s
+  `parent_item_id` was elided on the root path, blowing up the
+  recursive `for_each` consumer. Compounding gotcha: even when the
+  field IS present-as-null, Jinja's bare `default(0)` only substitutes
+  on Undefined, NOT on `None` — workflow must use the two-arg form
+  `default(0, true)` to coerce `None → 0`. Per-property
+  `[JsonIgnore(Condition = Never)]` is the surgical Option-A fix; the
+  blanket alternative (flip the context default to `Never` globally)
+  would tax every error-envelope shape and is deferred as a systematic
+  decision. **This pattern affects every nullable verb-output field**
+  reachable from a `strict_undefined` Jinja consumer — audit needed.
 - **Wave integration idempotency**: not yet exercised; document after
   first wave-integration smoke.
 - **`apex-wave-dispatch.yaml` and per-lifecycle sub-workflows**: not

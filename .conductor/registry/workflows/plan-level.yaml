@@ -751,7 +751,7 @@ agents:
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
       - "--parent-item-id"
-      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+      - "{{ ancestor_chain.output.parent_item_id | default(0, true) }}"
     routes:
       - to: ensure_plan_branch_error_gate
         when: "{{ ensure_plan_branch.output.error is defined and ensure_plan_branch.output.error }}"
@@ -856,7 +856,7 @@ agents:
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
       - "--parent-item-id"
-      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+      - "{{ ancestor_chain.output.parent_item_id | default(0, true) }}"
       - "--ancestor-ids"
       - "{{ ancestor_chain.output.ancestor_ids }}"
     routes:
@@ -1527,7 +1527,7 @@ agents:
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
       - "--parent-item-id"
-      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+      - "{{ ancestor_chain.output.parent_item_id | default(0, true) }}"
     routes:
       - to: stale_generation_gate
         when: "{{ merge_plan_pr.output.error_code is defined and merge_plan_pr.output.error_code == 'stale_generation' }}"
@@ -1834,7 +1834,7 @@ agents:
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
       - "--parent-item-id"
-      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+      - "{{ ancestor_chain.output.parent_item_id | default(0, true) }}"
       - "--ancestor-ids"
       - "{{ ancestor_chain.output.ancestor_ids }}"
     routes:
@@ -1961,7 +1961,7 @@ agents:
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
       - "--parent-item-id"
-      - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
+      - "{{ ancestor_chain.output.parent_item_id | default(0, true) }}"
     routes:
       # NOTE: stale_generation reuses stale_generation_gate. The gate's
       # prompt references merge_plan_pr.output.* fields — those are

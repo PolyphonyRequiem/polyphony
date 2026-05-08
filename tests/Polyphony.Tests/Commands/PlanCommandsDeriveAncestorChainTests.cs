@@ -205,4 +205,67 @@ public sealed class PlanCommandsDeriveAncestorChainTests : CommandTestBase
         result.Error.ShouldNotBeNull();
         result.Error.ShouldContain("Cycle detected");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Wire-shape regression: parent_item_id is always emitted (bug #8 — dogfood
+    // apex #3043, 2026-05-08). The PolyphonyJsonContext default is
+    // WhenWritingNull, but ParentItemId is per-property pinned to Never so
+    // workflow Jinja under strict_undefined can reference
+    // `output.parent_item_id` unconditionally without raising on a missing
+    // attribute. The wire shape is uniform across root-plan and descendant
+    // invocations.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RootPlan_WireShape_ParentItemIdAlwaysPresentAsNull()
+    {
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.DeriveAncestorChain(100, 100));
+
+        // Field must be present (not elided by WhenWritingNull) with explicit null value.
+        output.ShouldContain("\"parent_item_id\":null");
+    }
+
+    [Fact]
+    public async Task DirectChildOfRoot_WireShape_ParentItemIdAlwaysPresentAsNull()
+    {
+        await SeedAsync(
+            new WorkItemBuilder().WithId(100).WithType("Epic").Build(),
+            new WorkItemBuilder().WithId(200).WithType("Issue").WithParentId(100).Build());
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.DeriveAncestorChain(100, 200));
+
+        // Direct children of root also have null parent_item_id (the parent IS root,
+        // which is implicit). Field must still be emitted explicitly.
+        output.ShouldContain("\"parent_item_id\":null");
+    }
+
+    [Fact]
+    public async Task DescendantPlan_WireShape_ParentItemIdHasIntegerValue()
+    {
+        await SeedAsync(
+            new WorkItemBuilder().WithId(100).WithType("Epic").Build(),
+            new WorkItemBuilder().WithId(200).WithType("Issue").WithParentId(100).Build(),
+            new WorkItemBuilder().WithId(250).WithType("Task").WithParentId(200).Build());
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.DeriveAncestorChain(100, 250));
+
+        // Descendant: parent_item_id must be the integer parent id (here, 200).
+        output.ShouldContain("\"parent_item_id\":200");
+    }
+
+    [Fact]
+    public async Task ErrorPath_WireShape_ParentItemIdAlwaysPresent()
+    {
+        // Even on the error path, the schema must include parent_item_id so
+        // workflow consumers don't have to branch the access pattern by success
+        // vs. failure envelope.
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.DeriveAncestorChain(0, 0));
+
+        output.ShouldContain("\"parent_item_id\":null");
+        output.ShouldContain("\"error\":");
+    }
 }
