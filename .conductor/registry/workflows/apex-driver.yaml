@@ -742,7 +742,7 @@ agents:
 
       ### `polyphony state next-ready` error
       ```
-      {%- if preflight_apex_state.output.error is defined -%}
+      {%- if preflight_apex_state is defined and preflight_apex_state.output.error is defined -%}
       {{ preflight_apex_state.output.error }}
       {%- else -%}
       (no error — this step succeeded or did not run)
@@ -751,7 +751,7 @@ agents:
 
       ### `polyphony branch ensure-feature` error
       ```
-      {%- if preflight_ensure_branch.output.error is defined and preflight_ensure_branch.output.error != '' -%}
+      {%- if preflight_ensure_branch is defined and preflight_ensure_branch.output.error is defined and preflight_ensure_branch.output.error != '' -%}
       {{ preflight_ensure_branch.output.error }}
       {%- else -%}
       (no error — this step succeeded or did not run)
@@ -760,7 +760,7 @@ agents:
 
       ### `init_manifest` error
       ```
-      {%- if init_manifest.output.error is defined and init_manifest.output.error != '' -%}
+      {%- if init_manifest is defined and init_manifest.output.error is defined and init_manifest.output.error != '' -%}
       [{{ init_manifest.output.error_code | default('?') }}] {{ init_manifest.output.error }}
       {%- else -%}
       (no error — this step succeeded or did not run)
@@ -769,7 +769,7 @@ agents:
 
       ### `commit_and_push_manifest` error
       ```
-      {%- if commit_and_push_manifest.output.error is defined and commit_and_push_manifest.output.error != '' -%}
+      {%- if commit_and_push_manifest is defined and commit_and_push_manifest.output.error is defined and commit_and_push_manifest.output.error != '' -%}
       [{{ commit_and_push_manifest.output.error_code | default('?') }}] {{ commit_and_push_manifest.output.error }}
       {%- else -%}
       (no error — this step succeeded or did not run)
@@ -778,7 +778,7 @@ agents:
 
       ### `declare_root` error
       ```
-      {%- if declare_root.output.error is defined and declare_root.output.error != '' -%}
+      {%- if declare_root is defined and declare_root.output.error is defined and declare_root.output.error != '' -%}
       {{ declare_root.output.error }}
       {%- else -%}
       (no error — this step succeeded or did not run)
