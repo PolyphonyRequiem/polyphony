@@ -273,6 +273,37 @@ shouldn't accumulate into a parallel source of truth — the cap is the
 forcing function. Hitting the cap means clean up suppressions or
 raise the limit by ADR amendment.
 
+## Amendment 2026-05-08 — `can_omit_when_null` respects nullability
+
+The original generator computed `can_omit_when_null = ignore != "Never"`. Because
+`PolyphonyJsonContext`'s default condition is `WhenWritingNull`, every property
+without an explicit `[JsonIgnore]` override was emitted with
+`can_omit_when_null=true` — even compiler-non-null types like
+`required string State`. The lint then warned authors to wrap those references in
+`{% if x is defined %}`, producing 202 false-positive JINJA002 warnings on the
+live workflow corpus (issue #187).
+
+The corrected logic respects the C# nullable annotation (project-wide
+`<Nullable>enable</Nullable>` + `TreatWarningsAsErrors` makes the annotation a
+real contract):
+
+| `IgnoreCondition`    | Value type | `Nullable<T>` | Non-nullable ref | Nullable ref |
+|----------------------|-----------:|--------------:|-----------------:|-------------:|
+| `Always`             |  true      |  true         |  true            |  true        |
+| `Never`              |  false     |  false        |  false           |  false       |
+| `WhenWritingNull`    |  false     |  true         |  false           |  true        |
+| `WhenWritingDefault` |  true      |  true         |  false           |  true        |
+
+(`Always` rows are degenerate — `[JsonIgnore]` properties are filtered out earlier;
+the row is here for completeness.)
+
+Pinned by `tests/Polyphony.SchemaGenerator.Tests/CanOmitWhenNullTests.cs`. The
+fixture under `tests/lint/fixtures/verb-output-schemas.json` is regenerated
+in the same change, so the Pester real-corpus assertion continues to mirror the
+live registry. Issue #187 is closed by this fix; the residual 32 JINJA002
+warnings (down from 202) all reference genuinely-nullable fields and are the
+correct lint surface for case-by-case workflow guarding.
+
 ## Amendment 2026-05-08 — CI gate flipped to live registry
 
 When this ADR was written, #173 (the verb-output schema registry) had not
