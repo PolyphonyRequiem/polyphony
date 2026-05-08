@@ -319,7 +319,7 @@ public sealed class GhClient : IGhClient
         [
             "pr", "view", prNumber.ToString(),
             "--repo", repoSlug,
-            "--json", "number,state,reviewDecision,reviews,headRefOid,baseRefName,headRefName,mergeable,mergedAt,mergeCommit,body",
+            "--json", "number,state,reviewDecision,reviews,headRefOid,baseRefName,headRefName,mergeable,mergedAt,mergeCommit,body,author,comments",
         ];
         var result = await RunWithRetryAsync(args, ct).ConfigureAwait(false);
         return result.Succeeded ? ParsePrPollData(result.Stdout) : null;
@@ -838,6 +838,35 @@ public sealed class GhClient : IGhClient
             }
         }
 
+        var prAuthorLogin = string.Empty;
+        if (obj["author"] is JsonObject prAuthorObj)
+        {
+            prAuthorLogin = prAuthorObj["login"]?.GetValue<string>() ?? string.Empty;
+        }
+
+        var comments = new List<GhPullRequestComment>();
+        if (obj["comments"] is JsonArray commentsArray)
+        {
+            foreach (var item in commentsArray)
+            {
+                if (item is not JsonObject commentObj) continue;
+                var commentAuthor = string.Empty;
+                if (commentObj["author"] is JsonObject commentAuthorObj)
+                {
+                    commentAuthor = commentAuthorObj["login"]?.GetValue<string>() ?? string.Empty;
+                }
+                var commentBody = commentObj["body"]?.GetValue<string>() ?? string.Empty;
+                DateTimeOffset? createdAt = null;
+                var createdAtRaw = commentObj["createdAt"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(createdAtRaw)
+                    && DateTimeOffset.TryParse(createdAtRaw, out var parsedCreatedAt))
+                {
+                    createdAt = parsedCreatedAt;
+                }
+                comments.Add(new GhPullRequestComment(commentAuthor, commentBody, createdAt));
+            }
+        }
+
         return new GhPullRequestPollData(
             number,
             state,
@@ -849,7 +878,9 @@ public sealed class GhClient : IGhClient
             mergeSha,
             mergedAt,
             body,
-            reviews);
+            reviews,
+            prAuthorLogin,
+            comments);
     }
 
     /// <summary>

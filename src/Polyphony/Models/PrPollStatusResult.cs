@@ -6,8 +6,8 @@ namespace Polyphony;
 /// underlying source was GitHub or Azure DevOps. The vote vocabulary
 /// is normalized:
 /// <list type="bullet">
-///   <item><c>approved</c> — the reviewer signed off (GitHub APPROVED, ADO 10/5).</item>
-///   <item><c>changes_requested</c> — explicit block (GitHub CHANGES_REQUESTED, ADO -10/-5).</item>
+///   <item><c>approved</c> — the reviewer signed off (GitHub APPROVED, ADO 10/5, magic comment <c>polyphony:approve</c>).</item>
+///   <item><c>changes_requested</c> — explicit block (GitHub CHANGES_REQUESTED, ADO -10/-5, magic comment <c>polyphony:request-changes</c>).</item>
 ///   <item><c>commented</c> — comment-only review (GitHub COMMENTED).</item>
 ///   <item><c>dismissed</c> — review was dismissed/superseded (GitHub DISMISSED).</item>
 ///   <item><c>pending</c> — review requested but not yet submitted.</item>
@@ -23,6 +23,16 @@ public sealed record PrPollReviewer
 
     /// <summary>ISO-8601 timestamp of when the review was submitted; null when the source omits it (e.g. pending).</summary>
     public string? SubmittedAt { get; init; }
+
+    /// <summary>
+    /// Where the vote came from. <c>review</c> (default) — a native platform
+    /// review (GitHub Reviews tab, ADO vote). <c>magic_comment</c> — a
+    /// PR-author-posted top-level comment matching <c>polyphony:approve</c>
+    /// or <c>polyphony:request-changes</c>, used to work around GitHub's
+    /// PR-author-cannot-self-approve restriction. See issue #207 for the
+    /// design rationale and the planned replacement options.
+    /// </summary>
+    public string? Source { get; init; }
 }
 
 /// <summary>
