@@ -322,6 +322,57 @@ This closes the loop the original ADR's "Locked registry fixture vs.
 live registry" finding accepted as a documented gap — the gap was
 specifically about CI freshness, and is now closed.
 
+## Amendment 2026-05-08 — verb input schemas
+
+The registry now records each verb's CLI input shape alongside its
+output result type. The follow-up cross-reference linter (a sibling
+to the Jinja resolver lint) will validate workflow `command:
+polyphony` invocations against this shape — every `--flag` must
+appear in the verb's `inputs[]`, every required input must be
+threaded, and unknown flags fail the lint instead of silently
+exiting 0 from the CLI (the failure mode that motivated PR #159's
+audit and issue #191).
+
+Each verb in the catalog now carries:
+
+```jsonc
+"pr poll-status-ado": {
+  "result_type": "...",
+  "command_class": "...",
+  "inputs": [
+    { "name": "organization",     "clr_type": "string", "required": true },
+    { "name": "pr-number",        "clr_type": "int",    "required": true },
+    { "name": "include-metadata", "clr_type": "bool",   "required": false, "default": false }
+  ]
+}
+```
+
+Conventions:
+
+- `name` is the kebab-case CLI flag (no leading `--`), produced by
+  the same PascalCase→kebab-case transform ConsoleAppFramework
+  applies. C# `int prNumber` becomes `pr-number`.
+- `required` is `true` when the parameter has no explicit default
+  in the C# signature.
+- `default` is JSON-encoded — bare for primitives, quoted for
+  strings, `null` for `string? x = null`. The key is omitted
+  entirely when `required: true` so the absence of `default`
+  cannot be misread as "default is null".
+- `CancellationToken ct = default` is excluded — it's an idiomatic
+  trailer, never a user-facing flag.
+- The C# escape sigil on parameter names (`string @event`) is
+  dropped — `Name` resolves to `event`, so the CLI flag is
+  `--event`.
+
+Pinned by `tests/Polyphony.SchemaGenerator.Tests/VerbInputSchemaTests.cs`
+(11 tests covering required/optional/default-encoding/CT-exclusion/
+kebab-case/order). A real-verb shape is pinned end-to-end in
+`tests/Polyphony.Tests/Annotations/VerbCatalogGoldenTests.cs`
+(Golden 7 — `pr poll-status-ado`).
+
+This amendment lands the contract; the lint that consumes it ships
+in the next PR.
+
 ## Rubber-duck findings deferred
 
 | Finding | Disposition |

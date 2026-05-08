@@ -177,4 +177,46 @@ public sealed class VerbCatalogGoldenTests
         Types[taskRef].ShouldNotBeNull(
             $"chain endpoint '{taskRef}' must resolve in the types map");
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Golden 7 — verb inputs cross-reference (CR+CRL Part 1)
+    // ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void PrPollStatusAdo_Inputs_MatchAuthoritativeSignature()
+    {
+        // The cross-reference linter (Part 2 of CR+CRL) walks workflow
+        // `command: polyphony` invocations and asserts each `--flag` is
+        // declared on the verb. This pin guards the input shape for one
+        // representative ADO verb against accidental signature drift —
+        // the kind of drift PR #159's audit found across three call sites.
+        //
+        // Authoritative signature (PrCommands.PollStatusAdo.cs:35-41):
+        //   string organization, string project, string repositoryId,
+        //   int prNumber, bool includeMetadata = false, CancellationToken ct = default
+        var verb = Verbs["pr poll-status-ado"]?.AsObject();
+        verb.ShouldNotBeNull("verb 'pr poll-status-ado' is missing from the catalog");
+        var inputs = verb!["inputs"]!.AsArray();
+
+        var byName = inputs.ToDictionary(
+            i => i!.AsObject()["name"]!.GetValue<string>(),
+            i => i!.AsObject());
+
+        byName.Keys.ShouldBe(
+            ["organization", "project", "repository-id", "pr-number", "include-metadata"],
+            ignoreOrder: false);
+
+        byName["organization"]["required"]!.GetValue<bool>().ShouldBeTrue();
+        byName["organization"]["clr_type"]!.GetValue<string>().ShouldBe("string");
+
+        byName["pr-number"]["required"]!.GetValue<bool>().ShouldBeTrue();
+        byName["pr-number"]["clr_type"]!.GetValue<string>().ShouldBe("int");
+
+        byName["include-metadata"]["required"]!.GetValue<bool>().ShouldBeFalse();
+        byName["include-metadata"]["default"]!.GetValue<bool>().ShouldBeFalse();
+
+        // CancellationToken must never appear as a CLI flag.
+        byName.ShouldNotContainKey("ct");
+        byName.ShouldNotContainKey("cancellation-token");
+    }
 }
