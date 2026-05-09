@@ -63,6 +63,28 @@
 #        apex-driver writes NO checkpoint state of its own; the source
 #        of truth is the work-item tree (P1).
 #
+#   Q5 — Outer iterate-until-stable loop (PR #9, Option α). Wraps the
+#        existing wave dispatch loop so multi-facet items
+#        (plannable+implementable, etc.) traverse their facets in a
+#        SINGLE apex-driver invocation rather than one invocation per
+#        facet. Each outer iteration:
+#          1. (Re)builds the worklist via `polyphony worklist build` —
+#             observers see post-merge state from prior iterations
+#             (P1: source-of-truth is the work-item tree).
+#          2. Dispatches every wave (existing flow).
+#          3. Aggregates per-iteration progress via the wave-level
+#             `items_satisfied_count` and `items_dispatched_count`
+#             (added to apex-wave-dispatch.yaml in the same PR).
+#          4. Consults `polyphony state next-ready --work-item {apex_id}`
+#             — `item_satisfied: Satisfied` here is closed-loop honest
+#             as of PR #5.
+#          5. Decides `complete | cap | blocked | continue`.
+#        Cap defaults to 10 (override via
+#        POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS); see `outer_loop_evaluator`
+#        below. Option β (per-facet wave fan-out in worklist build) was
+#        deliberately deferred — see closed-loop-state-plan §4 PR #9
+#        footnote for revisit conditions.
+#
 # Routing-style envelope contract (per polyphony-workflow-author skill):
 #   * Every script step ALWAYS exits 0; failures surface via JSON
 #     envelope fields (`success`, `error_code`, etc.).
@@ -94,12 +116,15 @@ workflow:
     item under `apex_id` into the right lifecycle sub-workflow
     (plan-level / actionable / implement-pg / feature-pr / fast-path)
     in topological wave order, with per-item worktree isolation and
-    edge-correct wave integration. Replaces the deleted
-    polyphony-full.yaml.
-  version: "1.2.0"
+    edge-correct wave integration. Wraps the wave dispatch in an
+    outer iterate-until-stable loop (PR #9) so multi-facet items
+    (plannable+implementable, etc.) traverse plan → impl → close in a
+    single invocation rather than requiring per-facet re-invocation.
+    Replaces the deleted polyphony-full.yaml.
+  version: "2.2.0"
   entry_point: preflight_sync
   metadata:
-    min_polyphony_version: "1.2.0"
+    min_polyphony_version: "2.2.0"
 
   limits:
     # The dispatch loop is a for_each over waves; each wave is itself a
@@ -175,6 +200,22 @@ output:
   preflight_failed: >-
     {%- if terminal_preflight_failed is defined -%}true
     {%- else -%}false{%- endif -%}
+  # ── Outer-loop terminals (PR #9) ───────────────────────────────────────
+  # `iteration_cap_hit` fires when the apex.max_dispatch_iterations
+  # ceiling was reached without `item_satisfied` rolling all the way
+  # up. `blocked` fires when an iteration produced zero new dispatches
+  # AND the apex isn't satisfied — the workflow can't progress under
+  # its own steam (typically: an external dependency, a missing agent
+  # corridor, or a true human-input gap).
+  iteration_cap_hit: >-
+    {%- if terminal_apex_iteration_cap is defined -%}true
+    {%- else -%}false{%- endif -%}
+  blocked: >-
+    {%- if terminal_apex_blocked is defined -%}true
+    {%- else -%}false{%- endif -%}
+  iterations_used: >-
+    {%- if outer_loop_evaluator is defined -%}{{ outer_loop_evaluator.output.iteration | default(0) }}
+    {%- else -%}0{%- endif -%}
   renegotiation_pending: >-
     {%- if renegotiation_summary is defined -%}{{ (renegotiation_summary.output.any_pending | default(false)) | string | lower }}
     {%- else -%}false{%- endif -%}
@@ -367,9 +408,45 @@ agents:
     routes:
       - to: preflight_failure_gate
         when: "{{ declare_root.output.error is defined and declare_root.output.error != '' }}"
-      - to: build_worklist
+      - to: outer_loop_init
       # M4 catch-all
       - to: preflight_failure_gate
+
+  # ── Outer loop init (PR #9 — apex-driver iterate-until-stable) ────────────
+  #
+  # Resets the per-apex iteration counter file so a fresh invocation
+  # starts from iteration 0. Counter is keyed on apex_id and lives
+  # under [System.IO.Path]::GetTempPath() so it survives across the
+  # workflow's own steps (each script step is a fresh PowerShell process)
+  # but is naturally scoped to the apex.
+  #
+  # The outer loop body lives between `build_worklist` and
+  # `outer_loop_evaluator` (post-wave-loop). Each pass through the
+  # body increments the counter; the evaluator decides whether to loop
+  # back, terminate happy, or terminate as cap/blocked. See
+  # `apex.max_dispatch_iterations` (default 10) below.
+  #
+  # Invariants:
+  #   Pre:  declare_root succeeded.
+  #   Post: counter file exists with value "0".
+  - name: outer_loop_init
+    type: script
+    description: Reset the per-apex outer-loop iteration counter (PR #9)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "apex-driver-iter-{{ workflow.input.apex_id }}";
+        Set-Content -Path $counterFile -Value "0" -NoNewline;
+        [ordered]@{
+          apex_id = {{ workflow.input.apex_id }};
+          iteration = 0;
+          counter_file = $counterFile;
+          reset = $true;
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: build_worklist
 
   # ─────────────────────────────────────────────────────────────────────────
   # SECTION 2 — Dispatch loop
@@ -580,9 +657,131 @@ agents:
     routes:
       - to: renegotiation_gate
         when: "{{ renegotiation_summary.output.any_pending | string | lower == 'true' }}"
-      - to: apex_completion_gate
+      - to: outer_loop_evaluator
       # M4 catch-all
+      - to: outer_loop_evaluator
+
+  # ── Outer loop evaluator (PR #9 — iterate-until-stable) ──────────────────
+  #
+  # Decides what to do after one full pass through the wave dispatch
+  # loop. Implements Option α (per closed-loop-state-plan §3.4 + §4
+  # PR #9): re-classify the apex tree on the next iteration rather
+  # than fan out per-facet up front.
+  #
+  # Inputs read:
+  #   * Counter file (incremented by this step).
+  #   * `wave_dispatch_loop.outputs` — sums of per-wave items_satisfied_count
+  #     and items_dispatched_count tell us whether THIS iteration made
+  #     progress (something either reached terminal-satisfied or got
+  #     handed off to a corridor).
+  #   * `polyphony state next-ready --work-item {apex_id}` — closed-loop
+  #     honest as of PR #5; reports `item_satisfied: Satisfied` only when
+  #     all facet-driven kinds are Satisfied AND children rolled up.
+  #
+  # Decision priority (per PR #9 brief):
+  #   1. apex `item_satisfied: Satisfied` → `complete` → apex_completion_gate.
+  #   2. iteration counter ≥ max_dispatch_iterations → `cap` →
+  #      terminal_apex_iteration_cap.
+  #   3. zero new dispatches AND zero new satisfactions → `blocked` →
+  #      terminal_apex_blocked.
+  #   4. otherwise → `continue` → loop back to build_worklist.
+  #
+  # `apex.max_dispatch_iterations` defaults to 10. Override via the
+  # POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS env var if a particularly
+  # deep tree needs more passes (the cap is a safety net, not a
+  # performance ceiling).
+  #
+  # Known limitation (PR #6 carry-forward): apex_satisfied is observed
+  # via `next-ready` directly. If the validator-driven `item_satisfied`
+  # event is not configured in `.conductor/process-config.yaml > transitions`,
+  # the apex's ADO state will stay un-transitioned even though the outer
+  # loop terminates `complete`. Documented in PR #220's body and again
+  # in PR #9's PR body for the dogfood follow-up.
+  #
+  # Invariants:
+  #   Pre:  wave_loop_summary succeeded; renegotiation_summary fired.
+  #   Post: outer_loop_evaluator.output.decision is one of
+  #         {complete, cap, blocked, continue}; iteration counter
+  #         incremented exactly once.
+  - name: outer_loop_evaluator
+    type: script
+    description: Aggregate per-iteration progress + decide loop-back / terminate (PR #9)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "apex-driver-iter-{{ workflow.input.apex_id }}";
+        $iteration = if (Test-Path $counterFile) { [int]((Get-Content $counterFile -Raw).Trim()) + 1 } else { 1 };
+        Set-Content -Path $counterFile -Value "$iteration" -NoNewline;
+
+        $maxIterations = if ($env:POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS) { [int]$env:POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS } else { 10 };
+
+        $satisfiedDelta = 0; $dispatchedDelta = 0; $totalItems = 0;
+        $raw = @'
+        {{ wave_dispatch_loop.outputs | tojson }}
+        '@;
+        try {
+          $parsed = $raw | ConvertFrom-Json;
+          $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
+                    else { $parsed.PSObject.Properties.Value };
+          foreach ($v in $values) {
+            if ($null -eq $v) { continue }
+            if ($v.PSObject.Properties.Name -contains 'items_satisfied_count') { $satisfiedDelta += [int]$v.items_satisfied_count }
+            if ($v.PSObject.Properties.Name -contains 'items_dispatched_count') { $dispatchedDelta += [int]$v.items_dispatched_count }
+            if ($v.PSObject.Properties.Name -contains 'item_count') { $totalItems += [int]$v.item_count }
+          }
+        } catch { }
+
+        $madeProgress = ($satisfiedDelta -gt 0) -or ($dispatchedDelta -gt 0);
+
+        # Apex satisfaction: trust state next-ready's closed-loop honest
+        # `item_satisfied: Satisfied` (PR #5). Fail SAFE — if the verb
+        # errors out for any reason, treat as not-satisfied and let the
+        # progress / cap signals decide. Do NOT parse the reason text;
+        # truncation observability is by demotion (PR #5 hand-off note).
+        $apexSatisfied = $false;
+        try {
+          $nextRaw = polyphony state next-ready --work-item {{ workflow.input.apex_id }} 2>$null;
+          if ($nextRaw) {
+            $next = $nextRaw | ConvertFrom-Json;
+            if ($null -ne $next -and $next.PSObject.Properties.Name -contains 'item_satisfied') {
+              if ("$($next.item_satisfied)" -eq 'Satisfied') { $apexSatisfied = $true }
+            }
+          }
+        } catch { }
+
+        $capReached = $iteration -ge $maxIterations;
+
+        $decision = if ($apexSatisfied) { 'complete' }
+                    elseif ($capReached) { 'cap' }
+                    elseif (-not $madeProgress) { 'blocked' }
+                    else { 'continue' };
+
+        [ordered]@{
+          apex_id = {{ workflow.input.apex_id }};
+          iteration = $iteration;
+          max_iterations = $maxIterations;
+          items_satisfied_this_iteration = $satisfiedDelta;
+          items_dispatched_this_iteration = $dispatchedDelta;
+          total_items_observed = $totalItems;
+          made_progress = $madeProgress;
+          apex_satisfied = $apexSatisfied;
+          cap_reached = $capReached;
+          decision = $decision;
+        } | ConvertTo-Json -Compress
+    routes:
       - to: apex_completion_gate
+        when: "{{ outer_loop_evaluator.output.decision == 'complete' }}"
+      - to: terminal_apex_iteration_cap
+        when: "{{ outer_loop_evaluator.output.decision == 'cap' }}"
+      - to: terminal_apex_blocked
+        when: "{{ outer_loop_evaluator.output.decision == 'blocked' }}"
+      - to: build_worklist
+        when: "{{ outer_loop_evaluator.output.decision == 'continue' }}"
+      # M4 catch-all — defensive: undefined or malformed envelope
+      # falls into terminal_apex_blocked rather than silently looping.
+      - to: terminal_apex_blocked
 
   # ── Renegotiation gate ───────────────────────────────────────────────────
   #
@@ -818,11 +1017,19 @@ agents:
     prompt: |
       ## ✅ Apex dispatch complete
 
-      Every wave for apex **#{{ workflow.input.apex_id }}** dispatched
-      and integrated successfully. Confirm satisfaction to mark the
-      apex item_satisfied and close the workflow.
+      The outer dispatch loop for apex **#{{ workflow.input.apex_id }}**
+      reached `decision=complete` — `polyphony state next-ready` reports
+      the apex is `item_satisfied: Satisfied` (every facet-driven kind
+      Satisfied AND children's `item_satisfied` rolled up). Confirm
+      satisfaction to mark the apex done and close the workflow.
 
-      ### Wave summary
+      ### Iteration summary
+
+      - Outer-loop iterations used: **{{ outer_loop_evaluator.output.iteration | default('?') }}** of {{ outer_loop_evaluator.output.max_iterations | default('?') }}
+      - Last iteration items satisfied: **{{ outer_loop_evaluator.output.items_satisfied_this_iteration | default('?') }}**
+      - Last iteration items dispatched: **{{ outer_loop_evaluator.output.items_dispatched_this_iteration | default('?') }}**
+
+      ### Wave summary (most recent iteration)
 
       - Total waves: **{{ wave_loop_summary.output.total_waves }}**
       - Failed waves: **{{ wave_loop_summary.output.failed_waves }}**
@@ -908,6 +1115,61 @@ agents:
       - "-Command"
       - >-
         @{ apex_id = {{ workflow.input.apex_id }}; satisfied = $false; preflight_failed = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: apex iteration cap (PR #9) ─────────────────────────────────
+  #
+  # Fires when the outer dispatch loop exceeded apex.max_dispatch_iterations
+  # (default 10) without `item_satisfied` rolling all the way up the apex
+  # tree. Indicates either (a) a genuine multi-pass apex deeper than the
+  # cap, in which case the operator should raise POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS
+  # and re-invoke (state is on disk + ADO; resume is honest), or (b)
+  # reclassification flapping — symptom (iii) from the closed-loop-state-plan
+  # Option α footnote, calling for re-evaluating Option β (per-facet wave
+  # fan-out in worklist build).
+  - name: terminal_apex_iteration_cap
+    type: script
+    description: Terminal — outer dispatch loop hit max_dispatch_iterations
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          apex_id = {{ workflow.input.apex_id }};
+          satisfied = $false;
+          iteration_cap_hit = $true;
+          iterations_used = '{{ outer_loop_evaluator.output.iteration | default(0) }}';
+          max_iterations  = '{{ outer_loop_evaluator.output.max_iterations | default(0) }}';
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: apex blocked (PR #9) ───────────────────────────────────────
+  #
+  # Fires when the iteration produced zero new dispatches AND zero new
+  # satisfactions, AND the apex is not yet `item_satisfied: Satisfied`.
+  # The workflow has nothing left it can do under its own steam — every
+  # remaining item classifies as monitoring/blocked/error or has no
+  # eligible corridor. Operator should inspect `polyphony state next-ready
+  # --work-item {apex_id}` and the per-item dispositions before
+  # re-invoking apex-driver.
+  - name: terminal_apex_blocked
+    type: script
+    description: Terminal — outer loop is stable but apex is not satisfied
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          apex_id = {{ workflow.input.apex_id }};
+          satisfied = $false;
+          blocked = $true;
+          iterations_used = '{{ outer_loop_evaluator.output.iteration | default(0) }}';
+          decision = '{{ outer_loop_evaluator.output.decision | default('blocked') }}';
+        } | ConvertTo-Json -Compress
     routes:
       - to: $end
 
