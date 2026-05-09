@@ -235,27 +235,48 @@ if ($DryRun) {
     return
 }
 
-# ─── Launch conductor ────────────────────────────────────────────────────────
+# ─── Pin gh identity (github platform only) ──────────────────────────────────
 
-# Pre-resolve GH_TOKEN from the active gh auth so conductor's gh subprocesses
-# don't fight Windows Credential Manager / DPAPI in a non-TTY context.
-# Empirically (AB#3065 dogfood, 2026-05-09): gh CLI invocations from conductor's
-# Start-Process -WindowStyle Hidden subprocess hang at 60s × 3 retries when DPAPI
-# tries to surface a credential prompt that has nowhere to render. The same gh
-# call from an interactive shell returns in ~500ms. Setting GH_TOKEN bypasses
-# the keyring entirely and the subprocess gets the token via env. Idempotent —
-# caller's pre-set GH_TOKEN wins.
-if (-not $env:GH_TOKEN -and (Get-Command gh -ErrorAction SilentlyContinue)) {
+# Auto-detect whoever is logged into gh at this moment, capture that user's
+# token, validate it against the GitHub API, then pin the validated identity
+# into GH_TOKEN + GH_HOST for the entire conductor + polyphony subprocess
+# tree. This protects against two concrete failure modes:
+#
+#   1. Competing-worker auth slippage. Another agent in a sibling worktree
+#      can call `gh auth switch` mid-run, flipping the active gh user out
+#      from under us. Without pinning, every subsequent gh call inside
+#      conductor re-resolves the active user — and if the new active user
+#      has no token cached for github.com, gh falls through to DPAPI in a
+#      non-TTY context and hangs the per-attempt timeout (60s × 3 retries).
+#      Diagnosed during the AB#3066 dogfood (2026-05-09).
+#
+#   2. Stale or wrong-scope token. By validating once at launch, an
+#      expired/insufficient-scope token surfaces as a clear fail-fast at
+#      startup with the exact remediation command, instead of as 60s gh
+#      hangs on every PR-poll cycle hours later.
+#
+# Identity is auto-detected (whoever is active right now) — no hardcoded
+# username, no flag required from the caller. The diagnostic emit prints the
+# resolved login so the operator can spot a wrong-account launch immediately.
+#
+# Skipped on -Platform ado (no gh needed) and on -DryRun (no subprocess
+# calls during dry-run).
+if ($Platform -eq 'github') {
+    . (Join-Path $PSScriptRoot 'Resolve-GhIdentity.ps1')
     try {
-        $token = (& gh auth token --hostname github.com 2>$null | Out-String).Trim()
-        if ($token -and $token -notmatch '\s') {
-            $env:GH_TOKEN = $token
-        }
+        $identity = Resolve-GhIdentity
     } catch {
-        # Silent — caller can set GH_TOKEN explicitly if gh isn't available
-        # or has no token. The conductor's own gh failure will surface clearly.
+        # Re-throw with launcher context so the operator knows where the
+        # failure originated. The inner exception already carries the
+        # actionable remediation command.
+        throw "[polyphony-sdlc] gh identity probe failed:`n$($_.Exception.Message)"
     }
+    $env:GH_TOKEN = $identity.Token
+    $env:GH_HOST  = 'github.com'
+    Write-Host "[polyphony-sdlc] gh identity pinned: user='$($identity.User)' source=$($identity.Source) token_len=$($identity.TokenLength)" -ForegroundColor Cyan
 }
+
+# ─── Launch conductor ────────────────────────────────────────────────────────
 
 # Verify conductor is on PATH so we fail fast with a clear message instead of
 # Start-Process surfacing a generic "no such file" later.
