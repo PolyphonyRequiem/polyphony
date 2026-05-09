@@ -183,7 +183,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ApexYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ApexYaml.workflow.name        | Should -Be 'apex-driver'
         $script:ApexYaml.workflow.entry_point | Should -Be 'preflight_sync'
-        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '1.2.0'
+        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.0'
         $script:ApexYaml.tools                | Should -Contain 'twig'
         $script:ApexYaml.agents.Count         | Should -BeGreaterThan 10
     }
@@ -192,7 +192,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:WaveYaml.workflow | Should -Not -BeNullOrEmpty
         $script:WaveYaml.workflow.name        | Should -Be 'apex-wave-dispatch'
         $script:WaveYaml.workflow.entry_point | Should -Be 'dispatch_items'
-        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '1.0.1'
+        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.0'
         $script:WaveYaml.tools                | Should -Contain 'twig'
         # Per-M8 the workflow exposes 2 agents (aggregate_renegotiation,
         # integrate_wave) and 1 top-level for_each entry (dispatch_items).
@@ -204,7 +204,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ItemYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ItemYaml.workflow.name        | Should -Be 'apex-item-dispatch'
         $script:ItemYaml.workflow.entry_point | Should -Be 'classify_lifecycle'
-        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '1.2.0'
+        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.0'
         $script:ItemYaml.agents.Count         | Should -BeGreaterThan 8
     }
 
@@ -361,14 +361,14 @@ Describe 'apex-driver e2e — outer loop reachability' {
         $byValue['renegotiate']  | Should -Be 'terminal_apex_abandoned'
     }
 
-    It 'renegotiation_summary routes any-pending->renegotiation_gate else apex_completion_gate (with M4 catch-all)' {
+    It 'renegotiation_summary routes any-pending->renegotiation_gate else outer_loop_evaluator (PR #9 wraps the wave loop in an iterate-until-stable outer loop, so the no-pending edge feeds the evaluator instead of the completion gate directly)' {
         $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'renegotiation_summary')
         $hot = $routes | Where-Object { $_.When -match "any_pending \| string \| lower == 'true'" }
         $hot | Should -Not -BeNullOrEmpty
         $hot.Target | Should -Be 'renegotiation_gate'
         $catchAll = $routes[-1]
         $catchAll.When   | Should -BeNullOrEmpty
-        $catchAll.Target | Should -Be 'apex_completion_gate'
+        $catchAll.Target | Should -Be 'outer_loop_evaluator'
     }
 
     It 'renegotiation_gate exposes renegotiate/override/abort with the documented routes' {
@@ -395,10 +395,12 @@ Describe 'apex-driver e2e — outer loop reachability' {
         $routes.Target | Should -Contain 'terminal_apex_satisfied'
     }
 
-    It 'All three terminals route to $end' {
+    It 'All five terminals route to $end (PR #9 added terminal_apex_iteration_cap and terminal_apex_blocked alongside the original three)' {
         (Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'terminal_apex_satisfied').Target | Should -Contain '$end'
         (Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'terminal_apex_abandoned').Target | Should -Contain '$end'
         (Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'terminal_preflight_failed').Target | Should -Contain '$end'
+        (Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'terminal_apex_iteration_cap').Target | Should -Contain '$end'
+        (Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'terminal_apex_blocked').Target | Should -Contain '$end'
     }
 
     It 'The documented happy path is reachable from the entry point' {
@@ -409,11 +411,13 @@ Describe 'apex-driver e2e — outer loop reachability' {
             'preflight_sync',
             'preflight_apex_state',
             'preflight_ensure_branch',
+            'outer_loop_init',
             'build_worklist',
             'check_conflicts',
             'wave_dispatch_loop',
             'wave_loop_summary',
             'renegotiation_summary',
+            'outer_loop_evaluator',
             'apex_completion_gate',
             'close_mark_satisfied',
             'terminal_apex_satisfied'
@@ -421,6 +425,146 @@ Describe 'apex-driver e2e — outer loop reachability' {
         $missing = $waypoints | Where-Object { $reachable -notcontains $_ }
         $missing | Should -BeNullOrEmpty -Because (
             "every documented apex-driver waypoint must be reachable from the entry point; missing: $($missing -join ', ')")
+    }
+}
+
+# =====================================================================
+# Section 2b — outer iterate-until-stable loop (PR #9, Option α)
+#
+# These tests pin the structural shape of the outer loop (init,
+# evaluator, the four-way decision routes, the cap default, and the
+# new terminals) so future refactors can't silently turn the loop
+# back into a single-pass dispatch.
+# =====================================================================
+
+Describe 'apex-driver e2e — outer iterate-until-stable loop (PR #9)' {
+
+    It 'outer_loop_init is a script step that resets the per-apex temp counter and routes to build_worklist' {
+        $node = $script:ApexAgents['outer_loop_init']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        # The init script writes "0" to a per-apex counter file under
+        # the system temp dir.
+        $body = ($node.args -join "`n")
+        $body | Should -Match 'apex-driver-iter-'
+        $body | Should -Match 'GetTempPath'
+        $body | Should -Match 'Set-Content'
+        # Must hand off straight to build_worklist (the loop body's
+        # entry point).
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'outer_loop_init')
+        $routes.Target | Should -Contain 'build_worklist'
+    }
+
+    It 'declare_root routes to outer_loop_init (so the counter is reset BEFORE the first iteration)' {
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'declare_root')
+        # PR #9 inserts outer_loop_init between declare_root and
+        # build_worklist; the no-error happy-path must hit init first.
+        $routes.Target | Should -Contain 'outer_loop_init'
+    }
+
+    It 'outer_loop_evaluator is a script step that reads wave_dispatch_loop.outputs and shells out to polyphony state next-ready' {
+        $node = $script:ApexAgents['outer_loop_evaluator']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $body = ($node.args -join "`n")
+        # Increments the same counter file outer_loop_init seeded.
+        $body | Should -Match 'apex-driver-iter-'
+        # Sums per-iteration progress out of wave_dispatch_loop.outputs.
+        $body | Should -Match 'wave_dispatch_loop\.outputs'
+        $body | Should -Match 'items_satisfied_count'
+        $body | Should -Match 'items_dispatched_count'
+        # Reads apex satisfaction via state next-ready (PR #5 closed-loop).
+        $body | Should -Match 'state next-ready'
+        # Cap configurable via env var, default 10.
+        $body | Should -Match 'POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS'
+        $body | Should -Match '\b10\b'
+    }
+
+    It 'outer_loop_evaluator emits the four documented decisions (complete | cap | blocked | continue)' {
+        $node = $script:ApexAgents['outer_loop_evaluator']
+        $body = ($node.args -join "`n")
+        foreach ($d in @("'complete'", "'cap'", "'blocked'", "'continue'")) {
+            $body | Should -Match ([regex]::Escape($d))
+        }
+    }
+
+    It 'outer_loop_evaluator routes complete->apex_completion_gate, cap->terminal_apex_iteration_cap, blocked->terminal_apex_blocked, continue->build_worklist (with M4 catch-all to terminal_apex_blocked)' {
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'outer_loop_evaluator')
+        # Conditional routes — match by their `when` predicate.
+        $byDecision = @{}
+        foreach ($r in $routes) {
+            if ($r.When -match "decision == 'complete'") { $byDecision['complete'] = $r.Target }
+            if ($r.When -match "decision == 'cap'")      { $byDecision['cap'] = $r.Target }
+            if ($r.When -match "decision == 'blocked'")  { $byDecision['blocked'] = $r.Target }
+            if ($r.When -match "decision == 'continue'") { $byDecision['continue'] = $r.Target }
+        }
+        $byDecision['complete'] | Should -Be 'apex_completion_gate'
+        $byDecision['cap']      | Should -Be 'terminal_apex_iteration_cap'
+        $byDecision['blocked']  | Should -Be 'terminal_apex_blocked'
+        # `continue` is the loop-back that wraps the wave dispatch loop.
+        $byDecision['continue'] | Should -Be 'build_worklist'
+        # M4 catch-all (last unconditional route) must NOT silently
+        # loop back; defensive default is the blocked terminal.
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'terminal_apex_blocked'
+    }
+
+    It 'terminal_apex_iteration_cap is a script step that emits iteration_cap_hit=$true and routes to $end' {
+        $node = $script:ApexAgents['terminal_apex_iteration_cap']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $body = ($node.args -join "`n")
+        $body | Should -Match 'iteration_cap_hit'
+        # M3-guarded reference to the evaluator output (default(0) so
+        # the terminal still renders if the evaluator never emitted).
+        $body | Should -Match 'outer_loop_evaluator\.output\.iteration'
+        $body | Should -Match 'outer_loop_evaluator\.output\.max_iterations'
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'terminal_apex_iteration_cap')
+        $routes.Target | Should -Contain '$end'
+    }
+
+    It 'terminal_apex_blocked is a script step that emits blocked=$true and routes to $end' {
+        $node = $script:ApexAgents['terminal_apex_blocked']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $body = ($node.args -join "`n")
+        $body | Should -Match 'blocked'
+        $body | Should -Match 'outer_loop_evaluator\.output\.iteration'
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'terminal_apex_blocked')
+        $routes.Target | Should -Contain '$end'
+    }
+
+    It 'apex-driver.output surfaces iteration_cap_hit, blocked, and iterations_used (PR #9 telemetry into the workflow envelope)' {
+        $out = $script:ApexYaml.output
+        $out.Keys | Should -Contain 'iteration_cap_hit'
+        $out.Keys | Should -Contain 'blocked'
+        $out.Keys | Should -Contain 'iterations_used'
+    }
+
+    It 'apex-wave-dispatch.output surfaces items_satisfied_count, items_dispatched_count, item_count (PR #9 progress counters consumed by the outer evaluator)' {
+        $out = $script:WaveYaml.output
+        $out.Keys | Should -Contain 'items_satisfied_count'
+        $out.Keys | Should -Contain 'items_dispatched_count'
+        $out.Keys | Should -Contain 'item_count'
+    }
+
+    It 'apex-wave-dispatch aggregate_renegotiation script tallies item_satisfied + dispatched per item (PR #6 fields the evaluator sums across waves)' {
+        $node = $script:WaveAgents['aggregate_renegotiation']
+        $node | Should -Not -BeNullOrEmpty
+        $body = ($node.args -join "`n")
+        # Lowercased string compare (M7: booleans pipe through `| string | lower`).
+        $body | Should -Match 'item_satisfied'
+        $body | Should -Match 'dispatched'
+    }
+
+    It 'every outer-loop node and new terminal is reachable from the entry point' {
+        $reachable = Get-Reachable -Agents $script:ApexAgents -StartNode 'preflight_sync'
+        foreach ($n in @('outer_loop_init','outer_loop_evaluator','terminal_apex_iteration_cap','terminal_apex_blocked')) {
+            $reachable | Should -Contain $n -Because "PR #9 node '$n' must be reachable from preflight_sync"
+        }
     }
 }
 

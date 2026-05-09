@@ -32,10 +32,10 @@ workflow:
     work-item id. Either prompts the user (default), or auto-resolves
     per the `root_fallback.auto_decide` policy, and returns a
     structured `{ root_id, decision, auto_policy_applied }` envelope.
-  version: "1.0.0"
+  version: "2.2.0"
   entry_point: load_policy
   metadata:
-    min_polyphony_version: "1.0.1"
+    min_polyphony_version: "2.2.0"
 
   limits:
     # Shallow workflow — load policy, route, optional human gate, terminal.

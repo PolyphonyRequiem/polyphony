@@ -50,11 +50,13 @@ workflow:
     + lifecycle classification + branch-on-router lifecycle dispatch
     (plan-level / actionable / implement-pg / feature-pr / fast-path) +
     wave integration via wave-integrator.ps1. Aggregates renegotiation
-    bubble-up across the wave's items.
-  version: "1.1.0"
+    bubble-up AND per-item progress counts (items_satisfied_count,
+    items_dispatched_count) so the apex-driver outer loop (PR #9) can
+    decide whether the iteration made progress.
+  version: "2.2.0"
   entry_point: dispatch_items
   metadata:
-    min_polyphony_version: "1.0.1"
+    min_polyphony_version: "2.2.0"
 
   limits:
     # Each wave can hold dozens of items; the for_each iteration count
@@ -125,6 +127,19 @@ output:
   renegotiation_items: >-
     {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.renegotiation_items | default('[]') }}
     {%- else -%}[]{%- endif -%}
+  # ── Wave progress counters (PR #9 — apex-driver outer loop) ─────────────
+  # Sums per-item terminal envelopes across this wave so the outer loop
+  # can detect "iteration made progress" (any item satisfied or dispatched).
+  # Per M3 these are guarded with `is defined`; counters default to 0.
+  items_satisfied_count: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.items_satisfied_count | default(0) }}
+    {%- else -%}0{%- endif -%}
+  items_dispatched_count: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.items_dispatched_count | default(0) }}
+    {%- else -%}0{%- endif -%}
+  item_count: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.item_count | default(0) }}
+    {%- else -%}0{%- endif -%}
 
 agents:
   # ── Dispatch items ────────────────────────────────────────────────────────
@@ -134,7 +149,7 @@ agents:
   # not nested under `agents:` (M8). Routes cross sections — `dispatch_items`
   # routes to `aggregate_renegotiation` below.
 
-  # ── Aggregate renegotiation bubble-up ────────────────────────────────────
+  # ── Aggregate renegotiation bubble-up + per-item progress counts ────────
   #
   # Plan-level invocations may emit `renegotiation_pending=true` along
   # with a `renegotiation_request` body (PR #144). Each per-item
@@ -143,12 +158,20 @@ agents:
   # request) pairs so apex-driver can read a flat shape on its
   # post-wave check.
   #
+  # PR #9 (apex-driver outer loop) extension — also sum the per-item
+  # `item_satisfied` and `dispatched` flags into counters so the outer
+  # loop can detect "this iteration made progress" (Option α stability
+  # signal). `items_satisfied_count` is the canonical close-out signal
+  # for "wave settled an item"; `items_dispatched_count` covers the
+  # case where an item moved through a corridor (plan/impl/PR) but is
+  # not yet item_satisfied — still progress, just multi-pass progress.
+  #
   # Reads `dispatch_items.outputs` — the for_each result dict keyed by
   # iteration index. Per M8 there is no `output:` on the group; results
   # live under `.outputs` (success) and `.errors` (failure).
   - name: aggregate_renegotiation
     type: script
-    description: Aggregate per-item renegotiation_pending across the wave
+    description: Aggregate per-item renegotiation_pending + progress counts across the wave
     command: pwsh
     args:
       - "-NoProfile"
@@ -159,6 +182,9 @@ agents:
         '@;
         $items = @();
         $any = $false;
+        $satisfiedCount = 0;
+        $dispatchedCount = 0;
+        $itemCount = 0;
         try {
           $parsed = $raw | ConvertFrom-Json;
           # for_each .outputs is a dict keyed by iteration index;
@@ -167,6 +193,7 @@ agents:
                     else { $parsed.PSObject.Properties.Value };
           foreach ($v in $values) {
             if ($null -eq $v) { continue }
+            $itemCount += 1;
             $pending = $false;
             if ($v.PSObject.Properties.Name -contains 'renegotiation_pending') {
               $val = "$($v.renegotiation_pending)".ToLowerInvariant();
@@ -182,17 +209,31 @@ agents:
                 scope_violation_files = $v.scope_violation_files;
               };
             }
+            # PR #9 — progress counters. Booleans arrive as strings
+            # ("true"/"false") via the M7 `| string | lower` pipeline
+            # in apex-item-dispatch.output, so compare lowercased.
+            if ($v.PSObject.Properties.Name -contains 'item_satisfied') {
+              if ("$($v.item_satisfied)".ToLowerInvariant() -eq 'true') { $satisfiedCount += 1 }
+            }
+            if ($v.PSObject.Properties.Name -contains 'dispatched') {
+              if ("$($v.dispatched)".ToLowerInvariant() -eq 'true') { $dispatchedCount += 1 }
+            }
           }
         } catch {
           # Bubble parse failures as no-renegotiation rather than
           # halting the wave; the integrate step still needs to run.
           $any = $false;
           $items = @();
+          $satisfiedCount = 0;
+          $dispatchedCount = 0;
+          $itemCount = 0;
         }
         [ordered]@{
           renegotiation_pending = $any;
           renegotiation_items = ($items | ConvertTo-Json -Compress -Depth 6);
-          item_count = $items.Count;
+          item_count = $itemCount;
+          items_satisfied_count = $satisfiedCount;
+          items_dispatched_count = $dispatchedCount;
         } | ConvertTo-Json -Compress -Depth 6
     routes:
       - to: integrate_wave

@@ -147,10 +147,16 @@ Describe 'apex-driver.yaml :: declare_root agent stamps polyphony:root before bu
         $args = Get-AgentArgs $script:ApexYaml 'declare_root'
         ($args -join ' ') | Should -Match 'workflow\.input\.apex_id'
     }
-    It 'declare_root routes to build_worklist on success' {
+    It 'declare_root routes to outer_loop_init on success (PR #9 inserted outer_loop_init between declare_root and build_worklist; outer_loop_init then routes to build_worklist)' {
         $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'declare_root' }
-        $successRoute = $agent.routes | Where-Object { $_.to -eq 'build_worklist' }
+        $successRoute = $agent.routes | Where-Object { $_.to -eq 'outer_loop_init' }
         $successRoute | Should -Not -BeNullOrEmpty
+        # And outer_loop_init must hand off to build_worklist so the
+        # original "declare_root reaches build_worklist" invariant still
+        # holds transitively.
+        $initAgent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'outer_loop_init' }
+        $initRoute = $initAgent.routes | Where-Object { $_.to -eq 'build_worklist' }
+        $initRoute | Should -Not -BeNullOrEmpty
     }
     It 'declare_root routes envelope errors to preflight_failure_gate' {
         $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'declare_root' }

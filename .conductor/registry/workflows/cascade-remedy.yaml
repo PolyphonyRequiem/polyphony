@@ -26,10 +26,10 @@ workflow:
     ancestor-snapshot staleness, and apply auto-rebase / recreate /
     human-gate remedy per stale entry. Sequential for_each so the
     same-root run lock is never contended.
-  version: "1.0.0"
+  version: "2.2.0"
   entry_point: classify
   metadata:
-    min_polyphony_version: "1.0.1"
+    min_polyphony_version: "2.2.0"
 
   limits:
     # classify (1) → for_each over N entries (each 1 iteration of the
