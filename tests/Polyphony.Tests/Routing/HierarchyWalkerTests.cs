@@ -319,6 +319,56 @@ public sealed class HierarchyWalkerTests
         result.Children.ShouldNotBeNull();
         result.Children[0].Tags.ShouldBe("PG-1; Sprint 5");
     }
+
+    [Fact]
+    public async Task WalkAsync_ItemWithFacetsOverrideTag_UsesOverrideInsteadOfTypeDefaults()
+    {
+        // F11 / indivisible-apex case: architect declared apex_facets:[implementable]
+        // in plan front-matter; declare-root stamped polyphony:facets=implementable on
+        // the Epic. Walker MUST surface implementable so next-impl/route can pick it up.
+        var item = new WorkItemBuilder()
+            .WithId(3064).WithType("Epic").WithTitle("Indivisible apex")
+            .WithState("To Do").WithTags("polyphony:facets=implementable; polyphony:planned; polyphony:root")
+            .Build();
+
+        _repository.GetByIdAsync(3064, Arg.Any<CancellationToken>()).Returns(item);
+
+        var result = await CreateWalker().WalkAsync(3064, maxDepth: 0, CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        result.Facets.ShouldBe(["implementable"]);
+    }
+
+    [Fact]
+    public async Task WalkAsync_ItemWithEmptyFacetsOverrideTag_FallsBackToTypeDefaults()
+    {
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithTitle("Empty override")
+            .WithState("Doing").WithTags("polyphony:facets=")
+            .Build();
+
+        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(item);
+
+        var result = await CreateWalker().WalkAsync(1, maxDepth: 0, CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        result.Facets.ShouldBe(["plannable"]);
+    }
+
+    [Fact]
+    public async Task WalkAsync_ItemWithMalformedFacetsOverrideTag_ThrowsInvalidOperation()
+    {
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithTitle("Bad override")
+            .WithState("Doing").WithTags("polyphony:facets=nonexistent")
+            .Build();
+
+        _repository.GetByIdAsync(1, Arg.Any<CancellationToken>()).Returns(item);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => CreateWalker().WalkAsync(1, maxDepth: 0, CancellationToken.None));
+        ex.Message.ShouldContain("nonexistent");
+    }
 }
 
 
