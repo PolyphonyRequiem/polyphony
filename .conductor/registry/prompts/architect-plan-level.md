@@ -276,6 +276,19 @@ Read the user plan from the filesystem and use it as your starting point.
    - Define acceptance criteria for each child item
    - Group children into PR Groups (PGs) for implementation ordering
 
+   **Decomposition contract (read both bullets):**
+   - If the work item HAS children (the common case), every child you
+     intend to exist MUST appear in the structured `children` output array.
+     Children mentioned only in the markdown body (e.g. as headings under
+     `## Child Issues` or in a narrative paragraph) WILL NOT be created
+     and the seeder will halt the workflow.
+   - If the work item is genuinely INDIVISIBLE (it IS the unit of work —
+     no further decomposition makes sense), emit `children: []` AND begin
+     your `plan` markdown with YAML front matter declaring the facets
+     this unit-of-work satisfies (`apex_facets: [implementable]` etc.).
+     Empty `children` without `apex_facets` is treated as ambiguous and
+     refused — see `children` field section under Output below.
+
 4. **Identify open questions** — If you encounter ambiguity, classify it
    by severity and emit it as an open question. The route filters (driven
    by the open_questions policy) determine which questions actually gate —
@@ -339,14 +352,39 @@ contract.
    work items.
 2. **`type` must be valid.** Use only types listed in the decomposition
    guidance for the parent's child types.
-3. **Children mirror the plan.** Every child entry in `children` should also appear in the
-   plan markdown (and vice versa). Keep them in sync — the array is the
-   structured view of the decomposition the markdown narrates.
+3. **The `children` array IS the children declaration.** The structured
+   `children` array is the SOLE machine contract for what work items the
+   seeder will create. The markdown plan is for humans; if you mention
+   child items in the markdown but DON'T list them in `children`, those
+   items WILL NOT BE CREATED, the seeder will refuse to mark the parent
+   as planned, and the workflow will halt. Every child you intend to
+   exist must appear in `children` — no exceptions, no prose-only
+   declarations. Keep the markdown narrative and the structured array
+   in sync; the array is canonical.
 4. **`pg`** is optional — omit when no PG grouping is needed.
 5. **`depends_on`** references other `child_id` values in this same plan.
-6. **Atomic items emit `children: []`.** If you decide the work item needs no
-   decomposition, emit an empty array — the seeder will set the `planned` tag
-   on the parent and the workflow will route to implementation directly.
+6. **Indivisible items must declare `apex_facets` in plan front matter,
+   not emit empty `children`.** If you decide the work item genuinely
+   needs no decomposition (it IS the unit of work — implement, action,
+   etc.), emit `children: []` AND prepend the plan markdown with YAML
+   front matter declaring which facets the unit-of-work satisfies:
+
+   ```markdown
+   ---
+   apex_facets: [implementable]
+   ---
+
+   # <plan title>
+   ...
+   ```
+
+   Valid facets: `plannable`, `actionable`, `implementable`. The seeder
+   reads this front matter to know your "no children" emission was
+   deliberate (the apex is indivisible) rather than an oversight (you
+   forgot to populate `children`). An empty `children` array WITHOUT
+   `apex_facets` front matter is treated as ambiguous — the seeder
+   refuses to stamp the planned tag and the workflow halts with a
+   clear error pointing here.
 
 ### `open_questions` field
 
