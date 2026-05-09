@@ -1,17 +1,23 @@
 using Polyphony.Configuration;
+using Polyphony.Sdlc;
+using Polyphony.Tagging;
 using Twig.Domain.Interfaces;
 
 namespace Polyphony.Routing;
 
 /// <summary>
 /// Recursively traverses the work item tree to a specified depth,
-/// annotating each node with facets from the process config.
+/// annotating each node with facets from the process config — or, when an
+/// item carries a <c>polyphony:facets=&lt;csv&gt;</c> tag, the per-item
+/// override (per F2 / architect <c>apex_facets</c> declaration in plan
+/// front-matter; round-tripped via <see cref="FacetTagParser"/>).
 /// </summary>
 public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemRepository repository)
 {
     /// <summary>
     /// Walks the hierarchy starting from <paramref name="rootId"/> down to <paramref name="maxDepth"/> levels.
-    /// Each node is annotated with facets from <see cref="ProcessConfig.Types"/>.
+    /// Each node is annotated with facets from <see cref="ProcessConfig.Types"/>,
+    /// overridden when the item carries a <c>polyphony:facets=&lt;csv&gt;</c> tag.
     /// </summary>
     /// <param name="rootId">The work item ID to start from.</param>
     /// <param name="maxDepth">Maximum depth to traverse. 0 returns only the root node.</param>
@@ -33,8 +39,8 @@ public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemReposi
         CancellationToken ct)
     {
         var typeName = item.Type.Value;
-        var facets = LookupFacets(typeName);
         item.Fields.TryGetValue("System.Tags", out var tags);
+        var facets = ResolveEffectiveFacets(item.Id, typeName, tags);
 
         HierarchyResult[]? children = null;
 
@@ -72,6 +78,30 @@ public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemReposi
             return typeConfig.Facets;
 
         return [];
+    }
+
+    /// <summary>
+    /// Resolves the effective facet set for an item: the
+    /// <c>polyphony:facets=&lt;csv&gt;</c> tag override when present and
+    /// non-empty, otherwise the type-config defaults from
+    /// <see cref="LookupFacets"/>. Throws on a malformed override (consistent
+    /// with <c>state next-ready</c>) so a typo surfaces immediately rather
+    /// than silently degrading to type defaults.
+    /// </summary>
+    private string[] ResolveEffectiveFacets(int itemId, string typeName, string? tagsRaw)
+    {
+        var defaults = LookupFacets(typeName);
+        if (string.IsNullOrWhiteSpace(tagsRaw)) return defaults;
+
+        var tagSet = TagSet.Parse(tagsRaw);
+        var parsed = FacetTagParser.TryExtract(tagSet);
+        if (parsed is null) return defaults;
+        if (!parsed.IsValid)
+        {
+            throw new InvalidOperationException(
+                $"Item {itemId} has malformed polyphony:facets tag — unknown facet(s): {string.Join(", ", parsed.UnknownFacets)}.");
+        }
+        return parsed.Facets.Count == 0 ? defaults : parsed.Facets.ToArray();
     }
 }
 
