@@ -135,6 +135,14 @@ output:
   fast_pathed: >-
     {%- if terminal_fast_path is defined -%}true
     {%- else -%}false{%- endif -%}
+  # ── Terminal-satisfied bubble-up (PR #6 — closed-loop step 6) ──
+  # `item_satisfied` is true ONLY when the terminal_satisfied node
+  # actually ran and performed the ADO state transition. PR #9 (apex-driver
+  # outer loop) consumes this to count items as DONE in the wave aggregator
+  # rather than DISPATCHED. Other terminals default to false.
+  item_satisfied: >-
+    {%- if terminal_satisfied is defined -%}true
+    {%- else -%}false{%- endif -%}
   # ── Renegotiation bubble-up (PR #144 — plan-level outputs) ──
   # Only plan-level emits these; the other lifecycles leave them
   # undefined. The `is defined` guards collapse to safe defaults.
@@ -196,9 +204,13 @@ agents:
     routes:
       # Fast-path / monitoring / blocked / error short-circuits BEFORE
       # spawning a worktree — these legs are pure observable-state
-      # transitions with no per-item working-tree need.
+      # transitions with no per-item working-tree need. terminal-satisfied
+      # is also worktree-less: the only ready kind is item_satisfied, so
+      # we just perform the ADO state transition and emit item_satisfied=true.
       - to: terminal_fast_path
         when: "{{ classify_lifecycle.output.lifecycle_workflow == 'fast-path' }}"
+      - to: terminal_satisfied
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'terminal-satisfied' }}"
       - to: terminal_monitoring
         when: "{{ classify_lifecycle.output.lifecycle_workflow == 'monitoring' }}"
       - to: terminal_blocked
@@ -369,13 +381,13 @@ agents:
   # debugging tractable and pre-positions us for #173 (typed verb
   # output schema registry).
   #
-  # Canonical fields (12): work_item_id, apex_id, lifecycle_workflow,
-  # dispatched, fast_pathed, renegotiation_pending, renegotiation_request,
-  # validate_scope_verdict, scope_violation_files, actionable_satisfied,
-  # implement_pg_merged, feature_pr_merged. Error terminals add `error`
-  # and `error_code`. `monitoring`/`blocked` legs keep their additive
-  # boolean as a non-canonical convenience — harmless to consumers that
-  # ignore unknown keys.
+  # Canonical fields (13): work_item_id, apex_id, lifecycle_workflow,
+  # dispatched, fast_pathed, item_satisfied, renegotiation_pending,
+  # renegotiation_request, validate_scope_verdict, scope_violation_files,
+  # actionable_satisfied, implement_pg_merged, feature_pr_merged. Error
+  # terminals add `error` and `error_code`. `monitoring`/`blocked` legs
+  # keep their additive boolean as a non-canonical convenience — harmless
+  # to consumers that ignore unknown keys.
   - name: terminal_dispatched
     type: script
     description: Terminal — item dispatched into its lifecycle sub-workflow
@@ -390,6 +402,7 @@ agents:
           lifecycle_workflow = '{{ classify_lifecycle.output.lifecycle_workflow | default('') }}';
           dispatched = $true;
           fast_pathed = $false;
+          item_satisfied = $false;
           renegotiation_pending = $false;
           renegotiation_request = '';
           validate_scope_verdict = '';
@@ -415,6 +428,61 @@ agents:
           lifecycle_workflow = 'fast-path';
           dispatched = $false;
           fast_pathed = $true;
+          item_satisfied = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_pg_merged = $false;
+          feature_pr_merged = $false;
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: terminal-satisfied (PR #6) ─────────────────────────────────
+  #
+  # Performs the ADO state transition for an item whose only ready
+  # requirement is `item_satisfied` — every facet-driven kind has
+  # already settled. Mirrors apex-driver.yaml's `close_mark_satisfied`
+  # (validate-then-twig-state) so the same terminal-state mapping
+  # rules apply (per `.conductor/process-config.yaml > transitions`).
+  #
+  # The `polyphony validate --event item_satisfied` call is the
+  # canonical event-to-target-state lookup. When it returns a
+  # `target_state`, we transition via `twig state`; otherwise we
+  # leave the item in place (the surrounding workflow surfaces the
+  # condition via `item_satisfied=true` so the wave aggregator can
+  # count it).
+  #
+  # No worktree is spawned — this leg is purely an observable-state
+  # transition, same as fast-path / monitoring / blocked.
+  - name: terminal_satisfied
+    type: script
+    description: Terminal — perform ADO state transition for item_satisfied
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        try {
+          twig sync;
+          $validate = polyphony validate --work-item {{ workflow.input.work_item_id }} --event item_satisfied | ConvertFrom-Json;
+          if ($validate.target_state) {
+            twig state $validate.target_state --id {{ workflow.input.work_item_id }};
+          }
+        } catch {
+          # Swallow: the apex driver's outer loop (PR #9) re-evaluates
+          # next-ready on the next pass; transient ADO/twig failures
+          # surface there rather than failing the whole wave here.
+        }
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          apex_id = '{{ workflow.input.apex_id }}';
+          lifecycle_workflow = 'terminal-satisfied';
+          dispatched = $false;
+          fast_pathed = $false;
+          item_satisfied = $true;
           renegotiation_pending = $false;
           renegotiation_request = '';
           validate_scope_verdict = '';
@@ -440,6 +508,7 @@ agents:
           lifecycle_workflow = 'monitoring';
           dispatched = $false;
           fast_pathed = $false;
+          item_satisfied = $false;
           renegotiation_pending = $false;
           renegotiation_request = '';
           validate_scope_verdict = '';
@@ -466,6 +535,7 @@ agents:
           lifecycle_workflow = 'blocked';
           dispatched = $false;
           fast_pathed = $false;
+          item_satisfied = $false;
           renegotiation_pending = $false;
           renegotiation_request = '';
           validate_scope_verdict = '';
@@ -492,6 +562,7 @@ agents:
           lifecycle_workflow = 'error';
           dispatched = $false;
           fast_pathed = $false;
+          item_satisfied = $false;
           renegotiation_pending = $false;
           renegotiation_request = '';
           validate_scope_verdict = '';
@@ -519,6 +590,7 @@ agents:
           lifecycle_workflow = '{{ classify_lifecycle.output.lifecycle_workflow | default('') }}';
           dispatched = $false;
           fast_pathed = $false;
+          item_satisfied = $false;
           renegotiation_pending = $false;
           renegotiation_request = '';
           validate_scope_verdict = '';

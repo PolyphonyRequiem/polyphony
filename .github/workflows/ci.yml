@@ -53,6 +53,17 @@ jobs:
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-type-agnostic.ps1 -Surface all
 
+      - name: Lint (lifecycle-router RequirementKind coverage)
+        # Asserts every RequirementKind value in src/Polyphony/Sdlc/RequirementKind.cs
+        # is reachable through one of lifecycle-router.ps1's classification arrays
+        # (planKinds / actionKinds / implKinds / terminalKinds), or is explicitly
+        # excluded with a `# router-skip: <value> — <reason>` comment. Catches
+        # the silent-drop class of bug where a new requirement kind is added but
+        # the classifier never learns about it (PR #6, closed-loop step 6).
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-lifecycle-router-coverage.ps1
+
       - name: Install Pester
         shell: pwsh
         run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser

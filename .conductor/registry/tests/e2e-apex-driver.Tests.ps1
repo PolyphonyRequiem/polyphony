@@ -501,18 +501,20 @@ Describe 'apex-item-dispatch e2e — branch-on-router' {
         ($node.args -join ' ') | Should -Match '-ApexId'
     }
 
-    It 'classify_lifecycle short-circuits fast-path / monitoring / blocked / error to their terminals BEFORE spawning a worktree' {
+    It 'classify_lifecycle short-circuits fast-path / terminal-satisfied / monitoring / blocked / error to their terminals BEFORE spawning a worktree' {
         $routes = @(Get-NodeRoutes -Agents $script:ItemAgents -NodeName 'classify_lifecycle')
         $byVerdict = @{
-            'fast-path'  = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'fast-path'" }).Target
-            'monitoring' = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'monitoring'" }).Target
-            'blocked'    = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'blocked'" }).Target
-            'error'      = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'error'" }).Target
+            'fast-path'          = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'fast-path'" }).Target
+            'terminal-satisfied' = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'terminal-satisfied'" }).Target
+            'monitoring'         = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'monitoring'" }).Target
+            'blocked'            = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'blocked'" }).Target
+            'error'              = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'error'" }).Target
         }
-        $byVerdict['fast-path']  | Should -Be 'terminal_fast_path'
-        $byVerdict['monitoring'] | Should -Be 'terminal_monitoring'
-        $byVerdict['blocked']    | Should -Be 'terminal_blocked'
-        $byVerdict['error']      | Should -Be 'terminal_classify_error'
+        $byVerdict['fast-path']          | Should -Be 'terminal_fast_path'
+        $byVerdict['terminal-satisfied'] | Should -Be 'terminal_satisfied'
+        $byVerdict['monitoring']         | Should -Be 'terminal_monitoring'
+        $byVerdict['blocked']            | Should -Be 'terminal_blocked'
+        $byVerdict['error']              | Should -Be 'terminal_classify_error'
         # success route to spawn_worktree
         $ok = $routes | Where-Object { $_.When -match "success \| string \| lower == 'true'" }
         $ok | Should -Not -BeNullOrEmpty
@@ -596,6 +598,7 @@ Describe 'apex-item-dispatch e2e — branch-on-router' {
         $terminals = @(
             'terminal_dispatched',
             'terminal_fast_path',
+            'terminal_satisfied',
             'terminal_monitoring',
             'terminal_blocked',
             'terminal_classify_error',
@@ -614,7 +617,7 @@ Describe 'apex-item-dispatch e2e — branch-on-router' {
                 "$n must be reachable from the classifier — otherwise the branch-on-router dispatch is dead code")
         }
         # And the short-circuit terminals must be reachable too.
-        foreach ($t in 'terminal_fast_path','terminal_monitoring','terminal_blocked','terminal_classify_error','terminal_spawn_error','terminal_dispatched') {
+        foreach ($t in 'terminal_fast_path','terminal_satisfied','terminal_monitoring','terminal_blocked','terminal_classify_error','terminal_spawn_error','terminal_dispatched') {
             $reachable | Should -Contain $t -Because (
                 "$t must be reachable from classify_lifecycle in the assembled item graph")
         }
@@ -810,7 +813,7 @@ Describe 'apex-driver e2e — lifecycle-router script and YAML contract drift' {
         # regex match groups) — using it as a normal local breaks
         # subsequent `-match` operators in the same scope. Use
         # `$emits` / `$branches` instead.
-        $canonical = @('plan-level','actionable','implement-pg','feature-pr','fast-path','monitoring','blocked','error')
+        $canonical = @('plan-level','actionable','implement-pg','feature-pr','fast-path','terminal-satisfied','monitoring','blocked','error')
         $routerBody = $script:RouterRaw -replace '(?ms)^<#.*?#>',''
         $emits = [regex]::Matches($routerBody, "'([a-zA-Z\-]+)'")
         $set = New-Object System.Collections.Generic.HashSet[string]
@@ -838,6 +841,7 @@ Describe 'apex-driver e2e — lifecycle-router script and YAML contract drift' {
             'implement-pg',
             'feature-pr',
             'fast-path',
+            'terminal-satisfied',
             'monitoring',
             'blocked',
             'error'
@@ -862,7 +866,10 @@ Describe 'apex-driver e2e — lifecycle-router script and YAML contract drift' {
         # and then split by spawn_worktree's per-verdict branches.
         # The four "short-circuit" verdicts (fast-path / monitoring /
         # blocked / error) ARE branched on directly in classify_lifecycle.
-        $shortCircuit = @('fast-path', 'monitoring', 'blocked', 'error')
+        # PR #6 added terminal-satisfied as a fifth short-circuit verdict
+        # — same pattern (worktree-less terminal that performs the ADO
+        # state transition for items whose only ready kind is item_satisfied).
+        $shortCircuit = @('fast-path', 'terminal-satisfied', 'monitoring', 'blocked', 'error')
         $dispatch     = @('plan-level', 'actionable', 'implement-pg', 'feature-pr')
 
         # Short-circuit verdicts must appear as YAML branch values.
@@ -985,6 +992,7 @@ Describe 'apex-item-dispatch terminal canonical output schema (#178)' {
             'lifecycle_workflow',
             'dispatched',
             'fast_pathed',
+            'item_satisfied',
             'renegotiation_pending',
             'renegotiation_request',
             'validate_scope_verdict',
@@ -996,6 +1004,7 @@ Describe 'apex-item-dispatch terminal canonical output schema (#178)' {
         $script:TerminalNames = @(
             'terminal_dispatched',
             'terminal_fast_path',
+            'terminal_satisfied',
             'terminal_monitoring',
             'terminal_blocked',
             'terminal_classify_error',
@@ -1014,8 +1023,8 @@ Describe 'apex-item-dispatch terminal canonical output schema (#178)' {
         }
     }
 
-    foreach ($t in @('terminal_dispatched','terminal_fast_path','terminal_monitoring','terminal_blocked','terminal_classify_error','terminal_spawn_error')) {
-        It "$t emits all 12 canonical fields" -TestCases @{ TerminalName = $t } {
+    foreach ($t in @('terminal_dispatched','terminal_fast_path','terminal_satisfied','terminal_monitoring','terminal_blocked','terminal_classify_error','terminal_spawn_error')) {
+        It "$t emits all 13 canonical fields" -TestCases @{ TerminalName = $t } {
             param($TerminalName)
             $cmd = script:Get-TerminalCommand $script:ItemAgents $TerminalName
             foreach ($field in $script:CanonicalFields) {
@@ -1034,6 +1043,17 @@ Describe 'apex-item-dispatch terminal canonical output schema (#178)' {
         $cmd = script:Get-TerminalCommand $script:ItemAgents 'terminal_fast_path'
         $cmd | Should -Match "fast_pathed\s*=\s*\`$true"
         $cmd | Should -Match "lifecycle_workflow\s*=\s*'fast-path'"
+    }
+
+    It 'terminal_satisfied marks item_satisfied=$true and lifecycle_workflow=terminal-satisfied' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'terminal_satisfied'
+        $cmd | Should -Match "item_satisfied\s*=\s*\`$true"
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'terminal-satisfied'"
+        # Mirrors apex-driver close_mark_satisfied: validate the event then
+        # transition via twig if the validator returned a target_state.
+        $cmd | Should -Match 'polyphony validate'
+        $cmd | Should -Match '--event item_satisfied'
+        $cmd | Should -Match 'twig state'
     }
 
     It 'terminal_monitoring marks lifecycle_workflow=monitoring (additive monitoring=$true permitted)' {
