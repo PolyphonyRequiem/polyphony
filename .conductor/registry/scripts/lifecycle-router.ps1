@@ -12,7 +12,7 @@
     requirement-kind dispositions, and emits the lifecycle workflow
     name the apex-driver should invoke.
 
-    The five lifecycle outcomes:
+    The six lifecycle outcomes:
 
       plan-level     — Item has a planning facet and the next ready
                        requirement is one of plan_authored,
@@ -34,9 +34,24 @@
 
       fast-path      — Item has no facets (pure organizational
                        container) OR all requirements already
-                       satisfied. The apex-driver marks this item
-                       as item_satisfied without spawning a
-                       sub-workflow.
+                       satisfied (status='satisfied' or 'empty'). The
+                       apex-driver marks this item as item_satisfied
+                       without spawning a sub-workflow.
+
+      terminal-satisfied
+                     — Item is dispatchable but the only ready kind
+                       is `item_satisfied` — every facet-driven
+                       requirement is Satisfied and the only thing
+                       left is the act of declaring the item done.
+                       The apex-item-dispatch workflow performs the
+                       ADO state transition (validate +
+                       twig state) without spawning a worktree or a
+                       lifecycle sub-workflow. Distinct from
+                       fast-path so the wave aggregator can count
+                       items as DONE rather than DISPATCHED. Per
+                       PR #5 cross-item rollup, this only fires for
+                       items whose children's item_satisfied is also
+                       Satisfied (or for items with no children).
 
     Plus three non-dispatch outcomes the apex-driver routes specially:
       monitoring — at least one requirement is fulfilling; defer.
@@ -60,7 +75,7 @@
           work_item_id: <int>,
           work_item_type: '<string>',
           status: 'dispatchable' | 'monitoring' | 'satisfied' | 'empty' | 'blocked' | 'error',
-          lifecycle_workflow: 'plan-level' | 'actionable' | 'implement-pg' | 'feature-pr' | 'fast-path' | 'monitoring' | 'blocked' | 'error',
+          lifecycle_workflow: 'plan-level' | 'actionable' | 'implement-pg' | 'feature-pr' | 'fast-path' | 'terminal-satisfied' | 'monitoring' | 'blocked' | 'error',
           next_kinds: [<string>...],
           fulfilling_kinds: [<string>...],
           is_root: <bool>,
@@ -209,13 +224,18 @@ try {
     #   1. planning kinds win (plan-level always sequences before action/impl)
     #   2. actionable kinds next (action-evidence before implementation)
     #   3. implementation kinds last (routed root -> feature-pr, else implement-pg)
+    #   4. terminal kinds win ONLY when no other dispatchable kind is ready
+    #      — item_satisfied is the close-out act once every facet-driven
+    #      requirement has settled.
     $planKinds = @('plan_authored', 'plan_reviewed', 'plan_promoted', 'children_seeded')
     $actionKinds = @('action_satisfied', 'evidence_accepted')
     $implKinds = @('implementation_merged')
+    $terminalKinds = @('item_satisfied')
 
     $hasPlanReady = @($envelope.next_kinds | Where-Object { $planKinds -contains $_ }).Count -gt 0
     $hasActionReady = @($envelope.next_kinds | Where-Object { $actionKinds -contains $_ }).Count -gt 0
     $hasImplReady = @($envelope.next_kinds | Where-Object { $implKinds -contains $_ }).Count -gt 0
+    $hasTerminalReady = @($envelope.next_kinds | Where-Object { $terminalKinds -contains $_ }).Count -gt 0
 
     if ($hasPlanReady) {
         $envelope.success = $true
@@ -228,6 +248,14 @@ try {
     elseif ($hasImplReady) {
         $envelope.success = $true
         $envelope.lifecycle_workflow = if ($envelope.is_root) { 'feature-pr' } else { 'implement-pg' }
+    }
+    elseif ($hasTerminalReady) {
+        # Only terminal kinds are ready -> the item is ready to be
+        # declared satisfied. Routes to a worktree-less terminal that
+        # performs the ADO state transition (see apex-item-dispatch.yaml
+        # `terminal_satisfied` node).
+        $envelope.success = $true
+        $envelope.lifecycle_workflow = 'terminal-satisfied'
     }
     else {
         $envelope.error_code = 'classification_indeterminate'
