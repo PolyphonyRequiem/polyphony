@@ -346,7 +346,7 @@ public sealed class StatusCommand(
         if (plannedZero is not null)
         {
             return ($"apex {apex}: planned but no children — false-satisfied bug",
-                    $"Inspect the plan: `cat plans/plan-{apex}.md`. Re-run plan-level once F4 lint catches prose-only declarations.");
+                    $"Inspect the plan: `cat plans/plan-{apex}.md`. If children are declared in prose only, re-run plan-level so the architect emits structured `output.children`. If genuinely indivisible, declare `apex_facets: [implementable]` in plan front-matter.");
         }
 
         var notInScope = warnings.FirstOrDefault(w => w.Code == "apex_not_in_scope");
@@ -369,7 +369,7 @@ public sealed class StatusCommand(
         if (featurePr is { Exists: true, State: "MERGED" })
         {
             return ($"apex {apex}: feature PR #{featurePr.Number} merged",
-                    "Verify ADO state has advanced (item_satisfied transition pending until F5 lands).");
+                    "Verify the ADO work item has advanced to a terminal state. Automatic `item_satisfied`-triggered transitions are not wired yet — set the state in ADO directly (`twig state Done` or the ADO web UI) if needed.");
         }
 
         if (!manifest.Exists)
