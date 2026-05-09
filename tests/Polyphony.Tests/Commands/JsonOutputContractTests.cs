@@ -1767,5 +1767,190 @@ public sealed class JsonOutputContractTests : CommandTestBase
         json.ShouldNotContain("\"published_at\"");
         json.ShouldNotContain("\"last_updated_at\"");
     }
+
+    // =========================================================================
+    // Status command — JSON contract
+    // (Routing-style: ALWAYS exits 0; no NotFound CacheError shape.)
+    // =========================================================================
+
+    [Fact]
+    public void Status_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        var result = new StatusResult
+        {
+            ApexId = 42,
+            Ado = new StatusAdoSection
+            {
+                Found = true,
+                Type = "Issue",
+                State = "Doing",
+                Title = "Sample",
+                Tags = ["polyphony", "polyphony:root"],
+                InScope = true,
+                IsRoot = true,
+                HasPlannedTag = false,
+                ChildrenCount = 3,
+            },
+            Manifest = new StatusManifestSection
+            {
+                Exists = true,
+                Path = ".polyphony/run.yaml",
+                FeatureBranch = "feature/42",
+                PlanGenerationsRoot = 1,
+                MergedPlanPrsCount = 1,
+                MergeGroupsCount = 0,
+            },
+            FeaturePr = new StatusFeaturePrSection { Exists = false },
+            Binary = new StatusBinarySection
+            {
+                Version = "1.0.0.0",
+                InformationalVersion = "1.2.3-alpha.0.4",
+            },
+            Warnings = [],
+            Headline = "ok",
+        };
+
+        var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.StatusResult);
+
+        // Top-level snake_case keys.
+        json.ShouldContain("\"apex_id\"");
+        json.ShouldContain("\"ado\"");
+        json.ShouldContain("\"manifest\"");
+        json.ShouldContain("\"feature_pr\"");
+        json.ShouldContain("\"binary\"");
+        json.ShouldContain("\"warnings\"");
+        json.ShouldContain("\"headline\"");
+        // Per-section snake_case keys.
+        json.ShouldContain("\"has_planned_tag\"");
+        json.ShouldContain("\"is_root\"");
+        json.ShouldContain("\"in_scope\"");
+        json.ShouldContain("\"children_count\"");
+        json.ShouldContain("\"feature_branch\"");
+        json.ShouldContain("\"plan_generations_root\"");
+        json.ShouldContain("\"merged_plan_prs_count\"");
+        json.ShouldContain("\"merge_groups_count\"");
+        json.ShouldContain("\"informational_version\"");
+
+        AssertNoPascalCase(json, "ApexId");
+        AssertNoPascalCase(json, "HasPlannedTag");
+        AssertNoPascalCase(json, "IsRoot");
+        AssertNoPascalCase(json, "InScope");
+        AssertNoPascalCase(json, "ChildrenCount");
+        AssertNoPascalCase(json, "FeaturePr");
+        AssertNoPascalCase(json, "FeatureBranch");
+        AssertNoPascalCase(json, "PlanGenerationsRoot");
+        AssertNoPascalCase(json, "MergedPlanPrsCount");
+        AssertNoPascalCase(json, "MergeGroupsCount");
+        AssertNoPascalCase(json, "InformationalVersion");
+    }
+
+    [Fact]
+    public void Status_NullFieldsOmitted_WhenWritingNull()
+    {
+        var result = new StatusResult
+        {
+            ApexId = 42,
+            Ado = new StatusAdoSection
+            {
+                Found = false,
+                Tags = [],
+                InScope = false,
+                IsRoot = false,
+                HasPlannedTag = false,
+                ChildrenCount = 0,
+                Error = "missing",
+            },
+            Manifest = new StatusManifestSection { Exists = false },
+            FeaturePr = new StatusFeaturePrSection { Exists = false },
+            Binary = new StatusBinarySection
+            {
+                Version = "1.0.0.0",
+                InformationalVersion = "1.2.3",
+                Location = null,
+            },
+            Warnings = [],
+            Headline = "missing",
+            NextAction = null,
+        };
+
+        var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.StatusResult);
+
+        // Optional/null fields must not appear in the wire output.
+        json.ShouldNotContain("\"next_action\"");
+        json.ShouldNotContain("\"location\"");
+        json.ShouldNotContain("\"type\":");
+        json.ShouldNotContain("\"state\":");
+        json.ShouldNotContain("\"title\":");
+        json.ShouldNotContain("\"feature_branch\"");
+        json.ShouldNotContain("\"plan_generations_root\"");
+        json.ShouldNotContain("\"merged_plan_prs_count\"");
+        json.ShouldNotContain("\"merge_groups_count\"");
+        json.ShouldNotContain("\"path\":");
+        json.ShouldNotContain("\"number\":");
+        json.ShouldNotContain("\"url\":");
+        json.ShouldNotContain("\"merged_at\":");
+    }
+
+    [Fact]
+    public void Status_DeserializationRoundTrip_FieldsMapped()
+    {
+        var original = new StatusResult
+        {
+            ApexId = 7,
+            Ado = new StatusAdoSection
+            {
+                Found = true,
+                Type = "Issue",
+                State = "Doing",
+                Title = "Roundtrip",
+                Tags = ["polyphony", "polyphony:root", "polyphony:planned"],
+                InScope = true,
+                IsRoot = true,
+                HasPlannedTag = true,
+                ChildrenCount = 0,
+            },
+            Manifest = new StatusManifestSection
+            {
+                Exists = true,
+                Path = ".polyphony/run.yaml",
+                FeatureBranch = "feature/7",
+                PlanGenerationsRoot = 2,
+                MergedPlanPrsCount = 1,
+                MergeGroupsCount = 0,
+            },
+            FeaturePr = new StatusFeaturePrSection
+            {
+                Exists = true,
+                Number = 99,
+                Url = "https://github.com/o/r/pull/99",
+                State = "OPEN",
+            },
+            Binary = new StatusBinarySection
+            {
+                Version = "1.0.0.0",
+                InformationalVersion = "1.2.3",
+                Location = "/usr/local/bin/polyphony",
+            },
+            Warnings =
+            [
+                new StatusWarning { Code = "planned_tag_zero_children", Message = "msg" }
+            ],
+            Headline = "head",
+            NextAction = "next",
+        };
+
+        var json = JsonSerializer.Serialize(original, PolyphonyJsonContext.Default.StatusResult);
+        var rt = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.StatusResult);
+
+        rt.ShouldNotBeNull();
+        rt.ApexId.ShouldBe(7);
+        rt.Ado.HasPlannedTag.ShouldBeTrue();
+        rt.Ado.Tags.Count.ShouldBe(3);
+        rt.Manifest.PlanGenerationsRoot.ShouldBe(2);
+        rt.FeaturePr.Number.ShouldBe(99);
+        rt.Warnings.Count.ShouldBe(1);
+        rt.Warnings[0].Code.ShouldBe("planned_tag_zero_children");
+        rt.NextAction.ShouldBe("next");
+    }
 }
 

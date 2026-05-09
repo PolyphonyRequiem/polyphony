@@ -172,6 +172,12 @@ namespace Polyphony;
 [JsonSerializable(typeof(RequiredInputErrorResult))]
 [JsonSerializable(typeof(StateValidateInputsResult))]
 [JsonSerializable(typeof(StateValidateInputsDiagnostic))]
+[JsonSerializable(typeof(StatusResult))]
+[JsonSerializable(typeof(StatusAdoSection))]
+[JsonSerializable(typeof(StatusManifestSection))]
+[JsonSerializable(typeof(StatusFeaturePrSection))]
+[JsonSerializable(typeof(StatusBinarySection))]
+[JsonSerializable(typeof(StatusWarning))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
