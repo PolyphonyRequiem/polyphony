@@ -24,13 +24,16 @@ transitions:
     begin_implementation: Doing
     implementation_complete: Done
     all_children_complete: Done
+    item_satisfied: Done
   Issue:
     begin_planning: Doing
     begin_implementation: Doing
     implementation_complete: Done
+    item_satisfied: Done
   Task:
     begin_implementation: Doing
     implementation_complete: Done
+    item_satisfied: Done
 
 review_policies:
   planning:

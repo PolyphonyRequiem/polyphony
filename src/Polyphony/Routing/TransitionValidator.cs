@@ -69,6 +69,7 @@ public sealed class TransitionValidator(ProcessConfig processConfig)
             "begin_planning" => CheckBeginPlanning(workItemId, eventName, targetState, itemCategory),
             "begin_implementation" => CheckBeginImplementation(workItemId, eventName, targetState, itemCategory),
             "implementation_complete" => CheckImplementationComplete(workItemId, eventName, targetState, itemCategory),
+            "item_satisfied" => CheckItemSatisfied(workItemId, eventName, targetState, itemCategory),
             _ => null,
         };
     }
@@ -127,6 +128,19 @@ public sealed class TransitionValidator(ProcessConfig processConfig)
         {
             return new InvalidTransition(workItemId, eventName, targetState,
                 $"Precondition 'implementation_complete' failed: item must be in InProgress state category, " +
+                $"but is in {itemCategory}.");
+        }
+
+        return null;
+    }
+
+    private static TransitionOutcome? CheckItemSatisfied(
+        int workItemId, string eventName, string targetState, StateCategory itemCategory)
+    {
+        if (itemCategory != StateCategory.InProgress)
+        {
+            return new InvalidTransition(workItemId, eventName, targetState,
+                $"Precondition 'item_satisfied' failed: item must be in InProgress state category, " +
                 $"but is in {itemCategory}.");
         }
 

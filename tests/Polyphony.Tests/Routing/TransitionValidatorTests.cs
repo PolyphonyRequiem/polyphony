@@ -19,6 +19,7 @@ public sealed class TransitionValidatorTests
         {
             ["begin_planning"] = "Doing",
             ["all_children_complete"] = "Done",
+            ["item_satisfied"] = "Done",
         })
         .WithType("Issue", ["plannable", "implementable"], new Dictionary<string, string>
         {
@@ -26,11 +27,13 @@ public sealed class TransitionValidatorTests
             ["begin_implementation"] = "Doing",
             ["implementation_complete"] = "Done",
             ["all_children_complete"] = "Done",
+            ["item_satisfied"] = "Done",
         })
         .WithType("Task", ["implementable"], new Dictionary<string, string>
         {
             ["begin_implementation"] = "Doing",
             ["implementation_complete"] = "Done",
+            ["item_satisfied"] = "Done",
         })
         .Build();
 
@@ -204,6 +207,37 @@ public sealed class TransitionValidatorTests
     }
 
     // ── Edge cases ───────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("Epic")]
+    [InlineData("Issue")]
+    [InlineData("Task")]
+    public void Validate_ItemSatisfied_WhenInProgress_ReturnsValid(string typeName)
+    {
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType(typeName).WithState("Doing").Build();
+
+        var result = CreateValidator().Validate(item, "item_satisfied", []);
+
+        var valid = AssertValid(result);
+        valid.TargetState.ShouldBe("Done");
+        valid.Event.ShouldBe("item_satisfied");
+    }
+
+    [Theory]
+    [InlineData("To Do")]
+    [InlineData("Done")]
+    public void Validate_ItemSatisfied_WhenNotInProgress_ReturnsInvalid(string state)
+    {
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Task").WithState(state).Build();
+
+        var result = CreateValidator().Validate(item, "item_satisfied", []);
+
+        var invalid = AssertInvalid(result);
+        invalid.Message.ShouldContain("item_satisfied");
+        invalid.Message.ShouldContain("InProgress");
+    }
 
     [Fact]
     public void Validate_EventWithNoPrecondition_ValidIfTransitionExists()
