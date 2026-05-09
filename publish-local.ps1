@@ -43,6 +43,32 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Published to: $primaryDest" -ForegroundColor Green
 $builtMtime = (Get-Item $primaryExe).LastWriteTimeUtc
 
+# Stub-binary guard. dotnet publish has been observed to produce a 1-byte
+# polyphony.dll when the build silently corrupts the managed assembly (e.g.
+# stale obj/, mid-publish kill, disk-full mid-write). The exit code is still
+# 0 and the file timestamp is fresh, so the staleness check below would
+# happily promote the corrupt artifact onto PATH and every subsequent
+# `polyphony` invocation would fail with a runtime image-load error that
+# doesn't point back here.
+#
+# Note: polyphony.exe is the ~150KB .NET apphost shim, NOT the binary to
+# size-check. The actual managed assembly is polyphony.dll (~3.4MB Release).
+# AOT is currently disabled (see csproj header); when re-enabled, the exe
+# itself becomes the multi-MB native image and this guard should be widened
+# to cover both files.
+$primaryDll = Join-Path $primaryDest 'polyphony.dll'
+if (-not (Test-Path $primaryDll)) {
+    throw "Publish completed without producing $primaryDll. dotnet publish exit code was 0 but the managed assembly is missing — likely a stale obj/ directory. Remove src/Polyphony/bin and src/Polyphony/obj before retrying."
+}
+$builtDllSize = (Get-Item $primaryDll).Length
+$minDllBytes = 1MB
+if ($builtDllSize -lt $minDllBytes) {
+    throw "Publish produced a stub assembly at $primaryDll ($builtDllSize bytes; expected >= $minDllBytes). dotnet publish exit code was 0 but the artifact is corrupt. Remove src/Polyphony/bin and src/Polyphony/obj before retrying."
+}
+if ($builtDllSize -lt 2MB) {
+    Write-Warning "Published polyphony.dll is unusually small ($builtDllSize bytes). Normal Release builds are >3MB. Inspect for missing dependencies or aggressive trimming."
+}
+
 # Resolve every polyphony.exe currently on PATH (Get-Command -All returns them in PATH
 # order, so [0] is the one PowerShell would actually invoke). Copy the freshly-built
 # binary on top of any stale one earlier in the search order.
