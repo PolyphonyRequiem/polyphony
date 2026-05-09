@@ -620,7 +620,7 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
+      - |
         $raw = @'
         {{ wave_dispatch_loop.outputs | tojson }}
         '@;
@@ -710,7 +710,7 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
+      - |
         $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "apex-driver-iter-{{ workflow.input.apex_id }}";
         $iteration = if (Test-Path $counterFile) { [int]((Get-Content $counterFile -Raw).Trim()) + 1 } else { 1 };
         Set-Content -Path $counterFile -Value "$iteration" -NoNewline;

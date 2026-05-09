@@ -1602,6 +1602,7 @@ agents:
     args:
       - "plan"
       - "extract-renegotiation-flag"
+      - "--pr-number"
       - "{{ poll_status.output.pr_number if (poll_status is defined and poll_status.output.pr_number is defined) else open_plan_pr.output.pr_number }}"
     routes:
       - to: cascade_remedy

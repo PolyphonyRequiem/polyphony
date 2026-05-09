@@ -176,7 +176,7 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
+      - |
         $raw = @'
         {{ dispatch_items.outputs | tojson }}
         '@;

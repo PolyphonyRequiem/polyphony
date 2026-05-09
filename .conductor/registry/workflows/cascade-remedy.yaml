@@ -71,6 +71,7 @@ agents:
     args:
       - "plan"
       - "classify-stale-descendants"
+      - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--manifest-path"
       - "{{ workflow.input.manifest_path }}"
