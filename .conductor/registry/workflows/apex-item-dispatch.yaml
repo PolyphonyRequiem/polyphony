@@ -465,6 +465,7 @@ agents:
       - "-NoProfile"
       - "-Command"
       - |
+        $errMsg = '';
         try {
           twig sync;
           $validate = polyphony validate --work-item {{ workflow.input.work_item_id }} --event item_satisfied | ConvertFrom-Json;
@@ -472,11 +473,17 @@ agents:
             twig state $validate.target_state --id {{ workflow.input.work_item_id }};
           }
         } catch {
-          # Swallow: the apex driver's outer loop (PR #9) re-evaluates
-          # next-ready on the next pass; transient ADO/twig failures
-          # surface there rather than failing the whole wave here.
+          # Capture, don't swallow: the apex driver's outer loop (PR #9)
+          # re-evaluates next-ready on the next pass — transient ADO/twig
+          # failures still surface there rather than failing the whole
+          # wave here. But we now log the message to stderr (visible in
+          # the conductor event log) AND surface it in the structured
+          # output so wave-aggregator consumers can observe failures
+          # instead of silently re-looping. AB#3066 fix.
+          $errMsg = $_.Exception.Message;
+          [Console]::Error.WriteLine("terminal_satisfied caught: $errMsg");
         }
-        @{
+        $out = @{
           work_item_id = {{ workflow.input.work_item_id }};
           apex_id = '{{ workflow.input.apex_id }}';
           lifecycle_workflow = 'terminal-satisfied';
@@ -490,7 +497,12 @@ agents:
           actionable_satisfied = $false;
           implement_pg_merged = $false;
           feature_pr_merged = $false;
-        } | ConvertTo-Json -Compress
+        };
+        if ($errMsg -ne '') {
+          $out.error = $errMsg;
+          $out.error_code = 'terminal_satisfied_caught';
+        }
+        $out | ConvertTo-Json -Compress
     routes:
       - to: $end
 
