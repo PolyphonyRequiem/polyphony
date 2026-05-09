@@ -42,38 +42,72 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
             new ProcessResult(0, $$"""{"id":{{newId}},"title":"Created"}""", ""));
 
     [Fact]
-    public async Task SeedChildren_EmptyChildren_StampsTagAndReturnsZeroCounts()
+    public async Task SeedChildren_EmptyChildrenNoFacets_RoutesError()
     {
+        // Indivisibility must be explicit. An empty children list with no
+        // apex_facets declaration is ambiguous and would silently false-
+        // satisfy the apex (AB#3064 dogfood, 2026-05-09). The verb refuses.
+        var (cmd, _) = CreateCommand();
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, "[]"));
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(1);
+        result.Errors[0].Error.ShouldContain("apex_facets");
+        result.PlannedTagSet.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SeedChildren_EmptyChildrenWithApexFacets_StampsTags()
+    {
+        // The legitimate "decomposable but indivisible" case: planner emits
+        // no children but declares apex_facets in plan front-matter.
         var (cmd, runner) = CreateCommand();
         StubShowTreeNoChildren(runner, 100);
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, "[]"));
-        exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
-        result.WorkItemId.ShouldBe(100);
-        result.ChildCount.ShouldBe(0);
-        result.SeededCount.ShouldBe(0);
-        result.ReusedCount.ShouldBe(0);
-        result.ErrorCount.ShouldBe(0);
-        result.PlannedTagSet.ShouldBeTrue();
-        result.PlannedTagAlready.ShouldBeFalse();
+        var planFile = WriteTempPlanFile(100, "---\napex_facets: [implementable]\n---\n");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(100, "[]", "polyphony:planned", planFile));
+            exit.ShouldBe(ExitCodes.Success);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.WorkItemId.ShouldBe(100);
+            result.ChildCount.ShouldBe(0);
+            result.SeededCount.ShouldBe(0);
+            result.ReusedCount.ShouldBe(0);
+            result.ErrorCount.ShouldBe(0);
+            result.PlannedTagSet.ShouldBeTrue();
+            result.PlannedTagAlready.ShouldBeFalse();
+            result.FacetsTagSet.ShouldBeTrue();
+        }
+        finally
+        {
+            File.Delete(planFile);
+        }
     }
 
     [Fact]
     public async Task SeedChildren_TagAlreadyPresent_DoesNotPatch()
     {
+        // Idempotency: re-running with all children already present + tag
+        // already on parent should NOT patch. Using non-empty children with
+        // a marker-match so reuse path triggers.
         var (cmd, runner) = CreateCommand();
-        StubShowTreeNoChildren(runner, 100);
+        const string existing = """[{"id":555,"title":"Do thing","type":"Task","description":"x\n<!-- polyphony:plan-child-id=task-1 -->"}]""";
+        StubShowTreeChildren(runner, 100, existing);
         StubShowParent(runner, 100, tagsField: "polyphony:planned; other-tag");
         // No patch stub — must NOT be called.
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, "[]"));
+        var children = """[{"child_id":"task-1","title":"Do thing","type":"Task","description":"x"}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.PlannedTagSet.ShouldBeTrue();
         result.PlannedTagAlready.ShouldBeTrue();
+        result.ReusedCount.ShouldBe(1);
 
         var patchCalled = runner.Invocations.Any(i => i.Executable == "twig" && i.Arguments.Contains("patch"));
         patchCalled.ShouldBeFalse();
@@ -242,16 +276,25 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var (_, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, "[]"));
-        output.ShouldContain("\"work_item_id\"", Case.Sensitive);
-        output.ShouldContain("\"child_count\"", Case.Sensitive);
-        output.ShouldContain("\"seeded_count\"", Case.Sensitive);
-        output.ShouldContain("\"planned_tag_set\"", Case.Sensitive);
-        output.ShouldContain("\"planned_tag_already\"", Case.Sensitive);
-        output.ShouldContain("\"apex_facets\"", Case.Sensitive);
-        output.ShouldContain("\"facets_tag_set\"", Case.Sensitive);
-        output.ShouldNotContain("\"WorkItemId\"", Case.Sensitive);
-        output.ShouldNotContain("\"PlannedTagSet\"", Case.Sensitive);
+        var planFile = WriteTempPlanFile(100, "---\napex_facets: [implementable]\n---\n");
+        try
+        {
+            var (_, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(100, "[]", "polyphony:planned", planFile));
+            output.ShouldContain("\"work_item_id\"", Case.Sensitive);
+            output.ShouldContain("\"child_count\"", Case.Sensitive);
+            output.ShouldContain("\"seeded_count\"", Case.Sensitive);
+            output.ShouldContain("\"planned_tag_set\"", Case.Sensitive);
+            output.ShouldContain("\"planned_tag_already\"", Case.Sensitive);
+            output.ShouldContain("\"apex_facets\"", Case.Sensitive);
+            output.ShouldContain("\"facets_tag_set\"", Case.Sensitive);
+            output.ShouldNotContain("\"WorkItemId\"", Case.Sensitive);
+            output.ShouldNotContain("\"PlannedTagSet\"", Case.Sensitive);
+        }
+        finally
+        {
+            File.Delete(planFile);
+        }
     }
 
     // ── apex_facets / plan front-matter (closed-loop PR #7) ─────────────
@@ -315,24 +358,45 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_PlanFileMissing_BehavesAsIfFrontMatterAbsent()
+    public async Task SeedChildren_PlanFileMissing_NoChildren_RoutesError()
     {
         // Default planFile path is plans/plan-{id}.md relative to cwd; when
-        // it doesn't exist the verb falls back to the original behaviour
-        // (no facets tag, just polyphony:planned).
-        var (cmd, runner) = CreateCommand();
-        StubShowTreeNoChildren(runner, 102);
-        StubShowParent(runner, 102, tagsField: "");
-        StubPatchOk(runner);
+        // it doesn't exist AND children-json is empty, the strict
+        // indivisibility-must-be-explicit check fires (AB#3064 dogfood).
+        var (cmd, _) = CreateCommand();
 
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.SeedChildren(102, "[]", "polyphony:planned",
+                Path.Combine(Path.GetTempPath(), $"polyphony-pr7-missing-{Guid.NewGuid():N}.md")));
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(1);
+        result.Errors[0].Error.ShouldContain("apex_facets");
+        result.PlannedTagSet.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SeedChildren_PlanFileMissing_WithChildren_BehavesAsIfFrontMatterAbsent()
+    {
+        // Missing plan file with non-empty children is the classic flow:
+        // planner emitted children, no front-matter to read, just stamp the
+        // planned tag and reconcile the children.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 102);
+        StubCreateChild(runner, newId: 777);
+        StubShowParent(runner, 102, tagsField: "");
+        StubPatchOk(runner);
+
+        var children = """[{"child_id":"task-1","title":"Do the thing","type":"Task","description":"…"}]""";
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(102, children, "polyphony:planned",
                 Path.Combine(Path.GetTempPath(), $"polyphony-pr7-missing-{Guid.NewGuid():N}.md")));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ApexFacets.ShouldBeEmpty();
         result.FacetsTagSet.ShouldBeFalse();
         result.PlannedTagSet.ShouldBeTrue();
+        result.SeededCount.ShouldBe(1);
     }
 
     [Fact]

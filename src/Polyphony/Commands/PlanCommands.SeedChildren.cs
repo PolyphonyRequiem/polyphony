@@ -105,6 +105,27 @@ public sealed partial class PlanCommands
             return ExitCodes.ConfigError;
         }
 
+        // Indivisibility must be EXPLICIT. An empty children list with no
+        // apex_facets declaration is ambiguous: it could mean "this apex is
+        // genuinely indivisible" or — more commonly in practice — "the
+        // planner declared children in plan body prose but forgot to
+        // populate the structured architect.output.children". Silent-tag of
+        // zero-children plans is exactly what produced the false-satisfied
+        // apex surfaced by the AB#3064 dogfood (2026-05-09): the observer
+        // reads only the polyphony:planned tag, the rollup then collapses
+        // item_satisfied to satisfied, and the driver short-circuits at
+        // preflight having implemented nothing. We refuse rather than guess.
+        // To declare indivisibility, the planner must add `apex_facets:` to
+        // the plan front-matter.
+        if (children.Count == 0 && (apexFacets is null || apexFacets.Count == 0))
+        {
+            EmitError(
+                $"children-json is empty and plan front-matter declares no apex_facets — refusing to stamp #{workItem} as planned. " +
+                $"To declare an indivisible apex, add `apex_facets: [<facet>, ...]` to the front-matter of '{resolvedPlanFile}'. " +
+                $"Otherwise, supply --children-json containing the architect's structured decomposition.");
+            return ExitCodes.ConfigError;
+        }
+
         // Snapshot existing children once — we'll match against this.
         JsonNode? tree;
         try
