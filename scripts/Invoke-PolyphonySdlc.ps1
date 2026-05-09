@@ -237,6 +237,26 @@ if ($DryRun) {
 
 # ─── Launch conductor ────────────────────────────────────────────────────────
 
+# Pre-resolve GH_TOKEN from the active gh auth so conductor's gh subprocesses
+# don't fight Windows Credential Manager / DPAPI in a non-TTY context.
+# Empirically (AB#3065 dogfood, 2026-05-09): gh CLI invocations from conductor's
+# Start-Process -WindowStyle Hidden subprocess hang at 60s × 3 retries when DPAPI
+# tries to surface a credential prompt that has nowhere to render. The same gh
+# call from an interactive shell returns in ~500ms. Setting GH_TOKEN bypasses
+# the keyring entirely and the subprocess gets the token via env. Idempotent —
+# caller's pre-set GH_TOKEN wins.
+if (-not $env:GH_TOKEN -and (Get-Command gh -ErrorAction SilentlyContinue)) {
+    try {
+        $token = (& gh auth token --hostname github.com 2>$null | Out-String).Trim()
+        if ($token -and $token -notmatch '\s') {
+            $env:GH_TOKEN = $token
+        }
+    } catch {
+        # Silent — caller can set GH_TOKEN explicitly if gh isn't available
+        # or has no token. The conductor's own gh failure will surface clearly.
+    }
+}
+
 # Verify conductor is on PATH so we fail fast with a clear message instead of
 # Start-Process surfacing a generic "no such file" later.
 if (-not (Get-Command conductor -ErrorAction SilentlyContinue)) {
