@@ -369,7 +369,7 @@ public sealed class StatusCommand(
         if (featurePr is { Exists: true, State: "MERGED" })
         {
             return ($"apex {apex}: feature PR #{featurePr.Number} merged",
-                    "Verify the ADO work item has advanced to a terminal state. Automatic `item_satisfied`-triggered transitions are not wired yet — set the state in ADO directly (`twig state Done` or the ADO web UI) if needed.");
+                    "Verify the ADO work item has advanced to its terminal state. The apex-driver's `close_mark_satisfied` step transitions the state via `polyphony validate --event item_satisfied` + `twig state` — if the state didn't advance, the run likely exited before reaching that step. Either re-run `apex-driver` or set the state directly via `twig state Done`.");
         }
 
         if (!manifest.Exists)
