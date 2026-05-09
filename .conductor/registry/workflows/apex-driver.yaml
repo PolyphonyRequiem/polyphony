@@ -1073,6 +1073,14 @@ agents:
   # Sync ADO once more (so the validate event sees a fresh cache),
   # validate the satisfaction event against the apex's type config,
   # then transition state via twig.
+  # AUDIT (AB#3066): No try/catch wrapper here — intentional. Unlike
+  # `terminal_satisfied` in apex-item-dispatch.yaml (the per-item wave
+  # corridor, where a swallow lets the wave complete and the outer loop
+  # re-evaluate next-ready), this is the apex-level close-out. A failure
+  # here SHOULD fail the workflow loudly so the operator sees that the
+  # apex didn't transition. If a try/catch is later added here, mirror
+  # the apex-item-dispatch.yaml > terminal_satisfied shape — log to
+  # stderr AND surface in structured output.
   - name: close_mark_satisfied
     type: script
     description: Sync, validate, and transition apex to its satisfied state
