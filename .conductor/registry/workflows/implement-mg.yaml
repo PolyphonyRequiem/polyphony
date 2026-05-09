@@ -76,10 +76,10 @@ workflow:
     MG branch, iterates tasks through coder → reviewer with per-task
     branches and PRs, runs scope-level review, and opens + merges the
     MG PR via the merge-commit-only path required by the ADR.
-  version: "2.2.1"
+  version: "2.2.2"
   entry_point: branch_ensure_mg
   metadata:
-    min_polyphony_version: "2.2.1"
+    min_polyphony_version: "2.2.2"
 
   limits:
     # Per the rubber-duck pass — implement-mg's task loop is wider than
@@ -718,12 +718,45 @@ agents:
          - `git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat`
            for an aggregate file/line summary.
          - Read the modified files in full as needed.
-      3. Verify:
+      3. **Empty-MG structural check** (FAIL LOUDLY — do not punt to the
+         user_acceptance gate):
+
+         An MG that satisfies *any* of the following is structurally
+         broken and MUST receive `verdict: "changes_requested"`:
+
+         a. The branch `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+            does not exist (`git rev-parse --verify` fails).
+         b. `git log --oneline {{ workflow.input.feature_branch }}..mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+            returns zero commits.
+         c. `git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat`
+            shows zero files changed.
+         d. `{{ workflow.input.work_item_ids | length }}` is zero (the MG was
+            dispatched with no tasks).
+
+         When ANY of (a)-(d) holds, return immediately with:
+
+             verdict: "changes_requested"
+             issues: ["empty_merge_group_structural_violation: <which check failed and why>"]
+             feedback: a short paragraph naming the broken invariant and
+                       pointing at the upstream classifier/seeder/feature-pr-router
+                       as the likely cause. DO NOT rationalize the void by
+                       claiming the apex's requirements "must be covered
+                       elsewhere" — the MG layer is responsible for the work
+                       it was dispatched with; an empty MG is a bug somewhere
+                       upstream and approving it green-washes that bug.
+
+         This rule supersedes any other reasoning: if the MG is empty,
+         the verdict is `changes_requested`. The user_acceptance gate is
+         not the right place to confirm "did the apex get done somewhere
+         else?" — that check happens at the apex level, not inside the
+         MG reviewer.
+
+      4. Verify (only when the MG has actual content):
          - All acceptance criteria from the parent work item are met
          - Tasks work together cohesively
          - No integration issues between tasks
          - Test coverage is adequate at the integration level
-      4. Return your verdict.
+      5. Return your verdict.
 
          The `feedback` field will be rendered to the human in the
          user_acceptance gate that follows — write a self-contained
