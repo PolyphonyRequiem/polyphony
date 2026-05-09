@@ -64,6 +64,18 @@ jobs:
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-lifecycle-router-coverage.ps1
 
+      - name: Lint (prose-children declarations in plan files)
+        # Catches the false-satisfied bug class first surfaced by AB#3064:
+        # an architect emits a plan whose body lists child work items under
+        # a `## Child(ren) …` heading but whose YAML front-matter declares
+        # neither `apex_facets:` (explicit-indivisibility marker) nor a
+        # structured `children:` block. Defense in depth alongside PR #225
+        # (`polyphony plan seed-children`'s runtime refusal); this lint
+        # catches the same shape at PR-author time on the plan PR diff.
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-prose-children.ps1 -Format github
+
       - name: Install Pester
         shell: pwsh
         run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
