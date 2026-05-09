@@ -53,10 +53,10 @@ workflow:
     bubble-up AND per-item progress counts (items_satisfied_count,
     items_dispatched_count) so the apex-driver outer loop (PR #9) can
     decide whether the iteration made progress.
-  version: "2.2.0"
+  version: "2.2.1"
   entry_point: dispatch_items
   metadata:
-    min_polyphony_version: "2.2.0"
+    min_polyphony_version: "2.2.1"
 
   limits:
     # Each wave can hold dozens of items; the for_each iteration count
@@ -186,11 +186,15 @@ agents:
         $dispatchedCount = 0;
         $itemCount = 0;
         try {
-          $parsed = $raw | ConvertFrom-Json;
-          # for_each .outputs is a dict keyed by iteration index;
-          # iterate the values to inspect each item's surfaced output.
-          $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
-                    else { $parsed.PSObject.Properties.Value };
+          # `dispatch_items` for_each has no `key_by`, so conductor emits
+          # `.outputs` as a JSON array of per-iteration outputs. Wrap with
+          # `@(...)` so that PowerShell's pipeline-unwrapping of a single-
+          # element array doesn't collapse `[{...}]` to a bare PSObject —
+          # otherwise a 1-iteration wave was misread as the FIELDS of the
+          # single iteration's output (14 properties), not the iteration
+          # itself, and `dispatched`/`item_satisfied` counters silently
+          # reported 0. Surfaced live by the AB#3064 dogfood (2026-05-09).
+          $values = @($raw | ConvertFrom-Json);
           foreach ($v in $values) {
             if ($null -eq $v) { continue }
             $itemCount += 1;

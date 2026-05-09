@@ -121,10 +121,10 @@ workflow:
     (plannable+implementable, etc.) traverse plan → impl → close in a
     single invocation rather than requiring per-facet re-invocation.
     Replaces the deleted polyphony-full.yaml.
-  version: "2.2.0"
+  version: "2.2.1"
   entry_point: preflight_sync
   metadata:
-    min_polyphony_version: "2.2.0"
+    min_polyphony_version: "2.2.1"
 
   limits:
     # The dispatch loop is a for_each over waves; each wave is itself a
@@ -627,9 +627,15 @@ agents:
         $items = @();
         $any = $false;
         try {
-          $parsed = $raw | ConvertFrom-Json;
-          $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
-                    else { $parsed.PSObject.Properties.Value };
+          # `wave_dispatch_loop` for_each has no `key_by`, so conductor
+          # emits `.outputs` as a JSON array of per-wave outputs. Wrap
+          # with `@(...)` so that PowerShell's pipeline-unwrapping of a
+          # single-element array doesn't collapse `[{...}]` to a bare
+          # PSObject — otherwise a 1-wave run was misread as the FIELDS
+          # of the single wave's output and `renegotiation_pending` was
+          # never detected. Surfaced live by the AB#3064 dogfood
+          # (2026-05-09).
+          $values = @($raw | ConvertFrom-Json);
           foreach ($v in $values) {
             if ($null -eq $v) { continue }
             $pending = $false;
@@ -722,9 +728,15 @@ agents:
         {{ wave_dispatch_loop.outputs | tojson }}
         '@;
         try {
-          $parsed = $raw | ConvertFrom-Json;
-          $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
-                    else { $parsed.PSObject.Properties.Value };
+          # `wave_dispatch_loop` for_each has no `key_by`, so conductor
+          # emits `.outputs` as a JSON array of per-wave outputs. Wrap
+          # with `@(...)` so that PowerShell's pipeline-unwrapping of a
+          # single-element array doesn't collapse `[{...}]` to a bare
+          # PSObject — otherwise a 1-wave iteration was misread as the
+          # FIELDS of the single wave's output and the progress counters
+          # silently reported 0, falsely flipping the loop decision to
+          # `blocked`. Surfaced live by the AB#3064 dogfood (2026-05-09).
+          $values = @($raw | ConvertFrom-Json);
           foreach ($v in $values) {
             if ($null -eq $v) { continue }
             if ($v.PSObject.Properties.Name -contains 'items_satisfied_count') { $satisfiedDelta += [int]$v.items_satisfied_count }
