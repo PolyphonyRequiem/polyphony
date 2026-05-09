@@ -735,18 +735,21 @@ agents:
 
         $madeProgress = ($satisfiedDelta -gt 0) -or ($dispatchedDelta -gt 0);
 
-        # Apex satisfaction: trust state next-ready's closed-loop honest
-        # `item_satisfied: Satisfied` (PR #5). Fail SAFE — if the verb
-        # errors out for any reason, treat as not-satisfied and let the
-        # progress / cap signals decide. Do NOT parse the reason text;
-        # truncation observability is by demotion (PR #5 hand-off note).
+        # Apex satisfaction: trust state next-ready's top-level `status`
+        # routing hint (PR #5; StateNextReadyResult.cs). `status: satisfied`
+        # is emitted when every requirement (including item_satisfied) is at
+        # Disposition.Satisfied — the canonical "everything done" signal.
+        # Fail SAFE — if the verb errors out for any reason, treat as
+        # not-satisfied and let the progress / cap signals decide. Do NOT
+        # parse the reason text; truncation observability is by demotion
+        # (PR #5 hand-off note).
         $apexSatisfied = $false;
         try {
           $nextRaw = polyphony state next-ready --work-item {{ workflow.input.apex_id }} 2>$null;
           if ($nextRaw) {
             $next = $nextRaw | ConvertFrom-Json;
-            if ($null -ne $next -and $next.PSObject.Properties.Name -contains 'item_satisfied') {
-              if ("$($next.item_satisfied)" -eq 'Satisfied') { $apexSatisfied = $true }
+            if ($null -ne $next -and $next.PSObject.Properties.Name -contains 'status') {
+              if ("$($next.status)" -eq 'satisfied') { $apexSatisfied = $true }
             }
           }
         } catch { }
