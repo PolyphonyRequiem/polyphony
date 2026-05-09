@@ -21,6 +21,8 @@ types:
 transitions:
   Epic:
     begin_planning: Doing
+    begin_implementation: Doing
+    implementation_complete: Done
     all_children_complete: Done
   Issue:
     begin_planning: Doing
