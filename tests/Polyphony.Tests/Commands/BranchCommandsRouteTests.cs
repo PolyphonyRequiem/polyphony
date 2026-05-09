@@ -253,6 +253,75 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         output.ShouldNotContain("\"PrNumber\"");
     }
 
+    // F10: indivisible-apex routing — when the hierarchy has no MG tags
+    // (BuildRouteGroups synthesizes a single fallback PG-1) and the caller
+    // passes --pg-number = apex_id (e.g. 3064), Route used to silently emit
+    // action=all_complete because pgNumber matching failed. This is the
+    // false-satisfied bug: the apex carries non-terminal items but Route
+    // returned "nothing left to do". Now Route accepts the lone synthesized
+    // fallback and routes to create_branch instead.
+    [Fact]
+    public async Task Route_PgNumberMismatchButFallbackOnly_RoutesToFallback()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+        StubGitOrigin(runner);
+        StubRemoteBranches(runner);
+        StubPrList(runner, "merged", "[]");
+        StubPrList(runner, "open", "[]");
+
+        // Indivisible apex: a single Epic in non-terminal state, no children,
+        // and no PG tags anywhere. BuildRouteGroups will synthesize PG-1 with
+        // the apex as a container WorkItem.
+        var apex = new WorkItemBuilder()
+            .WithId(3064)
+            .WithType("Epic")
+            .WithTitle("Wire item_satisfied as ADO transition trigger")
+            .WithState("To Do")
+            .Build();
+        await SeedAsync(apex);
+
+        // Caller passes --pg-number = apex_id (the workflow YAML's
+        // current shape). Without the F10 fix this returns all_complete.
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Route(workItem: 3064, pgNumber: 3064));
+        var result = Deserialize(output);
+
+        result.Action.ShouldBe("create_branch", $"Output was: {output}");
+        result.CurrentMergeGroup.ShouldBe("PG-1");
+        result.TotalMergeGroups.ShouldBe(1);
+        result.WorkItemIds.ShouldContain(3064);
+    }
+
+    // F10 negative case: when MG tags DO exist and the caller asks for an MG
+    // number that none of them carry, the fallback acceptance must NOT kick
+    // in (parallel-dispatch correctness). Without an explicit guard a future
+    // refactor could reintroduce the wrong-MG bug in this shape.
+    [Fact]
+    public async Task Route_PgNumberMismatchWithTaggedGroups_DoesNotAcceptFallback()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+        StubGitOrigin(runner);
+        StubRemoteBranches(runner);
+        StubPrList(runner, "merged", "[]");
+        StubPrList(runner, "open", "[]");
+
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing").Build();
+        var task = new WorkItemBuilder().WithId(200).WithType("Task").WithTitle("T")
+            .WithState("To Do").WithParentId(100).WithTags("PG-1").Build();
+        await SeedAsync(epic, task);
+
+        // Caller asks for PG-2 but only PG-1 is tagged. Must NOT silently
+        // route to PG-1 — that would break parallel-dispatch invariants.
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Route(workItem: 100, pgNumber: 2));
+        var result = Deserialize(output);
+
+        result.Action.ShouldBe("all_complete", $"Output was: {output}");
+        result.CurrentMergeGroup.ShouldBe("");
+    }
+
     private static BranchRouteResult Deserialize(string output)
         => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchRouteResult)
             ?? throw new InvalidOperationException("Failed to deserialize route output");

@@ -73,6 +73,20 @@ public sealed partial class BranchCommands
             {
                 current = classified
                     .FirstOrDefault(c => string.Equals(c.Group.Name, $"PG-{pgNumber}", StringComparison.Ordinal));
+
+                // Indivisible-apex fallback (F6 / F10 follow-up): when the hierarchy
+                // carries no MG tags, BuildRouteGroups synthesizes a single fallback
+                // group named "PG-1". Callers commonly pass the apex work-item ID as
+                // --pg-number (e.g. 3064), which will never match "PG-1". Rather than
+                // silently returning "all_complete" (the false-satisfied bug pattern),
+                // accept the lone synthesized fallback as the answer — there is no
+                // ambiguity to resolve, and parallel-dispatch concerns do not apply
+                // when there is exactly one possible MG.
+                if (current is null && classified.Count == 1 && classified[0].Group.IsFallback)
+                {
+                    current = classified[0];
+                }
+
                 if (current is not null && current.Completed && current.Action != "submit_pr")
                 {
                     current = current with { Action = "all_complete" };
@@ -191,7 +205,8 @@ public sealed partial class BranchCommands
                 Name: "PG-1",
                 BranchName: ResolveFeatureBranch(hint, rootId, root.Title),
                 ChildIds: taskIds,
-                WorkItemIds: issueIds));
+                WorkItemIds: issueIds,
+                IsFallback: true));
         }
         else
         {
@@ -376,7 +391,8 @@ public sealed partial class BranchCommands
         string Name,
         string BranchName,
         IReadOnlyList<int> ChildIds,
-        IReadOnlyList<int> WorkItemIds);
+        IReadOnlyList<int> WorkItemIds,
+        bool IsFallback = false);
 
     private sealed record ClassifiedMergeGroup(
         RouteMergeGroup Group,
