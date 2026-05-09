@@ -74,10 +74,10 @@ workflow:
     sub-workflow (plan-level / actionable / implement-pg / feature-pr /
     fast-path), tear down worktree. Inner sub-workflow of
     apex-wave-dispatch.
-  version: "2.2.0"
+  version: "2.2.1"
   entry_point: classify_lifecycle
   metadata:
-    min_polyphony_version: "2.2.0"
+    min_polyphony_version: "2.2.1"
 
   limits:
     # Five branch nodes plus a teardown plus terminals. Sub-workflow

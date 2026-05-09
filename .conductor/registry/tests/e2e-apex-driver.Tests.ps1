@@ -183,7 +183,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ApexYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ApexYaml.workflow.name        | Should -Be 'apex-driver'
         $script:ApexYaml.workflow.entry_point | Should -Be 'preflight_sync'
-        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.0'
+        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.1'
         $script:ApexYaml.tools                | Should -Contain 'twig'
         $script:ApexYaml.agents.Count         | Should -BeGreaterThan 10
     }
@@ -192,7 +192,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:WaveYaml.workflow | Should -Not -BeNullOrEmpty
         $script:WaveYaml.workflow.name        | Should -Be 'apex-wave-dispatch'
         $script:WaveYaml.workflow.entry_point | Should -Be 'dispatch_items'
-        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.0'
+        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.1'
         $script:WaveYaml.tools                | Should -Contain 'twig'
         # Per-M8 the workflow exposes 2 agents (aggregate_renegotiation,
         # integrate_wave) and 1 top-level for_each entry (dispatch_items).
@@ -204,7 +204,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ItemYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ItemYaml.workflow.name        | Should -Be 'apex-item-dispatch'
         $script:ItemYaml.workflow.entry_point | Should -Be 'classify_lifecycle'
-        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.0'
+        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.1'
         $script:ItemYaml.agents.Count         | Should -BeGreaterThan 8
     }
 
@@ -568,6 +568,68 @@ Describe 'apex-driver e2e — outer iterate-until-stable loop (PR #9)' {
         # Lowercased string compare (M7: booleans pipe through `| string | lower`).
         $body | Should -Match 'item_satisfied'
         $body | Should -Match 'dispatched'
+    }
+
+    It 'aggregate_renegotiation, renegotiation_summary, and outer_loop_evaluator wrap for_each.outputs with @(...) (regression: PowerShell pipeline unwraps single-element arrays from ConvertFrom-Json, causing 1-iteration waves to mis-iterate the FIELDS of a single output object — surfaced live by the AB#3064 dogfood, 2026-05-09)' {
+        $waveAgg = ($script:WaveAgents['aggregate_renegotiation'].args -join "`n")
+        $renegSum = ($script:ApexAgents['renegotiation_summary'].args -join "`n")
+        $outerEval = ($script:ApexAgents['outer_loop_evaluator'].args -join "`n")
+        # All three sites consume a for_each `.outputs` (no key_by ⇒ JSON
+        # array). Each MUST wrap with `@(...)` so the pipeline doesn't
+        # unwrap `[{...}]` to a bare PSObject.
+        $waveAgg   | Should -Match '@\(\$raw \| ConvertFrom-Json\)'
+        $renegSum  | Should -Match '@\(\$raw \| ConvertFrom-Json\)'
+        $outerEval | Should -Match '@\(\$raw \| ConvertFrom-Json\)'
+        # The old shape-detection idiom (which produced the bug by
+        # falling into PSObject.Properties.Value when the array was
+        # unwrapped) MUST be gone everywhere.
+        $waveAgg   | Should -Not -Match 'PSObject\.Properties\.Value'
+        $renegSum  | Should -Not -Match 'PSObject\.Properties\.Value'
+        $outerEval | Should -Not -Match 'PSObject\.Properties\.Value'
+        # `-NoEnumerate` is a footgun in this exact context: combined
+        # with the @(...) wrap it produces a 1-element array whose
+        # element IS the array, then iteration walks the array's .NET
+        # metadata fields (Length, Rank, ...). Forbid it explicitly.
+        $waveAgg   | Should -Not -Match 'ConvertFrom-Json -NoEnumerate'
+        $renegSum  | Should -Not -Match 'ConvertFrom-Json -NoEnumerate'
+        $outerEval | Should -Not -Match 'ConvertFrom-Json -NoEnumerate'
+    }
+
+    It 'singleton-array iteration counts dispatched/satisfied correctly (executable regression: 1-iteration wave must NOT report items_dispatched_count=0 when one item dispatched)' {
+        # Reproduce the exact shape conductor emits for `dispatch_items.outputs`
+        # when a wave has ONE item: a JSON array with one element.
+        $singleIterJson = @'
+[{"work_item_id":3064,"apex_id":3064,"lifecycle_workflow":"plan-level","dispatched":true,"fast_pathed":false,"item_satisfied":false,"renegotiation_pending":false,"renegotiation_request":"","validate_scope_verdict":"","scope_violation_files":[],"actionable_satisfied":false,"implement_pg_merged":false,"feature_pr_merged":false,"error":"","error_code":""}]
+'@
+        # Mirror the production aggregator logic.
+        $values = @($singleIterJson | ConvertFrom-Json)
+        $itemCount = 0; $dispatchedCount = 0; $satisfiedCount = 0
+        foreach ($v in $values) {
+            if ($null -eq $v) { continue }
+            $itemCount += 1
+            if ($v.PSObject.Properties.Name -contains 'dispatched' -and "$($v.dispatched)".ToLowerInvariant() -eq 'true') { $dispatchedCount += 1 }
+            if ($v.PSObject.Properties.Name -contains 'item_satisfied' -and "$($v.item_satisfied)".ToLowerInvariant() -eq 'true') { $satisfiedCount += 1 }
+        }
+        $itemCount       | Should -Be 1
+        $dispatchedCount | Should -Be 1
+        $satisfiedCount  | Should -Be 0
+    }
+
+    It 'multi-iteration array iteration counts dispatched/satisfied correctly (forward compatibility — multi-item waves must still tally per item)' {
+        $multiIterJson = @'
+[{"work_item_id":1,"dispatched":true,"item_satisfied":false},{"work_item_id":2,"dispatched":true,"item_satisfied":true},{"work_item_id":3,"dispatched":false,"item_satisfied":false}]
+'@
+        $values = @($multiIterJson | ConvertFrom-Json)
+        $itemCount = 0; $dispatchedCount = 0; $satisfiedCount = 0
+        foreach ($v in $values) {
+            if ($null -eq $v) { continue }
+            $itemCount += 1
+            if ($v.PSObject.Properties.Name -contains 'dispatched' -and "$($v.dispatched)".ToLowerInvariant() -eq 'true') { $dispatchedCount += 1 }
+            if ($v.PSObject.Properties.Name -contains 'item_satisfied' -and "$($v.item_satisfied)".ToLowerInvariant() -eq 'true') { $satisfiedCount += 1 }
+        }
+        $itemCount       | Should -Be 3
+        $dispatchedCount | Should -Be 2
+        $satisfiedCount  | Should -Be 1
     }
 
     It 'every outer-loop node and new terminal is reachable from the entry point' {
