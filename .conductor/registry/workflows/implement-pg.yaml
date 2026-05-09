@@ -17,10 +17,10 @@ workflow:
     Single PG lifecycle. Creates a PG branch, iterates tasks through the
     coder → reviewer loop, checks dependency gates, runs issue-level review,
     and triggers platform-specific PR creation and merge.
-  version: "2.2.0"
+  version: "2.2.1"
   entry_point: pg_router
   metadata:
-    min_polyphony_version: "2.2.0"
+    min_polyphony_version: "2.2.1"
 
   limits:
     # Implement-pg runs a task loop (router -> coder -> reviewer ->

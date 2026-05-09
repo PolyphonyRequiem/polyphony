@@ -121,10 +121,10 @@ workflow:
     (plannable+implementable, etc.) traverse plan → impl → close in a
     single invocation rather than requiring per-facet re-invocation.
     Replaces the deleted polyphony-full.yaml.
-  version: "2.2.0"
+  version: "2.2.1"
   entry_point: preflight_sync
   metadata:
-    min_polyphony_version: "2.2.0"
+    min_polyphony_version: "2.2.1"
 
   limits:
     # The dispatch loop is a for_each over waves; each wave is itself a
@@ -620,16 +620,22 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
+      - |
         $raw = @'
         {{ wave_dispatch_loop.outputs | tojson }}
         '@;
         $items = @();
         $any = $false;
         try {
-          $parsed = $raw | ConvertFrom-Json;
-          $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
-                    else { $parsed.PSObject.Properties.Value };
+          # `wave_dispatch_loop` for_each has no `key_by`, so conductor
+          # emits `.outputs` as a JSON array of per-wave outputs. Wrap
+          # with `@(...)` so that PowerShell's pipeline-unwrapping of a
+          # single-element array doesn't collapse `[{...}]` to a bare
+          # PSObject — otherwise a 1-wave run was misread as the FIELDS
+          # of the single wave's output and `renegotiation_pending` was
+          # never detected. Surfaced live by the AB#3064 dogfood
+          # (2026-05-09).
+          $values = @($raw | ConvertFrom-Json);
           foreach ($v in $values) {
             if ($null -eq $v) { continue }
             $pending = $false;
@@ -710,7 +716,7 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
+      - |
         $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "apex-driver-iter-{{ workflow.input.apex_id }}";
         $iteration = if (Test-Path $counterFile) { [int]((Get-Content $counterFile -Raw).Trim()) + 1 } else { 1 };
         Set-Content -Path $counterFile -Value "$iteration" -NoNewline;
@@ -722,9 +728,15 @@ agents:
         {{ wave_dispatch_loop.outputs | tojson }}
         '@;
         try {
-          $parsed = $raw | ConvertFrom-Json;
-          $values = if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) { $parsed }
-                    else { $parsed.PSObject.Properties.Value };
+          # `wave_dispatch_loop` for_each has no `key_by`, so conductor
+          # emits `.outputs` as a JSON array of per-wave outputs. Wrap
+          # with `@(...)` so that PowerShell's pipeline-unwrapping of a
+          # single-element array doesn't collapse `[{...}]` to a bare
+          # PSObject — otherwise a 1-wave iteration was misread as the
+          # FIELDS of the single wave's output and the progress counters
+          # silently reported 0, falsely flipping the loop decision to
+          # `blocked`. Surfaced live by the AB#3064 dogfood (2026-05-09).
+          $values = @($raw | ConvertFrom-Json);
           foreach ($v in $values) {
             if ($null -eq $v) { continue }
             if ($v.PSObject.Properties.Name -contains 'items_satisfied_count') { $satisfiedDelta += [int]$v.items_satisfied_count }
@@ -735,18 +747,21 @@ agents:
 
         $madeProgress = ($satisfiedDelta -gt 0) -or ($dispatchedDelta -gt 0);
 
-        # Apex satisfaction: trust state next-ready's closed-loop honest
-        # `item_satisfied: Satisfied` (PR #5). Fail SAFE — if the verb
-        # errors out for any reason, treat as not-satisfied and let the
-        # progress / cap signals decide. Do NOT parse the reason text;
-        # truncation observability is by demotion (PR #5 hand-off note).
+        # Apex satisfaction: trust state next-ready's top-level `status`
+        # routing hint (PR #5; StateNextReadyResult.cs). `status: satisfied`
+        # is emitted when every requirement (including item_satisfied) is at
+        # Disposition.Satisfied — the canonical "everything done" signal.
+        # Fail SAFE — if the verb errors out for any reason, treat as
+        # not-satisfied and let the progress / cap signals decide. Do NOT
+        # parse the reason text; truncation observability is by demotion
+        # (PR #5 hand-off note).
         $apexSatisfied = $false;
         try {
           $nextRaw = polyphony state next-ready --work-item {{ workflow.input.apex_id }} 2>$null;
           if ($nextRaw) {
             $next = $nextRaw | ConvertFrom-Json;
-            if ($null -ne $next -and $next.PSObject.Properties.Name -contains 'item_satisfied') {
-              if ("$($next.item_satisfied)" -eq 'Satisfied') { $apexSatisfied = $true }
+            if ($null -ne $next -and $next.PSObject.Properties.Name -contains 'status') {
+              if ("$($next.status)" -eq 'satisfied') { $apexSatisfied = $true }
             }
           }
         } catch { }

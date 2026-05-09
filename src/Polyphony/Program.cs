@@ -25,6 +25,7 @@ app.Add<ValidateCommand>();
 app.Add<ValidateConfigCommand>();
 app.Add<HierarchyCommand>();
 app.Add<HealthCommand>();
+app.Add<StatusCommand>();
 app.Add<PlanCommands>("plan");
 app.Add<PolicyCommands>("policy");
 app.Add<GuidanceCommands>("guidance");
@@ -49,7 +50,7 @@ app.Add<AgentCommands>("agent");
 // app.Add<...>() calls above.
 var knownVerbRoots = new HashSet<string>(StringComparer.Ordinal)
 {
-    "validate", "validate-config", "hierarchy", "health",
+    "validate", "validate-config", "hierarchy", "health", "status",
     "plan", "policy", "guidance", "branch", "state", "pr", "scope", "root",
     "requirements", "mg", "manifest", "lock", "worktree", "worklist", "edges", "agent",
     // Built-ins / pass-throughs handled by CAF itself.

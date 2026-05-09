@@ -34,10 +34,10 @@ workflow:
     the architect's plan to a plan branch, opening a plan PR, surfacing
     LLM advisory + human approval via native PR review, then merging and
     seeding child work items.
-  version: "2.2.0"
+  version: "2.2.1"
   entry_point: depth_guard
   metadata:
-    min_polyphony_version: "2.2.0"
+    min_polyphony_version: "2.2.1"
 
   limits:
     # Recursive planning: each level fans out plan_children_group (for_each)
@@ -1602,6 +1602,7 @@ agents:
     args:
       - "plan"
       - "extract-renegotiation-flag"
+      - "--pr-number"
       - "{{ poll_status.output.pr_number if (poll_status is defined and poll_status.output.pr_number is defined) else open_plan_pr.output.pr_number }}"
     routes:
       - to: cascade_remedy
