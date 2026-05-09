@@ -25,12 +25,17 @@
 
       implement-pg   — Item has an implementable facet, the next
                        ready requirement is implementation_merged,
-                       AND the item is NOT the apex root. (apex root
-                       implementations are routed to feature-pr to
-                       gather all PG branches into a feature PR.)
+                       AND either (a) the item is NOT the apex root,
+                       or (b) the item IS the apex root but has zero
+                       ADO children (an indivisible apex — the apex
+                       itself is the unit of implementation work; the
+                       PG branch is `impl/{root}-{root}`).
 
-      feature-pr     — Item has implementation_merged ready AND it is
-                       the apex root.
+      feature-pr     — Item has implementation_merged ready, IS the
+                       apex root, AND has at least one ADO child. The
+                       children's PG branches have already been merged
+                       in earlier waves; feature-pr aggregates them
+                       into a single feature PR.
 
       fast-path      — Item has no facets (pure organizational
                        container) OR all requirements already
@@ -88,6 +93,15 @@
       next_ready_failed           — `polyphony state next-ready` exited non-zero.
       next_ready_invalid_json     — non-JSON output from polyphony.
       classification_indeterminate — dispatchable but no kind matched a lifecycle.
+      hierarchy_failed            — `polyphony hierarchy` exited non-zero or returned non-JSON.
+                                    Surfaces only on the apex-root + implementable
+                                    branch, where children-count drives the choice
+                                    between `implement-pg` and `feature-pr`. We FAIL
+                                    LOUDLY here rather than silently defaulting,
+                                    because either default is wrong roughly half the
+                                    time (decomposed apex → wrong-default skips real
+                                    aggregation; indivisible apex → wrong-default
+                                    creates the empty-MG bug).
 
 .PARAMETER WorkItemId
     ADO work item id of the item to classify.
@@ -132,6 +146,32 @@ $envelope = [ordered]@{
 
 function Write-Envelope($e) {
     $e | ConvertTo-Json -Compress -Depth 6
+}
+
+# Returns the count of direct ADO children for $WorkItemId by invoking
+# `polyphony hierarchy --work-item <id>` and parsing the `children`
+# array. Throws on any failure (caller catches and routes via
+# error_code='hierarchy_failed').
+function Get-DirectChildCount {
+    param(
+        [Parameter(Mandatory)][int]$WorkItemId,
+        [Parameter(Mandatory)][string]$PolyphonyExe
+    )
+    $stderrFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $stdout = & $PolyphonyExe hierarchy --work-item $WorkItemId 2>$stderrFile
+        $exit = $LASTEXITCODE
+        $stderr = Get-Content -Raw $stderrFile -ErrorAction SilentlyContinue
+    }
+    finally {
+        Remove-Item $stderrFile -ErrorAction SilentlyContinue
+    }
+    if ($exit -ne 0) {
+        throw "polyphony hierarchy --work-item $WorkItemId exited $exit. stderr: $stderr"
+    }
+    $hier = $stdout | ConvertFrom-Json -ErrorAction Stop
+    if ($null -eq $hier.children) { return 0 }
+    return @($hier.children).Count
 }
 
 try {
@@ -247,7 +287,35 @@ try {
     }
     elseif ($hasImplReady) {
         $envelope.success = $true
-        $envelope.lifecycle_workflow = if ($envelope.is_root) { 'feature-pr' } else { 'implement-pg' }
+        if ($envelope.is_root) {
+            # Apex-root + implementable splits on decomposition state:
+            #   • zero children → indivisible apex; the apex IS the
+            #     PG; route to implement-pg so an actual impl PR gets
+            #     opened against `impl/{root}-{root}`.
+            #   • >=1 child   → decomposed apex; children's PGs were
+            #     merged in earlier waves; route to feature-pr to
+            #     aggregate them into the feature PR.
+            #
+            # Defaulting either way silently is wrong roughly half the
+            # time and was the surface of the empty-MG bug observed in
+            # the AB#3064 dogfood (2026-05-09). Hierarchy failure
+            # surfaces as a hard error_code rather than a guess.
+            try {
+                $childCount = Get-DirectChildCount -WorkItemId $WorkItemId -PolyphonyExe $PolyphonyExe
+            }
+            catch {
+                $envelope.success = $false
+                $envelope.lifecycle_workflow = 'error'
+                $envelope.error_code = 'hierarchy_failed'
+                $envelope.error_message = "could not determine apex-root child count: $($_.Exception.Message)"
+                Write-Envelope $envelope
+                exit 0
+            }
+            $envelope.lifecycle_workflow = if ($childCount -gt 0) { 'feature-pr' } else { 'implement-pg' }
+        }
+        else {
+            $envelope.lifecycle_workflow = 'implement-pg'
+        }
     }
     elseif ($hasTerminalReady) {
         # Only terminal kinds are ready -> the item is ready to be
