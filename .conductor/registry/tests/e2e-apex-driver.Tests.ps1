@@ -482,6 +482,16 @@ Describe 'apex-driver e2e — outer iterate-until-stable loop (PR #9)' {
         $body | Should -Match '\b10\b'
     }
 
+    It 'outer_loop_evaluator reads next.status (top-level routing hint per StateNextReadyResult), not the nonexistent next.item_satisfied field (regression: typo blocked outer-loop completion in AB#3064 dogfood)' {
+        $node = $script:ApexAgents['outer_loop_evaluator']
+        $body = ($node.args -join "`n")
+        # Must check top-level $next.status against the documented 'satisfied' value.
+        $body | Should -Match '\$next\.status'
+        $body | Should -Match "'satisfied'"
+        # Must NOT reach for the nonexistent $next.item_satisfied field.
+        $body | Should -Not -Match '\$next\.item_satisfied'
+    }
+
     It 'outer_loop_evaluator emits the four documented decisions (complete | cap | blocked | continue)' {
         $node = $script:ApexAgents['outer_loop_evaluator']
         $body = ($node.args -join "`n")
