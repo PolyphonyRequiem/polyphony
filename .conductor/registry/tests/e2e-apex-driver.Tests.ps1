@@ -183,7 +183,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ApexYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ApexYaml.workflow.name        | Should -Be 'apex-driver'
         $script:ApexYaml.workflow.entry_point | Should -Be 'preflight_sync'
-        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.1'
+        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.2'
         $script:ApexYaml.tools                | Should -Contain 'twig'
         $script:ApexYaml.agents.Count         | Should -BeGreaterThan 10
     }
@@ -192,7 +192,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:WaveYaml.workflow | Should -Not -BeNullOrEmpty
         $script:WaveYaml.workflow.name        | Should -Be 'apex-wave-dispatch'
         $script:WaveYaml.workflow.entry_point | Should -Be 'dispatch_items'
-        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.1'
+        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.2'
         $script:WaveYaml.tools                | Should -Contain 'twig'
         # Per-M8 the workflow exposes 2 agents (aggregate_renegotiation,
         # integrate_wave) and 1 top-level for_each entry (dispatch_items).
@@ -204,7 +204,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ItemYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ItemYaml.workflow.name        | Should -Be 'apex-item-dispatch'
         $script:ItemYaml.workflow.entry_point | Should -Be 'classify_lifecycle'
-        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.1'
+        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.2'
         $script:ItemYaml.agents.Count         | Should -BeGreaterThan 8
     }
 
@@ -1127,6 +1127,104 @@ Describe 'apex-driver e2e — lifecycle-router script and YAML contract drift' {
         # Lifecycle workflow must default to 'error' on this leg so
         # the apex-item-dispatch classify_error route fires.
         $envelope.lifecycle_workflow | Should -Be 'error'
+    }
+}
+
+# =====================================================================
+# Section 7b — F6: indivisible-apex-root routing regression
+# =====================================================================
+# Bug surfaced AB#3064 dogfood 2026-05-09: an implementable apex with no
+# ADO children was mis-routed to feature-pr, which then dispatched empty
+# MGs because there were no children PGs to aggregate. The router now
+# consults `polyphony hierarchy` on the apex-root + implementable
+# branch and splits decomposed (>=1 child → feature-pr) from indivisible
+# (0 children → implement-pg).
+
+Describe 'apex-driver e2e — F6 indivisible-apex-root routing' {
+
+    BeforeAll {
+        # Build a polyphony stub once — handles BOTH
+        # `state next-ready --work-item N` AND `hierarchy --work-item N`
+        # invocations from the router. Each It block sets the
+        # PSE_F6_FIXTURE env var to vary canned output without touching
+        # the script on disk.
+        #
+        # Note: the stub uses Write-Error (NOT [Console]::Error.WriteLine)
+        # for the failure leg because PowerShell's `2>$tempFile`
+        # redirection inside the router only captures the PS error
+        # stream, not the .NET console stderr stream. Using Write-Error
+        # ensures the simulated failure text doesn't leak through to the
+        # outer pwsh's stderr and contaminate the captured envelope.
+        $script:F6StubPath = Join-Path ([System.IO.Path]::GetTempPath()) ("polyphony-f6-stub-" + [Guid]::NewGuid().ToString('N') + ".ps1")
+        @'
+$verb = $args[0]
+$sub  = $args[1]
+$fixture = $env:PSE_F6_FIXTURE
+if ($verb -eq 'state' -and $sub -eq 'next-ready') {
+    Write-Output '{"work_item_id":3064,"work_item_type":"Epic","status":"dispatchable","next":["implementation_merged"],"fulfilling":[]}'
+    exit 0
+}
+elseif ($verb -eq 'hierarchy') {
+    if ($fixture -eq 'children-empty')   { Write-Output '{"id":3064,"children":[]}';                        exit 0 }
+    if ($fixture -eq 'children-present') { Write-Output '{"id":3064,"children":[{"id":3065},{"id":3066}]}'; exit 0 }
+    if ($fixture -eq 'children-fail')    { Write-Error 'simulated hierarchy failure'; exit 7 }
+    Write-Error "unknown PSE_F6_FIXTURE: $fixture"; exit 9
+}
+Write-Error "unexpected stub invocation: $($args -join ' ')"; exit 9
+'@ | Set-Content -Path $script:F6StubPath -NoNewline
+        $script:F6Router = Join-Path $PSScriptRoot '..' 'scripts' 'lifecycle-router.ps1'
+    }
+
+    AfterAll {
+        if ($script:F6StubPath -and (Test-Path $script:F6StubPath)) {
+            Remove-Item $script:F6StubPath -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'F6: apex-root + implementable + ZERO children routes to implement-pg (indivisible apex)' {
+        $env:PSE_F6_FIXTURE = 'children-empty'
+        try {
+            $stdout = pwsh -NoProfile -File $script:F6Router `
+                -WorkItemId 3064 -ApexId 3064 -PolyphonyExe $script:F6StubPath 2>&1
+            $LASTEXITCODE | Should -Be 0
+            $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
+            $envelope.success | Should -Be $true -Because 'an indivisible implementable apex is a valid dispatchable item'
+            $envelope.is_root | Should -Be $true
+            $envelope.lifecycle_workflow | Should -Be 'implement-pg' -Because (
+                'apex root with no children IS the PG — must route to implement-pg, not feature-pr (empty-MG bug AB#3064)')
+            $envelope.error_code | Should -BeNullOrEmpty
+        }
+        finally { Remove-Item env:PSE_F6_FIXTURE -ErrorAction SilentlyContinue }
+    }
+
+    It 'F6: apex-root + implementable + N>=1 children routes to feature-pr (decomposed apex aggregation)' {
+        $env:PSE_F6_FIXTURE = 'children-present'
+        try {
+            $stdout = pwsh -NoProfile -File $script:F6Router `
+                -WorkItemId 3064 -ApexId 3064 -PolyphonyExe $script:F6StubPath 2>&1
+            $LASTEXITCODE | Should -Be 0
+            $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
+            $envelope.success | Should -Be $true
+            $envelope.is_root | Should -Be $true
+            $envelope.lifecycle_workflow | Should -Be 'feature-pr' -Because (
+                'a decomposed apex root has children whose PGs were merged in earlier waves; feature-pr aggregates them')
+        }
+        finally { Remove-Item env:PSE_F6_FIXTURE -ErrorAction SilentlyContinue }
+    }
+
+    It 'F6: hierarchy failure on the apex-root + implementable branch surfaces error_code=hierarchy_failed (no silent default)' {
+        $env:PSE_F6_FIXTURE = 'children-fail'
+        try {
+            $stdout = pwsh -NoProfile -File $script:F6Router `
+                -WorkItemId 3064 -ApexId 3064 -PolyphonyExe $script:F6StubPath 2>$null
+            $LASTEXITCODE | Should -Be 0 -Because 'router must always exit 0; failures surface via envelope'
+            $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
+            $envelope.success | Should -Be $false -Because (
+                'silently defaulting either way is wrong roughly half the time — must fail loudly so apex-item-dispatch.classify_error fires')
+            $envelope.lifecycle_workflow | Should -Be 'error'
+            $envelope.error_code | Should -Be 'hierarchy_failed'
+        }
+        finally { Remove-Item env:PSE_F6_FIXTURE -ErrorAction SilentlyContinue }
     }
 }
 

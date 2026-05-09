@@ -433,3 +433,4 @@ FodyWeavers.xsd
 
 # Playwright MCP transient page snapshots
 .playwright-mcp/
+.wt/

@@ -69,10 +69,10 @@ workflow:
     facet-profile composition + per-item guidance into the
     actionable_agent prompt; the full review rubric (PR #8) is still
     deferred.
-  version: "2.2.1"
+  version: "2.2.2"
   entry_point: executor_router
   metadata:
-    min_polyphony_version: "2.2.1"
+    min_polyphony_version: "2.2.2"
 
   limits:
     # The workflow is shallow — at most one revision loop on the
