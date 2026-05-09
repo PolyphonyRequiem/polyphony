@@ -1717,9 +1717,15 @@ agents:
   # idempotent matching, then sets the polyphony:planned tag on the parent.
   #
   # NOTE: when state_detector routes us straight here (state == merged_unseeded
-  # on resume), architect.output.children is undefined. The seeder verb
-  # tolerates an empty children array and reconciles against existing children
-  # — it will warn but proceed and still set polyphony:planned.
+  # on resume), the architect step never ran in this conductor process, so
+  # `architect` itself is undefined — not just `architect.output.children`.
+  # An inner `is defined` guard against `architect.output.children` raises
+  # TemplateError on the `.output` access before the guard evaluates, which
+  # crashes the step before `polyphony plan seed-children` is even invoked
+  # (closed-loop PR #8 — the merged_unseeded resume gap). The outer guard
+  # `(architect is defined and ...)` short-circuits cleanly so the seeder
+  # is invoked with `[]`. The verb tolerates the empty array, reconciles
+  # against existing children (idempotent), and sets polyphony:planned.
   - name: seeder
     type: script
     description: Idempotent seeder — marker-aware reconciliation, sets polyphony:planned tag
@@ -1730,7 +1736,7 @@ agents:
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
       - "--children-json"
-      - "{{ architect.output.children | tojson if architect.output.children is defined else '[]' }}"
+      - "{{ architect.output.children | tojson if (architect is defined and architect.output.children is defined) else '[]' }}"
     routes:
       - to: child_router
 
