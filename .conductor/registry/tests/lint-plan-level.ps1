@@ -379,6 +379,42 @@ if ($threeArgMatches.Count -gt 0) {
     }
 }
 
+# ── Check 26: merged_unseeded resume path invokes seeder ────────────────
+# Closed-loop PR #8. The state_detector step must route the
+# 'merged_unseeded' state to the seeder step (so `polyphony plan
+# seed-children` is invoked on the resume path), and the seeder's
+# `--children-json` Jinja template must wrap the architect.output
+# reference with an OUTER `(architect is defined and ...)` guard. An
+# inner-only guard like `architect.output.children is defined` raises
+# TemplateError on the `.output` access when architect itself is
+# undefined (which is exactly the merged_unseeded case — architect
+# never ran in the resume conductor process), causing the step to
+# crash before seed-children is invoked. Without the outer guard the
+# workflow short-circuits past seeder and the polyphony:planned tag is
+# never set, so next-ready keeps reporting children_seeded:Needed and
+# the closed-loop iterator can never make progress.
+$detectorBlock = ''
+$m = [regex]::Match($content, '(?s)- name: state_detector\b.*?(?=\n  - name: |\Z)')
+if ($m.Success) { $detectorBlock = $m.Value }
+if ($detectorBlock -notmatch "(?s)to:\s*seeder\s*\n\s*when:\s*[`"']\{\{\s*state_detector\.output\.state\s*==\s*'merged_unseeded'\s*\}\}") {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-merged-unseeded-seeder-route'
+        Detail = "state_detector must route state == 'merged_unseeded' → seeder so the workflow invokes 'polyphony plan seed-children' on the resume path (closed-loop PR #8). Without this route the polyphony:planned tag is never set on the parent and the closed-loop iterator stalls."
+    }
+}
+
+$seederBlock = ''
+$m = [regex]::Match($content, '(?s)- name: seeder\b.*?(?=\n  - name: |\Z)')
+if ($m.Success) { $seederBlock = $m.Value }
+if ($seederBlock -match 'architect\.output\.children\s*\|\s*tojson') {
+    if ($seederBlock -notmatch '\(\s*architect\s+is\s+defined\s+and\s+architect\.output\.children\s+is\s+defined\s*\)') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'seeder-children-json-missing-outer-architect-guard'
+            Detail = "seeder's --children-json template must wrap 'architect.output.children is defined' with the OUTER guard '(architect is defined and architect.output.children is defined)' so the merged_unseeded resume path renders cleanly to '[]' instead of raising TemplateError on the .output access of an undefined architect step (closed-loop PR #8 — fixes the resume gap that PR #210 partially addressed)."
+        }
+    }
+}
+
 # ── Report ───────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "`n❌ plan-level.yaml open_questions policy lint FAILED ($($violations.Count) violations):`n" -ForegroundColor Red
