@@ -464,7 +464,7 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
+      - |
         try {
           twig sync;
           $validate = polyphony validate --work-item {{ workflow.input.work_item_id }} --event item_satisfied | ConvertFrom-Json;
