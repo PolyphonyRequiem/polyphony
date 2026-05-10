@@ -21,12 +21,33 @@ BeforeAll {
     $script:HarnessRoot = $PSScriptRoot
     $script:RepoRoot    = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 
+    # Resolve the python interpreter to use. CI sets HARNESS_PYTHON
+    # explicitly; developer machines fall back to a local conductor venv;
+    # otherwise we try `python` on PATH and skip if it can't import.
     $script:Python = if ($env:HARNESS_PYTHON) {
         $env:HARNESS_PYTHON
     } elseif (Test-Path 'C:\Users\dangreen\projects\conductor\.venv\Scripts\python.exe') {
         'C:\Users\dangreen\projects\conductor\.venv\Scripts\python.exe'
     } else {
         'python'
+    }
+
+    # Probe prereqs. The harness needs the `conductor` Python package and
+    # `ruamel.yaml`. When either is missing, scenario tests skip with the
+    # diagnostic so CI doesn't fail just because conductor isn't installed.
+    $cmd = Get-Command $script:Python -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        $script:PrereqReady  = $false
+        $script:PrereqReason = "python interpreter '$($script:Python)' not found on PATH (set `$env:HARNESS_PYTHON to point at a conductor-equipped venv)"
+    } else {
+        $probe = & $script:Python -c "import conductor, ruamel.yaml" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $script:PrereqReady  = $false
+            $script:PrereqReason = "interpreter '$($script:Python)' missing imports: $probe"
+        } else {
+            $script:PrereqReady  = $true
+            $script:PrereqReason = $null
+        }
     }
 }
 
@@ -36,9 +57,14 @@ Describe 'polyphony harness scenarios' {
     }
 
     It 'passes scenario <_.Name>' -ForEach $scenarioDirs {
-        $scenarioDir = $_.FullName
+        if (-not $script:PrereqReady) {
+            Set-ItResult -Skipped -Because $script:PrereqReason
+            return
+        }
+
+        $scenarioDir  = $_.FullName
         $scenarioName = $_.Name
-        $resultPath  = Join-Path ([System.IO.Path]::GetTempPath()) ("harness-{0}-{1}.json" -f $scenarioName, ([guid]::NewGuid().ToString('N')))
+        $resultPath   = Join-Path ([System.IO.Path]::GetTempPath()) ("harness-{0}-{1}.json" -f $scenarioName, ([guid]::NewGuid().ToString('N')))
 
         Push-Location $script:RepoRoot
         try {
