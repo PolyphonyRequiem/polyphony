@@ -21,9 +21,9 @@ namespace Polyphony.Commands;
 /// + <see cref="ExecutionModeInjector"/> composition used by
 /// <c>state next-ready</c> and <c>edges check</c>, builds a single
 /// <see cref="EdgeGraph"/> over the resulting requirement sets, reads
-/// <c>.polyphony/run.yaml</c> for plan-PR ledger entries and generation
-/// counters, and emits a <see cref="WorklistResult"/>. No manifest
-/// mutation, no platform calls.</para>
+/// the local run manifest under <c>&lt;git-common-dir&gt;/polyphony/&lt;rootId&gt;/run.yaml</c>
+/// for plan-PR ledger entries and generation counters, and emits a
+/// <see cref="WorklistResult"/>. No manifest mutation, no platform calls.</para>
 ///
 /// <para>Wave assignment is by topological depth over the union graph
 /// (within-item edges ∪ definitional cross-item edges, plus mode-injected
@@ -49,9 +49,10 @@ public sealed partial class WorklistCommands
     /// <param name="rootId">Run-root work-item id (positive). MUST match
     /// the manifest's <see cref="RunManifest.RootId"/>; mismatch is an
     /// error so the dispatcher cannot accidentally drive the wrong run.</param>
-    /// <param name="manifestPath">Path to <c>.polyphony/run.yaml</c>.
-    /// Defaults to <c>.polyphony/run.yaml</c> resolved relative to the
-    /// current working directory.</param>
+    /// <param name="manifestPath">Optional override of the run manifest
+    /// path. When empty (default), derived under the git common dir via
+    /// <see cref="Polyphony.Infrastructure.Paths.PolyphonyStatePaths"/>.
+    /// Pass an explicit path only as a testing seam.</param>
     /// <param name="json">Emit machine-readable JSON instead of the
     /// human-readable wave summary. The JSON shape is
     /// <see cref="WorklistResult"/>.</param>
@@ -60,7 +61,7 @@ public sealed partial class WorklistCommands
     [VerbResult(typeof(WorklistResult))]
     public async Task<int> Build(
         int rootId = RequiredInput.MissingInt,
-        string manifestPath = ".polyphony/run.yaml",
+        string manifestPath = "",
         bool json = false,
         CancellationToken ct = default)
     {
@@ -74,16 +75,27 @@ public sealed partial class WorklistCommands
             return ExitCodes.Success;
         }
 
+        // Rev 4.2: resolve the local manifest path. When the caller passes
+        // --manifest-path explicitly we honor it (testing seam); otherwise
+        // PolyphonyStatePaths derives <git-common-dir>/polyphony/{rootId}/run.yaml.
+        var resolvedPath = await ManifestPathHelper.ResolveAsync(_statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
+        if (resolvedPath.Error is not null)
+        {
+            EmitWorklist(EmptyResult(rootId, resolvedPath.Error, "manifest_path_resolution_failed"), json);
+            return ExitCodes.Success;
+        }
+        var localManifestPath = resolvedPath.Path;
+
         // Load manifest. Routing-style: missing/malformed both surface as
         // categorical error codes the workflow can branch on.
         RunManifest manifest;
         try
         {
-            manifest = RunManifestStore.LoadOrThrow(manifestPath);
+            manifest = RunManifestStore.LoadOrThrow(localManifestPath);
         }
-        catch (FileNotFoundException ex)
+        catch (FileNotFoundException)
         {
-            EmitWorklist(EmptyResult(rootId, ex.Message, "manifest_not_found"), json);
+            EmitWorklist(EmptyResult(rootId, $"manifest not found at {localManifestPath}", "manifest_not_found"), json);
             return ExitCodes.Success;
         }
         catch (Exception ex)
