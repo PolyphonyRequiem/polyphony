@@ -16,9 +16,9 @@ file extension it has.
 | Polyphony CLI source | polyphony repo `src/` | The CLI itself |
 | CLI helper scripts (humans/CI invoke directly) | polyphony repo `scripts/` | Distinct from workflow scripts; consumer is human, not conductor |
 | Tests for polyphony CLI | polyphony repo `test/` | MSTest convention |
-| Process configuration | consumer repo `.conductor/process-config.yaml` | Per-consumer work-item state machine + types |
-| Type definitions & templates | consumer repo `.conductor/work-item-types/` | Per-consumer type semantics |
-| Repo-specific agent guidance | consumer repo `.conductor/agent-guidance/` | Loaded by `load-agent-guidance.ps1` |
+| Process configuration | consumer repo `.polyphony-config/process-config.yaml` | Per-consumer work-item state machine + types |
+| Type definitions & templates | consumer repo `.polyphony-config/work-item-types/` | Per-consumer type semantics |
+| Repo-specific agent guidance | consumer repo `.polyphony-config/agent-guidance/` | Loaded by `load-agent-guidance.ps1` |
 | Skills | consumer repo `.github/skills/<name>/SKILL.md` | GitHub convention; agent-side discovery |
 | Tools (twig, gh, polyphony CLI) | PATH | Not artifacts |
 

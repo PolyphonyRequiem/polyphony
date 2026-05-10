@@ -144,7 +144,7 @@ directly with their own `--input` shape.
 ### `plan-level.yaml` — Recursive Planning Core
 
 **Responsibility:** Plans a single hierarchy level. Loads type-specific context from
-`.conductor/work-item-types/`, runs the architect agent with parallel review pipeline,
+`.polyphony-config/work-item-types/`, runs the architect agent with parallel review pipeline,
 and seeds children. Self-recurses for nested plannable levels via `for_each`.
 
 | Agent | Type | Description |
@@ -445,7 +445,7 @@ For full rationale and the three-layer truth model see
    `polyphony --version` reports the real MinVer SemVer (e.g. `1.0.0`
    on a tagged commit, or `1.0.1-alpha.5+<sha>` on an untagged commit
    downstream of a tag).
-4. The target repo has `.conductor/process-config.yaml` with type
+4. The target repo has `.polyphony-config/process-config.yaml` with type
    definitions, templates, and `polyphony validate-config` passes.
 
 ### Apex driver invocation
@@ -487,7 +487,7 @@ pending and the next wave is whatever's ready *now*.
 
 Renegotiation: bubble-up signals (`renegotiation_pending: true` from
 inner sub-workflows) consult `policy.renegotiation.auto_decide`
-(`prompt` / `auto_restart` / `ignore`) — see `.conductor/policy.yaml`
+(`prompt` / `auto_restart` / `ignore`) — see `.polyphony-config/policy.yaml`
 and ADR `docs/decisions/apex-driver.md` for full rationale.
 
 ### Tested behaviors (Phase 7 e2e)
@@ -671,7 +671,7 @@ same regardless of which sub-workflow is invoked: `tracker`,
 
 ## Policy Configuration
 
-Policy is defined in `.conductor/policy.yaml` and resolved at runtime via
+Policy is defined in `.polyphony-config/policy.yaml` and resolved at runtime via
 `polyphony policy resolve --domain <domain> --scope <scope>`. Resolution uses
 most-specific-wins scoping: `root` → `type:<Name>` → `defaults`.
 
@@ -870,7 +870,7 @@ policy and returns the extracted text:
 }
 ```
 
-Two sources, configured in `.conductor/policy.yaml`:
+Two sources, configured in `.polyphony-config/policy.yaml`:
 
 ```yaml
 guidance:

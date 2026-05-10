@@ -231,7 +231,7 @@ the config file is template-specific.
 
 ### The footgun: `scope_removed: Removed` against ADO Basic
 
-Look at the canonical config (`.conductor/process-config.yaml:25, 30, 34`):
+Look at the canonical config (`.polyphony-config/process-config.yaml:25, 30, 34`):
 
 ```yaml
 transitions:

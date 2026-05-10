@@ -16,10 +16,10 @@ public sealed class HierarchyCommand(HierarchyWalker walker)
     /// </summary>
     /// <param name="workItem">ADO work item ID (root of hierarchy to display)</param>
     /// <param name="depth">Maximum depth to traverse</param>
-    /// <param name="config">Path to .conductor/process-config.yaml</param>
+    /// <param name="config">Path to .polyphony-config/process-config.yaml</param>
     [Command("hierarchy")]
     [VerbResult(typeof(HierarchyResult))]
-    public async Task<int> Hierarchy(int workItem = RequiredInput.MissingInt, int depth = 3, string config = ".conductor/process-config.yaml", CancellationToken ct = default)
+    public async Task<int> Hierarchy(int workItem = RequiredInput.MissingInt, int depth = 3, string config = ".polyphony-config/process-config.yaml", CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("hierarchy",
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)

@@ -1,7 +1,7 @@
-# `.conductor/` Directory Reference
+# `.polyphony-config/` Directory Reference
 
 Companion to `polyphony-process-config-schema.md`. That doc covers the schema
-of `process-config.yaml`. This doc covers **everything else** in `.conductor/`:
+of `process-config.yaml`. This doc covers **everything else** in `.polyphony-config/`:
 per-type definition and template files, agent-guidance files, and
 `profile.yaml`.
 
@@ -16,7 +16,7 @@ these files via warnings V-9..V-14
 ## Layout
 
 ```
-.conductor\
+.polyphony-config\
 ├── process-config.yaml                     # required (V-1..V-8 errors)
 ├── profile.yaml                            # warning V-14 if missing
 ├── agent-guidance\                         # consumed by sub-workflow agents
@@ -34,8 +34,8 @@ these files via warnings V-9..V-14
 `issue`, `User Story` → `user-story`, `Product Backlog Item` →
 `product-backlog-item`.
 
-The reference repo for "what does a complete `.conductor/` look like" is the
-polyphony repo itself: `C:\Users\dangreen\projects\polyphony\.conductor\`.
+The reference repo for "what does a complete `.polyphony-config/` look like" is the
+polyphony repo itself: `C:\Users\dangreen\projects\polyphony\.polyphony-config\`.
 Every file path cited below has a real example there (with the exception of
 `agent-guidance/` — see § 4 — which is currently absent and triggers V-11
 through V-13).
@@ -81,13 +81,13 @@ public static string ToSlug(string typeName) =>
 
 | Type name in `process-config.yaml` | Expected file path                                      |
 |------------------------------------|---------------------------------------------------------|
-| `Epic`                             | `.conductor/work-item-types/epic.md`                    |
-| `Issue`                            | `.conductor/work-item-types/issue.md`                   |
-| `Task`                             | `.conductor/work-item-types/task.md`                    |
-| `User Story`                       | `.conductor/work-item-types/user-story.md`              |
-| `Bug`                              | `.conductor/work-item-types/bug.md`                     |
-| `Product Backlog Item`             | `.conductor/work-item-types/product-backlog-item.md`    |
-| `Requirement`                      | `.conductor/work-item-types/requirement.md`             |
+| `Epic`                             | `.polyphony-config/work-item-types/epic.md`                    |
+| `Issue`                            | `.polyphony-config/work-item-types/issue.md`                   |
+| `Task`                             | `.polyphony-config/work-item-types/task.md`                    |
+| `User Story`                       | `.polyphony-config/work-item-types/user-story.md`              |
+| `Bug`                              | `.polyphony-config/work-item-types/bug.md`                     |
+| `Product Backlog Item`             | `.polyphony-config/work-item-types/product-backlog-item.md`    |
+| `Requirement`                      | `.polyphony-config/work-item-types/requirement.md`             |
 
 V-9 is emitted *per type defined in `process-config.yaml`*
 (`ConfigValidator.cs:100-110` — the loop iterates `config.Types.Keys`). A
@@ -96,7 +96,7 @@ five-type config with no `<slug>.md` files emits five warnings.
 ### Recommended structure
 
 The polyphony repo's three type-definition files are the reference shape:
-`.conductor/work-item-types/{epic,issue,task}.md`. Skeleton (used by all
+`.polyphony-config/work-item-types/{epic,issue,task}.md`. Skeleton (used by all
 three):
 
 ```markdown
@@ -141,23 +141,23 @@ field.
 
 ### Naming convention
 
-Filename = `<slug>-template.md` under `.conductor/work-item-types/templates/`.
+Filename = `<slug>-template.md` under `.polyphony-config/work-item-types/templates/`.
 The path expectation is at `ConfigValidator.cs:113-114`:
 
 ```csharp
-var templatePath = Path.Combine(repoRoot, ".conductor", "work-item-types", "templates",
+var templatePath = Path.Combine(repoRoot, ".polyphony-config", "work-item-types", "templates",
     $"{slug}-template.md");
 ```
 
 | Type           | Expected template path                                                |
 |----------------|----------------------------------------------------------------------|
-| `Epic`         | `.conductor/work-item-types/templates/epic-template.md`              |
-| `User Story`   | `.conductor/work-item-types/templates/user-story-template.md`        |
+| `Epic`         | `.polyphony-config/work-item-types/templates/epic-template.md`              |
+| `User Story`   | `.polyphony-config/work-item-types/templates/user-story-template.md`        |
 
 ### Recommended structure
 
 The polyphony repo's three templates are the reference:
-`.conductor/work-item-types/templates/{epic,issue,task}-template.md`. A
+`.polyphony-config/work-item-types/templates/{epic,issue,task}-template.md`. A
 template is a series of `## Section` headings with angle-bracket placeholders
 the planning agent replaces. Example shape (from `issue-template.md`):
 
@@ -228,7 +228,7 @@ they are *per-role* and there are exactly three.
 ### Status in this repo
 
 The polyphony repo currently has **no** `agent-guidance/` directory. Running
-`polyphony validate-config --config .conductor --output human` from this
+`polyphony validate-config --config .polyphony-config --output human` from this
 repo's root emits V-11, V-12, V-13 today. This is intentional during
 bootstrapping; it should be addressed before promoting this repo into
 production SDLC use.
@@ -264,16 +264,16 @@ Polyphony's CLI does not load it (no field on `ProcessConfig` maps to it).
 It only checks existence at `ConfigValidator.cs:144-148`:
 
 ```csharp
-if (!File.Exists(Path.Combine(repoRoot, ".conductor", "profile.yaml")))
+if (!File.Exists(Path.Combine(repoRoot, ".polyphony-config", "profile.yaml")))
 {
     warnings.Add(Warning("V-14",
-        "Profile file missing: .conductor/profile.yaml"));
+        "Profile file missing: .polyphony-config/profile.yaml"));
 }
 ```
 
 **No live consumer exists today** — verified by grep across the conductor
 Python CLI, the v2 workflow YAMLs, the polyphony scripts, and the agent
-prompts in `polyphony/prompts/`. Even `twig2/.conductor/profile.yaml` claims
+prompts in `polyphony/prompts/`. Even `twig2/.polyphony-config/profile.yaml` claims
 "Used by conductor SDLC workflow prompts via Jinja2 template variables" but
 no template actually loads it. Authoring a `profile.yaml` today silences V-14
 and prepares for future use; it does not change agent behavior. When a
@@ -282,7 +282,7 @@ documents and the coder agent to know which build command to run after edits.
 
 ### Reference example
 
-The polyphony repo's `.conductor/profile.yaml` is the working reference. Its
+The polyphony repo's `.polyphony-config/profile.yaml` is the working reference. Its
 shape:
 
 ```yaml
@@ -327,7 +327,7 @@ There is no formal schema yet. Unknown keys are ignored. Keep under ~3KB.
 
 ---
 
-## 6 · Minimum-viable vs. complete `.conductor/`
+## 6 · Minimum-viable vs. complete `.polyphony-config/`
 
 ### Minimum viable — `validate-config` exits 0 with no warnings
 
@@ -335,7 +335,7 @@ Required for V-9..V-14 to all be silent (N = number of types in
 `process-config.yaml`):
 
 ```
-.conductor\
+.polyphony-config\
 ├── process-config.yaml                              # V-1..V-8 satisfied
 ├── profile.yaml                                     # V-14
 ├── agent-guidance\
@@ -352,7 +352,7 @@ A repo running v2 SDLC for a while typically grows the following alongside
 the minimum-viable layout. None of these are checked by polyphony:
 
 ```
-.conductor\                           (as above)
+.polyphony-config\                           (as above)
 docs\
 ├── projects\
 │   ├── <slug>.plan.md                # one per Issue, generated by architect
@@ -377,7 +377,7 @@ non-null `repoRoot` (`src/Polyphony/Configuration/ConfigValidator.cs:21,
 var repoRoot = Path.GetFullPath(Path.Combine(config, ".."));
 ```
 
-So `polyphony validate-config --config .conductor` from repo root resolves
+So `polyphony validate-config --config .polyphony-config` from repo root resolves
 correctly. Unit tests calling `ConfigValidator.Validate(config)` with no
 `repoRoot` get **only** V-1..V-8.
 

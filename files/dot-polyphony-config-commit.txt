@@ -1,0 +1,86 @@
+Split engine inputs from conductor runtime: .conductor → .polyphony-config
+
+Polyphony's engine inputs (process-config.yaml, profile.yaml, policy.yaml,
+work-item-types/, agent-guidance/) used to live under `.conductor/`,
+sharing the directory with conductor's runtime registry at
+`.conductor/registry/`. That conflated two concerns:
+
+  - `.conductor/registry/` belongs to conductor (the workflow engine).
+  - The other files belong to polyphony (the SDLC engine that reads
+    them). Polyphony itself never touched `.conductor/registry/`.
+
+This collision blocked the next-step move to making the engine-input dir
+configurable per-consumer-repo, and made the polyphony bootstrap story
+confusing ("why am I editing conductor's directory to configure
+polyphony?"). It also forced cloudvault and other consumer repos to put
+polyphony config under a directory whose name implies conductor
+ownership.
+
+This PR splits the two:
+
+  - `.polyphony-config/` — engine inputs (this repo's own config moves,
+    and CLI defaults for `--config` change).
+  - `.conductor/registry/` — unchanged. Conductor runtime stays put.
+
+## Breaking change for consumers
+
+Consumer repos with engine inputs at `.conductor/{process-config.yaml,
+profile.yaml, policy.yaml, work-item-types/, agent-guidance/}` MUST
+relocate them to `.polyphony-config/...` (or pass `--config` explicitly).
+The CLI does not auto-discover the legacy location; there is no dual-path
+fallback by design — clean cut, single source of truth.
+
+The cloudvault-service-api bootstrap PR (#15545893) will be rebased onto
+`.polyphony-config/` immediately after this merges.
+
+## What changed
+
+- 5 engine-input artifacts `git mv`'d from `.conductor/` to
+  `.polyphony-config/` (process-config.yaml, profile.yaml, policy.yaml,
+  3 type defs + 3 templates under work-item-types/, 3 agent-guidance
+  files).
+- ~14 src/ files updated: CLI default values for `--config` /
+  `--policy`, ConfigValidator path resolution + V-9..V-14 warning
+  strings, PolicyLoader/PolicyConfig doc summaries.
+- ~8 test files updated to follow the moved paths; `tests/lint/fixtures/
+  verb-output-schemas.json` got a minimal targeted substitution
+  (NOT a regenerated artifact — guards against fixture/generator drift).
+- Workflow YAML prose comments in 5 files under
+  `.conductor/registry/workflows/` updated; no behavioral changes
+  (bundled workflows don't pass `--config` and rely on the new defaults).
+- `scripts/bootstrap-conductor.ps1` now scaffolds `.polyphony-config/`
+  (filename intentionally kept to avoid a 5-file rename cascade in this
+  PR; rename to `bootstrap-polyphony-config.ps1` is a clean follow-up).
+- ~30 docs/skills/README/plans files updated for the new path.
+- `docs/polyphony-conductor-directory.md` updated in place; a future PR
+  may rename this to `polyphony-config-directory.md`.
+
+## Validation
+
+  - `dotnet test tests/Polyphony.Tests/...`              3129/3129 ✅
+  - `dotnet test tests/Polyphony.SchemaGenerator.Tests/`    29/29 ✅
+  - Pester lint suite (lint-version-drift, lint-jinja-resolver,
+    lint-prose-children, bootstrap-conductor, lint-conductor-validate,
+    lint-type-agnostic)                                  142/142 ✅
+  - `polyphony validate-config --config .polyphony-config --output human`
+    against the moved files exits 0.
+
+## Known unrelated stale refs (not cleaned up here)
+
+  - `RunManifestStore.DefaultRelativePath = ".polyphony/run.yaml"` and
+    `PlanDiffValidator` block on `.polyphony/**`. Per Rev 4.2 of the
+    branch-model ADR, runtime state actually migrated to
+    `<git-common-dir>/polyphony/<root_id>/run.yaml` via
+    `PolyphonyStatePaths`. These stale source refs are out of scope for
+    this rename; cleaning them up is a separate follow-up that would
+    free the `.polyphony/` namespace if we ever want to drop the
+    `-config` suffix.
+
+## Workflow versioning
+
+No bundled workflow version bumps required: bundled workflows do not
+pass `--config` and rely on the new CLI defaults, which point at the new
+location. The breaking change is purely for *consumer repos* that have
+their own engine-input files at `.conductor/`.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

@@ -2,13 +2,13 @@
 
 ## Overview
 
-This document outlines the design and implementation plan for the `polyphony health` CLI command, which performs environment and configuration diagnostics for Polyphony CLI. The command checks .NET runtime version, AOT support, presence/version of the twig CLI, validity of `.conductor/process-config.yaml`, SQLite availability and WAL mode, and YamlDotNet compatibility. Results are output as JSON using PolyphonyJsonContext, with actionable messages for each check.
+This document outlines the design and implementation plan for the `polyphony health` CLI command, which performs environment and configuration diagnostics for Polyphony CLI. The command checks .NET runtime version, AOT support, presence/version of the twig CLI, validity of `.polyphony-config/process-config.yaml`, SQLite availability and WAL mode, and YamlDotNet compatibility. Results are output as JSON using PolyphonyJsonContext, with actionable messages for each check.
 
 ## Diagnostic Checks
 - .NET runtime version
 - Runtime AOT support (RuntimeFeature.IsDynamicCodeSupported)
 - twig CLI presence/version
-- Validity of `.conductor/process-config.yaml`
+- Validity of `.polyphony-config/process-config.yaml`
 - SQLite availability and WAL mode
 - YamlDotNet compatibility
 

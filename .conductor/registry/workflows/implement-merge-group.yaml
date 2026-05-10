@@ -214,7 +214,7 @@ agents:
   # ── Guidance loader ────────────────────────────────────────────────────
   #
   # Loads repo-specific agent guidance markdown from
-  # `.conductor/agent-guidance/` via `polyphony plan load-guidance`.
+  # `.polyphony-config/agent-guidance/` via `polyphony plan load-guidance`.
   # Outputs a JSON role map (keys like "coder", "reviewer"). Coder and
   # primary_reviewer consume their respective role keys via Jinja2
   # conditionals so prompts degrade gracefully when no guidance files

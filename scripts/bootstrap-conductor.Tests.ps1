@@ -32,7 +32,7 @@ Describe 'bootstrap-conductor.ps1 — auto-detect from .twig/config' {
 
     It 'Generates process-config.yaml with correct template' {
         & $script:ScriptPath -OutputPath $script:TempDir | Out-Null
-        $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
+        $configPath = Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml'
         Test-Path $configPath | Should -BeTrue
         $content = Get-Content $configPath -Raw
         $content | Should -Match 'process_template: Basic'
@@ -40,7 +40,7 @@ Describe 'bootstrap-conductor.ps1 — auto-detect from .twig/config' {
 
     It 'Creates all expected type files for Basic template' {
         & $script:ScriptPath -OutputPath $script:TempDir | Out-Null
-        $conductor = Join-Path $script:TempDir '.conductor'
+        $conductor = Join-Path $script:TempDir '.polyphony-config'
         Test-Path (Join-Path $conductor 'work-item-types' 'epic.md') | Should -BeTrue
         Test-Path (Join-Path $conductor 'work-item-types' 'issue.md') | Should -BeTrue
         Test-Path (Join-Path $conductor 'work-item-types' 'task.md') | Should -BeTrue
@@ -48,7 +48,7 @@ Describe 'bootstrap-conductor.ps1 — auto-detect from .twig/config' {
 
     It 'Creates all expected template files for Basic template' {
         & $script:ScriptPath -OutputPath $script:TempDir | Out-Null
-        $templates = Join-Path $script:TempDir '.conductor' 'work-item-types' 'templates'
+        $templates = Join-Path $script:TempDir '.polyphony-config' 'work-item-types' 'templates'
         Test-Path (Join-Path $templates 'epic-template.md') | Should -BeTrue
         Test-Path (Join-Path $templates 'issue-template.md') | Should -BeTrue
         Test-Path (Join-Path $templates 'task-template.md') | Should -BeTrue
@@ -105,7 +105,7 @@ Describe 'bootstrap-conductor.ps1 — Agile template' {
 
     It 'Generates correct types for Agile' {
         $result = & $script:ScriptPath -ProcessTemplate 'Agile' -OutputPath $script:TempDir | ConvertFrom-Json
-        $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
+        $configPath = Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
         foreach ($type in $config.types.Keys) {
             $result.types | Should -Contain $type
@@ -114,11 +114,11 @@ Describe 'bootstrap-conductor.ps1 — Agile template' {
 
     It 'Creates user-story.md type definition' {
         & $script:ScriptPath -ProcessTemplate 'Agile' -OutputPath $script:TempDir | Out-Null
-        $path = Join-Path $script:TempDir '.conductor' 'work-item-types' 'user-story.md'
+        $path = Join-Path $script:TempDir '.polyphony-config' 'work-item-types' 'user-story.md'
         Test-Path $path | Should -BeTrue
         $content = Get-Content $path -Raw
         # Validate the type name is present in the file, using runtime vocabulary
-        $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
+        $configPath = Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
         $typeName = ($config.types.Keys | Where-Object { ($_ -like '*User Story*') -or ($_ -like '*user story*') -or ($_ -like '*user-story*') })[0]
         if ($null -ne $typeName) {
@@ -135,14 +135,14 @@ Describe 'bootstrap-conductor.ps1 — Agile template' {
 
     It 'Creates user-story-template.md' {
         & $script:ScriptPath -ProcessTemplate 'Agile' -OutputPath $script:TempDir | Out-Null
-        $path = Join-Path $script:TempDir '.conductor' 'work-item-types' 'templates' 'user-story-template.md'
+        $path = Join-Path $script:TempDir '.polyphony-config' 'work-item-types' 'templates' 'user-story-template.md'
         Test-Path $path | Should -BeTrue
     }
 
     It 'Uses Active/Closed states in transitions' {
         & $script:ScriptPath -ProcessTemplate 'Agile' -OutputPath $script:TempDir | Out-Null
-        $config = Get-Content (Join-Path $script:TempDir '.conductor' 'process-config.yaml') -Raw
-        $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
+        $config = Get-Content (Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml') -Raw
+        $configPath = Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml'
         $yaml = Get-Content $configPath -Raw | ConvertFrom-Yaml
         $topType = $yaml.types.Keys | Where-Object { -not $yaml.types[$_].ContainsKey('parent') } | Select-Object -First 1
         $topType | Should -Not -BeNullOrEmpty
@@ -174,7 +174,7 @@ Describe 'bootstrap-conductor.ps1 — Scrum template' {
 
     It 'Generates correct types for Scrum' {
         $result = & $script:ScriptPath -ProcessTemplate 'Scrum' -OutputPath $script:TempDir | ConvertFrom-Json
-        $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
+        $configPath = Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
         foreach ($type in $config.types.Keys) {
             $result.types | Should -Contain $type
@@ -183,14 +183,14 @@ Describe 'bootstrap-conductor.ps1 — Scrum template' {
 
     It 'Creates product-backlog-item.md type definition' {
         & $script:ScriptPath -ProcessTemplate 'Scrum' -OutputPath $script:TempDir | Out-Null
-        $path = Join-Path $script:TempDir '.conductor' 'work-item-types' 'product-backlog-item.md'
+        $path = Join-Path $script:TempDir '.polyphony-config' 'work-item-types' 'product-backlog-item.md'
         Test-Path $path | Should -BeTrue
     }
 
     It 'Uses Committed for mid-level transitions' {
         & $script:ScriptPath -ProcessTemplate 'Scrum' -OutputPath $script:TempDir | Out-Null
-        $config = Get-Content (Join-Path $script:TempDir '.conductor' 'process-config.yaml') -Raw
-        $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
+        $config = Get-Content (Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml') -Raw
+        $configPath = Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml'
         $yaml = Get-Content $configPath -Raw | ConvertFrom-Yaml
         # Find a mid-level type structurally (plannable + implementable)
         $typeKeys = $yaml.types.Keys
@@ -224,7 +224,7 @@ Describe 'bootstrap-conductor.ps1 — CMMI template' {
 
     It 'Generates correct types for CMMI' {
         $result = & $script:ScriptPath -ProcessTemplate 'CMMI' -OutputPath $script:TempDir | ConvertFrom-Json
-        $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
+        $configPath = Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml'
         $config = Get-Content $configPath -Raw | ConvertFrom-Yaml
         foreach ($type in $config.types.Keys) {
             $result.types | Should -Contain $type
@@ -233,7 +233,7 @@ Describe 'bootstrap-conductor.ps1 — CMMI template' {
 
     It 'Creates requirement.md type definition' {
         & $script:ScriptPath -ProcessTemplate 'CMMI' -OutputPath $script:TempDir | Out-Null
-        $path = Join-Path $script:TempDir '.conductor' 'work-item-types' 'requirement.md'
+        $path = Join-Path $script:TempDir '.polyphony-config' 'work-item-types' 'requirement.md'
         Test-Path $path | Should -BeTrue
     }
 }
@@ -249,7 +249,7 @@ Describe 'bootstrap-conductor.ps1 — skip existing files (default)' {
         # Generate once
         & $script:ScriptPath -ProcessTemplate 'Basic' -OutputPath $script:TempDir | Out-Null
         # Customize a file
-        $customPath = Join-Path $script:TempDir '.conductor' 'profile.yaml'
+        $customPath = Join-Path $script:TempDir '.polyphony-config' 'profile.yaml'
         Set-Content -Path $customPath -Value 'custom: true'
     }
 
@@ -259,7 +259,7 @@ Describe 'bootstrap-conductor.ps1 — skip existing files (default)' {
 
     It 'Preserves existing files on second run' {
         & $script:ScriptPath -ProcessTemplate 'Basic' -OutputPath $script:TempDir 3>&1 | Out-Null
-        $content = Get-Content (Join-Path $script:TempDir '.conductor' 'profile.yaml') -Raw
+        $content = Get-Content (Join-Path $script:TempDir '.polyphony-config' 'profile.yaml') -Raw
         $content | Should -Match 'custom: true'
     }
 
@@ -284,7 +284,7 @@ Describe 'bootstrap-conductor.ps1 — -Force flag' {
         # Generate once
         & $script:ScriptPath -ProcessTemplate 'Basic' -OutputPath $script:TempDir | Out-Null
         # Customize a file
-        $customPath = Join-Path $script:TempDir '.conductor' 'profile.yaml'
+        $customPath = Join-Path $script:TempDir '.polyphony-config' 'profile.yaml'
         Set-Content -Path $customPath -Value 'custom: true'
     }
 
@@ -294,7 +294,7 @@ Describe 'bootstrap-conductor.ps1 — -Force flag' {
 
     It 'Overwrites existing files when -Force is set' {
         & $script:ScriptPath -ProcessTemplate 'Basic' -OutputPath $script:TempDir -Force | Out-Null
-        $content = Get-Content (Join-Path $script:TempDir '.conductor' 'profile.yaml') -Raw
+        $content = Get-Content (Join-Path $script:TempDir '.polyphony-config' 'profile.yaml') -Raw
         $content | Should -Not -Match 'custom: true'
     }
 
@@ -318,15 +318,15 @@ Describe 'bootstrap-conductor.ps1 — output path' {
         Remove-Item -Path $script:TempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    It 'Creates .conductor/ under the specified output path' {
+    It 'Creates .polyphony-config/ under the specified output path' {
         & $script:ScriptPath -ProcessTemplate 'Basic' -OutputPath $script:TempDir | Out-Null
-        Test-Path (Join-Path $script:TempDir '.conductor') | Should -BeTrue
+        Test-Path (Join-Path $script:TempDir '.polyphony-config') | Should -BeTrue
     }
 
     It 'Creates nested directory structure' {
         & $script:ScriptPath -ProcessTemplate 'Basic' -OutputPath $script:TempDir | Out-Null
-        Test-Path (Join-Path $script:TempDir '.conductor' 'work-item-types' 'templates') | Should -BeTrue
-        Test-Path (Join-Path $script:TempDir '.conductor' 'agent-guidance') | Should -BeTrue
+        Test-Path (Join-Path $script:TempDir '.polyphony-config' 'work-item-types' 'templates') | Should -BeTrue
+        Test-Path (Join-Path $script:TempDir '.polyphony-config' 'agent-guidance') | Should -BeTrue
     }
 }
 
@@ -348,7 +348,7 @@ Describe 'bootstrap-conductor.ps1 — agent guidance' {
     It 'Creates agent-guidance files for all types' {
         $types = @('epic', 'issue', 'task')
         foreach ($type in $types) {
-            $path = Join-Path $script:TempDir '.conductor' 'agent-guidance' ("$type.md")
+            $path = Join-Path $script:TempDir '.polyphony-config' 'agent-guidance' ("$type.md")
             Test-Path $path | Should -BeTrue
             $content = Get-Content $path -Raw
             $content | Should -Match ($type.Substring(0,1).ToUpper() + $type.Substring(1) + ' Guidance')
@@ -373,7 +373,7 @@ Describe 'bootstrap-conductor.ps1 — profile.yaml' {
     }
 
     It 'Creates profile.yaml with TODO placeholders' {
-        $path = Join-Path $script:TempDir '.conductor' 'profile.yaml'
+        $path = Join-Path $script:TempDir '.polyphony-config' 'profile.yaml'
         Test-Path $path | Should -BeTrue
         $content = Get-Content $path -Raw
         $content | Should -Match 'TODO'
@@ -398,8 +398,8 @@ Describe 'bootstrap-conductor.ps1 — content quality' {
     }
 
     It 'process-config.yaml contains all three Basic types' {
-        $config = Get-Content (Join-Path $script:TempDir '.conductor' 'process-config.yaml') -Raw
-        $configPath = Join-Path $script:TempDir '.conductor' 'process-config.yaml'
+        $config = Get-Content (Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml') -Raw
+        $configPath = Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml'
         $yaml = Get-Content $configPath -Raw | ConvertFrom-Yaml
         foreach ($type in $yaml.types.Keys) {
             $config | Should -Match ("${type}:")
@@ -407,22 +407,22 @@ Describe 'bootstrap-conductor.ps1 — content quality' {
     }
 
     It 'process-config.yaml contains transitions section' {
-        $config = Get-Content (Join-Path $script:TempDir '.conductor' 'process-config.yaml') -Raw
+        $config = Get-Content (Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml') -Raw
         $config | Should -Match 'transitions:'
     }
 
     It 'process-config.yaml contains branch_strategy section' {
-        $config = Get-Content (Join-Path $script:TempDir '.conductor' 'process-config.yaml') -Raw
+        $config = Get-Content (Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml') -Raw
         $config | Should -Match 'branch_strategy:'
     }
 
     It 'process-config.yaml contains platform field' {
-        $config = Get-Content (Join-Path $script:TempDir '.conductor' 'process-config.yaml') -Raw
+        $config = Get-Content (Join-Path $script:TempDir '.polyphony-config' 'process-config.yaml') -Raw
         $config | Should -Match 'platform: github'
     }
 
     It 'Type definitions contain TODO markers' {
-        $epicDef = Get-Content (Join-Path $script:TempDir '.conductor' 'work-item-types' 'epic.md') -Raw
+        $epicDef = Get-Content (Join-Path $script:TempDir '.polyphony-config' 'work-item-types' 'epic.md') -Raw
         $epicDef | Should -Match 'TODO'
     }
 

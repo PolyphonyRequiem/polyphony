@@ -74,10 +74,10 @@ public sealed class VerbInputSchemaTests
     [Fact]
     public void OptionalString_EmittedWithQuotedDefault()
     {
-        var inputs = InputsFor("string config = \".conductor/process-config.yaml\"");
+        var inputs = InputsFor("string config = \".polyphony-config/process-config.yaml\"");
         var p = inputs[0]!.AsObject();
         p["required"]!.GetValue<bool>().ShouldBeFalse();
-        p["default"]!.GetValue<string>().ShouldBe(".conductor/process-config.yaml");
+        p["default"]!.GetValue<string>().ShouldBe(".polyphony-config/process-config.yaml");
     }
 
     [Fact]

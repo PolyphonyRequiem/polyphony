@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Generates stub .conductor/ files for repos onboarding to the v2 SDLC workflow.
+    Generates stub .polyphony-config/ files for repos onboarding to the v2 SDLC workflow.
 
 .DESCRIPTION
     Auto-detects the process template from .twig/config when present, falling
@@ -18,7 +18,7 @@
     Overwrite existing files. Default: skip existing files with a warning.
 
 .PARAMETER OutputPath
-    Target directory for .conductor/ output. Default: current directory.
+    Target directory for .polyphony-config/ output. Default: current directory.
 #>
 param(
     [string]$ProcessTemplate = '',
@@ -347,14 +347,14 @@ if (-not ($script:TemplateTypes.ContainsKey($resolvedTemplate))) {
 }
 
 $types = $script:TemplateTypes[$resolvedTemplate]
-$conductorPath = Join-Path $OutputPath '.conductor'
+$configPath = Join-Path $OutputPath '.polyphony-config'
 $forceFlag = [bool]$Force
 
 $filesWritten = @()
 $filesSkipped = @()
 
 # 1. process-config.yaml
-$pcPath = Join-Path $conductorPath 'process-config.yaml'
+$pcPath = Join-Path $configPath 'process-config.yaml'
 $pcContent = New-ProcessConfigYaml -Template $resolvedTemplate -Types $types
 if (Write-StubFile -FilePath $pcPath -Content $pcContent -ForceOverwrite $forceFlag) {
     $filesWritten += $pcPath
@@ -366,7 +366,7 @@ if (Write-StubFile -FilePath $pcPath -Content $pcContent -ForceOverwrite $forceF
 foreach ($type in $types) {
     $slug = Get-TypeSlug $type
 
-    $defPath = Join-Path $conductorPath "work-item-types/$slug.md"
+    $defPath = Join-Path $configPath "work-item-types/$slug.md"
     $defContent = New-TypeDefinition -TypeName $type -Template $resolvedTemplate
     if (Write-StubFile -FilePath $defPath -Content $defContent -ForceOverwrite $forceFlag) {
         $filesWritten += $defPath
@@ -374,7 +374,7 @@ foreach ($type in $types) {
         $filesSkipped += $defPath
     }
 
-    $tplPath = Join-Path $conductorPath "work-item-types/templates/$slug-template.md"
+    $tplPath = Join-Path $configPath "work-item-types/templates/$slug-template.md"
     $tplContent = New-TypeTemplate -TypeName $type
     if (Write-StubFile -FilePath $tplPath -Content $tplContent -ForceOverwrite $forceFlag) {
         $filesWritten += $tplPath
@@ -386,7 +386,7 @@ foreach ($type in $types) {
 # 3. Agent guidance files (type-neutral)
 foreach ($type in $types) {
     $slug = Get-TypeSlug $type
-    $guidancePath = Join-Path $conductorPath "agent-guidance/$slug.md"
+    $guidancePath = Join-Path $configPath "agent-guidance/$slug.md"
     $guidanceContent = New-AgentGuidance -RoleName $type
     if (Write-StubFile -FilePath $guidancePath -Content $guidanceContent -ForceOverwrite $forceFlag) {
         $filesWritten += $guidancePath
@@ -396,7 +396,7 @@ foreach ($type in $types) {
 }
 
 # 4. profile.yaml
-$profilePath = Join-Path $conductorPath 'profile.yaml'
+$profilePath = Join-Path $configPath 'profile.yaml'
 $profileContent = New-ProfileYaml
 if (Write-StubFile -FilePath $profilePath -Content $profileContent -ForceOverwrite $forceFlag) {
     $filesWritten += $profilePath

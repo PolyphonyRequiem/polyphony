@@ -32,11 +32,11 @@ public sealed class FooCommand(
 {
     /// <summary>Verb description for help.</summary>
     /// <param name="workItem">ADO work item ID</param>
-    /// <param name="config">Path to .conductor/process-config.yaml</param>
+    /// <param name="config">Path to .polyphony-config/process-config.yaml</param>
     [Command("foo")]
     public async Task<int> Foo(
         int workItem,
-        string config = ".conductor/process-config.yaml",
+        string config = ".polyphony-config/process-config.yaml",
         CancellationToken ct = default)
     {
         // 1. Load via repository (cache lookup).

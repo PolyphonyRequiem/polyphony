@@ -19,10 +19,10 @@ public sealed class ValidateCommand(
     /// </summary>
     /// <param name="workItem">ADO work item ID</param>
     /// <param name="event">Lifecycle event name (e.g., begin_planning, implementation_complete)</param>
-    /// <param name="config">Path to .conductor/process-config.yaml</param>
+    /// <param name="config">Path to .polyphony-config/process-config.yaml</param>
     [Command("validate")]
     [VerbResult(typeof(ValidateResult))]
-    public async Task<int> Validate(int workItem = RequiredInput.MissingInt, string @event = "", string config = ".conductor/process-config.yaml", CancellationToken ct = default)
+    public async Task<int> Validate(int workItem = RequiredInput.MissingInt, string @event = "", string config = ".polyphony-config/process-config.yaml", CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("validate",
             ("--work-item", workItem == RequiredInput.MissingInt),

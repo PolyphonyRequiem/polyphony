@@ -37,7 +37,7 @@
 #        workflow needing to re-read `process-config.yaml`.
 #
 #   Q3 — Renegotiation bubble-up is gated by `renegotiation.auto_decide`
-#        in `.conductor/policy.yaml`:
+#        in `.polyphony-config/policy.yaml`:
 #          - `prompt`       — surface the renegotiation human gate
 #                             (default — `renegotiation_gate` below).
 #          - `auto_restart` — re-enter the parent's plan-level workflow
@@ -720,7 +720,7 @@ agents:
   #
   # Known limitation (PR #6 carry-forward): apex_satisfied is observed
   # via `next-ready` directly. If the validator-driven `item_satisfied`
-  # event is not configured in `.conductor/process-config.yaml > transitions`,
+  # event is not configured in `.polyphony-config/process-config.yaml > transitions`,
   # the apex's ADO state will stay un-transitioned even though the outer
   # loop terminates `complete`. Documented in PR #220's body and again
   # in PR #9's PR body for the dogfood follow-up.
@@ -878,7 +878,7 @@ agents:
       One or more child planner invocations under apex
       **#{{ workflow.input.apex_id }}** completed but flagged that the
       assigned scope is unworkable as-is. Per
-      `.conductor/policy.yaml > renegotiation.auto_decide` (default
+      `.polyphony-config/policy.yaml > renegotiation.auto_decide` (default
       `prompt`) the operator decides next.
 
       ### Waves with renegotiation requests

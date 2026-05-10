@@ -1,4 +1,4 @@
-# `.conductor/process-config.yaml` Schema Reference
+# `.polyphony-config/process-config.yaml` Schema Reference
 
 Schema and validation rules for the process configuration file consumed by every
 Polyphony command. This file is the single point where work-item types, their
@@ -138,12 +138,12 @@ The `{n}` placeholder for PG numbers is substituted later by helper scripts
 | V-6   | Error    | `transitions:` references a type not declared in `types:`.                                         | 88-95       |
 | V-7   | Error    | Duplicate type name (case-insensitive).                                                            | 42-49       |
 | V-8   | Error    | `allowed_child_types` references a type not declared in `types:`.                                  | 77-84       |
-| V-9   | Warning  | `.conductor/work-item-types/<slug>.md` missing.                                                    | 105-110     |
-| V-10  | Warning  | `.conductor/work-item-types/templates/<slug>-template.md` missing.                                 | 113-119     |
-| V-11  | Warning  | `.conductor/agent-guidance/{slug}.md` missing for a type.                                         | 139-145     |
+| V-9   | Warning  | `.polyphony-config/work-item-types/<slug>.md` missing.                                                    | 105-110     |
+| V-10  | Warning  | `.polyphony-config/work-item-types/templates/<slug>-template.md` missing.                                 | 113-119     |
+| V-11  | Warning  | `.polyphony-config/agent-guidance/{slug}.md` missing for a type.                                         | 139-145     |
 | V-12  |          | *Removed in AB#2995: see V-11 for per-type agent guidance check.*                                  |             |
 | V-13  |          | *Removed in AB#2995: see V-11 for per-type agent guidance check.*                                  |             |
-| V-14  | Warning  | `.conductor/profile.yaml` missing.                                                                 | 144-148     |
+| V-14  | Warning  | `.polyphony-config/profile.yaml` missing.                                                                 | 144-148     |
 | V-15  | Error    | `parent` references a type not declared in `types:`.                                               | 40-47       |
 | V-16  | Error    | Cycle detected in type parent relationships.                                                       | 40-52       |
 
@@ -162,7 +162,7 @@ choice that lets `polyphony validate` return a `target_state` consumable directl
 
 ### ⚠ Anti-pattern callout: `scope_removed: Removed`
 
-The current canonical config (`.conductor/process-config.yaml:25, 30, 34`) declares:
+The current canonical config (`.polyphony-config/process-config.yaml:25, 30, 34`) declares:
 
 ```yaml
 transitions:

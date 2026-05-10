@@ -16,7 +16,7 @@ var app = ConsoleApp.Create()
     {
         var twigDir = WorkspaceDiscovery.FindTwigDir()
             ?? Path.Combine(Directory.GetCurrentDirectory(), ".twig");
-        var configPath = Path.Combine(Directory.GetCurrentDirectory(), ".conductor", "process-config.yaml");
+        var configPath = Path.Combine(Directory.GetCurrentDirectory(), ".polyphony-config", "process-config.yaml");
 
         services.AddPolyphonyServices(configPath, twigDir);
     });

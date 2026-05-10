@@ -624,11 +624,11 @@ All 9 workflow YAMLs pass `conductor validate`:
 
 ### Basic Template End-to-End Workflow Routing
 
-Full trace of the v2 SDLC workflow routing for the twig repo's own Basic process template (Epic/Issue/Task) as configured in `.conductor/process-config.yaml`.
+Full trace of the v2 SDLC workflow routing for the twig repo's own Basic process template (Epic/Issue/Task) as configured in `.polyphony-config/process-config.yaml`.
 
 #### Process Config Verification
 
-The twig repo's `.conductor/process-config.yaml` defines:
+The twig repo's `.polyphony-config/process-config.yaml` defines:
 
 | Field | Value | Validated |
 |-------|-------|:---------:|
@@ -779,7 +779,7 @@ Epic (all children Done) ──detect-state──→ ready_for_completion
 Epic (Done) ──detect-state──→ done → $end
 ```
 
-**Result:** All major phase transitions route correctly for the Basic template. The v2 workflow correctly handles the twig repo's own work items using the configuration in `.conductor/process-config.yaml`.
+**Result:** All major phase transitions route correctly for the Basic template. The v2 workflow correctly handles the twig repo's own work items using the configuration in `.polyphony-config/process-config.yaml`.
 
 ### Validation Gaps — Postmortem Observations
 

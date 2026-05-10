@@ -25,12 +25,12 @@ public sealed class GuidanceCommands(IWorkItemRepository repository)
     /// </summary>
     /// <param name="workItem">ADO work item ID to extract guidance from.</param>
     /// <param name="policy">Path to the policy file. Defaults to
-    /// <c>.conductor/policy.yaml</c>.</param>
+    /// <c>.polyphony-config/policy.yaml</c>.</param>
     [Command("extract")]
     [VerbResult(typeof(GuidanceExtractResult))]
     public async Task<int> Extract(
         int workItem = RequiredInput.MissingInt,
-        string policy = ".conductor/policy.yaml",
+        string policy = ".polyphony-config/policy.yaml",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("guidance extract",

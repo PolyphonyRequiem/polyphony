@@ -3,7 +3,7 @@ name: polyphony-bootstrap
 description: >-
   Activate when onboarding a fresh repo to the polyphony SDLC engine — i.e. a
   repo that has twig already installed and configured, and the polyphony CLI on
-  PATH, but no `.conductor/` directory yet. Provides prereq verification, the
+  PATH, but no `.polyphony-config/` directory yet. Provides prereq verification, the
   6-step smoke test that proves the wiring before any workflow runs, and a
   catalogue of common bootstrap pitfalls. The full step-by-step walkthrough
   (process template selection, type definitions, templates, agent guidance,
@@ -32,7 +32,7 @@ Read order if you are doing this for real:
 
 1. This skill (you're here) — confirm prereqs, run smoke test.
 2. **`docs/onboarding-guide.md`** — the long walkthrough.
-3. **`docs/polyphony-conductor-directory.md`** — every file in `.conductor/`.
+3. **`docs/polyphony-conductor-directory.md`** — every file in `.polyphony-config/`.
 4. **`docs/polyphony-process-config-schema.md`** — full YAML schema, V-1..V-14.
 5. **`docs/polyphony-agent-failure-modes.md`** — prior agents' bootstrap mistakes.
 
@@ -64,10 +64,10 @@ Follow `docs/onboarding-guide.md` sections 2–8 to:
 
 - Select your process template (Basic / Agile / Scrum / CMMI / custom)
 - Run `bootstrap-conductor.ps1 -ProcessTemplate <template>` to scaffold
-  `.conductor/`
+  `.polyphony-config/`
 - Author `process-config.yaml`, type definitions, templates, agent guidance,
   and `profile.yaml`
-- Run `polyphony validate-config --config .conductor --output human` until
+- Run `polyphony validate-config --config .polyphony-config --output human` until
   it exits 0 (warnings allowed)
 
 Once `validate-config` passes, return here and run the smoke test below
@@ -88,7 +88,7 @@ $WI = 1234   # ← replace with your real ID
 ### 3.1 — `validate-config` returns exit 0
 
 ```powershell
-polyphony validate-config --config .conductor
+polyphony validate-config --config .polyphony-config
 $LASTEXITCODE
 # Expect: 0   (warnings allowed; errors block)
 ```
@@ -220,8 +220,8 @@ Full contract: `docs/polyphony-architecture.md` "The three vocabularies".
 
 | Verb              | `--config` is a … | Default                            |
 |-------------------|-------------------|------------------------------------|
-| `validate-config` | **directory**     | `.conductor`                       |
-| `validate` / `hierarchy` / `state next-ready` | **file path** | `.conductor/process-config.yaml` |
+| `validate-config` | **directory**     | `.polyphony-config`                       |
+| `validate` / `hierarchy` / `state next-ready` | **file path** | `.polyphony-config/process-config.yaml` |
 
 Source: `ValidateConfigCommand.cs:20-22`, `ValidateCommand.cs:22`,
 `HierarchyCommand.cs:19`, `StateCommands.NextReady.cs:22`. Passing a file to
@@ -258,7 +258,7 @@ config emits 10 of those warnings before V-11..V-14. Recommended order:
 [ ] 1.   twig workspace returns a workspace (not "no workspace found")
 [ ] 1.   Pick a real $WI to smoke-test against
 [ ] 2.   Walk docs/onboarding-guide.md sections 2-8
-[ ] 2.   polyphony validate-config --config .conductor → exit 0 (warnings ok)
+[ ] 2.   polyphony validate-config --config .polyphony-config → exit 0 (warnings ok)
 [ ] 3.1  validate-config exit code is 0
 [ ] 3.2  hierarchy --work-item $WI --depth 1 returns valid JSON with non-empty type
 [ ] 3.3  route --work-item $WI returns phase + action

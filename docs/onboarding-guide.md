@@ -5,7 +5,7 @@ A step-by-step guide for onboarding a new repository to the
 sub-workflow library). This guide uses **kyber** (a fictitious post-quantum
 cryptography library on a custom `KyberAgile` ADO process template) as a worked
 example throughout. After following this guide, you will have a working
-`.conductor/` configuration for any ADO process template — standard or custom.
+`.polyphony-config/` configuration for any ADO process template — standard or custom.
 
 ---
 
@@ -35,7 +35,7 @@ Before starting, ensure the following are in place:
 - **Polyphony CLI installed** — The AOT-compiled `polyphony` binary is available on
   your PATH (typically at `~/.twig/bin/polyphony`). Build it with `publish-local.ps1`
   from the polyphony repo if not already installed.
-- **Type facets configured** — Every type in `.conductor/process-config.yaml` must declare a `facets` field with at least one of `plannable` or `implementable` (case-insensitive). Only these two values are valid.
+- **Type facets configured** — Every type in `.polyphony-config/process-config.yaml` must declare a `facets` field with at least one of `plannable` or `implementable` (case-insensitive). Only these two values are valid.
 - **ADO workspace configured** — Your repo has a `.twig/config` file pointing to the
   correct ADO organization and project. If not, run `twig init`.
 - **Git repository** — Your repo uses git with a `main` branch as the default target.
@@ -52,7 +52,7 @@ polyphony health      # Run environment and config diagnostics
 
 After installing Polyphony, run `polyphony health` to verify your environment and configuration. This command checks:
 
-- That `.conductor/process-config.yaml` exists and is valid
+- That `.polyphony-config/process-config.yaml` exists and is valid
 - That required tools (`twig`, `git`) are available on your PATH
 - OS, architecture, .NET, and Polyphony version
 
@@ -80,7 +80,7 @@ After installing Polyphony, run `polyphony health` to verify your environment an
 - Use this command after setup or when troubleshooting environment issues.
 - For failed checks, follow the remediation steps in the `message` field. Common actions:
   - Reinstall missing tools (`twig`, `git`)
-  - Fix or restore `.conductor/process-config.yaml`
+  - Fix or restore `.polyphony-config/process-config.yaml`
   - Ensure your PATH includes required binaries
   - Re-run `polyphony health` after making changes
 - If you are unable to resolve an issue, copy the full output and seek help in the project support channel.
@@ -162,7 +162,7 @@ rejects it with `Unknown state '<X>'. Valid states: ...`.
 
 ## 3. Bootstrap
 
-The `bootstrap-conductor.ps1` script generates a complete set of stub `.conductor/`
+The `bootstrap-conductor.ps1` script generates a complete set of stub `.polyphony-config/`
 files, giving you a starting point to customize.
 
 ### Running the Bootstrap
@@ -200,10 +200,10 @@ From your repository root:
 ### What Gets Generated
 
 The bootstrap creates the following directory structure (canonical layout per
-the `.conductor/` directory reference):
+the `.polyphony-config/` directory reference):
 
 ```
-.conductor/
+.polyphony-config/
 ├── process-config.yaml                 # Type facets, transitions, branch strategy
 ├── profile.yaml                        # Project metadata, tech stack, build commands
 ├── agent-guidance/
@@ -238,7 +238,7 @@ functional but generic.
 
 ## 4. Type Definitions
 
-Type definitions live in `.conductor/work-item-types/` as markdown files. They tell
+Type definitions live in `.polyphony-config/work-item-types/` as markdown files. They tell
 agents what each work item type represents, how it's used, and what conventions to
 follow.
 
@@ -373,7 +373,7 @@ in `process-config.yaml` that is missing its `<slug>.md`.
 
 ## 5. Templates
 
-Templates live in `.conductor/work-item-types/templates/` and define the expected
+Templates live in `.polyphony-config/work-item-types/templates/` and define the expected
 structure of a work item's **Description** field. Agents use these when creating
 new work items to ensure consistent formatting.
 
@@ -503,7 +503,7 @@ codebase — it's where domain invariants get enforced by default.
 
 ## 6. Agent Guidance
 
-Agent guidance files live in `.conductor/agent-guidance/` and provide project-specific
+Agent guidance files live in `.polyphony-config/agent-guidance/` and provide project-specific
 instructions for each AI agent role. These are injected into agent prompts via Jinja2
 templating during workflow execution.
 
@@ -670,17 +670,17 @@ estimation:
 
 ## 8. Config Validation
 
-After creating your `.conductor/` configuration, validate it with Polyphony before
+After creating your `.polyphony-config/` configuration, validate it with Polyphony before
 running the workflow.
 
 ### Running Validation
 
 ```bash
 # JSON output (default) — for programmatic consumption
-polyphony validate-config --config .conductor
+polyphony validate-config --config .polyphony-config
 
 # Human-readable output — for interactive use
-polyphony validate-config --config .conductor --output human
+polyphony validate-config --config .polyphony-config --output human
 ```
 
 ### Interpreting Results
@@ -695,8 +695,8 @@ Configuration is valid.
 
 ```
 Warnings (2):
-  [V-9] Type definition file missing: .conductor/work-item-types/task.md
-  [V-11] Agent guidance file missing: .conductor/agent-guidance/architect.md
+  [V-9] Type definition file missing: .polyphony-config/work-item-types/task.md
+  [V-11] Agent guidance file missing: .polyphony-config/agent-guidance/architect.md
 Configuration is valid (with warnings).
 ```
 
@@ -743,12 +743,12 @@ The full V-rule table is enforced in
 
 | Rule ID | Source line | Meaning | Recommendation |
 |---------|-------------|---------|---------------|
-| V-9 | `ConfigValidator.cs:105-110` | Type definition file missing | Create `.conductor/work-item-types/{slug}.md` per type |
-| V-10 | `ConfigValidator.cs:113-119` | Template file missing | Create `.conductor/work-item-types/templates/{slug}-template.md` per type |
-| V-11 | `ConfigValidator.cs:122-127` | Architect guidance file missing | Create `.conductor/agent-guidance/architect.md` |
-| V-12 | `ConfigValidator.cs:130-134` | Coder guidance file missing | Create `.conductor/agent-guidance/coder.md` |
-| V-13 | `ConfigValidator.cs:137-141` | Reviewer guidance file missing | Create `.conductor/agent-guidance/reviewer.md` |
-| V-14 | `ConfigValidator.cs:144-148` | Profile file missing | Create `.conductor/profile.yaml` |
+| V-9 | `ConfigValidator.cs:105-110` | Type definition file missing | Create `.polyphony-config/work-item-types/{slug}.md` per type |
+| V-10 | `ConfigValidator.cs:113-119` | Template file missing | Create `.polyphony-config/work-item-types/templates/{slug}-template.md` per type |
+| V-11 | `ConfigValidator.cs:122-127` | Architect guidance file missing | Create `.polyphony-config/agent-guidance/architect.md` |
+| V-12 | `ConfigValidator.cs:130-134` | Coder guidance file missing | Create `.polyphony-config/agent-guidance/coder.md` |
+| V-13 | `ConfigValidator.cs:137-141` | Reviewer guidance file missing | Create `.polyphony-config/agent-guidance/reviewer.md` |
+| V-14 | `ConfigValidator.cs:144-148` | Profile file missing | Create `.polyphony-config/profile.yaml` |
 
 The slug used by V-9 and V-10 is `ConfigValidator.ToSlug` — lowercase plus
 spaces-to-hyphens (`ConfigValidator.cs:162-163`).
@@ -826,7 +826,7 @@ If the workflow doesn't behave as expected:
 **1. Check Polyphony routing directly:**
 
 ```bash
-polyphony state next-ready --work-item <id> --config .conductor/process-config.yaml
+polyphony state next-ready --work-item <id> --config .polyphony-config/process-config.yaml
 ```
 
 This outputs a JSON routing decision showing the dispatchable requirements,
@@ -866,7 +866,7 @@ This shows the work item tree with type facets at each level.
 
 ## 10. Kyber Worked Example
 
-This section shows a complete, annotated `.conductor/` configuration for kyber,
+This section shows a complete, annotated `.polyphony-config/` configuration for kyber,
 a `KyberAgile` (custom) process repository on GitHub. Use this as a reference
 when building your own config.
 
@@ -874,7 +874,7 @@ when building your own config.
 
 ```
 kyber/
-└── .conductor/
+└── .polyphony-config/
     ├── process-config.yaml
     ├── profile.yaml
     ├── agent-guidance/
@@ -1076,7 +1076,7 @@ Use this checklist when onboarding a new repo:
 - [ ] Add agent guidance in `agent-guidance/` (architect, coder, reviewer —
       V-11..V-13)
 - [ ] Fill in `profile.yaml` — project info, tech stack, build commands (V-14)
-- [ ] Run `polyphony validate-config --config .conductor --output human`
+- [ ] Run `polyphony validate-config --config .polyphony-config --output human`
 - [ ] Fix any errors, review warnings
 - [ ] Run `conductor run apex-driver@polyphony --input apex_id=<id> --web` on a test apex work item
 - [ ] Verify routing, agent behavior, and PR lifecycle work correctly

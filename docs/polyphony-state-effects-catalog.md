@@ -144,7 +144,7 @@ introduce new dependencies.
 
 ### `polyphony plan load-type --work-item <N>`
 - **Purpose**: load type-specific planning context for a work item.
-- **Pre**: work item exists in ADO; `.conductor/work-item-types/`
+- **Pre**: work item exists in ADO; `.polyphony-config/work-item-types/`
   configured for the project.
 - **Post**: emits `{type, definition, decomposition_guidance, template}`
   on success; `{error}` envelope on failure (e.g. type definition
@@ -192,7 +192,7 @@ introduce new dependencies.
 ### `polyphony policy resolve --domain <d> --scope <s> [--path P]`
 - **Purpose**: resolve effective policy for a `(scope, domain)` pair by
   layering most-specific-wins (`type:Name` > `root` > `defaults`).
-- **Pre**: `.conductor/policy.yaml` parseable (or absent — built-in
+- **Pre**: `.polyphony-config/policy.yaml` parseable (or absent — built-in
   defaults applied).
 - **Post**: emits `ResolvedRule` JSON. Domain-shaped fields are present
   only when populated:

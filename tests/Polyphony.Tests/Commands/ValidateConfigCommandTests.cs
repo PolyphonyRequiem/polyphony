@@ -21,7 +21,7 @@ public sealed class ValidateConfigCommandTests : IDisposable
     private string CreateConfigDir(string yamlContent)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"polyphony-vc-{Guid.NewGuid():N}");
-        var conductorDir = Path.Combine(tempDir, ".conductor");
+        var conductorDir = Path.Combine(tempDir, ".polyphony-config");
         Directory.CreateDirectory(conductorDir);
         File.WriteAllText(Path.Combine(conductorDir, "process-config.yaml"), yamlContent);
         _tempDirs.Add(tempDir);

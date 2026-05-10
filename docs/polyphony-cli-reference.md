@@ -265,7 +265,7 @@ Validation in polyphony has three distinct flavors:
 2. **Process-config schema validation** (`polyphony validate-config`) —
    *is `process-config.yaml` well-formed and complete?* Runs 14 rules
    (V-1..V-14). V-1..V-8 are errors (block execution); V-9..V-14 are warnings
-   for missing companion files under `.conductor/`.
+   for missing companion files under `.polyphony-config/`.
 
 3. **Policy schema validation** (`polyphony policy validate`) — *is
    `policy.yaml` well-formed?* Runs without applying built-in defaults so
@@ -493,7 +493,7 @@ on the root run.
 
 ### Conceptual model
 
-`policy.yaml` (optional file at `.conductor/policy.yaml`) is the SDLC's
+`policy.yaml` (optional file at `.polyphony-config/policy.yaml`) is the SDLC's
 **adjustable behavior layer** — caps, modes, severity thresholds. It exists
 because some workflow behaviors should vary by scope (per-type, per-root) but
 shouldn't be hardcoded in the YAML. Examples:
@@ -933,7 +933,7 @@ home. Otherwise, the script registry is where it belongs.
   underpins `validate`).
 - **`process-config.yaml` schema:** `docs/polyphony-process-config-schema.md`
   (validated by `validate-config`).
-- **`.conductor/` directory layout:** `docs/polyphony-conductor-directory.md`
+- **`.polyphony-config/` directory layout:** `docs/polyphony-conductor-directory.md`
   (consumed by `plan load-type` and `plan load-guidance`).
 - **Onboarding a fresh repo:** `docs/onboarding-guide.md` (which verbs to
   call when, with worked examples).

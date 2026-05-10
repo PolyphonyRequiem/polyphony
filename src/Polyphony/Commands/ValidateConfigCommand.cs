@@ -16,11 +16,11 @@ public sealed class ValidateConfigCommand
     /// <summary>
     /// Validate process configuration against all Polyphony validation rules.
     /// </summary>
-    /// <param name="config">Path to .conductor directory containing process-config.yaml</param>
+    /// <param name="config">Path to .polyphony-config directory containing process-config.yaml</param>
     /// <param name="output">Output format: json or human</param>
     [Command("validate-config")]
     [VerbResult(typeof(ConfigValidationResult))]
-    public int ValidateConfig(string config = ".conductor", string output = "json")
+    public int ValidateConfig(string config = ".polyphony-config", string output = "json")
     {
         var configPath = Path.Combine(config, "process-config.yaml");
         var isJson = !string.Equals(output, "human", StringComparison.OrdinalIgnoreCase);

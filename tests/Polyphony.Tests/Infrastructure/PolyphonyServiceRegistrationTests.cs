@@ -180,7 +180,7 @@ public sealed class PolyphonyServiceRegistrationTests
     private static string? FindProcessConfigPath()
     {
         var twig2Root = TestHelpers.FindRepoRoot("twig2");
-        var path = Path.Combine(twig2Root, ".conductor", "process-config.yaml");
+        var path = Path.Combine(twig2Root, ".polyphony-config", "process-config.yaml");
         return File.Exists(path) ? path : null;
     }
 }

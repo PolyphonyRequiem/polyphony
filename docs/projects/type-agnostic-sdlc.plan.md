@@ -45,7 +45,7 @@ reason about **hierarchy levels and roles** rather than specific type names.
 │     - No hardcoded type names, state names, or hierarchy   │
 └────────────────────────────────────────────────────────────┘
 ┌────────────────────────────────────────────────────────────┐
-│  3. PER-REPO CONFIGURATION (.conductor/ in target repo)    │
+│  3. PER-REPO CONFIGURATION (.polyphony-config/ in target repo)    │
 │     Process-specific definitions and templates             │
 │     - profile.yaml: tech stack, build, estimation          │
 │     - process-config.yaml: type facets, transitions  │
@@ -94,14 +94,14 @@ the invocation target — ANY type can be root depending on what the user passes
 - .NET 10 stable (DU preview deferred to Phase 5 — C4)
 - References `Twig.Domain` and `Twig.Infrastructure` via ProjectReference
 - Reads twig's local SQLite cache for work item data
-- Reads `.conductor/` config for type facets and transition mappings
+- Reads `.polyphony-config/` config for type facets and transition mappings
 - Outputs structured JSON to stdout, uses exit codes for conductor routing
 - Includes `workspace_hint` in routing output (branch names for scripts to use)
 - AOT-compiled, single-file binary deployed to ~/.twig/bin/
 
 **Key Commands:**
 ```bash
-polyphony route --work-item 1234 --config .conductor/process-config.yaml
+polyphony route --work-item 1234 --config .polyphony-config/process-config.yaml
 polyphony validate --work-item 1234 --transition done
 polyphony hierarchy --work-item 1234 --depth 3
 polyphony review-policy --pr-type planning --level plannable
@@ -227,7 +227,7 @@ the user plan is context.
 ### Per-Repo Configuration Structure
 
 ```
-<target-repo>/.conductor/
+<target-repo>/.polyphony-config/
   profile.yaml                      # Tech stack, build, estimation
   process-config.yaml               # Type facets, transitions, review policies, branches
   work-item-types/
@@ -317,7 +317,7 @@ Implications:
   the agent should write findings to a file and pass the path, not accumulate in context
 
 **Compaction logging mechanism:** Write to a JSONL file at a known location
-(e.g., `.conductor/logs/compaction-events.jsonl`) with timestamp, workflow name,
+(e.g., `.polyphony-config/logs/compaction-events.jsonl`) with timestamp, workflow name,
 agent name, turn count, and approximate token usage. This can be queried later
 for workflow design improvements.
 
@@ -415,7 +415,7 @@ completed, the block clears automatically without user intervention (P3: re-entr
 After the focus item's feature PR merges (`review_approved`), a closeout phase runs:
 1. **Post-mortem scoped to focus item** — Review what went well/poorly across the hierarchy
 2. **Observation classification** — Each observation is classified by type using:
-   - Type definitions (`.conductor/work-item-types/*.md`) for semantic understanding
+   - Type definitions (`.polyphony-config/work-item-types/*.md`) for semantic understanding
    - `filing_eligible` flag to filter valid target types
    - AI classification with confidence threshold
 3. **User confirmation** — Low-confidence classifications get a human gate presenting
@@ -531,7 +531,7 @@ These are promoted into Polyphony in later phases once routing is proven.
 - Freshness enforcement (verify twig sync recency — C1)
 - Basic routing command: `polyphony route --work-item <id>`
 
-#### 0.2 — Define twig repo's .conductor/ configuration
+#### 0.2 — Define twig repo's .polyphony-config/ configuration
 - Create `process-config.yaml` for Basic process (Epic/Issue/Task)
 - Include explicit transition mappings (C2)
 - Create `work-item-types/` definitions (adapted from cloudvault registry patterns)
@@ -547,7 +547,7 @@ These are promoted into Polyphony in later phases once routing is proven.
 
 #### 1.1 — Hierarchy discovery
 - Read twig's process configuration (types, containment rules, state categories)
-- Read `.conductor/process-config.yaml` for role assignments
+- Read `.polyphony-config/process-config.yaml` for role assignments
 - Build in-memory hierarchy model from work item tree
 - Enforce freshness invariant (C1)
 
@@ -648,7 +648,7 @@ These are promoted into Polyphony in later phases once routing is proven.
 ### Phase 6: Future — Cross-Repo Onboarding
 
 #### 6.1 — Cloudvault onboarding
-- Create `.conductor/` config for cloudvault (CMMI process)
+- Create `.polyphony-config/` config for cloudvault (CMMI process)
 - Validate Polyphony routing against cloudvault hierarchy
 - Replace cloudvault's prototype workflows with generic versions
 
@@ -664,7 +664,7 @@ These are promoted into Polyphony in later phases once routing is proven.
 The existing hardcoded workflow is preserved as a fallback:
 
 1. **Parallel deployment:** New generic workflow registers as `twig-sdlc-v2-full@twig`
-2. **Feature flag:** Process config presence (`.conductor/process-config.yaml`) determines
+2. **Feature flag:** Process config presence (`.polyphony-config/process-config.yaml`) determines
    which workflow to invoke. If config exists → v2. If not → legacy.
 3. **Gradual cutover:** Prove on twig repo first. Then cloudvault. Then deprecate legacy.
 4. **Rollback:** If v2 fails, invoke legacy with `twig-sdlc-full@twig` — no changes needed.
@@ -677,13 +677,13 @@ The existing hardcoded workflow is preserved as a fallback:
 |----------|--------|-----------|
 | Routing engine location | Separate tool (Polyphony) | Decouples SDLC logic from twig CLI; reusable across workflows |
 | Language | C# (.NET 10 stable; DU preview deferred to Phase 5) | Shared types with Twig.Domain; stable AOT first, DUs later |
-| Config location | Per-repo `.conductor/` | Different repos have different processes |
+| Config location | Per-repo `.polyphony-config/` | Different repos have different processes |
 | Type definitions | Markdown files | Human-readable, inject-able into agent prompts |
 | Branch strategy | Nested feature branches as integration points | Each plannable level gets its own feature branch |
 | PR review | Configurable per workflow phase | Policies bind to phases (planning/implementation/remediation), not types |
 | Recursion | Sub-workflows, depth-budgeted (max depth 5 of 10) | Leave headroom; flatten helpers into scripts |
 | Identity references | Derive from git remote + twig config | No hardcoded users, orgs, or paths |
-| Compaction logging | JSONL file in `.conductor/logs/` | Queryable, doesn't require infrastructure |
+| Compaction logging | JSONL file in `.polyphony-config/logs/` | Queryable, doesn't require infrastructure |
 | Freshness | Polyphony fails closed if sync >30s stale | Prevents routing on stale cache (P1/P3) |
 | Transition mapping | Explicit per-TYPE in config, hard error on missing | States are per type; no silent fallbacks |
 | Rollout | Parallel v2 workflow, config-presence gated | Zero risk to existing workflow |

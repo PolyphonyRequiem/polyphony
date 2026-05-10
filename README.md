@@ -9,7 +9,7 @@ of hardcoded type names.
 
 It is the *replacement* for the original `twig-sdlc-full@twig` workflow, which
 was wired specifically to the Basic process template (Epic → Issue → Task).
-Polyphony reads `.conductor/process-config.yaml` and adapts to **Basic, Agile,
+Polyphony reads `.polyphony-config/process-config.yaml` and adapts to **Basic, Agile,
 Scrum, CMMI, and custom process templates** without changes to the workflow
 YAML itself.
 
@@ -57,8 +57,8 @@ register the workflow suite with `conductor`.
   operator, conductor mechanics, bootstrap onboarding, twig CLI / SDLC, the
   design/mechanics design pair, and the workflow path-coverage harness)
   loaded by Copilot CLI / Claude Code when working in this codebase.
-- **`.conductor/`** — the configuration consumed by both the CLI and the
-  workflow suite at runtime. Polyphony's *own* `.conductor/` directory is
+- **`.polyphony-config/`** — the configuration consumed by both the CLI and the
+  workflow suite at runtime. Polyphony's *own* `.polyphony-config/` directory is
   the dogfood example: this repo runs itself through the polyphony workflow
   suite.
 
@@ -82,7 +82,7 @@ engine:
 
 The workflow YAML routes on the *answers*, not on type names. This means the
 same conductor workflow runs against any ADO process template that declares
-its types in `.conductor/process-config.yaml`.
+its types in `.polyphony-config/process-config.yaml`.
 
 For the deeper "why split it this way?" — see
 [`docs/polyphony-architecture.md`](docs/polyphony-architecture.md) and §12 of
@@ -152,7 +152,7 @@ If all four pass, you're ready to run a workflow.
 
 The fastest way to see polyphony work is to drive an existing ADO work item
 through `apex-driver@polyphony`. From a repo that already has its own
-`.conductor/` configured (see *Configure your repo*, below):
+`.polyphony-config/` configured (see *Configure your repo*, below):
 
 ```powershell
 # Set up an isolated worktree for this apex
@@ -206,11 +206,11 @@ polyphony state preflight --work-item 1234   # Full preflight (12 checks)
 ## Configure your repo
 
 To onboard a *different* repo to polyphony — i.e. a target codebase you want
-the workflow suite to operate on — you create a `.conductor/` directory with
-the following layout. Polyphony's own `.conductor/` is the dogfood example.
+the workflow suite to operate on — you create a `.polyphony-config/` directory with
+the following layout. Polyphony's own `.polyphony-config/` is the dogfood example.
 
 ```
-.conductor/
+.polyphony-config/
 ├── process-config.yaml      # types, facets, transitions, review policy
 ├── policy.yaml              # (optional) implementation modes + per-scope caps
 ├── profile.yaml             # default agent + workflow tuning per repo
@@ -252,7 +252,7 @@ A short tour of each file:
   agent roles. Use this to steer the architect, coder, reviewer, etc., with
   repo-specific conventions.
 
-For everything that lives in `.conductor/` *outside* `process-config.yaml`,
+For everything that lives in `.polyphony-config/` *outside* `process-config.yaml`,
 see [`docs/polyphony-conductor-directory.md`](docs/polyphony-conductor-directory.md).
 
 ---
@@ -270,7 +270,7 @@ The tables below are the quick-reference index.
 |-------------------------------|----------------------------------------------------------|
 | `polyphony health`            | Environment + configuration diagnostics.                 |
 | `polyphony validate`          | Validate a state transition against ADO + SDLC rules.    |
-| `polyphony validate-config`   | Schema-check `.conductor/process-config.yaml`.           |
+| `polyphony validate-config`   | Schema-check `.polyphony-config/process-config.yaml`.           |
 | `polyphony hierarchy`         | Display work item hierarchy with role annotations.       |
 
 ### `polyphony state <verb>`
@@ -288,7 +288,7 @@ The tables below are the quick-reference index.
 | `polyphony plan depth-guard`    | Enforce the recursion-depth budget.                  |
 | `polyphony plan next-child`     | Pick the next plannable child for recursive planning.|
 | `polyphony plan load-type`      | Inject type definition + template into prompts.      |
-| `polyphony plan load-guidance`  | Inject `.conductor/agent-guidance/*.md` into prompts.|
+| `polyphony plan load-guidance`  | Inject `.polyphony-config/agent-guidance/*.md` into prompts.|
 | `polyphony plan review`         | Aggregate planner reviews and gate revision cycles.  |
 | `polyphony plan seed-children`  | Marker-based child seeding with idempotent re-entry. |
 
@@ -360,7 +360,7 @@ For agent rosters, recursion budgets, and the platform-abstraction model
 | [`docs/polyphony-cli-reference.md`](docs/polyphony-cli-reference.md)                      | Per-verb deep-dive, conceptual primers, and value assessment.          |
 | [`docs/polyphony-architecture.md`](docs/polyphony-architecture.md)                        | Layering diagram, three-vocabularies rule, Polyphony-vs-twig boundary. |
 | [`docs/polyphony-process-config-schema.md`](docs/polyphony-process-config-schema.md)      | Full schema for `process-config.yaml`.                                 |
-| [`docs/polyphony-conductor-directory.md`](docs/polyphony-conductor-directory.md)          | Everything in `.conductor/` outside `process-config.yaml`.             |
+| [`docs/polyphony-conductor-directory.md`](docs/polyphony-conductor-directory.md)          | Everything in `.polyphony-config/` outside `process-config.yaml`.             |
 | [`docs/onboarding-guide.md`](docs/onboarding-guide.md)                                    | Step-by-step new-repo onboarding, with worked example.                 |
 | [`docs/polyphony-skills-index.md`](docs/polyphony-skills-index.md)                        | Index of the agent skills shipped under `.github/skills/`.             |
 | [`docs/polyphony-agent-failure-modes.md`](docs/polyphony-agent-failure-modes.md)          | Known failure modes and remediation patterns.                          |
@@ -430,7 +430,7 @@ launch a run against a polyphony Epic in this repo.
 ## Architecture in one paragraph
 
 The CLI references `Twig.Domain` and `Twig.Infrastructure` for work-item
-models and SQLite cache reads, reads `.conductor/process-config.yaml` (and
+models and SQLite cache reads, reads `.polyphony-config/process-config.yaml` (and
 optionally `policy.yaml`) for type facets and transition mappings,
 emits structured JSON to stdout, and uses exit codes to signal routing
 outcomes. **Routing decisions are fully deterministic** — no AI, no LLM, no

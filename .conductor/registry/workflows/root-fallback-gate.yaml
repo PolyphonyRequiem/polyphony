@@ -7,7 +7,7 @@
 # `root_fallback.auto_decide` policy, and returns a structured
 # `{ root_id, decision, auto_policy_applied }` envelope.
 #
-# Auto-decide policy (read from `.conductor/policy.yaml > root_fallback`):
+# Auto-decide policy (read from `.polyphony-config/policy.yaml > root_fallback`):
 #
 #   - `prompt`           — surface the human gate (default).
 #                          decision is one of {use_active_item, abort};
@@ -76,7 +76,7 @@ output:
 agents:
   # ── Load policy ───────────────────────────────────────────────────────────
   #
-  # Loads `.conductor/policy.yaml` (or the defaults-only snapshot when
+  # Loads `.polyphony-config/policy.yaml` (or the defaults-only snapshot when
   # the file is missing) and emits the full policy envelope. Downstream
   # routing reads `load_policy.output.root_fallback.auto_decide`.
   #
@@ -143,7 +143,7 @@ agents:
       ### Bypassing this gate
 
       Workspaces with a high-confidence policy can skip this gate by
-      setting `root_fallback.auto_decide` in `.conductor/policy.yaml`
+      setting `root_fallback.auto_decide` in `.polyphony-config/policy.yaml`
       to `use_active_item` or `abort`. See the
       `polyphony-workflow-author` skill for guidance.
     options:
