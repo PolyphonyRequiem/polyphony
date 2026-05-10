@@ -109,7 +109,6 @@ namespace Polyphony;
 [JsonSerializable(typeof(ManifestTopologyHashResult))]
 [JsonSerializable(typeof(ManifestRebaseRecordResult))]
 [JsonSerializable(typeof(ManifestApprovalRecordResult))]
-[JsonSerializable(typeof(ManifestCommitAndPushResult))]
 [JsonSerializable(typeof(ManifestRecordPlanMergeResult))]
 [JsonSerializable(typeof(ManifestReadPlanGenerationResult))]
 [JsonSerializable(typeof(ManifestReadPlanGenerationSnapshotResult))]

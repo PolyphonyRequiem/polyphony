@@ -58,7 +58,7 @@ public sealed class PlanCommandsStatusTests : CommandTestBase, IDisposable
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier()),
+        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(new GitClient(runner))),
                 runner);
     }
 

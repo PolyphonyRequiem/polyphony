@@ -29,18 +29,16 @@ public sealed class ManifestCommandsTests : IDisposable
         try { Directory.Delete(this.tempDir, recursive: true); } catch { /* best effort */ }
     }
 
-    // The pre-existing manifest verbs (init/read/topology-hash/record-*) do
-    // not invoke the injected IGitClient, so a stub backed by an empty
-    // FakeProcessRunner is safe — any unstubbed git call would throw
-    // immediately and surface as a test failure rather than a false pass.
+    // The remaining manifest verbs (init/read/topology-hash/record-*) take
+    // only PolyphonyStatePaths as a dependency. Tests pass an explicit
+    // --path so the resolver is exercised through the "explicit" branch
+    // and never actually consults git; a FakeProcessRunner-backed
+    // GitClient is sufficient as a placeholder.
     private static ManifestCommands NewCommand()
     {
         var git = new Polyphony.Infrastructure.Processes.GitClient(
             new Polyphony.Tests.Infrastructure.Processes.FakeProcessRunner());
-        return new(
-            git,
-            new Polyphony.Tests.TestFixtures.FakePostconditionVerifier(),
-            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git));
+        return new(new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git));
     }
 
     /// <summary>

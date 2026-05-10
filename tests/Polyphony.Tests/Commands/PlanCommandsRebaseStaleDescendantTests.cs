@@ -59,7 +59,7 @@ public sealed class PlanCommandsRebaseStaleDescendantTests : CommandTestBase, ID
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier()), runner);
+        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(new GitClient(runner))), runner);
     }
 
     private static PlanRebaseStaleDescendantResult Parse(string output) =>
@@ -111,15 +111,18 @@ public sealed class PlanCommandsRebaseStaleDescendantTests : CommandTestBase, ID
 
     private void StubShowManifest(FakeProcessRunner runner, string branch = FeatureBranch, string? yamlOverride = null, bool missing = false)
     {
-        var refspec = $"origin/{branch}:{_manifestPath}";
+        _ = runner;
+        _ = branch;
         if (missing)
         {
-            runner.WhenExact("git", ["show", refspec],
-                new ProcessResult(128, "", $"fatal: path '{_manifestPath}' does not exist in 'origin/{branch}'"));
+            if (File.Exists(_manifestPath)) File.Delete(_manifestPath);
             return;
         }
-        var yaml = yamlOverride ?? ReadManifestYaml();
-        runner.WhenExact("git", ["show", refspec], new ProcessResult(0, yaml, ""));
+        if (yamlOverride is not null)
+        {
+            File.WriteAllText(_manifestPath, yamlOverride);
+        }
+        // else: leave the file as SeedManifest left it.
     }
 
     /// <summary>
@@ -898,33 +901,9 @@ public sealed class PlanCommandsRebaseStaleDescendantTests : CommandTestBase, ID
         LoadManifest().Rebases.ShouldBeEmpty();
     }
 
-    [Fact]
-    public async Task ManifestPushRejected_ReturnsManifestPushRejected()
-    {
-        var (cmd, runner) = CreateCommand();
-        SeedManifest();
-        StubEnvironmentDefaults(runner);
-        StubStatusClean(runner);
-        StubFetch(runner, FeatureBranch);
-        StubFetch(runner, ParentPlanBranch);
-        StubFetch(runner, HeadBranch);
-        StubShowManifest(runner);
-
-        var body = MakeBodyWithSnapshot(new Dictionary<string, int> { ["root"] = 1, ["200"] = 0 });
-        StubPrPoll(runner, PrNumber, "OPEN", HeadBranch, ParentPlanBranch, OldHeadSha, body);
-        StubRevParseOriginHead(runner, HeadBranch, OldHeadSha);
-        StubCascadeParentNoPr(runner);
-        StubIsAncestor(runner, $"origin/{ParentPlanBranch}", $"origin/{HeadBranch}", false);
-        StubMergeBase(runner, OldHeadSha, $"origin/{ParentPlanBranch}", "f00ba12c");
-        StubRebaseClean(runner, $"origin/{ParentPlanBranch}", "f00ba12c", OldHeadSha, NewHeadSha);
-        StubPushHeadWithLeaseSuccess(runner, HeadBranch, OldHeadSha);
-        StubGhPrEditOk(runner, PrNumber);
-        StubManifestPushRejected(runner);
-
-        var (_, output) = await CaptureConsoleAsync(() =>
-            cmd.RebaseStaleDescendant(RootId, ItemId, ParentId, PrNumber, ancestorIds: "200,root", manifestPath: _manifestPath));
-        Parse(output).ErrorCode.ShouldBe("manifest_push_rejected");
-    }
+    // ManifestPushRejected_ReturnsManifestPushRejected DELETED — Rev 4.2 dropped the
+    // worktree-side manifest git transaction entirely. Manifest writes are now atomic
+    // file replacements under the run lock; there is no longer any push to be rejected.
 
     [Fact]
     public async Task CommentPostFailed_ReturnsRebasedWithWarning()

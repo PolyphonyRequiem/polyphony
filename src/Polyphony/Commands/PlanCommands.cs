@@ -2,6 +2,7 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.Paths;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Postconditions;
 using Polyphony.Routing;
@@ -36,7 +37,8 @@ public sealed partial class PlanCommands(
     ITwigClient twig,
     IGitClient git,
     IGhClient gh,
-    IPostconditionVerifier postconditions)
+    IPostconditionVerifier postconditions,
+    PolyphonyStatePaths statePaths)
 {
     /// <summary>
     /// Validates current recursion depth against a configured maximum. Always exits 0.

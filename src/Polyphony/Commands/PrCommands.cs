@@ -4,6 +4,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.Paths;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 using Twig.Domain.Interfaces;
@@ -34,6 +35,7 @@ public sealed partial class PrCommands(
     ProcessConfig processConfig,
     Polyphony.Locking.RunLockStore lockStore,
     Polyphony.Locking.RunLockPathResolver lockPathResolver,
+    PolyphonyStatePaths statePaths,
     IAdoClient? ado = null)
 {
     private static readonly Regex PullUrlRegex =

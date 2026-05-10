@@ -34,6 +34,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             git, gh, twig, Repository, Config,
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
+            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
             ado);
         return (cmd, runner, ado);
     }
@@ -151,6 +152,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         var cmd = new PrCommands(git, gh, twig, Repository, Config,
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
+            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
             ado: null);
 
         var (_, output) = await CaptureConsoleAsync(

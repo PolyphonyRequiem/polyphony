@@ -1311,7 +1311,8 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         var config = CreateConfigBuilder().Build();
         var twig = new TwigClient(new FakeProcessRunner());
-        return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config, twig, new GitClient(new FakeProcessRunner()), new GhClient(new FakeProcessRunner()), new FakePostconditionVerifier());
+        var git = new GitClient(new FakeProcessRunner());
+        return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config, twig, git, new GhClient(new FakeProcessRunner()), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git));
     }
 
     private ValidateCommand CreateValidateCommand()

@@ -63,7 +63,7 @@ public sealed partial class PrCommands
         int itemId = RequiredInput.MissingInt,
         int parentItemId = 0,
         string ancestorIds = "",
-        string manifestPath = RunManifestStore.DefaultRelativePath,
+        string manifestPath = "",
         string title = "",
         string body = "",
         CancellationToken ct = default)
@@ -170,42 +170,39 @@ public sealed partial class PrCommands
             return ExitCodes.Success;
         }
 
-        // ── 2. Read manifest from origin/feature/{root} + compute snapshot. ─
-        // Same rationale as the GitHub-side verb: the manifest is owned by
-        // the feature branch, not the plan branch; reading the working tree
-        // would pick up whatever happens to be checked out. Always read
-        // from the remote feature ref.
+        // ── 2. Read manifest + compute snapshot. ───────────────────────────
+        // Rev 4.2: the manifest lives locally under the git common dir;
+        // it is the single source of truth, mutated under the run lock by
+        // `pr merge-plan-pr`/`merge-plan-ado` and the rebase/recreate verbs.
+        // No git fetch/show needed.
         IReadOnlyDictionary<string, int> snapshot;
         var featureBranch = BranchNameBuilder.Feature(root).Value;
-        var manifestRef = $"origin/{featureBranch}";
+        var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
+        if (resolvedPath.Error is not null)
+        {
+            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+                "manifest_read_failed", resolvedPath.Error, headBranch, baseBranch);
+            return ExitCodes.Success;
+        }
+        var localManifestPath = resolvedPath.Path;
         try
         {
-            var manifestYaml = await git.ShowFileAtRefAsync(manifestRef, manifestPath, ct).ConfigureAwait(false);
-            if (manifestYaml is null)
-            {
-                EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
-                    "manifest_read_failed",
-                    $"manifest not found at {manifestRef}:{manifestPath} — ensure the feature branch has the manifest committed and pushed",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
-            }
-            var manifest = RunManifestStore.Parse(manifestYaml, $"{manifestRef}:{manifestPath}");
-            RunManifestValidator.ValidateOrThrow(manifest, $"{manifestRef}:{manifestPath}");
+            var manifest = RunManifestStore.LoadOrThrow(localManifestPath);
             snapshot = ComputeSnapshot(manifest.PlanGenerations, ancestorKeys);
+        }
+        catch (FileNotFoundException)
+        {
+            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+                "manifest_read_failed",
+                $"manifest not found at {localManifestPath} — run `polyphony manifest init --root-id {rootId} ...` first",
+                headBranch, baseBranch);
+            return ExitCodes.Success;
         }
         catch (OperationCanceledException) { throw; }
         catch (InvalidOperationException ex)
         {
             EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "manifest_invalid", $"manifest invalid: {ex.Message}", headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-        catch (ExternalToolException ex)
-        {
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
-                "manifest_read_failed",
-                $"git show failed for {manifestRef}:{manifestPath}: {ex.Message}",
-                headBranch, baseBranch);
             return ExitCodes.Success;
         }
 

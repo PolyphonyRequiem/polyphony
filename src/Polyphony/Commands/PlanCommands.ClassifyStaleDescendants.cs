@@ -29,13 +29,13 @@ public sealed partial class PlanCommands
     /// tree by ancestor-snapshot staleness.
     /// </summary>
     /// <param name="rootId">Root work item ID — defines feature/{root} and is the manifest's owner.</param>
-    /// <param name="manifestPath">Run manifest path within <c>origin/feature/{root}</c>. Defaults to <c>.polyphony/run.yaml</c>.</param>
+    /// <param name="manifestPath">Optional override of the run manifest path. When empty (default), derived under the git common dir via <c>PolyphonyStatePaths</c>. Pass an explicit path only as a testing seam.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("classify-stale-descendants")]
     [VerbResult(typeof(PlanClassifyStaleDescendantsResult))]
     public async Task<int> ClassifyStaleDescendants(
         int rootId = RequiredInput.MissingInt,
-        string manifestPath = ".polyphony/run.yaml",
+        string manifestPath = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan classify-stale-descendants",
@@ -58,46 +58,40 @@ public sealed partial class PlanCommands
             return ExitCodes.Success;
         }
 
-        // ── 3. Read manifest from origin/feature/{root}. ──────────────────
+        // ── 3. Read manifest from local common-dir state. ─────────────────
+        // Rev 4.2: manifest is local + canonical; no git transaction.
         var featureBranch = BranchNameBuilder.Feature(root).Value;
-        var manifestRef = $"origin/{featureBranch}";
-
-        string? manifestYaml;
-        try
+        var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
+        if (resolvedPath.Error is not null)
         {
-            manifestYaml = await git.ShowFileAtRefAsync(manifestRef, manifestPath, ct).ConfigureAwait(false);
-        }
-        catch (ExternalToolException ex)
-        {
-            EmitClassifyError(rootId, manifestPath,
-                $"manifest read failed: {ex.Message}", "manifest_read_failed", manifestRef);
+            EmitClassifyError(rootId, manifestPath, resolvedPath.Error, "manifest_path_resolution_failed");
             return ExitCodes.Success;
         }
-        if (manifestYaml is null)
-        {
-            EmitClassifyError(rootId, manifestPath,
-                $"manifest not found at {manifestRef}:{manifestPath}", "manifest_not_found", manifestRef);
-            return ExitCodes.Success;
-        }
+        var localManifestPath = resolvedPath.Path;
 
         RunManifest manifest;
         try
         {
-            manifest = RunManifestStore.Parse(manifestYaml, manifestPath);
-            RunManifestValidator.ValidateOrThrow(manifest);
+            manifest = RunManifestStore.LoadOrThrow(localManifestPath);
+        }
+        catch (FileNotFoundException)
+        {
+            EmitClassifyError(rootId, localManifestPath,
+                $"manifest not found at {localManifestPath}", "manifest_not_found");
+            return ExitCodes.Success;
         }
         catch (Exception ex)
         {
-            EmitClassifyError(rootId, manifestPath,
-                $"manifest invalid: {ex.Message}", "manifest_invalid", manifestRef);
+            EmitClassifyError(rootId, localManifestPath,
+                $"manifest invalid: {ex.Message}", "manifest_invalid");
             return ExitCodes.Success;
         }
 
         if (manifest.RootId != rootId)
         {
-            EmitClassifyError(rootId, manifestPath,
-                $"manifest at {manifestRef}:{manifestPath} declares root {manifest.RootId}, expected {rootId}",
-                "root_id_mismatch", manifestRef);
+            EmitClassifyError(rootId, localManifestPath,
+                $"manifest at {localManifestPath} declares root {manifest.RootId}, expected {rootId}",
+                "root_id_mismatch");
             return ExitCodes.Success;
         }
 
@@ -172,8 +166,8 @@ public sealed partial class PlanCommands
         EmitClassify(new PlanClassifyStaleDescendantsResult
         {
             RootId = rootId,
-            ManifestRef = manifestRef,
-            ManifestPath = manifestPath,
+            ManifestRef = string.Empty,
+            ManifestPath = localManifestPath,
             TotalDescendantsScanned = descendantIds.Count,
             TotalDescendantsWithOpenPrs = withOpenPrs,
             TotalStale = stale.Count,

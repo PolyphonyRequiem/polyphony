@@ -68,7 +68,7 @@ public sealed partial class PrCommands
         int itemId = RequiredInput.MissingInt,
         int prNumber = RequiredInput.MissingInt,
         int parentItemId = 0,
-        string manifestPath = RunManifestStore.DefaultRelativePath,
+        string manifestPath = "",
         int lockTtlHours = 24,
         string by = "",
         CancellationToken ct = default)
@@ -157,6 +157,15 @@ public sealed partial class PrCommands
 
         var manifestBranch = BranchNameBuilder.Feature(root).Value;
 
+        // ── 1b. Resolve local manifest path (Rev 4.2). ─────────────────────
+        var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
+        if (resolvedPath.Error is not null)
+            return EmitMergePlanAdoError(
+                rootId, itemId, resolvedParent, organization, project, repository, slug, prUrl, prNumber,
+                "internal_error", resolvedPath.Error,
+                isRootPlan, itemKey, headBranch, baseBranch, manifestBranch);
+        var localManifestPath = resolvedPath.Path;
+
         if (ado is null)
         {
             return EmitMergePlanAdoError(
@@ -216,7 +225,7 @@ public sealed partial class PrCommands
         {
             return await MergePlanAdoUnderLockAsync(
                 rootId, itemId, resolvedParent, organization, project, repository, slug, prUrl, prNumber,
-                isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, manifestPath,
+                isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, localManifestPath,
                 lockToken, ct).ConfigureAwait(false);
         }
         finally
@@ -283,20 +292,9 @@ public sealed partial class PrCommands
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, lockToken: lockToken);
         }
 
-        // ── 4. Fetch the feature branch. ───────────────────────────────────
-        try
-        {
-            await git.FetchAsync("origin", manifestBranch, ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            return EmitMergePlanAdoError(
-                rootId, itemId, parentItemId, organization, project, repository, slug, prUrl, prNumber,
-                "internal_error",
-                $"git fetch origin {manifestBranch} failed: {ex.Message}",
-                isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, lockToken: lockToken);
-        }
+        // ── 4. Skipped (Rev 4.2): no need to fetch the feature branch.
+        // The manifest is local + canonical; the post-merge sequence below
+        // does not need worktree state.
 
         // ── 5. Poll PR + validate identity. ────────────────────────────────
         AdoPullRequestPollData? poll;
@@ -368,40 +366,29 @@ public sealed partial class PrCommands
         {
             var snapshot = PlanPrFrontMatter.Parse(poll.Body).AncestorPlanGenerations;
 
-            string? manifestYaml = null;
-            try
+            // Read manifest from local disk (Rev 4.2). Missing file = no
+            // staleness signal → fall through.
+            RunManifest? localManifest = null;
+            if (File.Exists(manifestPath))
             {
-                manifestYaml = await git.ShowFileAtRefAsync($"origin/{manifestBranch}", manifestPath, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                return EmitMergePlanAdoError(
-                    rootId, itemId, parentItemId, organization, project, repository, slug, prUrl, prNumber,
-                    "internal_error",
-                    $"Could not read manifest at origin/{manifestBranch}:{manifestPath} for staleness check: {ex.Message}",
-                    isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, lockToken: lockToken,
-                    prState: poll.State);
-            }
-
-            if (manifestYaml is not null)
-            {
-                IReadOnlyDictionary<string, int> currentGens;
                 try
                 {
-                    var remoteManifest = RunManifestStore.Parse(manifestYaml);
-                    currentGens = remoteManifest.PlanGenerations;
+                    localManifest = RunManifestStore.LoadOrThrow(manifestPath);
                 }
                 catch (Exception ex)
                 {
                     return EmitMergePlanAdoError(
                         rootId, itemId, parentItemId, organization, project, repository, slug, prUrl, prNumber,
                         "internal_error",
-                        $"Could not parse manifest at origin/{manifestBranch}:{manifestPath} for staleness check: {ex.Message}",
+                        $"Could not parse manifest at {manifestPath} for staleness check: {ex.Message}",
                         isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, lockToken: lockToken,
                         prState: poll.State);
                 }
+            }
 
+            if (localManifest is not null)
+            {
+                var currentGens = localManifest.PlanGenerations;
                 var staleness = PlanGenerationStaleness.Check(snapshot, currentGens);
                 if (staleness.IsEmpty)
                 {
@@ -548,30 +535,12 @@ public sealed partial class PrCommands
                 prState: poll.State);
         }
 
-        // ── 7. Checkout feature branch + reset to remote tip. ──────────────
-        // Re-fetch first: step 4's fetch happened BEFORE the ADO complete-PR
-        // call advanced origin/{manifestBranch} server-side. Without a
-        // second fetch, our local origin/{manifestBranch} ref is stale and
-        // the post-merge manifest commit will fail to push as
-        // non-fast-forward.
-        try
-        {
-            await git.FetchAsync("origin", manifestBranch, ct).ConfigureAwait(false);
-            await git.CheckoutAsync(manifestBranch, ct).ConfigureAwait(false);
-            await git.ResetHardAsync($"origin/{manifestBranch}", ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            return EmitMergePlanAdoError(
-                rootId, itemId, parentItemId, organization, project, repository, slug, prUrl, prNumber,
-                "internal_error",
-                $"Could not checkout/reset {manifestBranch}: {ex.Message}",
-                isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, lockToken: lockToken,
-                prState: "MERGED", merged: true, alreadyMerged: alreadyMerged, mergeCommit: mergeCommit);
-        }
+        // ── 7. Skipped (Rev 4.2): no checkout/reset needed.
+        // Manifest is local + canonical; ADO complete-PR landed on origin
+        // but does not affect the manifest file (which lives outside the
+        // worktree under <git-common-dir>/polyphony/...).
 
-        // ── 8. Apply ledger; save+stage+commit+push only on fresh entry. ───
+        // ── 8. Apply ledger; save under run lock. ──────────────────────────
         RunManifest manifest;
         try
         {
@@ -604,34 +573,14 @@ public sealed partial class PrCommands
             try
             {
                 RunManifestStore.Save(manifestPath, manifest);
-                await git.StageAsync(manifestPath, ct).ConfigureAwait(false);
-                await git.CommitAsync(
-                    $"chore(manifest): record plan PR #{prNumber} merge for {itemKey}", ct).ConfigureAwait(false);
-                await git.PushAsync(manifestBranch, "origin", ct).ConfigureAwait(false);
                 manifestPushed = true;
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (ExternalToolException pushEx) when (pushEx.Stderr?.Contains("rejected", StringComparison.OrdinalIgnoreCase) == true
-                                                       || pushEx.Stderr?.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                try { await git.ResetHardAsync($"origin/{manifestBranch}", ct).ConfigureAwait(false); }
-                catch { /* best-effort; surface the original push failure */ }
-
-                return EmitMergePlanAdoError(
-                    rootId, itemId, parentItemId, organization, project, repository, slug, prUrl, prNumber,
-                    "manifest_push_rejected",
-                    $"Manifest push to origin/{manifestBranch} rejected (likely a concurrent push). Re-run the verb to retry; the ledger will pick up the existing merge commit and bump exactly once. Detail: {pushEx.Stderr}",
-                    isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, lockToken: lockToken,
-                    prState: "MERGED", merged: true, alreadyMerged: alreadyMerged, mergeCommit: mergeCommit,
-                    prevGen: ledger.PreviousGeneration, currGen: ledger.CurrentGeneration,
-                    manifestRecorded: false, manifestPushed: false);
             }
             catch (Exception ex)
             {
                 return EmitMergePlanAdoError(
                     rootId, itemId, parentItemId, organization, project, repository, slug, prUrl, prNumber,
                     "internal_error",
-                    $"Manifest commit/push failed: {ex.Message}",
+                    $"Manifest save failed: {ex.Message}",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, lockToken: lockToken,
                     prState: "MERGED", merged: true, alreadyMerged: alreadyMerged, mergeCommit: mergeCommit,
                     prevGen: ledger.PreviousGeneration, currGen: ledger.CurrentGeneration,

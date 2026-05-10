@@ -59,7 +59,7 @@ public sealed partial class PlanCommands
     /// <param name="parentItemId">Immediate plan-tree parent's work-item id. Use <paramref name="rootId"/> when the parent is the root plan.</param>
     /// <param name="prNumber">Old (stale) PR number to close (positive).</param>
     /// <param name="ancestorIds">Comma-separated ancestor chain BELOW the root, ending in the literal token <c>root</c> (e.g. <c>"5678,root"</c> for a grandchild). Empty when the parent IS the root plan and the chain has only "root".</param>
-    /// <param name="manifestPath">Path to the run manifest. Defaults to <c>.polyphony/run.yaml</c>.</param>
+    /// <param name="manifestPath">Optional override of the run manifest path. When empty (default), derived under the git common dir via <c>PolyphonyStatePaths</c>. Pass an explicit path only as a testing seam.</param>
     /// <param name="by">Lock acquirer name; defaults to <c>USERNAME</c>/<c>USER</c> env.</param>
     /// <param name="lockTtlHours">Run-lock TTL (default 24).</param>
     /// <param name="ct">Cancellation token.</param>
@@ -71,7 +71,7 @@ public sealed partial class PlanCommands
         int parentItemId = RequiredInput.MissingInt,
         int prNumber = RequiredInput.MissingInt,
         string ancestorIds = "",
-        string manifestPath = ".polyphony/run.yaml",
+        string manifestPath = "",
         string by = "",
         int lockTtlHours = 24,
         CancellationToken ct = default)
@@ -122,6 +122,13 @@ public sealed partial class PlanCommands
             parentPlanBranch = BranchNameBuilder.DescendantPlan(root, parentItem).Value;
         }
         var manifestBranch = BranchNameBuilder.Feature(root).Value;
+
+        // ── 1b. Resolve local manifest path (Rev 4.2). ─────────────────────
+        var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
+        if (resolvedPath.Error is not null)
+            return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "internal_error", resolvedPath.Error,
+                oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
+        var localManifestPath = resolvedPath.Path;
 
         // ── 2. Resolve repo slug. ──────────────────────────────────────────
         var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
@@ -175,7 +182,7 @@ public sealed partial class PlanCommands
             return await RecreateStaleDescendantUnderLockAsync(
                 rootId, itemId, parentItemId, prNumber,
                 headBranch, parentPlanBranch, manifestBranch,
-                manifestPath, slug, ancestorIds, ct).ConfigureAwait(false);
+                localManifestPath, slug, ancestorIds, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -213,10 +220,9 @@ public sealed partial class PlanCommands
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
         }
 
-        // ── 5. Fetch feature branch + parent plan branch. ──────────────────
+        // ── 5. Fetch parent plan branch only (manifest is local in Rev 4.2). ──
         try
         {
-            await git.FetchAsync("origin", manifestBranch, ct).ConfigureAwait(false);
             await git.FetchAsync("origin", parentPlanBranch, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
@@ -227,35 +233,36 @@ public sealed partial class PlanCommands
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
         }
 
-        // ── 6. Read manifest from origin/feature/{root} UNDER lock. ────────
+        // ── 6. Read manifest from local disk UNDER lock (Rev 4.2). ─────────
         RunManifest manifest;
         try
         {
-            var manifestYaml = await git.ShowFileAtRefAsync($"origin/{manifestBranch}", manifestPath, ct).ConfigureAwait(false);
-            if (manifestYaml is null)
-                return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "manifest_read_failed",
-                    $"manifest not found at origin/{manifestBranch}:{manifestPath}",
-                    oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
-            manifest = RunManifestStore.Parse(manifestYaml, manifestPath);
+            manifest = RunManifestStore.LoadOrThrow(manifestPath);
             RunManifestValidator.ValidateOrThrow(manifest);
         }
         catch (OperationCanceledException) { throw; }
-        catch (ExternalToolException ex)
+        catch (FileNotFoundException)
         {
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "manifest_read_failed",
-                $"manifest read failed: {ex.Message}",
+                $"manifest not found at {manifestPath}",
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "manifest_invalid",
                 $"manifest invalid: {ex.Message}",
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
         }
+        catch (Exception ex)
+        {
+            return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "manifest_read_failed",
+                $"manifest read failed: {ex.Message}",
+                oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
+        }
 
         if (manifest.RootId != rootId)
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "manifest_invalid",
-                $"manifest at origin/{manifestBranch}:{manifestPath} declares root {manifest.RootId}, expected {rootId}",
+                $"manifest at {manifestPath} declares root {manifest.RootId}, expected {rootId}",
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
 
         // ── 7. Poll old PR + verify identity. ──────────────────────────────
@@ -445,30 +452,13 @@ public sealed partial class PlanCommands
         var trimmedNewUrl = newPrUrl.Trim();
         var newPrNumber = ExtractPrNumberForRecreate(trimmedNewUrl);
 
-        // ── 15. Reload manifest from origin tip + apply ledger + push. ─────
-        // Mirrors the rebase verb's reload-after-reset pattern: the manifest
-        // we read at step 6 may have been superseded by a peer; re-reading
-        // after `reset --hard origin/{feature}` lets us record on top of
-        // whatever the current tip is. Apply is idempotent on
-        // (branch, commit, reason), so a peer that recorded the SAME entry
-        // gives DuplicateSkipped → no commit/push needed.
+        // ── 15. Apply ledger to local manifest + save (Rev 4.2). ───────────
+        // Manifest is local + canonical; no checkout/reset needed. The lock
+        // acquired in step 3 serializes us against concurrent writers.
+        // Apply is idempotent on (branch, commit, reason), so a peer that
+        // recorded the SAME entry gives DuplicateSkipped → no-op.
         bool manifestRecorded = false;
         bool manifestPushed = false;
-        try
-        {
-            await git.CheckoutAsync(manifestBranch, ct).ConfigureAwait(false);
-            await git.ResetHardAsync($"origin/{manifestBranch}", ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "internal_error",
-                $"Could not checkout/reset {manifestBranch}: {ex.Message}",
-                oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch, oldPrUrl: oldPrUrl,
-                oldPrClosed: true, oldBranchDeleted: oldBranchDeleted, newBranchCreated: true,
-                newPrOpened: true, newPrNumber: newPrNumber, newPrUrl: trimmedNewUrl, newHeadBranch: headBranch,
-                warnings: warnings);
-        }
 
         RunManifest manifestForLedger;
         try
@@ -478,7 +468,7 @@ public sealed partial class PlanCommands
         catch (Exception ex)
         {
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "manifest_read_failed",
-                $"Could not reload manifest at '{manifestPath}' after reset: {ex.Message}",
+                $"Could not reload manifest at '{manifestPath}': {ex.Message}",
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch, oldPrUrl: oldPrUrl,
                 oldPrClosed: true, oldBranchDeleted: oldBranchDeleted, newBranchCreated: true,
                 newPrOpened: true, newPrNumber: newPrNumber, newPrUrl: trimmedNewUrl, newHeadBranch: headBranch,
@@ -507,36 +497,19 @@ public sealed partial class PlanCommands
                 newPrOpened: true, newPrNumber: newPrNumber, newPrUrl: trimmedNewUrl, newHeadBranch: headBranch,
                 warnings: warnings);
         }
-        // DuplicateSkipped → noop on the ledger; treat as already-pushed.
+        // DuplicateSkipped → noop on the ledger; treat as already-persisted.
 
         if (manifestRecorded)
         {
             try
             {
                 RunManifestStore.Save(manifestPath, manifestForLedger);
-                await git.StageAsync(manifestPath, ct).ConfigureAwait(false);
-                await git.CommitAsync(
-                    $"chore(manifest): record recreate of {headBranch} after ancestor plan_generation drift",
-                    ct).ConfigureAwait(false);
-                await git.PushAsync(manifestBranch, "origin", ct).ConfigureAwait(false);
                 manifestPushed = true;
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (ExternalToolException pushEx) when (LooksLikePushRejectForRecreate(pushEx.Stderr))
-            {
-                try { await git.ResetHardAsync($"origin/{manifestBranch}", ct).ConfigureAwait(false); }
-                catch { /* best-effort rollback */ }
-                return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "manifest_push_rejected",
-                    $"Manifest push to origin/{manifestBranch} rejected (likely a concurrent push). Re-run the verb to complete recovery — the rebase ledger entry will be re-applied idempotently. Detail: {pushEx.Stderr}",
-                    oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch, oldPrUrl: oldPrUrl,
-                    oldPrClosed: true, oldBranchDeleted: oldBranchDeleted, newBranchCreated: true,
-                    newPrOpened: true, newPrNumber: newPrNumber, newPrUrl: trimmedNewUrl, newHeadBranch: headBranch,
-                    warnings: warnings);
             }
             catch (Exception ex)
             {
                 return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "internal_error",
-                    $"Manifest commit/push failed: {ex.Message}",
+                    $"Manifest save failed: {ex.Message}",
                     oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch, oldPrUrl: oldPrUrl,
                     oldPrClosed: true, oldBranchDeleted: oldBranchDeleted, newBranchCreated: true,
                     newPrOpened: true, newPrNumber: newPrNumber, newPrUrl: trimmedNewUrl, newHeadBranch: headBranch,

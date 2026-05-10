@@ -49,7 +49,7 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new PrCommands(git, gh, twig, Repository, Config, new RunLockStore(), new RunLockPathResolver(git)), runner);
+        return (new PrCommands(git, gh, twig, Repository, Config, new RunLockStore(), new RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git)), runner);
     }
 
     private void SeedManifest(int rootId, Dictionary<string, int>? planGenerations = null, List<MergedPlanPrEntry>? ledger = null)
@@ -138,16 +138,24 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
     }
 
     /// <summary>
-    /// Stub for <see cref="IGitClient.ShowFileAtRefAsync"/>. Use <c>missing: true</c>
-    /// to simulate the manifest file not existing at that revision.
+    /// Rev 4.2: manifest is read from local disk. Seeds the local file at
+    /// <see cref="_manifestPath"/> with <paramref name="yamlContent"/>, or
+    /// deletes it when <paramref name="missing"/> is true. The
+    /// <paramref name="branch"/> parameter is retained for call-site
+    /// compatibility but no longer participates.
     /// </summary>
     private void StubGitShowManifest(FakeProcessRunner runner, string branch, string yamlContent, bool missing = false)
     {
-        var refspec = $"origin/{branch}:{_manifestPath}";
-        var result = missing
-            ? new ProcessResult(128, "", $"fatal: path '{_manifestPath}' does not exist in 'origin/{branch}'")
-            : new ProcessResult(0, yamlContent, "");
-        runner.WhenExact("git", ["show", refspec], result);
+        _ = runner;
+        _ = branch;
+        if (missing)
+        {
+            if (File.Exists(_manifestPath)) File.Delete(_manifestPath);
+        }
+        else
+        {
+            File.WriteAllText(_manifestPath, yamlContent);
+        }
     }
 
     /// <summary>Builds a plan-PR body with YAML front-matter carrying an ancestor_plan_generations snapshot.</summary>
@@ -567,7 +575,6 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
             merged_plan_prs: []
             """;
         StubGitShowManifest(runner, "feature/100", manifestYaml);
-        SeedManifest(100);
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergePlanPr(rootId: 100, itemId: 1100, prNumber: 42, manifestPath: _manifestPath));
@@ -615,7 +622,6 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
             merged_plan_prs: []
             """;
         StubGitShowManifest(runner, "feature/100", manifestYaml);
-        SeedManifest(100);
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergePlanPr(rootId: 100, itemId: 1100, prNumber: 42, manifestPath: _manifestPath));
@@ -745,7 +751,6 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
             merged_plan_prs: []
             """;
         StubGitShowManifest(runner, "feature/100", manifestYaml);
-        SeedManifest(100);
 
         // Deliberately NO `gh pr merge` stub. The verb catches the
         // "no responder" exception from FakeProcessRunner and surfaces it
@@ -810,7 +815,6 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
             merged_plan_prs: []
             """;
         StubGitShowManifest(runner, "feature/100", manifestYaml);
-        SeedManifest(100);
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergePlanPr(rootId: 100, itemId: 1100, prNumber: 42, manifestPath: _manifestPath));
@@ -851,7 +855,6 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
             merged_plan_prs: []
             """;
         StubGitShowManifest(runner, "feature/100", manifestYaml);
-        SeedManifest(100);
 
         // Don't stub `gh pr merge`; we want the verb to fail at the merge
         // step, NOT at the validator guard. That proves the guard let it through.
