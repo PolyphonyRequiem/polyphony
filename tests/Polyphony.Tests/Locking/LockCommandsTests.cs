@@ -161,14 +161,16 @@ public sealed class LockCommandsTests : IDisposable
     }
 
     [Fact]
-    public async Task Acquire_DefaultPath_UsesGitTopLevelLayout()
+    public async Task Acquire_DefaultPath_UsesGitCommonDirLayout()
     {
         var (exit, output) = await CaptureAsync(() => _sut.Acquire(rootId: 1234, by: "alice"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize<AcquireLockResult>(output, PolyphonyJsonContext.Default.AcquireLockResult)!;
         result.Acquired.ShouldBeTrue();
-        var expected = Path.Combine(_dir, ".polyphony", "locks", "run-1234.lock");
+        // Rev 4.2: lock lives under <git-common-dir>/polyphony/<root_id>/locks/run.lock.
+        // FakeGitClient.GetCommonDirAsync returns Path.Combine(_topLevel, ".git").
+        var expected = Path.Combine(_dir, ".git", "polyphony", "1234", "locks", "run.lock");
         result.Path.ShouldBe(expected);
         File.Exists(expected).ShouldBeTrue();
     }
@@ -309,6 +311,7 @@ public sealed class LockCommandsTests : IDisposable
         private readonly string _topLevel;
         public FakeGitClient(string topLevel) { _topLevel = topLevel; }
         public Task<string?> GetTopLevelAsync(CancellationToken ct = default) => Task.FromResult<string?>(_topLevel);
+        public Task<string?> GetCommonDirAsync(CancellationToken ct = default) => Task.FromResult<string?>(Path.Combine(_topLevel, ".git"));
         public Task<string?> GetCurrentBranchAsync(CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<string?> GetRemoteUrlAsync(string remote = "origin", CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<IReadOnlyList<string>> ListRemoteBranchesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);

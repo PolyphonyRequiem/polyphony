@@ -13,6 +13,22 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
         return result.Succeeded ? TrimOrNull(result.Stdout) : null;
     }
 
+    public async Task<string?> GetCommonDirAsync(CancellationToken ct = default)
+    {
+        // --path-format=absolute MUST come before --git-common-dir on the
+        // command line — git's rev-parse arg parser is left-to-right and
+        // requires the format flag earlier in the line to apply to the
+        // path-emitting flag that follows. Per the Rev 4.2 amendment, the
+        // absolute form is non-negotiable: a relative path resolves
+        // differently from each worktree's cwd and breaks the cross-worktree
+        // convergence the common dir is meant to provide.
+        var result = await runner.RunAsync(
+            Exe,
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            ct).ConfigureAwait(false);
+        return result.Succeeded ? TrimOrNull(result.Stdout) : null;
+    }
+
     public async Task<string?> GetCurrentBranchAsync(CancellationToken ct = default)
     {
         var result = await runner.RunAsync(Exe, ["branch", "--show-current"], ct).ConfigureAwait(false);

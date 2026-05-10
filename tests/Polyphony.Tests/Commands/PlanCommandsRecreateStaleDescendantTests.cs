@@ -97,6 +97,8 @@ public sealed class PlanCommandsRecreateStaleDescendantTests : CommandTestBase, 
     private void StubEnvironmentDefaults(FakeProcessRunner runner, string? remote = null)
     {
         runner.WhenExact("git", ["rev-parse", "--show-toplevel"], new ProcessResult(0, _tempDir + "\n", ""));
+        runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, Path.Combine(_tempDir, ".git") + "\n", ""));
         runner.WhenExact("git", ["remote", "get-url", "origin"], new ProcessResult(0, (remote ?? "https://github.com/owner/repo.git") + "\n", ""));
     }
 
@@ -420,9 +422,10 @@ public sealed class PlanCommandsRecreateStaleDescendantTests : CommandTestBase, 
         var (cmd, runner) = CreateCommand();
         StubEnvironmentDefaults(runner);
 
-        var lockDir = Path.Combine(_tempDir, ".polyphony", "locks");
+        // Rev 4.2: lock lives at <git-common-dir>/polyphony/<root_id>/locks/run.lock.
+        var lockDir = Path.Combine(_tempDir, ".git", "polyphony", $"{RootId}", "locks");
         Directory.CreateDirectory(lockDir);
-        File.WriteAllText(Path.Combine(lockDir, $"run-{RootId}.lock"),
+        File.WriteAllText(Path.Combine(lockDir, "run.lock"),
             $"schema: 1\nroot_id: {RootId}\nlock_token: held-by-other\nacquired_by: peer\nacquired_at: 2099-01-01T00:00:00Z\nttl_until: 2099-01-02T00:00:00Z\n");
 
         var (_, output) = await CaptureConsoleAsync(() =>
@@ -452,7 +455,7 @@ public sealed class PlanCommandsRecreateStaleDescendantTests : CommandTestBase, 
         await CaptureConsoleAsync(() =>
             cmd.RecreateStaleDescendant(RootId, ItemId, ParentId, PrNumber, ancestorIds: "200,root", manifestPath: _manifestPath));
 
-        File.Exists(Path.Combine(_tempDir, ".polyphony", "locks", $"run-{RootId}.lock")).ShouldBeFalse();
+        File.Exists(Path.Combine(_tempDir, ".git", "polyphony", $"{RootId}", "locks", "run.lock")).ShouldBeFalse();
     }
 
     // ════════════════════════════════════════════════════════════════════

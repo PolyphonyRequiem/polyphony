@@ -1,42 +1,54 @@
+using Polyphony.Infrastructure.Paths;
 using Polyphony.Infrastructure.Processes;
 
 namespace Polyphony.Locking;
 
 /// <summary>
 /// Resolves the on-disk path for a polyphony run lock.
-/// Default layout (per the Rev 4 branch-model ADR):
-/// <c>&lt;repoRoot&gt;/.polyphony/locks/run-{root_id}.lock</c>.
+/// Layout (per the Rev 4.2 amendment to the branch-model ADR):
+/// <c>&lt;git-common-dir&gt;/polyphony/&lt;root_id&gt;/locks/run.lock</c>.
 ///
-/// <para>Repo root is resolved via <see cref="IGitClient.GetTopLevelAsync"/>
-/// when available; falls back to the current working directory when
-/// not inside a git repo. Callers can override the entire path for
-/// tests.</para>
+/// <para>Lock-path resolution delegates to
+/// <see cref="PolyphonyStatePaths"/>, which throws when not inside a
+/// git repo. Repo root (used only to populate
+/// <see cref="RunLock.RepoRoot"/> for human-readable diagnostics)
+/// continues to be resolved from
+/// <see cref="IGitClient.GetTopLevelAsync"/> with a cwd fallback —
+/// it is not load-bearing.</para>
+///
+/// <para>Callers can still override the entire path for tests via
+/// the <c>--path</c> flag on each lock verb.</para>
 /// </summary>
 public sealed class RunLockPathResolver
 {
     private readonly IGitClient _git;
+    private readonly PolyphonyStatePaths _paths;
 
     public RunLockPathResolver(IGitClient git)
+        : this(git, new PolyphonyStatePaths(git))
     {
+    }
+
+    public RunLockPathResolver(IGitClient git, PolyphonyStatePaths paths)
+    {
+        ArgumentNullException.ThrowIfNull(git);
+        ArgumentNullException.ThrowIfNull(paths);
         _git = git;
+        _paths = paths;
     }
 
     /// <summary>
     /// Returns the absolute lock-file path for the given root id.
-    /// Creates no directories.
+    /// Creates no directories. Throws when not inside a git repo.
     /// </summary>
-    public async Task<string> ResolveAsync(int rootId, CancellationToken ct = default)
-    {
-        var repoRoot = await _git.GetTopLevelAsync(ct).ConfigureAwait(false)
-            ?? Directory.GetCurrentDirectory();
-
-        return Path.Combine(repoRoot, ".polyphony", "locks", $"run-{rootId}.lock");
-    }
+    public Task<string> ResolveAsync(int rootId, CancellationToken ct = default)
+        => _paths.GetLockPathAsync(rootId, ct);
 
     /// <summary>
-    /// Returns the absolute repo root used for default lock-path
-    /// resolution. Used by acquire to populate
-    /// <see cref="RunLock.RepoRoot"/> for human-readable diagnostics.
+    /// Returns the absolute repo root for human-readable diagnostics in
+    /// <see cref="RunLock.RepoRoot"/>. Falls back to the current working
+    /// directory when not inside a git repo — this field is informational
+    /// only and never used for path resolution.
     /// </summary>
     public async Task<string> ResolveRepoRootAsync(CancellationToken ct = default)
     {

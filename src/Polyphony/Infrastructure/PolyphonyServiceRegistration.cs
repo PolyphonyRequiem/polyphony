@@ -75,6 +75,10 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<Polyphony.Locking.RunLockStore>();
         services.AddSingleton<Polyphony.Locking.RunLockPathResolver>();
 
+        // Per-root state path resolver (Rev 4.2 amendment): manifest +
+        // run-lock paths under <git-common-dir>/polyphony/<root_id>/.
+        services.AddSingleton<Polyphony.Infrastructure.Paths.PolyphonyStatePaths>();
+
         // Command classes that are referenced as constructor dependencies of
         // OTHER command classes must be registered explicitly. ConsoleAppFramework
         // resolves top-level command parameters from the container but does not

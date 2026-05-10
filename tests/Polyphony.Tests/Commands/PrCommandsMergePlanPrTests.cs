@@ -74,6 +74,8 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
     private void StubEnvironmentDefaults(FakeProcessRunner runner)
     {
         runner.WhenExact("git", ["rev-parse", "--show-toplevel"], new ProcessResult(0, _tempDir + "\n", ""));
+        runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, Path.Combine(_tempDir, ".git") + "\n", ""));
         runner.WhenExact("git", ["remote", "get-url", "origin"], new ProcessResult(0, "https://github.com/owner/repo.git\n", ""));
     }
 
@@ -235,9 +237,10 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
         StubEnvironmentDefaults(runner);
 
         // Pre-create the lock file so TryAcquire returns Held.
-        var lockDir = Path.Combine(_tempDir, ".polyphony", "locks");
+        // Rev 4.2: lock lives at <git-common-dir>/polyphony/<root_id>/locks/run.lock.
+        var lockDir = Path.Combine(_tempDir, ".git", "polyphony", "100", "locks");
         Directory.CreateDirectory(lockDir);
-        var lockFile = Path.Combine(lockDir, "run-100.lock");
+        var lockFile = Path.Combine(lockDir, "run.lock");
         File.WriteAllText(lockFile,
             "schema: 1\nroot_id: 100\nlock_token: existing\nacquired_by: someone\nacquired_at: 2026-05-06T00:00:00Z\nttl_until: 2099-01-01T00:00:00Z\n");
 

@@ -15,6 +15,30 @@ public interface IGitClient
     Task<string?> GetTopLevelAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// <c>git rev-parse --path-format=absolute --git-common-dir</c>. Returns
+    /// the absolute path to the **shared** git directory for the current
+    /// worktree. In the main worktree this is the same as <c>.git</c>; in a
+    /// linked worktree (created via <c>git worktree add</c>) it is the main
+    /// worktree's <c>.git</c>, NOT the per-worktree <c>.git/worktrees/{name}</c>
+    /// directory. Returns null when not inside a git repo.
+    ///
+    /// <para><b>The <c>--path-format=absolute</c> qualifier is mandatory.</b>
+    /// The default output is relative to the current working directory
+    /// (<c>.git</c> from the main worktree, <c>../.git/worktrees/{name}</c>
+    /// or similar from a linked worktree). Path resolvers that consume the
+    /// relative form silently produce inconsistent absolute paths between
+    /// worktrees, defeating the only reason callers ask for the common dir.
+    /// See <c>docs/decisions/branch-model.md § State location (Rev 4.2
+    /// amendment)</c>.</para>
+    ///
+    /// <para><b><c>--git-common-dir</c>, not <c>--git-dir</c>.</b>
+    /// <c>--git-dir</c> resolves to the per-worktree
+    /// <c>.git/worktrees/{name}</c> directory in linked worktrees and would
+    /// re-introduce the divergence we are trying to eliminate.</para>
+    /// </summary>
+    Task<string?> GetCommonDirAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// <c>git branch --show-current</c>. Returns the current branch name,
     /// or null when detached / not in a repo.
     /// </summary>
