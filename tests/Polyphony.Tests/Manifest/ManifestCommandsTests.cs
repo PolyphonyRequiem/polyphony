@@ -33,10 +33,15 @@ public sealed class ManifestCommandsTests : IDisposable
     // not invoke the injected IGitClient, so a stub backed by an empty
     // FakeProcessRunner is safe — any unstubbed git call would throw
     // immediately and surface as a test failure rather than a false pass.
-    private static ManifestCommands NewCommand() =>
-        new(new Polyphony.Infrastructure.Processes.GitClient(
-                new Polyphony.Tests.Infrastructure.Processes.FakeProcessRunner()),
-            new Polyphony.Tests.TestFixtures.FakePostconditionVerifier());
+    private static ManifestCommands NewCommand()
+    {
+        var git = new Polyphony.Infrastructure.Processes.GitClient(
+            new Polyphony.Tests.Infrastructure.Processes.FakeProcessRunner());
+        return new(
+            git,
+            new Polyphony.Tests.TestFixtures.FakePostconditionVerifier(),
+            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git));
+    }
 
     /// <summary>
     /// Runs an async command while capturing stdout. Mirrors
@@ -182,6 +187,100 @@ public sealed class ManifestCommandsTests : IDisposable
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadResult)!;
         result.Error!.ShouldNotBeNullOrEmpty();
+    }
+
+    // ── Path resolution (Rev 4.2) ───────────────────────────────────────
+
+    [Fact]
+    public async Task Read_ExplicitPath_WithMatchingRootId_ReportsExplicitSource()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() =>
+            cmd.Init(rootId: 4242, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.Read(rootId: 4242, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadResult)!;
+        result.PathSource.ShouldBe("explicit");
+        result.Manifest.RootId.ShouldBe(4242);
+    }
+
+    [Fact]
+    public async Task Read_ExplicitPath_WithMismatchedRootId_ReturnsManifestRootMismatch()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() =>
+            cmd.Init(rootId: 1111, platformProject: "x/y", path: this.manifestPath));
+
+        // Caller asks for a different root than what's on disk — the
+        // AB#3067 carry-over guard.
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.Read(rootId: 9999, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadResult)!;
+        result.ErrorCode.ShouldBe("manifest_root_mismatch");
+        result.PathSource.ShouldBe("explicit");
+        result.Error!.ShouldContain("AB#3067");
+    }
+
+    [Fact]
+    public async Task Read_NonPositiveRootId_ReturnsInvalidRootId()
+    {
+        var cmd = NewCommand();
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.Read(rootId: 0, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadResult)!;
+        result.ErrorCode.ShouldBe("invalid_root_id");
+        result.Error!.ShouldContain("--root-id must be positive");
+    }
+
+    [Fact]
+    public async Task Read_NoRootIdNoPath_FallsBackToLegacyDefault()
+    {
+        // When neither --root-id nor --path is supplied, resolution falls
+        // back to .polyphony/run.yaml. The file doesn't exist here so
+        // we expect manifest_not_found, not a path-resolution error —
+        // the point is to prove path_source = "default_legacy".
+        var cmd = NewCommand();
+        var (exit, output) = await CaptureAsync(() => cmd.Read());
+
+        exit.ShouldBe(ExitCodes.CacheError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestReadResult)!;
+        result.PathSource.ShouldBe("default_legacy");
+        result.ErrorCode.ShouldBe("manifest_not_found");
+    }
+
+    [Fact]
+    public async Task TopologyHash_ExplicitPath_WithMismatchedRootId_ReturnsManifestRootMismatch()
+    {
+        var cmd = NewCommand();
+        await CaptureAsync(() =>
+            cmd.Init(rootId: 1111, platformProject: "x/y", path: this.manifestPath));
+
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.TopologyHash(rootId: 9999, path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestTopologyHashResult)!;
+        result.ErrorCode.ShouldBe("manifest_root_mismatch");
+        result.PathSource.ShouldBe("explicit");
+    }
+
+    [Fact]
+    public async Task Init_NonPositiveRootId_ReturnsInvalidRootId()
+    {
+        var cmd = NewCommand();
+        var (exit, output) = await CaptureAsync(() =>
+            cmd.Init(rootId: 0, platformProject: "x/y", path: this.manifestPath));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ManifestInitResult)!;
+        result.ErrorCode.ShouldBe("invalid_root_id");
     }
 
     [Fact]

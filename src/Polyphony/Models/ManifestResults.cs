@@ -2,6 +2,24 @@ using Polyphony.Manifest;
 
 namespace Polyphony;
 
+// All ManifestCommands result records carry two cross-cutting diagnostic
+// fields appended at the end of each record:
+//
+//   • PathSource (snake_case `path_source`) — how the manifest path was
+//     resolved. One of `"derived"` (from --root-id via PolyphonyStatePaths),
+//     `"explicit"` (caller supplied --path), or `"default_legacy"` (neither
+//     --root-id nor --path; fell back to `.polyphony/run.yaml`). Always
+//     populated on success; populated on error when the failure happened
+//     after path resolution.
+//
+//   • ErrorCode (snake_case `error_code`) — structured tag for workflow
+//     gates to route on. Populated only on error paths. Known values:
+//     `invalid_root_id`, `manifest_path_resolution_failed`,
+//     `manifest_not_found`, `manifest_malformed`, `manifest_root_mismatch`.
+//
+// Both fields are nullable; `WhenWritingNull` keeps successful payloads
+// from carrying `error_code: null` noise.
+
 /// <summary>JSON output for <c>polyphony manifest read</c>.</summary>
 public sealed record ManifestReadResult
 {
@@ -19,6 +37,12 @@ public sealed record ManifestReadResult
 
     /// <summary>Validation error when read fails.</summary>
     public string? Error { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? PathSource { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? ErrorCode { get; init; }
 }
 
 /// <summary>JSON output for <c>polyphony manifest topology-hash</c>.</summary>
@@ -38,6 +62,12 @@ public sealed record ManifestTopologyHashResult
 
     /// <summary>Validation error when computation fails.</summary>
     public string? Error { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? PathSource { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? ErrorCode { get; init; }
 }
 
 /// <summary>JSON output for <c>polyphony manifest record-rebase</c>.</summary>
@@ -66,6 +96,12 @@ public sealed record ManifestRebaseRecordResult
 
     /// <summary>Validation error when the operation fails.</summary>
     public string? Error { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? PathSource { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? ErrorCode { get; init; }
 }
 
 /// <summary>JSON output for <c>polyphony manifest record-approval</c>.</summary>
@@ -91,6 +127,12 @@ public sealed record ManifestApprovalRecordResult
 
     /// <summary>Validation error when the operation fails.</summary>
     public string? Error { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? PathSource { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? ErrorCode { get; init; }
 }
 
 /// <summary>
@@ -146,6 +188,12 @@ public sealed record ManifestRecordPlanMergeResult
 
     /// <summary>Validation error when the operation fails.</summary>
     public string? Error { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? PathSource { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? ErrorCode { get; init; }
 }
 
 /// <summary>
@@ -172,6 +220,12 @@ public sealed record ManifestReadPlanGenerationResult
 
     /// <summary>Validation error when the operation fails.</summary>
     public string? Error { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? PathSource { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? ErrorCode { get; init; }
 }
 
 /// <summary>
@@ -213,4 +267,10 @@ public sealed record ManifestReadPlanGenerationSnapshotResult
 
     /// <summary>Validation error when the operation fails.</summary>
     public string? Error { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? PathSource { get; init; }
+
+    /// <summary>See file header for semantics.</summary>
+    public string? ErrorCode { get; init; }
 }

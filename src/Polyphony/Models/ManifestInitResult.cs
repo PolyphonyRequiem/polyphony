@@ -26,4 +26,21 @@ public sealed record ManifestInitResult
 
     /// <summary>Validation error when init fails.</summary>
     public string? Error { get; init; }
+
+    /// <summary>
+    /// How the manifest path was resolved: <c>"derived"</c> (from --root-id
+    /// via PolyphonyStatePaths), <c>"explicit"</c> (caller supplied --path),
+    /// or <c>"default_legacy"</c> (no --root-id, no --path; fell back to
+    /// <c>.polyphony/run.yaml</c>). Always populated on success; populated
+    /// on error when the failure happened after path resolution.
+    /// </summary>
+    public string? PathSource { get; init; }
+
+    /// <summary>
+    /// Structured error tag for workflow gates to route on. Populated only
+    /// on error paths. Known values: <c>invalid_root_id</c>,
+    /// <c>manifest_path_resolution_failed</c>, <c>manifest_not_found</c>,
+    /// <c>manifest_malformed</c>, <c>manifest_root_mismatch</c>.
+    /// </summary>
+    public string? ErrorCode { get; init; }
 }
