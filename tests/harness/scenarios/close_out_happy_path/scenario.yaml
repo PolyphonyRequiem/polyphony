@@ -1,0 +1,27 @@
+# close_out_happy_path — single-agent terminal scenario.
+#
+# Drives close-out.yaml end-to-end with a scripted close_out agent that
+# returns an empty observations list. Proves the harness can:
+#   1. Load a real production workflow YAML.
+#   2. Construct conductor with a FakeProvider injected at the existing
+#      provider seam (no conductor PR required).
+#   3. Capture the event stream via a recorder subscribed to the
+#      WorkflowEventEmitter.
+#   4. Assert ordered-subsequence agent execution + terminal reached.
+
+workflow: .conductor/registry/workflows/close-out.yaml
+
+inputs:
+  work_item_id: 12345
+  feature_branch: feature/12345-test
+
+agent_scripts:
+  close_out:
+    - content:
+        observations: []
+        summary: "All clean — no observations warranted."
+
+expected_trace:
+  agents_executed:
+    - close_out
+  reached_terminal: true
