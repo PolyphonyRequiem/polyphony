@@ -6,6 +6,13 @@
 # Twig CLI tool local data
 .twig/
 
+# Polyphony per-root state lives under <git-common-dir>/polyphony/<root_id>/
+# (run.yaml, run.lock). The legacy worktree-tracked location is forbidden
+# post-Rev 4.2 (PRs #251/#252/#254/#255). Any reappearance of this directory
+# in the worktree is a stale artifact from a pre-Rev-4.2 binary or a manual
+# mistake — it should never be committed.
+.polyphony/
+
 # User-specific files
 *.rsuser
 *.suo

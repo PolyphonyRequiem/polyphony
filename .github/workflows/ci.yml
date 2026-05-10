@@ -76,6 +76,18 @@ jobs:
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-prose-children.ps1 -Format github
 
+      - name: Lint (no tracked .polyphony/ state — Rev 4.2 invariant)
+        # Post-Rev 4.2 (PRs #251/#252/#254/#255) the polyphony per-root
+        # state (run.yaml, run.lock) lives EXCLUSIVELY at
+        # <git-common-dir>/polyphony/<root_id>/. The worktree-tracked
+        # `.polyphony/` directory is forbidden. `.gitignore` covers
+        # un-tracked state but does NOT prevent already-tracked paths
+        # from being committed nor `git add -f` overrides — this lint
+        # is the explicit invariant gate.
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-no-tracked-polyphony-state.ps1
+
       - name: Install Pester
         shell: pwsh
         run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
