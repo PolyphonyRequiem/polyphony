@@ -26,8 +26,10 @@ Two scenarios shipping today:
 Future PRs add additional P0 scenarios and a custom gate handler for
 non-default gate selections.
 
-See [`files/harness-design.md`](../../session-state/...) — the full
-design — for the long-form rationale.
+See [`docs/decisions/harness-mvp.md`](../../docs/decisions/harness-mvp.md) —
+the design ADR — for the long-form rationale, and
+[`.github/skills/polyphony-harness/SKILL.md`](../../.github/skills/polyphony-harness/SKILL.md)
+for the agent-loadable conventions guide.
 
 ## Why a separate Python driver
 
