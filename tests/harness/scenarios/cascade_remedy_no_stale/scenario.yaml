@@ -1,0 +1,26 @@
+# Cascade-remedy happy path: classify reports nothing stale, workflow ends.
+#
+# Exercises the simplest path through cascade-remedy.yaml:
+#   1. The `classify` script: node runs `polyphony plan classify-stale-descendants`.
+#   2. The shim returns `{"total_stale": 0, "total_descendants_scanned": 5}`.
+#   3. The route condition `(classify.output.total_stale | default(0)) == 0`
+#      matches and the workflow goes to $end without entering the for_each.
+#
+# This is the first harness scenario that depends on the .NET shim binary
+# under tests/harness/shim/ (no agent_scripts needed because cascade-remedy
+# has no LLM agents on this path).
+
+workflow: .conductor/registry/workflows/cascade-remedy.yaml
+
+inputs:
+  root_id: 1100
+
+cli_scripts:
+  - command: polyphony
+    args: [plan, classify-stale-descendants]
+    stdout: |
+      {"total_stale": 0, "total_descendants_scanned": 5, "stale_descendants": []}
+    exit_code: 0
+
+expected_trace:
+  reached_terminal: true

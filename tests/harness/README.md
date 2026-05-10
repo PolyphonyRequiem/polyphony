@@ -13,22 +13,27 @@ how to add a new scenario.
 
 ## Status
 
-**First scenario shipped.** `close_out_happy_path` runs `close-out.yaml`
-end-to-end with a single scripted agent and asserts the workflow reaches
-`workflow_completed`. Future PRs add the .NET shim binary (for
-workflows with `script:` nodes), additional P0 scenarios, and a custom
-gate handler for non-default gate selections.
+**Two scenarios shipping.**
+- `close_out_happy_path` runs `close-out.yaml` end-to-end with a single
+  scripted agent and asserts the workflow reaches `workflow_completed`.
+- `cascade_remedy_no_stale` runs `cascade-remedy.yaml`'s no-stale path,
+  exercising a `script:` node via the .NET shim binary — first scenario
+  to drive both the agent-provider seam and the shim PATH seam together.
+
+Future PRs add additional P0 scenarios and a custom gate handler for
+non-default gate selections.
 
 See [`files/harness-design.md`](../../session-state/...) — the full
-design — for the long-form rationale and tier-2 (subprocess shim) plan.
+design — for the long-form rationale.
 
 ## Why a separate Python driver
 
 Conductor is a Python application. Polyphony is .NET. Conductor exposes
 a clean `AgentProvider` ABC and accepts a `provider` constructor kwarg
 on `WorkflowEngine` — the cheapest way to inject a deterministic LLM
-fake is to construct the engine in-process from Python. A separate .NET
-shim handles the orthogonal concern of intercepting CLI calls (next PR);
+fake is to construct the engine in-process from Python. The .NET shim
+covers the orthogonal concern of intercepting `script:` calls (which
+conductor invokes via `asyncio.create_subprocess_exec` against `PATH`);
 the two layers compose because each fakes a different conductor
 boundary.
 
@@ -42,11 +47,15 @@ tests/harness/
 │   ├── run.py                        # CLI entrypoint (python -m driver.run <dir>)
 │   ├── scenario.py                   # scenario YAML loader + dataclasses
 │   ├── trace.py                      # event recorder + assertion engine
+│   ├── shim_runtime.py               # builds the shim, stages per-scenario bin/
 │   └── fakes/
 │       └── provider.py               # FakeProvider(AgentProvider)
+├── shim/
+│   ├── Polyphony.HarnessShim/        # .NET console app: replays scripted CLI calls
+│   └── Polyphony.HarnessShim.Tests/  # xUnit tests for the matcher
 └── scenarios/
     └── <scenario_name>/
-        └── scenario.yaml             # workflow path, agent scripts, expectations
+        └── scenario.yaml             # workflow path, agent + cli scripts, expectations
 ```
 
 ## Scenario YAML format
@@ -65,6 +74,13 @@ agent_scripts:
     - content:
         field: other-value
 
+cli_scripts:                          # optional — needed for `script:` nodes
+  - command: polyphony                # invoked as `polyphony plan classify-...`
+    args: [plan, classify-stale-descendants]
+    stdout: '{"total_stale": 0}'      # parsed as JSON into <step>.output
+    exit_code: 0
+  # First-match-wins. Put the most specific entries first.
+
 expected_trace:
   agents_executed:                    # ordered subsequence (not equality)
     - <agent_name>
@@ -74,11 +90,27 @@ expected_trace:
 ```
 
 The fake provider raises a clear error if the workflow asks for an agent
-the scenario didn't script, or asks for a scripted agent more times than
-scripted. Scenarios are intentionally minimal — assertions are
-**ordered subsequence**, not exhaustive equality, so adding a new
-lifecycle event to a workflow doesn't silently break unrelated
-scenarios.
+the scenario didn't script. The shim exits 99 with a structured stderr
+message when no `cli_scripts` entry matches an invocation. Both surfaces
+fail loudly so missing fixtures are obvious.
+
+## How `cli_scripts` matching works
+
+A scenario's `cli_scripts` list becomes a JSON manifest pointed at by
+`POLYPHONY_HARNESS_MANIFEST`. When conductor's `script:` executor calls
+`polyphony plan classify-stale-descendants --root-id 42`:
+
+1. The driver staged a copy of the shim binary as `polyphony.exe` (or
+   `polyphony` on Linux) into a temp `bin/` and prepended it to `PATH`.
+2. The OS resolves `polyphony` to the shim.
+3. The shim reads its argv: `command = "polyphony"`,
+   `args = ["plan", "classify-stale-descendants", "--root-id", "42"]`.
+4. It walks the manifest, taking the first entry whose `command` matches
+   AND whose declared `args` is a prefix of the actual invocation.
+5. It writes the entry's `stdout` / `stderr` and exits with `exit_code`.
+
+The shim also appends every invocation to an audit log; the driver
+exposes that under `cli_calls` in the result JSON for debugging.
 
 ## Running locally
 
@@ -87,6 +119,7 @@ scenarios.
 - A Python interpreter (3.11+) with `conductor` and `ruamel.yaml`
   importable.
 - Pester 5+ on PowerShell 7+.
+- The .NET 11 SDK (the shim binary builds on first scenario run).
 
 The simplest local setup is a conductor checkout with its own venv:
 
@@ -135,10 +168,6 @@ JSON to a file via `--output-json` to keep parsing clean.
 
 ## What this harness does not yet cover
 
-- **Workflows with `script:` nodes that shell out to polyphony, twig, or
-  gh.** Those need the .NET subprocess shim (next PR). 12 of the 13
-  production workflows have at least one `script:` node, so this is the
-  immediate next gap to close.
 - **Workflows with non-default human gate routing.** `--skip-gates`
   auto-picks the first option; scenarios that need to walk a different
   branch will need a custom `HumanGateHandler` (deferred — addresses
@@ -147,6 +176,8 @@ JSON to a file via `--output-json` to keep parsing clean.
   engine but with their own provider/registry; the fake propagation
   story for sub-workflows will need verification once we have a
   scenario that exercises one.
+- **CI execution.** Scenario tests skip on CI today (the runner has no
+  conductor venv). Wiring conductor into the CI matrix is its own PR.
 
 ## Why this layout (vs. the original design)
 

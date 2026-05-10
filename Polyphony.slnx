@@ -7,5 +7,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Polyphony.Tests/Polyphony.Tests.csproj" />
     <Project Path="tests/Polyphony.SchemaGenerator.Tests/Polyphony.SchemaGenerator.Tests.csproj" />
+    <Project Path="tests/harness/shim/Polyphony.HarnessShim/Polyphony.HarnessShim.csproj" />
+    <Project Path="tests/harness/shim/Polyphony.HarnessShim.Tests/Polyphony.HarnessShim.Tests.csproj" />
   </Folder>
 </Solution>

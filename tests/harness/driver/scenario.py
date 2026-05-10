@@ -9,6 +9,11 @@ shape is intentionally minimal:
     agent_scripts:
       <agent_name>:
         - content: { ... }   # one or more scripted outputs
+    cli_scripts:
+      - command: polyphony
+        args: [plan, classify-stale-descendants]
+        stdout: "{...json...}"
+        exit_code: 0
     expected_trace:
       agents_executed: [<name>, ...]   # ordered subsequence
       reached_terminal: true
@@ -28,6 +33,7 @@ from typing import Any
 import ruamel.yaml
 
 from .fakes.provider import ScriptedResponse
+from .shim_runtime import CliScript
 
 
 def _load_yaml(text: str) -> object:
@@ -49,6 +55,7 @@ class Scenario:
     workflow_path: Path
     inputs: dict[str, Any]
     agent_scripts: dict[str, list[ScriptedResponse]]
+    cli_scripts: list[CliScript]
     expected_trace: ExpectedTrace
 
 
@@ -93,6 +100,33 @@ def load_scenario(scenario_dir: Path, repo_root: Path) -> Scenario:
             for entry in entries
         ]
 
+    cli_raw = raw.get("cli_scripts") or []
+    if not isinstance(cli_raw, list):
+        raise ValueError(f"'cli_scripts' must be a list: {scenario_file}")
+    cli_scripts: list[CliScript] = []
+    for idx, entry in enumerate(cli_raw):
+        if not isinstance(entry, dict):
+            raise ValueError(f"cli_scripts[{idx}] must be a mapping: {scenario_file}")
+        command = entry.get("command")
+        if not command or not isinstance(command, str):
+            raise ValueError(
+                f"cli_scripts[{idx}] missing required 'command' string: {scenario_file}"
+            )
+        args = entry.get("args") or []
+        if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+            raise ValueError(
+                f"cli_scripts[{idx}].args must be a list of strings: {scenario_file}"
+            )
+        cli_scripts.append(
+            CliScript(
+                command=command,
+                args=list(args),
+                stdout=str(entry.get("stdout") or ""),
+                stderr=str(entry.get("stderr") or ""),
+                exit_code=int(entry.get("exit_code") or 0),
+            )
+        )
+
     expected_raw = raw.get("expected_trace") or {}
     expected = ExpectedTrace(
         agents_executed=list(expected_raw.get("agents_executed") or []),
@@ -106,5 +140,6 @@ def load_scenario(scenario_dir: Path, repo_root: Path) -> Scenario:
         workflow_path=workflow_path,
         inputs=inputs,
         agent_scripts=agent_scripts,
+        cli_scripts=cli_scripts,
         expected_trace=expected,
     )
