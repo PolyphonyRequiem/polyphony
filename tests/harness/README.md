@@ -13,7 +13,10 @@ how to add a new scenario.
 
 ## Status
 
-**Two scenarios shipping.**
+**Active on CI.** Every PR build installs Python 3.12 + conductor + the
+.NET SDK and runs all scenarios under `tests/harness/scenarios/`.
+
+Two scenarios shipping today:
 - `close_out_happy_path` runs `close-out.yaml` end-to-end with a single
   scripted agent and asserts the workflow reaches `workflow_completed`.
 - `cascade_remedy_no_stale` runs `cascade-remedy.yaml`'s no-stale path,
@@ -176,8 +179,6 @@ JSON to a file via `--output-json` to keep parsing clean.
   engine but with their own provider/registry; the fake propagation
   story for sub-workflows will need verification once we have a
   scenario that exercises one.
-- **CI execution.** Scenario tests skip on CI today (the runner has no
-  conductor venv). Wiring conductor into the CI matrix is its own PR.
 
 ## Why this layout (vs. the original design)
 
