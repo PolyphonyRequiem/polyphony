@@ -213,6 +213,24 @@ output:
   blocked: >-
     {%- if terminal_apex_blocked is defined -%}true
     {%- else -%}false{%- endif -%}
+  # ── Dispatch-failure telemetry (AB#3067 — outer-loop visibility) ───────
+  # `dispatch_failures` fires when one or more per-item sub-workflow
+  # invocations failed inside `dispatch_items` (which runs with
+  # `failure_mode: continue_on_error`). Per-wave failures are aggregated
+  # by `aggregate_renegotiation` into `items_failed_count` + a JSON
+  # `failed_items` array, then rolled up across waves by
+  # `outer_loop_evaluator`. Without these surfaces, item failures
+  # silently flipped the apex to `terminal_apex_blocked` with no
+  # actionable detail.
+  dispatch_failures: >-
+    {%- if terminal_apex_dispatch_failures is defined -%}true
+    {%- else -%}false{%- endif -%}
+  items_failed_count: >-
+    {%- if outer_loop_evaluator is defined -%}{{ outer_loop_evaluator.output.items_failed_this_iteration | default(0) }}
+    {%- else -%}0{%- endif -%}
+  failed_items: >-
+    {%- if outer_loop_evaluator is defined -%}{{ outer_loop_evaluator.output.failed_items | default('[]') }}
+    {%- else -%}[]{%- endif -%}
   iterations_used: >-
     {%- if outer_loop_evaluator is defined -%}{{ outer_loop_evaluator.output.iteration | default(0) }}
     {%- else -%}0{%- endif -%}
@@ -677,7 +695,7 @@ agents:
   #         incremented exactly once.
   - name: outer_loop_evaluator
     type: script
-    description: Aggregate per-iteration progress + decide loop-back / terminate (PR #9)
+    description: Aggregate per-iteration progress + failures + decide loop-back / terminate (PR #9 / AB#3067)
     command: pwsh
     args:
       - "-NoProfile"
@@ -689,7 +707,8 @@ agents:
 
         $maxIterations = if ($env:POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS) { [int]$env:POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS } else { 10 };
 
-        $satisfiedDelta = 0; $dispatchedDelta = 0; $totalItems = 0;
+        $satisfiedDelta = 0; $dispatchedDelta = 0; $failedDelta = 0; $totalItems = 0;
+        $failedItemsAgg = @();
         $raw = @'
         {{ wave_dispatch_loop.outputs | tojson }}
         '@;
@@ -708,10 +727,34 @@ agents:
             if ($v.PSObject.Properties.Name -contains 'items_satisfied_count') { $satisfiedDelta += [int]$v.items_satisfied_count }
             if ($v.PSObject.Properties.Name -contains 'items_dispatched_count') { $dispatchedDelta += [int]$v.items_dispatched_count }
             if ($v.PSObject.Properties.Name -contains 'item_count') { $totalItems += [int]$v.item_count }
+            # ── AB#3067 — roll up per-wave dispatch failures so the outer
+            # loop can route to terminal_apex_dispatch_failures instead of
+            # silently flipping to `blocked` when items failed.
+            if ($v.PSObject.Properties.Name -contains 'items_failed_count') {
+              $failedDelta += [int]$v.items_failed_count;
+            }
+            if ($v.PSObject.Properties.Name -contains 'failed_items') {
+              try {
+                # `failed_items` arrives as a JSON STRING (workflow output
+                # map flattens via Jinja). Parse + @() wrap to defeat the
+                # same singleton-array unwrap that bit aggregate_renegotiation.
+                $perWaveFailed = @($v.failed_items | ConvertFrom-Json);
+                foreach ($fi in $perWaveFailed) {
+                  if ($null -eq $fi) { continue }
+                  $failedItemsAgg += [ordered]@{
+                    wave_index      = $v.wave_index;
+                    iteration_index = $fi.iteration_index;
+                    work_item_id    = $fi.work_item_id;
+                    error           = $fi.error;
+                  };
+                }
+              } catch { }
+            }
           }
         } catch { }
 
         $madeProgress = ($satisfiedDelta -gt 0) -or ($dispatchedDelta -gt 0);
+        $hasDispatchFailures = ($failedDelta -gt 0);
 
         # Apex satisfaction: trust state next-ready's top-level `status`
         # routing hint (PR #5; StateNextReadyResult.cs). `status: satisfied`
@@ -734,7 +777,12 @@ agents:
 
         $capReached = $iteration -ge $maxIterations;
 
-        $decision = if ($apexSatisfied) { 'complete' }
+        # AB#3067 — `dispatch_failures` is FIRST priority (above complete).
+        # A satisfied apex with concurrent sub-workflow failures is almost
+        # certainly a stale validator read; the operator must see the
+        # failures before we declare success. Failures are loud by design.
+        $decision = if ($hasDispatchFailures) { 'dispatch_failures' }
+                    elseif ($apexSatisfied) { 'complete' }
                     elseif ($capReached) { 'cap' }
                     elseif (-not $madeProgress) { 'blocked' }
                     else { 'continue' };
@@ -745,13 +793,18 @@ agents:
           max_iterations = $maxIterations;
           items_satisfied_this_iteration = $satisfiedDelta;
           items_dispatched_this_iteration = $dispatchedDelta;
+          items_failed_this_iteration = $failedDelta;
+          failed_items = ($failedItemsAgg | ConvertTo-Json -Compress -Depth 6);
           total_items_observed = $totalItems;
           made_progress = $madeProgress;
+          has_dispatch_failures = $hasDispatchFailures;
           apex_satisfied = $apexSatisfied;
           cap_reached = $capReached;
           decision = $decision;
         } | ConvertTo-Json -Compress
     routes:
+      - to: terminal_apex_dispatch_failures
+        when: "{{ outer_loop_evaluator.output.decision == 'dispatch_failures' }}"
       - to: apex_completion_gate
         when: "{{ outer_loop_evaluator.output.decision == 'complete' }}"
       - to: terminal_apex_iteration_cap
@@ -1150,6 +1203,50 @@ agents:
           iterations_used = '{{ outer_loop_evaluator.output.iteration | default(0) }}';
           decision = '{{ outer_loop_evaluator.output.decision | default('blocked') }}';
         } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: apex dispatch failures (AB#3067) ───────────────────────────
+  #
+  # Fires when one or more per-item sub-workflow invocations failed inside
+  # `dispatch_items` (which runs `failure_mode: continue_on_error`). Without
+  # this terminal, those failures were swallowed by the wave's "successful"
+  # return and the outer loop flipped to `terminal_apex_blocked` with no
+  # actionable detail. This terminal enumerates the failed items with their
+  # work_item_id (when correlatable) and the underlying error message so
+  # the operator can decide whether to re-invoke, fix the upstream cause,
+  # or open a bug.
+  #
+  # Priority: this terminal is reached BEFORE complete / cap / blocked. A
+  # satisfied apex coexisting with sub-workflow failures is almost always a
+  # stale validator read; surface the failures first.
+  #
+  # NOTE: `|` (literal) — `>-` (folded) destroys the here-string the body
+  # uses to pass the failed_items JSON across the Jinja boundary.
+  - name: terminal_apex_dispatch_failures
+    type: script
+    description: Terminal — one or more for_each item dispatches failed; enumerate
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $failedItems = @();
+        try {
+          $rawFailed = @'
+        {{ outer_loop_evaluator.output.failed_items | default('[]') }}
+        '@;
+          $failedItems = @($rawFailed | ConvertFrom-Json);
+        } catch { $failedItems = @() }
+        [ordered]@{
+          apex_id            = {{ workflow.input.apex_id }};
+          satisfied          = $false;
+          dispatch_failures  = $true;
+          items_failed_count = [int]'{{ outer_loop_evaluator.output.items_failed_this_iteration | default(0) }}';
+          failed_items       = $failedItems;
+          iterations_used    = '{{ outer_loop_evaluator.output.iteration | default(0) }}';
+          decision           = '{{ outer_loop_evaluator.output.decision | default('dispatch_failures') }}';
+        } | ConvertTo-Json -Compress -Depth 6
     routes:
       - to: $end
 

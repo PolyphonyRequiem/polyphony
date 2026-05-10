@@ -140,6 +140,21 @@ output:
   item_count: >-
     {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.item_count | default(0) }}
     {%- else -%}0{%- endif -%}
+  # ── Wave failure surfacing (AB#3067 dogfood — outer-loop visibility) ────
+  # `items_failed_count` and `failed_items` capture per-item sub-workflow
+  # failures from the `dispatch_items` for_each (which runs
+  # `failure_mode: continue_on_error`). Without these, the apex-driver
+  # outer loop has no signal that items silently failed and would
+  # terminate as `terminal_apex_blocked` (zero-progress) without ever
+  # surfacing the underlying errors. apex-driver's outer_loop_evaluator
+  # rolls these up across waves and routes to
+  # terminal_apex_dispatch_failures when `items_failed_count > 0`.
+  items_failed_count: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.items_failed_count | default(0) }}
+    {%- else -%}0{%- endif -%}
+  failed_items: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.failed_items | default('[]') }}
+    {%- else -%}[]{%- endif -%}
 
 agents:
   # ── Dispatch items ────────────────────────────────────────────────────────
@@ -171,20 +186,41 @@ agents:
   # live under `.outputs` (success) and `.errors` (failure).
   - name: aggregate_renegotiation
     type: script
-    description: Aggregate per-item renegotiation_pending + progress counts across the wave
+    description: Aggregate per-item renegotiation_pending + progress + failure counts across the wave
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - |
-        $raw = @'
+        $rawOutputs = @'
         {{ dispatch_items.outputs | tojson }}
+        '@;
+        # Per M8: `for_each` failures land under `.errors`, NOT `.outputs`.
+        # Without aggregating these, per-item sub-workflow failures (e.g.
+        # plan-level Jinja TemplateError on AB#3067 dogfood) are silently
+        # lost — the wave returns "success", the apex-driver outer loop
+        # sees zero progress, and silently flips to terminal_apex_blocked
+        # with no actionable detail. Surface them here so apex-driver can
+        # route to terminal_apex_dispatch_failures instead.
+        $rawErrors = @'
+        {{ dispatch_items.errors | tojson }}
+        '@;
+        # wave_items is the JSON-encoded WorklistItem[] this wave consumed.
+        # We re-parse it here so we can correlate dispatch_items.errors
+        # (keyed by iteration index when there is no `key_by:`) back to a
+        # concrete work_item_id rather than reporting "iteration 2 failed".
+        $rawWaveItems = @'
+        {{ workflow.input.wave_items }}
         '@;
         $items = @();
         $any = $false;
         $satisfiedCount = 0;
         $dispatchedCount = 0;
         $itemCount = 0;
+        $failedCount = 0;
+        $failedItems = @();
+        $waveItems = @();
+        try { $waveItems = @($rawWaveItems | ConvertFrom-Json) } catch { $waveItems = @() }
         try {
           # `dispatch_items` for_each has no `key_by`, so conductor emits
           # `.outputs` as a JSON array of per-iteration outputs. Wrap with
@@ -194,7 +230,7 @@ agents:
           # single iteration's output (14 properties), not the iteration
           # itself, and `dispatched`/`item_satisfied` counters silently
           # reported 0. Surfaced live by the AB#3064 dogfood (2026-05-09).
-          $values = @($raw | ConvertFrom-Json);
+          $values = @($rawOutputs | ConvertFrom-Json);
           foreach ($v in $values) {
             if ($null -eq $v) { continue }
             $itemCount += 1;
@@ -232,12 +268,68 @@ agents:
           $dispatchedCount = 0;
           $itemCount = 0;
         }
+        # ── Surface dispatch_items.errors to apex-driver (AB#3067 fix) ─────
+        # Per M8: `dispatch_items` runs `failure_mode: continue_on_error`,
+        # so per-item failures land under `.errors` keyed by iteration
+        # index (no `key_by:` on this for_each). Defensively also handle
+        # an array shape in case the engine serializes it that way.
+        try {
+          $errsTrimmed = if ($null -eq $rawErrors) { '' } else { $rawErrors.Trim() };
+          if ($errsTrimmed -and ($errsTrimmed -notin @('null', '{}', '[]'))) {
+            $errs = $rawErrors | ConvertFrom-Json;
+            $errProps = @();
+            if ($null -ne $errs) {
+              if ($errs -is [System.Collections.IEnumerable] -and -not ($errs -is [string])) {
+                $i = 0;
+                foreach ($e in @($errs)) {
+                  $errProps += [PSCustomObject]@{ Name = "$i"; Value = $e };
+                  $i += 1;
+                }
+              } else {
+                foreach ($p in $errs.PSObject.Properties) {
+                  $errProps += [PSCustomObject]@{ Name = $p.Name; Value = $p.Value };
+                }
+              }
+            }
+            foreach ($p in $errProps) {
+              $failedCount += 1;
+              $idx = -1;
+              [void][int]::TryParse("$($p.Name)", [ref]$idx);
+              $workItemId = $null;
+              if ($idx -ge 0 -and $idx -lt $waveItems.Count) {
+                $workItemId = $waveItems[$idx].item_id;
+              }
+              $msg = $null;
+              if ($null -ne $p.Value) {
+                if ($p.Value.PSObject.Properties.Name -contains 'message') {
+                  $msg = "$($p.Value.message)";
+                } elseif ($p.Value.PSObject.Properties.Name -contains 'error') {
+                  $msg = "$($p.Value.error)";
+                } else {
+                  $msg = ($p.Value | ConvertTo-Json -Compress -Depth 4);
+                }
+              }
+              $failedItems += [ordered]@{
+                iteration_index = $p.Name;
+                work_item_id    = $workItemId;
+                error           = $msg;
+              };
+            }
+          }
+        } catch {
+          # Defensive default per the surrounding pattern: empty failure
+          # info is benign; the wave still ran and produced outputs.
+          $failedCount = 0;
+          $failedItems = @();
+        }
         [ordered]@{
-          renegotiation_pending = $any;
-          renegotiation_items = ($items | ConvertTo-Json -Compress -Depth 6);
-          item_count = $itemCount;
-          items_satisfied_count = $satisfiedCount;
+          renegotiation_pending  = $any;
+          renegotiation_items    = ($items | ConvertTo-Json -Compress -Depth 6);
+          item_count             = $itemCount;
+          items_satisfied_count  = $satisfiedCount;
           items_dispatched_count = $dispatchedCount;
+          items_failed_count     = $failedCount;
+          failed_items           = ($failedItems | ConvertTo-Json -Compress -Depth 6);
         } | ConvertTo-Json -Compress -Depth 6
     routes:
       - to: integrate_wave
