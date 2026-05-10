@@ -53,10 +53,10 @@ workflow:
     bubble-up AND per-item progress counts (items_satisfied_count,
     items_dispatched_count) so the apex-driver outer loop (PR #9) can
     decide whether the iteration made progress.
-  version: "2.2.2"
-  entry_point: dispatch_items
+  version: "2.3.0"
+  entry_point: check_prior_wave_status
   metadata:
-    min_polyphony_version: "2.2.2"
+    min_polyphony_version: "2.3.0"
 
   limits:
     # Each wave can hold dozens of items; the for_each iteration count
@@ -155,8 +155,94 @@ output:
   failed_items: >-
     {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.failed_items | default('[]') }}
     {%- else -%}[]{%- endif -%}
+  # ── Wave skip surfacing (fail-fast across waves) ────────────────────────
+  # When `check_prior_wave_status` short-circuits this wave because an
+  # earlier wave under the same apex run already failed, the workflow
+  # exits via `terminal_wave_skipped` and `aggregate_renegotiation` is
+  # never reached — every counter above falls through to its `is defined`
+  # default of 0 / 'false' / '[]'. `wave_skipped` + `skip_reason` make
+  # the short-circuit visible to apex-driver's outer-loop diagnostics
+  # without changing the aggregator routing (zero counters are invisible
+  # to outer_loop_evaluator's progress + failure rollup, exactly as
+  # intended — only the wave that ORIGINALLY failed contributes its
+  # non-zero items_failed_count).
+  wave_skipped: >-
+    {%- if terminal_wave_skipped is defined -%}true{%- else -%}false{%- endif -%}
+  skip_reason: >-
+    {%- if terminal_wave_skipped is defined -%}{{ terminal_wave_skipped.output.skip_reason | default('') }}
+    {%- else -%}{%- endif -%}
 
 agents:
+  # ── Check prior wave status (fail-fast across waves) ────────────────────
+  #
+  # Entry point. Asks scripts/wave-dispatch-guard.ps1 whether any
+  # earlier wave under the same apex run already wrote a failure
+  # sentinel. When blocked, short-circuits to `terminal_wave_skipped`
+  # (which emits zero counters) so the outer loop's
+  # `outer_loop_evaluator` is unaffected by this wave (it still sees
+  # the ORIGINAL failing wave's non-zero `items_failed_count` and
+  # routes to `terminal_apex_dispatch_failures`).
+  #
+  # apex-driver's `wave_dispatch_loop` is `failure_mode: continue_on_error`
+  # because conductor's native `failure_mode: fail_fast` raises
+  # ExecutionError to the parent and bypasses every gate. This sentinel-
+  # based short-circuit is the workflow-level equivalent: graceful,
+  # routed, observable.
+  #
+  # NOT short-circuited on renegotiation (intentional). The existing
+  # `renegotiation_gate.override` route flips straight to
+  # `apex_completion_gate` and assumes every wave ran; skipping later
+  # waves on a renegotiation request would let `override` declare apex
+  # completion having silently skipped real work. Failure is safe to
+  # short-circuit because `outer_loop_evaluator` routes failures to
+  # `terminal_apex_dispatch_failures` regardless of how many waves
+  # actually executed.
+  - name: check_prior_wave_status
+    type: script
+    description: Short-circuit this wave if a prior wave under the same apex run already failed
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/wave-dispatch-guard.ps1"
+      - "-Op"
+      - "check"
+      - "-RootId"
+      - "{{ workflow.input.apex_id }}"
+    routes:
+      - to: terminal_wave_skipped
+        when: "{{ check_prior_wave_status.output.blocked | string | lower == 'true' }}"
+      - to: dispatch_items
+      # M4 catch-all — undefined `blocked` means the guard helper
+      # returned an unexpected envelope shape (or git-common-dir
+      # resolution failed). Degrade to today's behavior — dispatch
+      # the wave — rather than silently skipping it.
+      - to: dispatch_items
+
+  # ── Terminal: wave skipped due to prior-wave failure ────────────────────
+  #
+  # No-op terminal that emits a structured envelope marking this wave
+  # as skipped. The workflow output template (above) hoists
+  # `wave_skipped` + `skip_reason` to apex-driver scope so operators
+  # can distinguish "wave ran with zero items" from "wave skipped due
+  # to prior failure" in the dashboard/event log.
+  - name: terminal_wave_skipped
+    type: script
+    description: Wave was short-circuited because a prior wave under the same apex run already failed
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        [ordered]@{
+          wave_index  = {{ workflow.input.wave_index }};
+          apex_id     = {{ workflow.input.apex_id }};
+          skipped     = $true;
+          skip_reason = '{{ check_prior_wave_status.output.first_reason | default("prior_wave_failure") }}';
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
   # ── Dispatch items ────────────────────────────────────────────────────────
   #
   # See top-level `for_each: dispatch_items` at end of file. Conductor
@@ -331,6 +417,46 @@ agents:
           items_failed_count     = $failedCount;
           failed_items           = ($failedItems | ConvertTo-Json -Compress -Depth 6);
         } | ConvertTo-Json -Compress -Depth 6
+    routes:
+      - to: record_wave_failure_flag
+        when: "{{ aggregate_renegotiation.output.items_failed_count | int > 0 }}"
+      - to: integrate_wave
+      # M4 catch-all
+      - to: integrate_wave
+
+  # ── Record wave failure flag (fail-fast across waves) ────────────────────
+  #
+  # Persists a per-root sentinel so subsequent waves' `check_prior_wave_status`
+  # short-circuits via terminal_wave_skipped. Runs ONLY when this wave
+  # observed item-level failures (items_failed_count > 0) — see
+  # check_prior_wave_status header for why renegotiation does NOT
+  # trigger this.
+  #
+  # The flag persists in the worktree until the next dispatch pass's
+  # `reset_wave_failure_flags` step (in apex-driver) wipes it. On
+  # terminal exit (no further outer-loop iteration) the flag remains
+  # but is harmless — the next run starts from `init_manifest` which
+  # is followed by `build_worklist → check_conflicts → reset_wave_failure_flags`.
+  #
+  # The script always exits 0; on git-common-dir resolution failure the
+  # envelope reports `error_code: git_common_dir_failed` and the next
+  # wave will not short-circuit — system degrades to today's behavior.
+  - name: record_wave_failure_flag
+    type: script
+    description: Persist a per-root sentinel so subsequent waves short-circuit via terminal_wave_skipped
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/wave-dispatch-guard.ps1"
+      - "-Op"
+      - "record"
+      - "-RootId"
+      - "{{ workflow.input.apex_id }}"
+      - "-WaveIndex"
+      - "{{ workflow.input.wave_index }}"
+      - "-Reason"
+      - "failure"
     routes:
       - to: integrate_wave
 
