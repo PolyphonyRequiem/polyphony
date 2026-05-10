@@ -29,6 +29,63 @@ public sealed class GitClientTests
     }
 
     [Fact]
+    public async Task GetCommonDirAsync_MainWorktree_ReturnsAbsoluteGitDir()
+    {
+        var fake = new FakeProcessRunner();
+        // From the main worktree, common dir is the repo's .git directory
+        // (absolute form because we passed --path-format=absolute).
+        fake.WhenExact("git",
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, "/Users/dan/projects/polyphony/.git\n", ""));
+        var client = new GitClient(fake);
+
+        (await client.GetCommonDirAsync()).ShouldBe("/Users/dan/projects/polyphony/.git");
+    }
+
+    [Fact]
+    public async Task GetCommonDirAsync_LinkedWorktree_ReturnsMainWorktreeGitDir()
+    {
+        var fake = new FakeProcessRunner();
+        // From a linked worktree at `../polyphony-3067`, --git-common-dir
+        // still returns the main repo's .git (NOT
+        // `../polyphony/.git/worktrees/polyphony-3067`). This is the
+        // convergence guarantee that makes cross-worktree shared state work.
+        fake.WhenExact("git",
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, "/Users/dan/projects/polyphony/.git\n", ""));
+        var client = new GitClient(fake);
+
+        (await client.GetCommonDirAsync()).ShouldBe("/Users/dan/projects/polyphony/.git");
+    }
+
+    [Fact]
+    public async Task GetCommonDirAsync_NotInRepo_ReturnsNull()
+    {
+        var fake = new FakeProcessRunner();
+        fake.WhenExact("git",
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(128, "", "fatal: not a git repository"));
+        var client = new GitClient(fake);
+
+        (await client.GetCommonDirAsync()).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task GetCommonDirAsync_TrimsTrailingNewline()
+    {
+        // git emits a trailing newline; consumers build paths with
+        // Path.Combine and would silently produce path strings with
+        // an embedded newline if we didn't trim.
+        var fake = new FakeProcessRunner();
+        fake.WhenExact("git",
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, "C:\\Users\\dan\\polyphony\\.git\r\n", ""));
+        var client = new GitClient(fake);
+
+        (await client.GetCommonDirAsync()).ShouldBe("C:\\Users\\dan\\polyphony\\.git");
+    }
+
+    [Fact]
     public async Task GetCurrentBranchAsync_Success_ReturnsBranchName()
     {
         var fake = new FakeProcessRunner();
