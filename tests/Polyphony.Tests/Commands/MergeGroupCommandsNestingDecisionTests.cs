@@ -6,14 +6,14 @@ using Xunit;
 namespace Polyphony.Tests.Commands;
 
 /// <summary>
-/// Tests for <c>polyphony mg nesting-decision</c>. Verifies the
+/// Tests for <c>polyphony merge-group nesting-decision</c>. Verifies the
 /// default-nest trigger from ADR <c>docs/decisions/branch-model.md</c>
 /// (decomposable AND implementable -> nest) along with planner
 /// overrides (<c>--override-flat</c>, <c>--override-nested-mg-id</c>),
 /// the mutual-exclusion guard between them, derived nested-id naming,
 /// nested path composition, and validation of the inputs.
 /// </summary>
-public sealed class MgCommandsNestingDecisionTests : CommandTestBase
+public sealed class MergeGroupCommandsNestingDecisionTests : CommandTestBase
 {
     private static MergeGroupCommands CreateCommand() => new();
 

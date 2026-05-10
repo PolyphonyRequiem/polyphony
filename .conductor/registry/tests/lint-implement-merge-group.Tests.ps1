@@ -234,7 +234,7 @@ agents:
             # both so the lint regex finds neither, then assert the
             # specific input-missing violation. (We only assert on input;
             # the output check will also fire, which is fine.)
-            $yaml = ($script:ValidYaml) -replace '(?m)^\s+mg_path:', '    mg_branch_path:'
+            $yaml = ($script:ValidYaml) -replace '(?m)^\s+mg_path:', '    bogus_input_name:'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
