@@ -144,20 +144,41 @@ tools:
 # M7 booleans are piped through `| string | lower` so the parent receives
 # a real bool rather than capital "True"/"False".
 #
+# StrictUndefined trap (2026-05-10 dogfood AB#3067, plan-PR #260):
+# `<agent> is defined` only checks the agent variable, NOT the dict keys
+# under `.output`. When a verb's Result model declares `string? Foo`
+# (omitted from JSON when null per WhenWritingNull), accessing
+# `<agent>.output.foo` RAISES TemplateError — `| default('')` does not
+# rescue, because StrictUndefined fires on the missing dict key BEFORE
+# the filter runs. So nullable verb fields require a TWO-LEVEL guard:
+# `<agent> is defined and <agent>.output.<field> is defined`. Required
+# fields (e.g. `flag_present`, `verdict`) are always emitted and only
+# need the agent-level guard. Cf. PlanDeriveAncestorChainResult.cs which
+# uses `[JsonIgnore(Condition = Never)]` to dodge the same trap from the
+# verb side.
+#
 # Design rationale — option (C) in docs/decisions/scope-renegotiation.md
 # (handler design — workflow output bubble-up). Today plan-level has no
 # caller, so these outputs go nowhere; that is intentional. apex-driver
 # (a downstream PR) consumes them.
 output:
+  # FlagPresent is `required bool` in PlanExtractRenegotiationFlagResult
+  # — always emitted, agent-level guard suffices.
   renegotiation_pending: >-
     {% if extract_renegotiation_flag is defined %}{{ (extract_renegotiation_flag.output.flag_present | default(false)) | string | lower }}
     {%- else %}false{% endif %}
+  # RenegotiationRequest is `string?` — OMITTED from JSON when no flag
+  # was present. Two-level guard is mandatory; see the trap note above.
   renegotiation_request: >-
-    {% if extract_renegotiation_flag is defined %}{{ extract_renegotiation_flag.output.renegotiation_request | default('') }}
+    {% if extract_renegotiation_flag is defined and extract_renegotiation_flag.output.renegotiation_request is defined %}{{ extract_renegotiation_flag.output.renegotiation_request }}
     {%- else %}{% endif %}
+  # Verdict is `required string` in PlanValidateScopeResult — always
+  # emitted, agent-level guard suffices.
   validate_scope_verdict: >-
     {% if validate_scope is defined %}{{ validate_scope.output.verdict | default('') }}
     {%- else %}{% endif %}
+  # FilesOutOfScope is non-nullable IReadOnlyList<string> with default
+  # `Array.Empty<string>()` — always emitted, agent-level guard suffices.
   scope_violation_files: >-
     {% if validate_scope is defined %}{{ validate_scope.output.files_out_of_scope | default([]) | tojson }}
     {%- else %}[]{% endif %}
