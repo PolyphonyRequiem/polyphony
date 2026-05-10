@@ -78,7 +78,6 @@ public sealed class ProcessConfigBuilderTests
         config.BranchStrategy!.FeatureBranch.ShouldBe("feature/{id}");
         config.BranchStrategy.PlanningBranch.ShouldBe("planning/{id}");
         config.BranchStrategy.MergeGroupBranch.ShouldBe("feature/{id}-mg-{n}");
-        config.BranchStrategy.PgBranch.ShouldBe("");
         config.BranchStrategy.Target.ShouldBe("develop");
     }
 

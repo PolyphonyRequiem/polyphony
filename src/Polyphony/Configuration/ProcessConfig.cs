@@ -145,16 +145,6 @@ public sealed class BranchStrategy
     [YamlMember(Alias = "mg_branch")]
     public string MergeGroupBranch { get; set; } = "";
 
-    /// <summary>
-    /// Deprecated alias for <see cref="MergeGroupBranch"/>. Accepted for back-compat with
-    /// process configs written before the PG→MergeGroup rename. The loader copies
-    /// this onto <see cref="MergeGroupBranch"/> when the new key is absent. The validator
-    /// emits a deprecation warning (V-17) when only the legacy key is present.
-    /// New configs must use <c>mg_branch:</c>.
-    /// </summary>
-    [YamlMember(Alias = "pg_branch")]
-    public string PgBranch { get; set; } = "";
-
     public string Target { get; set; } = "main";
 }
 

@@ -32,50 +32,12 @@ public static class ProcessConfigLoader
             }
         }
 
-        // Back-compat: copy the legacy `branch_strategy.pg_branch` YAML key
-        // onto `MergeGroupBranch` when the new `mg_branch:` key is absent. The
-        // PG→MergeGroup rename ships in Phase 4 of the PR-lifecycle overhaul;
-        // existing process configs continue to work during the migration
-        // window. The validator emits V-17 when this fallback fires.
-        if (config.BranchStrategy is { } branchStrategy
-            && string.IsNullOrEmpty(branchStrategy.MergeGroupBranch)
-            && !string.IsNullOrEmpty(branchStrategy.PgBranch))
-        {
-            branchStrategy.MergeGroupBranch = branchStrategy.PgBranch;
-        }
-
-        // Back-compat: copy the legacy `pg_pr:` policy key onto `mg_pr` for
-        // each ReviewPolicies dictionary (planning, implementation,
-        // remediation) when the new `mg_pr:` key is absent. Workflow YAMLs
-        // that read `mg_pr` continue to function against legacy configs.
-        // The validator emits V-18 when this fallback fires.
-        if (config.ReviewPolicies is { } reviewPolicies)
-        {
-            CopyLegacyPolicyKey(reviewPolicies.Planning);
-            CopyLegacyPolicyKey(reviewPolicies.Implementation);
-            CopyLegacyPolicyKey(reviewPolicies.Remediation);
-        }
-
         if (config.SchemaVersion > 1)
             throw new InvalidOperationException(
                 $"Unsupported process config schema version {config.SchemaVersion}. " +
                 "This version of Polyphony supports schema_version 0 (absent) and 1.");
 
         return config;
-    }
-
-    /// <summary>
-    /// Copies the legacy <c>pg_pr</c> policy entry onto <c>mg_pr</c> when the
-    /// latter is absent. Operates in-place on the supplied dictionary.
-    /// </summary>
-    private static void CopyLegacyPolicyKey(Dictionary<string, ReviewPolicy>? policies)
-    {
-        if (policies is null) return;
-        if (policies.ContainsKey("mg_pr")) return;
-        if (policies.TryGetValue("pg_pr", out var legacy))
-        {
-            policies["mg_pr"] = legacy;
-        }
     }
 
     /// <summary>

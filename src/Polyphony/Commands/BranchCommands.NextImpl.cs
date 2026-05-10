@@ -152,8 +152,7 @@ public sealed partial class BranchCommands
             var (containerId, containerTitle, containerType) = FindNearestPlannableAncestorWithType(next);
 
             // Resolve branch name: prefer config-driven workspace_hint
-            // merge-group-branch pattern (legacy JSON wire key
-            // "pg_branch"), fall back to feature/{rootId}-{slug-of-mg}.
+            // merge-group-branch template, fall back to feature/{rootId}-{slug-of-mg}.
             var rootItem = await repository.GetByIdAsync(workItem, ct).ConfigureAwait(false);
             var hint = rootItem is not null ? BranchNameResolver.Resolve(processConfig, rootItem) : null;
 

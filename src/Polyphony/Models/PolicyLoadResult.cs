@@ -61,7 +61,6 @@ public sealed record PolicyDomainSnapshot
 public sealed record PolicyConcurrencySnapshot
 {
     public required int MaxConcurrentChildren { get; init; }
-    public required int MaxConcurrentPgs { get; init; }
 }
 
 /// <summary>

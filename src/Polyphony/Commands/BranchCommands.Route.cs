@@ -298,9 +298,9 @@ public sealed partial class BranchCommands
     /// <summary>
     /// Resolves the merge-group branch name by substituting the legacy
     /// <c>{n}</c>/<c>{pg}</c> placeholders in the user's
-    /// <c>pg_branch</c> template against the <c>PG-N</c> tag suffix.
+    /// <c>mg_branch</c> template against the <c>PG-N</c> tag suffix.
     /// "Legacy" because the template surface and tag format both flip in
-    /// the workflow rewire PR; until then this still consumes
+    /// a follow-up rewire; until then this still consumes
     /// <c>WorkspaceHint.MergeGroupBranch</c> as a free-form template.
     /// </summary>
     private static string ResolveLegacyMergeGroupBranch(WorkspaceHint? hint, int rootId, string mergeGroupName)

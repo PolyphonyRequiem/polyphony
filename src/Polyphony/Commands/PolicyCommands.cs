@@ -53,7 +53,6 @@ public sealed class PolicyCommands
             Concurrency = new PolicyConcurrencySnapshot
             {
                 MaxConcurrentChildren = config.Concurrency!.MaxConcurrentChildren!.Value,
-                MaxConcurrentPgs = config.Concurrency.MaxConcurrentPgs!.Value,
             },
             Guidance = SnapshotGuidance(config.Guidance!),
             RootFallback = SnapshotRootFallback(config.RootFallback!),
@@ -240,7 +239,6 @@ public sealed class PolicyCommands
         WarnIfNonPositive(config.Pr?.Defaults?.MaxRemediationCycles, "pr.defaults.max_remediation_cycles", errors);
         WarnIfNonPositive(config.OpenQuestions?.Defaults?.MaxQuestionLoops, "open_questions.defaults.max_question_loops", errors);
         WarnIfNonPositive(config.Concurrency?.MaxConcurrentChildren, "concurrency.max_concurrent_children", errors);
-        WarnIfNonPositive(config.Concurrency?.MaxConcurrentPgs, "concurrency.max_concurrent_pgs", errors);
 
         // Guidance: source must be one of the canonical strings (when set);
         // ado_field requires a non-empty ado_field_name.

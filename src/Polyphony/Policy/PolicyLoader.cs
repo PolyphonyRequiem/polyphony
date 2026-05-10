@@ -21,7 +21,6 @@ namespace Polyphony.Policy;
 ///   <item><description>open_questions.defaults.min_severity = moderate</description></item>
 ///   <item><description>open_questions.defaults.max_question_loops = 3</description></item>
 ///   <item><description>concurrency.max_concurrent_children = 3</description></item>
-///   <item><description>concurrency.max_concurrent_pgs = 3</description></item>
 ///   <item><description>guidance.source = description_block</description></item>
 ///   <item><description>guidance.ado_field_name = null</description></item>
 ///   <item><description>root_fallback.auto_decide = prompt</description></item>
@@ -109,7 +108,6 @@ public static class PolicyLoader
 
         config.Concurrency ??= new ConcurrencyPolicy();
         config.Concurrency.MaxConcurrentChildren ??= 3;
-        config.Concurrency.MaxConcurrentPgs ??= 3;
 
         config.Guidance ??= new GuidancePolicy();
         config.Guidance.Source ??= GuidanceSource.DescriptionBlock;

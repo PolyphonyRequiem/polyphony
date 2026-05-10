@@ -42,7 +42,6 @@ public sealed class PolicyCommandsTests : CommandTestBase
         result.Pr.DefaultsMaxFixLoops.ShouldBe(10);
         result.Pr.DefaultsMaxRemediationCycles.ShouldBe(3);
         result.Concurrency.MaxConcurrentChildren.ShouldBe(3);
-        result.Concurrency.MaxConcurrentPgs.ShouldBe(3);
     }
 
     [Fact]
@@ -108,7 +107,6 @@ public sealed class PolicyCommandsTests : CommandTestBase
         output.ShouldContain("\"defaults_mode\"");
         output.ShouldContain("\"defaults_max_revision_cycles\"");
         output.ShouldContain("\"max_concurrent_children\"");
-        output.ShouldContain("\"max_concurrent_pgs\"");
         output.ShouldNotContain("\"DefaultsMode\"");
     }
 
@@ -143,7 +141,6 @@ public sealed class PolicyCommandsTests : CommandTestBase
               defaults: { mode: warning, max_fix_loops: 10, max_remediation_cycles: 3 }
             concurrency:
               max_concurrent_children: 2
-              max_concurrent_pgs: 2
             """);
 
         var cmd = CreateCommand();
