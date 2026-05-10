@@ -128,9 +128,7 @@ public sealed class BranchStrategy
 
     /// <summary>
     /// Canonical branch template for merge-group branches. YAML key
-    /// <c>merge_group_branch:</c> (long form) — also accepts <c>mg_branch:</c>
-    /// as a transitional alias retained alongside the rest of the
-    /// G2 PG→MergeGroup consolidation. Substitution placeholders:
+    /// <c>merge_group_branch:</c>. Substitution placeholders:
     /// <c>{root_id}</c>, <c>{slug}</c>, plus the legacy template tokens
     /// <c>{n}</c>/<c>{pg}</c> (the merge-group number) accepted by
     /// <see cref="Routing.BranchNameResolver"/> for back-compat.
@@ -142,7 +140,6 @@ public sealed class BranchStrategy
     /// <c>branch route</c> / <c>branch next-impl</c> code paths via
     /// <see cref="Routing.BranchNameResolver"/>.
     /// </remarks>
-    [YamlMember(Alias = "mg_branch")]
     public string MergeGroupBranch { get; set; } = "";
 
     public string Target { get; set; } = "main";

@@ -110,6 +110,26 @@ public sealed class PolicyCommandsTests : CommandTestBase
         output.ShouldNotContain("\"DefaultsMode\"");
     }
 
+    [Fact]
+    public void Load_RetiredMaxConcurrentPgsKey_ReturnsConfigErrorWithRenameGuidance()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            concurrency:
+              max_concurrent_pgs: 3
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var doc = JsonDocument.Parse(output);
+        var error = doc.RootElement.GetProperty("error").GetString()!;
+        error.ShouldContain("max_concurrent_pgs");
+        error.ShouldContain("Polyphony 2.4.0");
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // validate
     // ─────────────────────────────────────────────────────────────────────────

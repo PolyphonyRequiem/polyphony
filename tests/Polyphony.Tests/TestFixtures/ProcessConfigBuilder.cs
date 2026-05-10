@@ -69,7 +69,7 @@ public sealed class ProcessConfigBuilder
     /// <summary>Configures the branch naming strategy.</summary>
     /// <remarks>
     /// <paramref name="MergeGroupBranch"/> is the canonical Phase-4 template (YAML key
-    /// <c>mg_branch</c>). Production tests should set
+    /// <c>merge_group_branch</c>). Production tests should set
     /// <paramref name="MergeGroupBranch"/>.
     /// </remarks>
     public ProcessConfigBuilder WithBranchStrategy(

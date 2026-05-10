@@ -159,6 +159,55 @@ public sealed class ProcessConfigLoaderTests
         Should.Throw<ArgumentException>(() => ProcessConfigLoader.GetParentTypeName(config, "Unknown"));
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // G2 retired-key rejection (no_window_fail_loud)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("pg_branch", "branch_strategy.merge_group_branch", """
+        process_template: Basic
+        types: { Task: { facets: [implementable] } }
+        transitions: {}
+        branch_strategy:
+          feature_branch: "feature/{root_id}"
+          pg_branch: "pg-{n}/{root_id}-{slug}"
+          target: main
+        """)]
+    [InlineData("mg_branch", "branch_strategy.merge_group_branch", """
+        process_template: Basic
+        types: { Task: { facets: [implementable] } }
+        transitions: {}
+        branch_strategy:
+          feature_branch: "feature/{root_id}"
+          mg_branch: "mg-{n}/{root_id}-{slug}"
+          target: main
+        """)]
+    [InlineData("pg_pr", "review_policies.<section>.merge_group_pr", """
+        process_template: Basic
+        types: { Task: { facets: [implementable] } }
+        transitions: {}
+        review_policies:
+          implementation:
+            pg_pr: { agent_review: true, human_review: false, auto_merge: true }
+        """)]
+    [InlineData("mg_pr", "review_policies.<section>.merge_group_pr", """
+        process_template: Basic
+        types: { Task: { facets: [implementable] } }
+        transitions: {}
+        review_policies:
+          implementation:
+            mg_pr: { agent_review: true, human_review: false, auto_merge: true }
+        """)]
+    public void Load_RetiredKey_ThrowsWithRenameGuidance(
+        string retiredKey, string replacementKey, string yaml)
+    {
+        var path = WriteTempConfig(yaml);
+        var ex = Should.Throw<InvalidOperationException>(() => ProcessConfigLoader.Load(path));
+        ex.Message.ShouldContain($"'{retiredKey}'");
+        ex.Message.ShouldContain($"'{replacementKey}'");
+        ex.Message.ShouldContain("Polyphony 2.4.0");
+    }
+
     private static string WriteTempConfig(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"polyphony-test-{Guid.NewGuid()}.yaml");

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -5,12 +6,29 @@ namespace Polyphony.Configuration;
 
 public static class ProcessConfigLoader
 {
+    // Legacy keys retired by the G2 PG removal + MergeGroup consolidation
+    // (Polyphony 2.4.0). The loader fails loudly rather than silently
+    // ignoring stale keys so operators discover the rename immediately
+    // rather than wondering why review policy or branch templates are no
+    // longer applied. Each pattern targets a YAML key at any indent, with
+    // optional surrounding whitespace and a colon.
+    private static readonly (Regex Pattern, string Replacement)[] RetiredKeys = new[]
+    {
+        (new Regex(@"^\s*pg_branch\s*:", RegexOptions.Multiline), "branch_strategy.merge_group_branch"),
+        (new Regex(@"^\s*mg_branch\s*:", RegexOptions.Multiline), "branch_strategy.merge_group_branch"),
+        (new Regex(@"^\s*pg_pr\s*:", RegexOptions.Multiline), "review_policies.<section>.merge_group_pr"),
+        (new Regex(@"^\s*mg_pr\s*:", RegexOptions.Multiline), "review_policies.<section>.merge_group_pr"),
+    };
+
     public static ProcessConfig Load(string path)
     {
         if (!File.Exists(path))
             throw new FileNotFoundException($"Process config not found: {path}");
 
         var yaml = File.ReadAllText(path);
+
+        RejectRetiredKeys(yaml, path);
+
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
@@ -38,6 +56,23 @@ public static class ProcessConfigLoader
                 "This version of Polyphony supports schema_version 0 (absent) and 1.");
 
         return config;
+    }
+
+    private static void RejectRetiredKeys(string yaml, string path)
+    {
+        foreach (var (pattern, replacement) in RetiredKeys)
+        {
+            var match = pattern.Match(yaml);
+            if (!match.Success) continue;
+
+            var lineNumber = yaml.Take(match.Index).Count(static c => c == '\n') + 1;
+            var keyName = match.Value.Trim().TrimEnd(':').Trim();
+            throw new InvalidOperationException(
+                $"Process config '{path}' line {lineNumber}: key '{keyName}' is no longer supported. " +
+                $"Rename to '{replacement}'. " +
+                "(Polyphony 2.4.0 retired the PG → MergeGroup deprecation aliases; " +
+                "see docs/glossary.md and the G2 changelog entry.)");
+        }
     }
 
     /// <summary>

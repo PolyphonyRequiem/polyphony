@@ -67,7 +67,7 @@ public sealed class BranchNameResolverTests
         var hint = BranchNameResolver.Resolve(config, item);
 
         hint.ShouldNotBeNull();
-        // The canonical YAML key is `mg_branch:`, populated into
+        // The canonical YAML key is `merge_group_branch:`, populated into
         // BranchStrategy.MergeGroupBranch. The resolver substitutes the same
         // placeholders ({id}, {root_id}, {slug}) and surfaces the result via
         // WorkspaceHint.MergeGroupBranch (JSON wire key `merge_group_branch`).

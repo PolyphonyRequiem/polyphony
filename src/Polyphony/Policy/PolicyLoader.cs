@@ -56,6 +56,8 @@ public static class PolicyLoader
     /// </summary>
     public static PolicyConfig Parse(string yaml, string sourcePath = "<inline>")
     {
+        RejectRetiredKeys(yaml, sourcePath);
+
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
@@ -78,6 +80,20 @@ public static class PolicyLoader
         {
             throw new InvalidOperationException($"Failed to parse policy YAML at {sourcePath}: {ex.Message}", ex);
         }
+    }
+
+    private static void RejectRetiredKeys(string yaml, string sourcePath)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            yaml, @"^\s*max_concurrent_pgs\s*:",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+        if (!match.Success) return;
+
+        var lineNumber = yaml.Take(match.Index).Count(static c => c == '\n') + 1;
+        throw new InvalidOperationException(
+            $"Policy config '{sourcePath}' line {lineNumber}: key 'max_concurrent_pgs' is no longer supported. " +
+            "It was removed alongside the G2 PG → MergeGroup consolidation in Polyphony 2.4.0; " +
+            "no replacement key is needed (the cap was unused at runtime).");
     }
 
     /// <summary>
