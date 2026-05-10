@@ -1367,7 +1367,15 @@ public sealed class JsonOutputContractTests : CommandTestBase
     private WorklistCommands CreateWorklistCommands()
     {
         var config = CreateConfigBuilder().Build();
-        return new WorklistCommands(Repository, config);
+        var runner = new FakeProcessRunner();
+        // Stub git common-dir so PolyphonyStatePaths resolves; explicit
+        // --manifest-path is always passed in these tests so the derive
+        // path is not exercised, but the dependency must be satisfiable.
+        runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, Path.GetTempPath() + "\n", ""));
+        var git = new GitClient(runner);
+        var statePaths = new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git);
+        return new WorklistCommands(Repository, config, statePaths);
     }
 
     private static ProcessConfigBuilder CreateConfigBuilder()

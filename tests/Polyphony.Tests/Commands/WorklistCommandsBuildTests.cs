@@ -2,8 +2,11 @@ using System.Text.Json;
 using Polyphony;
 using Polyphony.Commands;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.Paths;
+using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
 using Polyphony.Sdlc;
+using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
@@ -22,17 +25,30 @@ namespace Polyphony.Tests.Commands;
 /// wave 0, topological wave ordering), conflict surfacing, and mode
 /// injection alongside the pre-existing manifest-loading + status-mapping
 /// contract that survived the cutover.</para>
+///
+/// <para>Rev 4.2: the verb takes a <see cref="PolyphonyStatePaths"/>
+/// dependency for deriving the manifest path under
+/// <c>&lt;git-common-dir&gt;/polyphony/&lt;rootId&gt;/</c> when no
+/// explicit <c>--manifest-path</c> is supplied. Tests construct a fake
+/// <see cref="GitClient"/> via <see cref="FakeProcessRunner"/> so they
+/// stay hermetic — when an explicit path is passed, the git stub is not
+/// hit.</para>
 /// </summary>
 public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
 {
     private readonly string _tempDir;
+    private readonly string _tempCommonDir;
     private readonly string _manifestPath;
+    private readonly string _derivedManifestPath;
 
     public WorklistCommandsBuildTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), "polyphony-worklist-build-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDir);
         _manifestPath = Path.Combine(_tempDir, "run.yaml");
+        _tempCommonDir = Path.Combine(_tempDir, ".git");
+        Directory.CreateDirectory(_tempCommonDir);
+        _derivedManifestPath = Path.Combine(_tempCommonDir, "polyphony");
     }
 
     void IDisposable.Dispose()
@@ -41,8 +57,18 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
         base.Dispose();
     }
 
-    private WorklistCommands CreateCommand() => new(Repository, Config);
-    private WorklistCommands CreateCommand(ProcessConfig config) => new(Repository, config);
+    private (WorklistCommands Command, FakeProcessRunner Runner) CreateCommandWithRunner(ProcessConfig? config = null)
+    {
+        var runner = new FakeProcessRunner();
+        runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, _tempCommonDir + "\n", ""));
+        var git = new GitClient(runner);
+        var statePaths = new PolyphonyStatePaths(git);
+        return (new WorklistCommands(Repository, config ?? Config, statePaths), runner);
+    }
+
+    private WorklistCommands CreateCommand() => CreateCommandWithRunner().Command;
+    private WorklistCommands CreateCommand(ProcessConfig config) => CreateCommandWithRunner(config).Command;
 
     private void SaveManifest(
         int rootId,
@@ -666,5 +692,67 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
             () => cmd.Build(rootId: 100, manifestPath: missing, json: false));
         output.ShouldContain("error:");
         output.ShouldContain("manifest_not_found");
+    }
+
+    // ─── Rev 4.2: derive manifest path from --root-id ──────────────────────
+    //
+    // When the caller does NOT pass --manifest-path, the verb resolves the
+    // local manifest path under <git-common-dir>/polyphony/{rootId}/run.yaml
+    // via PolyphonyStatePaths. The apex-driver workflow's `build_worklist`
+    // agent depends on this — it only passes --root-id.
+
+    [Fact]
+    public async Task DerivedPath_ManifestUnderCommonDir_LoadsAndEmitsWaves()
+    {
+        // Place the manifest exactly where PolyphonyStatePaths derives it:
+        //   <commonDir>/polyphony/{rootId}/run.yaml
+        var derivedDir = Path.Combine(_derivedManifestPath, "200");
+        Directory.CreateDirectory(derivedDir);
+        var derivedPath = Path.Combine(derivedDir, "run.yaml");
+
+        var manifest = new RunManifest
+        {
+            Schema = 1,
+            RootId = 200,
+            PlatformProject = "github.com/owner/repo",
+            CreatedAt = DateTime.UtcNow,
+            CreatedBy = "test",
+            BranchModelVersion = 1,
+            PlanGenerations = new Dictionary<string, int>(StringComparer.Ordinal),
+            MergedPlanPrs = new List<MergedPlanPrEntry>(),
+        };
+        RunManifestStore.Save(derivedPath, manifest);
+
+        var root = new WorkItemBuilder().WithId(200).WithType("Epic").WithTitle("Root").WithState("To Do").Build();
+        await SeedAsync(root);
+
+        var (cmd, _) = CreateCommandWithRunner();
+        var (exitCode, output) = await CaptureConsoleAsync(
+            () => cmd.Build(rootId: 200, manifestPath: "", json: true));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.WorklistResult).ShouldNotBeNull();
+        result.RootId.ShouldBe(200);
+        result.Error.ShouldBeNull();
+        result.Waves.Count.ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task DerivedPath_ManifestMissing_ReportsCommonDirPathInError()
+    {
+        // No file at <commonDir>/polyphony/300/run.yaml — verify the error
+        // points at the derived path, not the legacy .polyphony/run.yaml.
+        var (cmd, _) = CreateCommandWithRunner();
+        var (exitCode, output) = await CaptureConsoleAsync(
+            () => cmd.Build(rootId: 300, manifestPath: "", json: true));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.WorklistResult).ShouldNotBeNull();
+        result.ErrorCode.ShouldBe("manifest_not_found");
+        // The derived path shape proves we're using PolyphonyStatePaths, not
+        // the old .polyphony/run.yaml default.
+        result.Error.ShouldNotBeNull();
+        result.Error.ShouldContain(Path.Combine(_tempCommonDir, "polyphony", "300", "run.yaml"));
+        result.Error.ShouldNotContain(".polyphony/run.yaml");
     }
 }
