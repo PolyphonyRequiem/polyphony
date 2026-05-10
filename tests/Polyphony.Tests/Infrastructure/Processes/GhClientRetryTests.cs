@@ -424,4 +424,27 @@ public sealed class GhClientRetryTests
         inv.Environment!["GH_PROMPT_DISABLED"].ShouldBe("1");
         inv.Environment!["NO_COLOR"].ShouldBe("1");
     }
+
+    /// <summary>
+    /// Issue #209 regression: every gh invocation must request stdin
+    /// closure so the child sees EOF on read instead of inheriting a
+    /// stale console handle from the conductor → polyphony chain on
+    /// Windows. <see cref="GhClient.RunSingleAttemptAsync"/> is the
+    /// single funnel for all gh subprocess spawns; asserting closeStdin
+    /// on it covers every gh verb in the codebase.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AlwaysRequestsCloseStdin()
+    {
+        var fake = new FakeProcessRunner();
+        fake.WhenAsync(
+            (e, a) => e == "gh" && a.Take(2).SequenceEqual(new[] { "auth", "status" }, StringComparer.Ordinal),
+            (_, _) => Task.FromResult(new ProcessResult(0, "", "✓ Logged in")));
+        var client = new GhClient(fake, FastNoRetry);
+
+        await client.GetAuthStatusAsync();
+
+        fake.Invocations.Count.ShouldBe(1);
+        fake.Invocations[0].CloseStdin.ShouldBeTrue();
+    }
 }

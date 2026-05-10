@@ -47,11 +47,23 @@ public interface IProcessRunner
     /// When null/empty, only the parent process environment is inherited
     /// (existing behaviour).
     /// </param>
+    /// <param name="closeStdin">
+    /// When true (and <paramref name="stdin"/> is null), the child's standard
+    /// input is explicitly redirected and immediately closed so the child
+    /// sees EOF on read. Breaks the inherited-handle chain when polyphony
+    /// itself was launched detached / hidden-window — fixes issue #209
+    /// (<c>gh pr view</c> hangs in conductor subprocess on Windows because
+    /// gh inherits a stale console handle from the launcher's
+    /// <c>Start-Process -WindowStyle Hidden</c>). Has no effect when
+    /// <paramref name="stdin"/> is non-null (that path already redirects
+    /// and closes after writing).
+    /// </param>
     Task<ProcessResult> RunAsync(
         string executable,
         IReadOnlyList<string> arguments,
         CancellationToken ct = default,
         string? workingDirectory = null,
         string? stdin = null,
-        IReadOnlyDictionary<string, string?>? environment = null);
+        IReadOnlyDictionary<string, string?>? environment = null,
+        bool closeStdin = false);
 }

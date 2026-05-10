@@ -100,4 +100,43 @@ public sealed class ExternalToolTimeoutExceptionFormatTests
 
         msg.ShouldNotContain("last attempt");
     }
+
+    /// <summary>
+    /// Issue #209: when GhClient captures a hang diagnostic sidecar,
+    /// the path must surface in the operator-facing message so the
+    /// gate prompt can point at it. Verifies the wiring at the
+    /// exception layer; GhClient hooks the capture call up at the
+    /// throw site.
+    /// </summary>
+    [Fact]
+    public void FormatErrorMessage_WithDiagnosticPath_IncludesSnapshotLine()
+    {
+        var ex = new ExternalToolTimeoutException(
+            executable: "gh",
+            arguments: ["pr", "view"],
+            attempts: 3,
+            timeoutPerAttempt: TimeSpan.FromSeconds(60),
+            lastBufferedStdout: string.Empty,
+            lastBufferedStderr: string.Empty,
+            lastElapsed: TimeSpan.FromSeconds(60),
+            diagnosticFilePath: @"C:\Users\me\AppData\Local\Temp\polyphony\gh-hang-20260510T120000Z-pid1234.diag.json");
+
+        ex.DiagnosticFilePath.ShouldEndWith(".diag.json");
+        var msg = ex.FormatErrorMessage("gh pr view");
+        msg.ShouldContain("Diagnostic snapshot:");
+        msg.ShouldContain("gh-hang-20260510T120000Z-pid1234.diag.json");
+    }
+
+    [Fact]
+    public void DiagnosticFilePath_DefaultsToEmpty_WhenOmitted()
+    {
+        var ex = new ExternalToolTimeoutException(
+            executable: "gh",
+            arguments: ["pr", "view"],
+            attempts: 3,
+            timeoutPerAttempt: TimeSpan.FromSeconds(60));
+
+        ex.DiagnosticFilePath.ShouldBe(string.Empty);
+        ex.FormatErrorMessage("gh pr view").ShouldNotContain("Diagnostic snapshot");
+    }
 }

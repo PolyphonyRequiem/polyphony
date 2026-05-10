@@ -26,7 +26,8 @@ public sealed class ProcessRunner : IProcessRunner
         CancellationToken ct = default,
         string? workingDirectory = null,
         string? stdin = null,
-        IReadOnlyDictionary<string, string?>? environment = null)
+        IReadOnlyDictionary<string, string?>? environment = null,
+        bool closeStdin = false)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -35,7 +36,7 @@ public sealed class ProcessRunner : IProcessRunner
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = stdin is not null,
+            RedirectStandardInput = stdin is not null || closeStdin,
         };
 
         if (workingDirectory is not null)
@@ -69,6 +70,15 @@ public sealed class ProcessRunner : IProcessRunner
         using var process = new Process { StartInfo = startInfo };
         process.Start();
         var stopwatch = Stopwatch.StartNew();
+
+        // Issue #209 (Windows gh hang via inherited console handle): when
+        // closeStdin was requested without a stdin payload, immediately
+        // close the (now-redirected) input so the child sees EOF on read
+        // instead of inheriting whatever stale handle the parent had.
+        if (stdin is null && closeStdin)
+        {
+            process.StandardInput.Close();
+        }
 
         // Begin draining BOTH pipes immediately. If we waited for exit first
         // and the child wrote enough to fill the OS pipe buffer (~64KB), the

@@ -163,9 +163,8 @@ public sealed class GhClient : IGhClient
 
                 if (attempt >= _policy.MaxAttempts)
                 {
-                    throw new ExternalToolTimeoutException(
-                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout,
-                        pce.BufferedStdout, pce.BufferedStderr, pce.Elapsed);
+                    throw BuildTimeoutException(
+                        args, pce.BufferedStdout, pce.BufferedStderr, pce.Elapsed);
                 }
 
                 await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
@@ -178,8 +177,7 @@ public sealed class GhClient : IGhClient
 
                 if (attempt >= _policy.MaxAttempts)
                 {
-                    throw new ExternalToolTimeoutException(
-                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout);
+                    throw BuildTimeoutException(args);
                 }
 
                 await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
@@ -260,9 +258,8 @@ public sealed class GhClient : IGhClient
 
                 if (attempt >= _policy.MaxAttempts)
                 {
-                    throw new ExternalToolTimeoutException(
-                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout,
-                        pce.BufferedStdout, pce.BufferedStderr, pce.Elapsed);
+                    throw BuildTimeoutException(
+                        args, pce.BufferedStdout, pce.BufferedStderr, pce.Elapsed);
                 }
 
                 await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
@@ -283,8 +280,7 @@ public sealed class GhClient : IGhClient
 
                 if (attempt >= _policy.MaxAttempts)
                 {
-                    throw new ExternalToolTimeoutException(
-                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout);
+                    throw BuildTimeoutException(args);
                 }
 
                 await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
@@ -558,9 +554,8 @@ public sealed class GhClient : IGhClient
 
                 if (attempt >= _policy.MaxAttempts)
                 {
-                    throw new ExternalToolTimeoutException(
-                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout,
-                        lastStdout, lastStderr, lastElapsed);
+                    throw BuildTimeoutException(
+                        args, lastStdout, lastStderr, lastElapsed);
                 }
                 await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
             }
@@ -570,8 +565,7 @@ public sealed class GhClient : IGhClient
                 // buffered output (FakeProcessRunner test paths, mainly).
                 if (attempt >= _policy.MaxAttempts)
                 {
-                    throw new ExternalToolTimeoutException(
-                        Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout);
+                    throw BuildTimeoutException(args);
                 }
                 await DelayBackoffAsync(attempt, ct).ConfigureAwait(false);
             }
@@ -581,6 +575,27 @@ public sealed class GhClient : IGhClient
         throw new InvalidOperationException("RunWithRetryAsync exited the retry loop without returning.");
     }
 
+    /// <summary>
+    /// Build the canonical timeout exception, capturing a process-tree +
+    /// env diagnostic snapshot first so the operator gate prompt can
+    /// point at a sidecar JSON file with everything needed to verify
+    /// hypotheses about the hang (issue #209). Best-effort: any failure
+    /// inside <see cref="GhHangDiagnostics.Capture"/> falls back to the
+    /// pre-existing message-only path.
+    /// </summary>
+    private ExternalToolTimeoutException BuildTimeoutException(
+        IReadOnlyList<string> args,
+        string lastStdout = "",
+        string lastStderr = "",
+        TimeSpan lastElapsed = default)
+    {
+        var diagPath = GhHangDiagnostics.Capture(
+            args, lastElapsed, _policy.MaxAttempts, _policy.PerAttemptTimeout) ?? string.Empty;
+        return new ExternalToolTimeoutException(
+            Exe, args, _policy.MaxAttempts, _policy.PerAttemptTimeout,
+            lastStdout, lastStderr, lastElapsed, diagPath);
+    }
+
     private async Task<ProcessResult> RunSingleAttemptAsync(
         IReadOnlyList<string> args,
         CancellationToken ct,
@@ -588,7 +603,10 @@ public sealed class GhClient : IGhClient
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(_policy.PerAttemptTimeout);
-        return await _runner.RunAsync(Exe, args, timeoutCts.Token, stdin: stdin, environment: GhEnvironment).ConfigureAwait(false);
+        // closeStdin=true (issue #209): break the inherited-handle chain so
+        // gh never blocks on a stale stdin handle inherited from the
+        // conductor's detached / hidden-window launch.
+        return await _runner.RunAsync(Exe, args, timeoutCts.Token, stdin: stdin, environment: GhEnvironment, closeStdin: true).ConfigureAwait(false);
     }
 
     private async Task DelayBackoffAsync(int attemptJustFailed, CancellationToken ct)
