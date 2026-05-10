@@ -1,7 +1,6 @@
 using Polyphony.Configuration;
 using Twig.Domain.Aggregates;
 using Twig.Domain.Enums;
-using Twig.Domain.Services.Process;
 
 namespace Polyphony.Routing;
 
@@ -27,7 +26,7 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
     /// <returns>A <see cref="RoutingDecision"/> describing the detected phase and action.</returns>
     public RoutingDecision Detect(WorkItem item, IReadOnlyList<WorkItem> children)
     {
-        var category = StateCategoryResolver.Resolve(item.State, entries: null);
+        var category = processConfig.GetCategory(item.Type.Value, item.State);
 
         // Terminal states apply regardless of type or facets
         if (category == StateCategory.Completed)
@@ -50,7 +49,7 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
         return new RoutingUnknown($"No recognized facets for type '{item.Type.Value}'.");
     }
 
-    private static RoutingDecision DetectPlannablePhase(
+    private RoutingDecision DetectPlannablePhase(
         WorkItem item,
         IReadOnlyList<WorkItem> children,
         StateCategory category,
@@ -75,18 +74,12 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
         {
             if (children.Count == 0)
             {
-                // Plannable + implementable with no children in InProgress → ready for direct implementation
                 if (isAlsoImplementable)
                 {
                     var atomicSuffix = planned ? " (planned, atomic)" : "";
                     return new ReadyForImplementation($"{item.Type.Value} '{item.Title}' is in progress with no children — ready for direct implementation{atomicSuffix}.");
                 }
 
-                // Plannable-only with no children → needs seeding (decomposition).
-                // If the planned tag is set on a plannable-only type with no
-                // children, the architect emitted an empty task list for a type
-                // that requires decomposition — surface as NeedsSeeding so the
-                // anomaly is visible rather than silently advancing.
                 return new NeedsSeeding($"{item.Type.Value} '{item.Title}' is in progress but has no children — needs seeding.");
             }
 
@@ -107,14 +100,14 @@ public sealed class PhaseDetector(ProcessConfig processConfig)
         };
     }
 
-    private static RoutingDecision ClassifyByChildren(WorkItem item, IReadOnlyList<WorkItem> children)
+    private RoutingDecision ClassifyByChildren(WorkItem item, IReadOnlyList<WorkItem> children)
     {
         var allCompleted = true;
         var allProposed = true;
 
         for (var i = 0; i < children.Count; i++)
         {
-            var childCategory = StateCategoryResolver.Resolve(children[i].State, entries: null);
+            var childCategory = processConfig.GetCategory(children[i].Type.Value, children[i].State);
 
             if (childCategory != StateCategory.Completed && childCategory != StateCategory.Removed)
                 allCompleted = false;

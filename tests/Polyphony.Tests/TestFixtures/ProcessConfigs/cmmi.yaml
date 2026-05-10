@@ -36,6 +36,26 @@ transitions:
     implementation_complete: Closed
     scope_removed: Removed
 
+states:
+  Epic:
+    Proposed: proposed
+    Active: in_progress
+    Resolved: resolved
+    Closed: completed
+    Removed: removed
+  Requirement:
+    Proposed: proposed
+    Active: in_progress
+    Resolved: resolved
+    Closed: completed
+    Removed: removed
+  Task:
+    Proposed: proposed
+    Active: in_progress
+    Resolved: resolved
+    Closed: completed
+    Removed: removed
+
 branch_strategy:
   feature_branch: "feature/{root_id}-{slug}"
   planning_branch: "planning/{root_id}"

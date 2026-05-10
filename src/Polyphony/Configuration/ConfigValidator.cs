@@ -1,17 +1,21 @@
 using Polyphony.Sdlc;
+using Twig.Domain.Enums;
 
 namespace Polyphony.Configuration;
 
 /// <summary>
 /// Validates a <see cref="ProcessConfig"/> against the rules family
-/// (V-1 through V-20, with V-17 and V-18 retired alongside the G2 PG removal).
-/// Rules V-1–V-8, V-15, V-16, V-19, V-20 produce errors (block execution).
+/// (V-1 through V-21, with V-17 and V-18 retired alongside the G2 PG removal).
+/// Rules V-1–V-8, V-15, V-16, V-19, V-20, V-21 produce errors (block execution).
 /// Rules V-9–V-14 produce warnings (informational, file-existence checks).
 /// </summary>
 public static class ConfigValidator
 {
     private static readonly HashSet<string> ValidFacets =
         new(StringComparer.OrdinalIgnoreCase) { "plannable", "actionable", "implementable" };
+
+    private static readonly string[] ValidCategoryNames =
+        ["proposed", "in_progress", "resolved", "completed", "removed"];
 
     /// <summary>
     /// Validates the given <paramref name="config"/> and returns a structured result.
@@ -130,6 +134,70 @@ public static class ConfigValidator
         // identical names are fine (the composer dedupes them silently);
         // see FacetProfileValidator.
         errors.AddRange(FacetProfileValidator.Validate(config));
+
+        // V-21: declared state→category mapping. Every type with at least one
+        // transition must have a `states:` block; every state appearing on the
+        // RHS of `transitions:` must be declared in `states:` with a valid
+        // category; declared categories must be one of the canonical 5 names.
+        // Replaces the deprecated runtime path through StateCategoryResolver
+        // heuristics — see issue #281 / docs/decisions/states-in-process-config.md.
+        foreach (var typeName in config.Types.Keys)
+        {
+            var hasTransitions = config.Transitions.TryGetValue(typeName, out var transitions)
+                && transitions.Count > 0;
+            var typeStates = config.States.TryGetValue(typeName, out var declaredStates)
+                ? declaredStates
+                : null;
+
+            if (hasTransitions && (typeStates is null || typeStates.Count == 0))
+            {
+                errors.Add(Error("V-21",
+                    $"Type '{typeName}' has transitions but no `states:` block declaring " +
+                    "the (state → category) mapping. Declare every state appearing on the " +
+                    "right-hand side of `transitions:` under `states:` with one of: " +
+                    "proposed, in_progress, resolved, completed, removed."));
+                continue;
+            }
+
+            if (typeStates is null) continue;
+
+            // Validate that every declared category string parses
+            foreach (var (stateName, categoryString) in typeStates)
+            {
+                if (string.IsNullOrWhiteSpace(categoryString))
+                {
+                    errors.Add(Error("V-21",
+                        $"Type '{typeName}' state '{stateName}' has an empty category. " +
+                        $"Valid categories: {string.Join(", ", ValidCategoryNames)}."));
+                    continue;
+                }
+
+                if (ProcessConfig.ParseCategory(categoryString) == StateCategory.Unknown)
+                {
+                    errors.Add(Error("V-21",
+                        $"Type '{typeName}' state '{stateName}' has invalid category " +
+                        $"'{categoryString}'. Valid categories: " +
+                        $"{string.Join(", ", ValidCategoryNames)}."));
+                }
+            }
+
+            // Validate that every transition target is declared in states:
+            if (hasTransitions)
+            {
+                var declaredNames = new HashSet<string>(typeStates.Keys, StringComparer.OrdinalIgnoreCase);
+                foreach (var (eventName, targetState) in transitions!)
+                {
+                    if (!declaredNames.Contains(targetState))
+                    {
+                        errors.Add(Error("V-21",
+                            $"Type '{typeName}' transition '{eventName}: {targetState}' " +
+                            $"references state '{targetState}' that is not declared in " +
+                            "`states:`. Add it under `states:` with one of: " +
+                            $"{string.Join(", ", ValidCategoryNames)}."));
+                    }
+                }
+            }
+        }
 
         // V-9 through V-14: file-existence warnings (only when repoRoot is provided)
         if (repoRoot is not null)

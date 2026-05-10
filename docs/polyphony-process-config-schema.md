@@ -33,6 +33,12 @@ transitions:
   <TypeName>:
     <event_name>: <StateName>              # e.g. begin_planning: Active
 
+states:                                    # required (V-21) when transitions exist
+  <TypeName>:
+    <StateName>: <category>                # category is one of:
+                                           #   proposed | in_progress | resolved
+                                           #   completed | removed
+
 review_policies:
   planning:
     plan_pr: { agent_review: true, human_review: true, auto_merge: false }
@@ -146,6 +152,7 @@ The `{n}` placeholder for PG numbers is substituted later by helper scripts
 | V-14  | Warning  | `.polyphony-config/profile.yaml` missing.                                                                 | 144-148     |
 | V-15  | Error    | `parent` references a type not declared in `types:`.                                               | 40-47       |
 | V-16  | Error    | Cycle detected in type parent relationships.                                                       | 40-52       |
+| V-21  | Error    | `states:` block missing/incomplete: type with transitions has no states declared, a category is empty/invalid (must be one of `proposed`, `in_progress`, `resolved`, `completed`, `removed`), or a transition target name is not declared in `states:`. | 257-330 |
 
 V-9..V-14 only fire when `repoRoot` is supplied (i.e. when run via the CLI rather than
 in unit tests). Type-name → file-slug uses `ConfigValidator.ToSlug`

@@ -666,7 +666,94 @@ public sealed class ConfigValidatorTests
 
     #endregion
 
-    #region Helpers
+    #region V-21: per-type state→category mapping (issue #281)
+
+    [Fact]
+    public void V21_MissingStatesBlock_TypeWithTransitions_ProducesError()
+    {
+        var config = ValidConfig();
+        config.States.Clear();
+
+        var result = ConfigValidator.Validate(config);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(d => d.RuleId == "V-21" && d.Message.Contains("Epic"));
+        result.Errors.ShouldContain(d => d.RuleId == "V-21" && d.Message.Contains("Task"));
+    }
+
+    [Fact]
+    public void V21_StatesEmptyForType_ProducesError()
+    {
+        var config = ValidConfig();
+        config.States["Epic"] = new Dictionary<string, string>();
+
+        var result = ConfigValidator.Validate(config);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(d => d.RuleId == "V-21" && d.Message.Contains("Epic"));
+    }
+
+    [Fact]
+    public void V21_InvalidCategoryName_ProducesError()
+    {
+        var config = ValidConfig();
+        config.States["Epic"]["Doing"] = "active"; // invalid — must be "in_progress"
+
+        var result = ConfigValidator.Validate(config);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(d => d.RuleId == "V-21" && d.Message.Contains("active"));
+    }
+
+    [Fact]
+    public void V21_EmptyCategoryString_ProducesError()
+    {
+        var config = ValidConfig();
+        config.States["Epic"]["Doing"] = "";
+
+        var result = ConfigValidator.Validate(config);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(d => d.RuleId == "V-21" && d.Message.Contains("Doing"));
+    }
+
+    [Fact]
+    public void V21_TransitionTargetNotInStates_ProducesError()
+    {
+        var config = ValidConfig();
+        config.States["Epic"].Remove("Done");
+
+        var result = ConfigValidator.Validate(config);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(d => d.RuleId == "V-21" && d.Message.Contains("Done"));
+    }
+
+    [Fact]
+    public void V21_StatesWithoutTransitionsForType_NoError()
+    {
+        // A type can declare states even if it has no transitions — useful for
+        // pure container types whose items are merely categorized but never
+        // transitioned by polyphony events.
+        var config = ValidConfig();
+        config.Transitions.Remove("Epic");
+
+        var result = ConfigValidator.Validate(config);
+
+        result.Errors.ShouldNotContain(d => d.RuleId == "V-21" && d.Message.Contains("Epic"));
+    }
+
+    [Fact]
+    public void V21_AllCategoriesValid_NoError()
+    {
+        var config = ValidConfig();
+
+        var result = ConfigValidator.Validate(config);
+
+        result.Errors.ShouldNotContain(d => d.RuleId == "V-21");
+    }
+
+    #endregion
 
     private static ProcessConfig ValidConfig()
     {
@@ -691,6 +778,21 @@ public sealed class ConfigValidatorTests
                     ["implementation_complete"] = "Done",
                 },
             },
+            States = new Dictionary<string, Dictionary<string, string>>
+            {
+                ["Epic"] = new Dictionary<string, string>
+                {
+                    ["To Do"] = "proposed",
+                    ["Doing"] = "in_progress",
+                    ["Done"] = "completed",
+                },
+                ["Task"] = new Dictionary<string, string>
+                {
+                    ["To Do"] = "proposed",
+                    ["Doing"] = "in_progress",
+                    ["Done"] = "completed",
+                },
+            },
         };
     }
 
@@ -710,6 +812,15 @@ public sealed class ConfigValidatorTests
                     ["begin_implementation"] = "Doing",
                 },
             },
+            States = new Dictionary<string, Dictionary<string, string>>
+            {
+                [typeName] = new Dictionary<string, string>
+                {
+                    ["To Do"] = "proposed",
+                    ["Doing"] = "in_progress",
+                    ["Done"] = "completed",
+                },
+            },
         };
     }
 
@@ -727,8 +838,6 @@ public sealed class ConfigValidatorTests
         Directory.CreateDirectory(dir);
         File.WriteAllText(path, "");
     }
-
-    #endregion
 }
 
 

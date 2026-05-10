@@ -73,6 +73,40 @@ $script:TemplateTransitions = @{
     }
 }
 
+# Per-template state→category catalog. Required by V-21 (issue #281): every
+# state name a work item can occupy must declare its category so polyphony
+# routing can read it from config rather than hardcoded heuristics.
+# Categories: proposed | in_progress | resolved | completed | removed.
+$script:TemplateStates = @{
+    'Basic' = @(
+        @{ name = 'To Do';  category = 'proposed' }
+        @{ name = 'Doing';  category = 'in_progress' }
+        @{ name = 'Done';   category = 'completed' }
+    )
+    'Agile' = @(
+        @{ name = 'New';      category = 'proposed' }
+        @{ name = 'Active';   category = 'in_progress' }
+        @{ name = 'Resolved'; category = 'resolved' }
+        @{ name = 'Closed';   category = 'completed' }
+        @{ name = 'Removed';  category = 'removed' }
+    )
+    'Scrum' = @(
+        @{ name = 'New';         category = 'proposed' }
+        @{ name = 'Approved';    category = 'proposed' }
+        @{ name = 'Committed';   category = 'in_progress' }
+        @{ name = 'In Progress'; category = 'in_progress' }
+        @{ name = 'Done';        category = 'completed' }
+        @{ name = 'Removed';     category = 'removed' }
+    )
+    'CMMI' = @(
+        @{ name = 'Proposed'; category = 'proposed' }
+        @{ name = 'Active';   category = 'in_progress' }
+        @{ name = 'Resolved'; category = 'resolved' }
+        @{ name = 'Closed';   category = 'completed' }
+        @{ name = 'Removed';  category = 'removed' }
+    )
+}
+
 # ── Helper: detect process template from .twig/config ────────────────────────
 function Get-ProcessTemplateFromConfig {
     param([string]$BasePath)
@@ -190,6 +224,19 @@ function New-ProcessConfigYaml {
             $lines += "    begin_implementation: $midActive"
             $lines += "    implementation_complete: $doneState"
             if ($removedState) { $lines += "    scope_removed: $removedState" }
+        }
+    }
+
+    $lines += ''
+    $lines += '# Per-type state→category mapping (issue #281, validator V-21).'
+    $lines += '# Categories: proposed | in_progress | resolved | completed | removed.'
+    $lines += 'states:'
+
+    $stateCatalog = $script:TemplateStates[$Template]
+    foreach ($type in $Types) {
+        $lines += "  $($type):"
+        foreach ($state in $stateCatalog) {
+            $lines += "    $($state.name): $($state.category)"
         }
     }
 

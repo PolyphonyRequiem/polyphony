@@ -36,6 +36,24 @@ transitions:
     implementation_complete: Done
     scope_removed: Removed
 
+states:
+  Epic:
+    New: proposed
+    In Progress: in_progress
+    Done: completed
+    Removed: removed
+  Product Backlog Item:
+    New: proposed
+    Approved: proposed
+    Committed: in_progress
+    Done: completed
+    Removed: removed
+  Task:
+    To Do: proposed
+    In Progress: in_progress
+    Done: completed
+    Removed: removed
+
 branch_strategy:
   feature_branch: "feature/{root_id}-{slug}"
   planning_branch: "planning/{root_id}"

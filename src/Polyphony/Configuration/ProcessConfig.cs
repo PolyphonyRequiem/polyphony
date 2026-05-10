@@ -1,3 +1,4 @@
+using Twig.Domain.Enums;
 using YamlDotNet.Serialization;
 
 namespace Polyphony.Configuration;
@@ -8,6 +9,22 @@ public sealed class ProcessConfig
     public string ProcessTemplate { get; set; } = "";
     public Dictionary<string, TypeConfig> Types { get; set; } = new();
     public Dictionary<string, Dictionary<string, string>> Transitions { get; set; } = new();
+
+    /// <summary>
+    /// Per-type declared state→category mapping. The user-owned source of
+    /// truth for what category each named state belongs to. Keyed by type
+    /// name → state name → snake_case category string
+    /// (<c>proposed | in_progress | resolved | completed | removed</c>).
+    /// </summary>
+    /// <remarks>
+    /// Required as of issue #281: polyphony's routing logic
+    /// (<see cref="Routing.PhaseDetector"/>, <see cref="Routing.TransitionValidator"/>)
+    /// reads category strictly from this block, never from heuristics or
+    /// twig's process-cache. Validator rule V-21 enforces presence and
+    /// completeness. See <c>docs/decisions/states-in-process-config.md</c>.
+    /// </remarks>
+    public Dictionary<string, Dictionary<string, string>> States { get; set; } = new();
+
     public ReviewPolicies? ReviewPolicies { get; set; }
     public BranchStrategy? BranchStrategy { get; set; }
     public string Platform { get; set; } = "github";
@@ -27,6 +44,73 @@ public sealed class ProcessConfig
     /// </remarks>
     [YamlMember(Alias = "facets")]
     public Dictionary<string, FacetProfileConfig>? Facets { get; set; }
+
+    /// <summary>
+    /// Resolves the <see cref="StateCategory"/> for a given (type, state) pair
+    /// strictly from the declared <see cref="States"/> block. Returns
+    /// <see cref="StateCategory.Unknown"/> when the type or state isn't
+    /// declared, or when the declared category string isn't recognizable.
+    /// </summary>
+    /// <remarks>
+    /// V-21 validation makes "Unknown" practically unreachable for
+    /// configurations that have passed <c>validate-config</c>; callers
+    /// should treat Unknown as evidence of skipped validation, not as a
+    /// runtime category to honor.
+    /// </remarks>
+    public StateCategory GetCategory(string typeName, string? stateName)
+    {
+        if (string.IsNullOrEmpty(stateName))
+            return StateCategory.Unknown;
+
+        Dictionary<string, string>? typeStates = null;
+        foreach (var (declaredType, states) in States)
+        {
+            if (string.Equals(declaredType, typeName, StringComparison.OrdinalIgnoreCase))
+            {
+                typeStates = states;
+                break;
+            }
+        }
+
+        if (typeStates is null)
+            return StateCategory.Unknown;
+
+        foreach (var (declaredName, categoryString) in typeStates)
+        {
+            if (string.Equals(declaredName, stateName, StringComparison.OrdinalIgnoreCase))
+                return ParseCategory(categoryString);
+        }
+
+        return StateCategory.Unknown;
+    }
+
+    /// <summary>
+    /// Parses a snake_case category string from <see cref="States"/> into
+    /// the canonical <see cref="StateCategory"/>. Returns
+    /// <see cref="StateCategory.Unknown"/> for null, empty, or unrecognized
+    /// input. Whitespace, hyphens, and underscores are ignored; matching is
+    /// case-insensitive.
+    /// </summary>
+    public static StateCategory ParseCategory(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return StateCategory.Unknown;
+
+        var compact = new string(raw
+            .Where(c => !char.IsWhiteSpace(c) && c != '-' && c != '_')
+            .ToArray())
+            .ToLowerInvariant();
+
+        return compact switch
+        {
+            "proposed" => StateCategory.Proposed,
+            "inprogress" => StateCategory.InProgress,
+            "resolved" => StateCategory.Resolved,
+            "completed" => StateCategory.Completed,
+            "removed" => StateCategory.Removed,
+            _ => StateCategory.Unknown,
+        };
+    }
 }
 
 public sealed class TypeConfig
