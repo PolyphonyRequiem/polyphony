@@ -120,7 +120,11 @@ public sealed class PlanCommandsExtractRenegotiationFlagTests : CommandTestBase
         r.ErrorCode.ShouldBeNull();
         r.ErrorMessage.ShouldBeNull();
         // Null fields must be omitted from the snake_case JSON.
-        output.ShouldNotContain("\"renegotiation_request\":null");
+        // Exception: renegotiation_request is per-property pinned to
+        // [JsonIgnore(Never)] (AB#3067 dogfood, 2026-05-10) so it is
+        // ALWAYS emitted, even when null, so workflow Jinja under
+        // strict_undefined can reference it unconditionally.
+        output.ShouldContain("\"renegotiation_request\":null");
         output.ShouldNotContain("\"error_code\":null");
     }
 
@@ -255,5 +259,39 @@ public sealed class PlanCommandsExtractRenegotiationFlagTests : CommandTestBase
         output.ShouldNotContain("PrNumber");
         output.ShouldNotContain("FlagPresent");
         output.ShouldNotContain("FencedBlockWellFormed");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Wire-shape regression: renegotiation_request is always emitted
+    // (AB#3067 dogfood TemplateError, 2026-05-10). The PolyphonyJsonContext
+    // default is WhenWritingNull, but RenegotiationRequest is per-property
+    // pinned to Never via [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    // so workflow Jinja under strict_undefined can reference
+    // extract_renegotiation_flag.output.renegotiation_request unconditionally
+    // without raising on a missing dict key. Mirrors the bug-#8 precedent on
+    // PlanDeriveAncestorChainResult.ParentItemId. PR #263 added the workflow-
+    // level guard as defense in depth; this attribute closes the source so
+    // the workflow guard is no longer load-bearing. The happy-path no-fence
+    // case is covered above by PrBodyHasNoFence_FlagAbsent_WellFormed; this
+    // test pins the error-envelope path, which is where the original
+    // TemplateError manifested live.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RenegotiationRequest_ErrorEnvelope_AlwaysEmittedAsExplicitNull()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubPrViewMissing(runner, PrNumber);
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.ExtractRenegotiationFlag(prNumber: PrNumber, repo: Repo));
+
+        var r = Parse(output);
+        r.Success.ShouldBeFalse();
+        r.ErrorCode.ShouldBe("pr_not_found");
+        r.RenegotiationRequest.ShouldBeNull();
+        // Even on the error path the field is emitted; consumers can rely on
+        // .renegotiation_request being defined irrespective of success/failure.
+        output.ShouldContain("\"renegotiation_request\":null");
     }
 }
