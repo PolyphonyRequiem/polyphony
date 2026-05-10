@@ -61,7 +61,7 @@ because workflow YAMLs route on specific top-level keys (e.g. `allowed`,
 
 ## Routing-script exit-code convention
 
-Scripts authored as `type: script` agents in the plan-level / implement-pg workflows
+Scripts authored as `type: script` agents in the plan-level / implement-merge-group workflows
 **always exit 0** — the workflow routes on JSON output, not exit code. Migrated verbs
 in this category preserve that behaviour (returning `ExitCodes.Success` even on the
 "work item not found" path), and surface the error inline as an `error` field plus

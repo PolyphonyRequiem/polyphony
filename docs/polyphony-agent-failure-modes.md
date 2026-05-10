@@ -33,10 +33,10 @@ to `twig state`. This is the established way to derive the state name."*
 ## 2. Auditing `workflows/` only and missing two hardcoded sites in `scripts/`
 
 **What happened:** I went looking for hardcoded state names ("the literal `Done`" / "the
-literal `Doing`") and grep'd only `workflows/`. I found one (`workflows/implement-pg.yaml:370`)
+literal `Doing`") and grep'd only `workflows/`. I found one (`workflows/implement-merge-group.yaml:370`)
 and reported "one site to fix". The audit was wrong — there is also
 `scripts/impl-router.ps1:106` (`twig state Doing --output json …`), and the workflow
-literal at `implement-pg.yaml:370` is itself an inline pwsh fragment, not a YAML
+literal at `implement-merge-group.yaml:370` is itself an inline pwsh fragment, not a YAML
 attribute. Both of these are "scripts that hardcode state names", and I missed half the
 problem because I treated workflow YAML and helper scripts as if they were one layer.
 
@@ -47,7 +47,7 @@ plus `polyphony-workflow-author.skill.md` (the canonical helper-scripts table an
 **What it would have said:** *"Workflow YAMLs in `workflows/` and PowerShell helpers in
 `scripts/` are two distinct layers, both of which can shell out to twig directly. Audits
 of state-name literals must search both directories. The existing anti-patterns are
-`workflows/implement-pg.yaml:370` and `scripts/impl-router.ps1:106`."* The skill
+`workflows/implement-merge-group.yaml:370` and `scripts/impl-router.ps1:106`."* The skill
 literally cites both sites by line number.
 
 ---
@@ -89,7 +89,7 @@ and substituting the appropriate event name. No new infrastructure required."*
 `IProcessAdapter`) C# interface that didn't exist. I had assumed that the
 "github vs. ado" split must be a typed C# seam in `src/Polyphony/`. It isn't. The split
 is a workflow-YAML construct: `feature-pr.yaml`'s `pr_platform_router` node
-(lines 98-111) and `implement-pg.yaml`'s same-named node (lines 697-710) inspect a
+(lines 98-111) and `implement-merge-group.yaml`'s same-named node (lines 697-710) inspect a
 `platform` input and route to either `github-pr.yaml` or `ado-pr.yaml`. The two
 sub-workflows share an *input/output schema contract* documented in their headers
 (`workflows/github-pr.yaml:1-16`, `workflows/ado-pr.yaml:1-15`); there is no C# code
@@ -100,7 +100,7 @@ abstraction lives" section.
 
 **What it would have said:** *"There are no `IWorkItemPlatform` / `IProcessAdapter`
 interfaces in `src/Polyphony/`. The platform split is workflow-YAML-only:
-`pr_platform_router` in `feature-pr.yaml` and `implement-pg.yaml` dispatches on
+`pr_platform_router` in `feature-pr.yaml` and `implement-merge-group.yaml` dispatches on
 `workflow.input.platform` to `github-pr.yaml` or `ado-pr.yaml`. Adding a new platform
 means writing a `<platform>-pr.yaml` matching the contract and adding a `when` branch."*
 That section even includes the dispatch diagram so this can't be missed.

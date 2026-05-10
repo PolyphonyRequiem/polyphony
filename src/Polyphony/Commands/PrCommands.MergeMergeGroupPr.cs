@@ -29,7 +29,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-mg-pr")]
     [VerbResult(typeof(PrMergeMergeGroupResult))]
-    public async Task<int> MergeMgPr(
+    public async Task<int> MergeMergeGroupPr(
         int rootId = RequiredInput.MissingInt,
         string mgPath = "",
         bool admin = false,

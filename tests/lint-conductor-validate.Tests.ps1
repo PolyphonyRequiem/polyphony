@@ -64,7 +64,7 @@ exit 0
         It 'Passes when all 9 YAMLs pass conductor validate' {
             $yamlNames = @(
                 'twig-sdlc-v2-full.yaml', 'twig-sdlc-v2-planning.yaml', 'twig-sdlc-v2-implement.yaml',
-                'plan-level.yaml', 'implement-pg.yaml', 'feature-pr.yaml',
+                'plan-level.yaml', 'implement-merge-group.yaml', 'feature-pr.yaml',
                 'github-pr.yaml', 'ado-pr.yaml', 'close-out.yaml'
             )
             foreach ($name in $yamlNames) {

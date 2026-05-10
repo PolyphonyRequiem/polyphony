@@ -236,8 +236,5 @@ public sealed class ConcurrencyPolicy
 {
     /// <summary>Plan-level for_each cap (max parallel planning sub-workflows).</summary>
     public int? MaxConcurrentChildren { get; set; }
-
-    /// <summary>Implementation for_each cap (max parallel PG implementation sub-workflows).</summary>
-    public int? MaxConcurrentPgs { get; set; }
 }
 

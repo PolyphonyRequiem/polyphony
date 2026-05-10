@@ -24,7 +24,7 @@
 #        (planner-declared on the parent MG container) serializes the
 #        wave's items inside a shared MG worktree; `per_item` (default)
 #        spawns a fresh worktree per item and runs them in parallel
-#        bounded by `concurrency.max_concurrent_pgs`. MVP ships
+#        bounded by `concurrency.max_concurrent_children`. MVP ships
 #        per_item; per_mg serialization is a stub (defers to per_item
 #        until a follow-up wires the MG container check).
 #
@@ -114,17 +114,17 @@ workflow:
   description: >-
     Tree-walking apex-level SDLC orchestrator. Dispatches each work
     item under `apex_id` into the right lifecycle sub-workflow
-    (plan-level / actionable / implement-pg / feature-pr / fast-path)
+    (plan-level / actionable / implement-merge-group / feature-pr / fast-path)
     in topological wave order, with per-item worktree isolation and
     edge-correct wave integration. Wraps the wave dispatch in an
     outer iterate-until-stable loop (PR #9) so multi-facet items
     (plannable+implementable, etc.) traverse plan → impl → close in a
     single invocation rather than requiring per-facet re-invocation.
     Replaces the deleted polyphony-full.yaml.
-  version: "2.3.0"
+  version: "2.4.0"
   entry_point: preflight_sync
   metadata:
-    min_polyphony_version: "2.3.0"
+    min_polyphony_version: "2.4.0"
 
   limits:
     # The dispatch loop is a for_each over waves; each wave is itself a

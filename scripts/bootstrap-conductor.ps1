@@ -197,7 +197,7 @@ function New-ProcessConfigYaml {
     $lines += 'branch_strategy:'
     $lines += '  feature_branch: "feature/{root_id}-{slug}"'
     $lines += '  planning_branch: "planning/{root_id}"'
-    $lines += '  pg_branch: "pg-{n}/{root_id}-{slug}"'
+    $lines += '  merge_group_branch: "mg-{n}/{root_id}-{slug}"'
     $lines += '  target: main'
     $lines += ''
     $lines += 'platform: github'

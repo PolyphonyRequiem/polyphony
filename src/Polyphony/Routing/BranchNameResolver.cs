@@ -27,12 +27,7 @@ public static class BranchNameResolver
         return new WorkspaceHint
         {
             FeatureBranch = SubstitutePlaceholders(config.BranchStrategy.FeatureBranch, rootItem.Id, slug),
-            // BranchStrategy.MgBranch is the canonical YAML wire key on the
-            // user's process-config.yaml (the legacy `pg_branch:` key is
-            // copied into MgBranch by ProcessConfigLoader for back-compat).
-            // The JSON output emits "pg_branch" via [JsonPropertyName] until
-            // the workflow rewire PR removes the bridge.
-            MergeGroupBranch = SubstitutePlaceholders(config.BranchStrategy.MgBranch, rootItem.Id, slug),
+            MergeGroupBranch = SubstitutePlaceholders(config.BranchStrategy.MergeGroupBranch, rootItem.Id, slug),
         };
     }
 

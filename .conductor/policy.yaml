@@ -57,7 +57,7 @@ pr:
   # — Auto-merges if no major issues remain at fix-loop cap
   # — Gates only if major issues unresolved at cap
   defaults:
-    mode: warning
+    mode: auto
     max_fix_loops: 10
     max_remediation_cycles: 3
 
@@ -72,11 +72,9 @@ pr:
 concurrency:
   # ACTIVE: Planning and implementation parallelism limits.
   # — Up to 3 child workflows planned concurrently per recursion frame
+  # — Up to 3 plans executed in parallel per planning wave
   #   (prevents overwhelming the orchestrator with too many simultaneous plans)
-  # — Up to 3 PG implementations executed in parallel per feature
-  #   (balances throughput against resource utilization and feedback loops)
   max_concurrent_children: 3
-  max_concurrent_pgs: 3
 
 open_questions:
   # ACTIVE DEFAULTS: Warning mode for open questions gate.

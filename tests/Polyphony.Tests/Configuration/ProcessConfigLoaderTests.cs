@@ -159,95 +159,53 @@ public sealed class ProcessConfigLoaderTests
         Should.Throw<ArgumentException>(() => ProcessConfigLoader.GetParentTypeName(config, "Unknown"));
     }
 
-    [Fact]
-    public void Load_LegacyPgBranchOnly_CopiesOntoMgBranch()
+    // ─────────────────────────────────────────────────────────────────────────
+    // G2 retired-key rejection (no_window_fail_loud)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("pg_branch", "branch_strategy.merge_group_branch", """
+        process_template: Basic
+        types: { Task: { facets: [implementable] } }
+        transitions: {}
+        branch_strategy:
+          feature_branch: "feature/{root_id}"
+          pg_branch: "pg-{n}/{root_id}-{slug}"
+          target: main
+        """)]
+    [InlineData("mg_branch", "branch_strategy.merge_group_branch", """
+        process_template: Basic
+        types: { Task: { facets: [implementable] } }
+        transitions: {}
+        branch_strategy:
+          feature_branch: "feature/{root_id}"
+          mg_branch: "mg-{n}/{root_id}-{slug}"
+          target: main
+        """)]
+    [InlineData("pg_pr", "review_policies.<section>.merge_group_pr", """
+        process_template: Basic
+        types: { Task: { facets: [implementable] } }
+        transitions: {}
+        review_policies:
+          implementation:
+            pg_pr: { agent_review: true, human_review: false, auto_merge: true }
+        """)]
+    [InlineData("mg_pr", "review_policies.<section>.merge_group_pr", """
+        process_template: Basic
+        types: { Task: { facets: [implementable] } }
+        transitions: {}
+        review_policies:
+          implementation:
+            mg_pr: { agent_review: true, human_review: false, auto_merge: true }
+        """)]
+    public void Load_RetiredKey_ThrowsWithRenameGuidance(
+        string retiredKey, string replacementKey, string yaml)
     {
-        var path = WriteTempConfig("""
-            process_template: Basic
-            types:
-              Task:
-                facets: [implementable]
-            transitions: {}
-            branch_strategy:
-              feature_branch: "feature/{root_id}"
-              pg_branch: "pg-{n}/{root_id}-{slug}"
-              target: main
-            """);
-
-        var config = ProcessConfigLoader.Load(path);
-
-        config.BranchStrategy.ShouldNotBeNull();
-        config.BranchStrategy!.PgBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
-        config.BranchStrategy.MgBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
-    }
-
-    [Fact]
-    public void Load_BothMgAndPgBranchSet_KeepsMgBranchAuthoritative()
-    {
-        var path = WriteTempConfig("""
-            process_template: Basic
-            types:
-              Task:
-                facets: [implementable]
-            transitions: {}
-            branch_strategy:
-              feature_branch: "feature/{root_id}"
-              mg_branch: "mg-{n}/{root_id}-{slug}"
-              pg_branch: "pg-{n}/{root_id}-{slug}"
-              target: main
-            """);
-
-        var config = ProcessConfigLoader.Load(path);
-
-        config.BranchStrategy.ShouldNotBeNull();
-        config.BranchStrategy!.MgBranch.ShouldBe("mg-{n}/{root_id}-{slug}");
-        config.BranchStrategy.PgBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
-    }
-
-    [Fact]
-    public void Load_LegacyPgPrPolicyOnly_CopiesOntoMgPr()
-    {
-        var path = WriteTempConfig("""
-            process_template: Basic
-            types:
-              Task:
-                facets: [implementable]
-            transitions: {}
-            review_policies:
-              implementation:
-                pg_pr: { agent_review: true, human_review: false, auto_merge: true }
-            """);
-
-        var config = ProcessConfigLoader.Load(path);
-
-        config.ReviewPolicies.ShouldNotBeNull();
-        var implementation = config.ReviewPolicies!.Implementation;
-        implementation.ShouldNotBeNull();
-        implementation!.ShouldContainKey("pg_pr");
-        implementation.ShouldContainKey("mg_pr");
-        implementation["mg_pr"].AutoMerge.ShouldBeTrue();
-    }
-
-    [Fact]
-    public void Load_BothPgPrAndMgPr_KeepsMgPrAuthoritative()
-    {
-        var path = WriteTempConfig("""
-            process_template: Basic
-            types:
-              Task:
-                facets: [implementable]
-            transitions: {}
-            review_policies:
-              implementation:
-                mg_pr: { agent_review: true, human_review: true, auto_merge: false }
-                pg_pr: { agent_review: true, human_review: false, auto_merge: true }
-            """);
-
-        var config = ProcessConfigLoader.Load(path);
-
-        var implementation = config.ReviewPolicies!.Implementation!;
-        implementation["mg_pr"].HumanReview.ShouldBeTrue();
-        implementation["mg_pr"].AutoMerge.ShouldBeFalse();
+        var path = WriteTempConfig(yaml);
+        var ex = Should.Throw<InvalidOperationException>(() => ProcessConfigLoader.Load(path));
+        ex.Message.ShouldContain($"'{retiredKey}'");
+        ex.Message.ShouldContain($"'{replacementKey}'");
+        ex.Message.ShouldContain("Polyphony 2.4.0");
     }
 
     private static string WriteTempConfig(string yaml)

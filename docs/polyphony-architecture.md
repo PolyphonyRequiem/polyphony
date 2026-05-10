@@ -92,7 +92,7 @@ matching input/output schemas, not by a typed interface:
 
 ```text
               ┌──────────────────────────────────┐
-              │ feature-pr.yaml / implement-pg   │
+              │ feature-pr.yaml / implement-merge-group   │
               │  (platform-agnostic orchestrator) │
               └────────────────┬─────────────────┘
                                │
@@ -100,7 +100,7 @@ matching input/output schemas, not by a typed interface:
                  ┌──────────────────────────┐
                  │   pr_platform_router     │   ← inline pwsh, no script file
                  │   (a script node that    │     (feature-pr.yaml:98-111
-                 │    re-emits `platform`)  │      implement-pg.yaml:697-710)
+                 │    re-emits `platform`)  │      implement-merge-group.yaml:697-710)
                  └─────────┬────────────────┘
                            │
             when=='github' │  when=='ado'
@@ -123,7 +123,7 @@ by the `platform` input that ultimately originates from
 
 If you go looking for a C# interface to "add a new platform", you are in the wrong layer.
 Adding a platform means: (1) write a `<platform>-pr.yaml` matching the contract;
-(2) add a `when` branch to `pr_platform_router` in `feature-pr.yaml` and `implement-pg.yaml`.
+(2) add a `when` branch to `pr_platform_router` in `feature-pr.yaml` and `implement-merge-group.yaml`.
 
 ---
 
@@ -269,7 +269,7 @@ repo config gets away with this because no current workflow actually emits
 A worked example for the most common operation in the SDLC — closing an
 `implementable` task as part of a PG.
 
-1. **Workflow YAML** (`workflows/implement-pg.yaml`) routes to a node that runs the
+1. **Workflow YAML** (`workflows/implement-merge-group.yaml`) routes to a node that runs the
    inline pwsh "transition completed task to Done" snippet. This snippet currently
    contains the anti-pattern `twig state Done` (line 370).
 

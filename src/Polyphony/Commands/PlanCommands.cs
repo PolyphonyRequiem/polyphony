@@ -187,7 +187,7 @@ public sealed partial class PlanCommands(
     /// <summary>
     /// Loads agent guidance markdown files into a JSON role map keyed by file
     /// basename (extension stripped). Consumed by <c>plan-level.yaml</c>'s
-    /// <c>guidance_loader</c> step and <c>implement-pg.yaml</c>'s equivalent.
+    /// <c>guidance_loader</c> step and <c>implement-merge-group.yaml</c>'s equivalent.
     /// Returns an empty object when the guidance directory does not exist —
     /// graceful degradation for repos without agent guidance configured.
     /// </summary>

@@ -16,8 +16,8 @@ namespace Polyphony.Commands;
 /// are all "success"); validation errors return ConfigError per the
 /// project-wide convention.
 /// </summary>
-[VerbGroup("mg")]
-public sealed partial class MgCommands
+[VerbGroup("merge-group")]
+public sealed partial class MergeGroupCommands
 {
     /// <summary>
     /// Decide whether a child item under an enclosing merge group becomes
@@ -56,7 +56,7 @@ public sealed partial class MgCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("nesting-decision")]
-    [VerbResult(typeof(MgNestingDecisionResult))]
+    [VerbResult(typeof(MergeGroupNestingDecisionResult))]
     public Task<int> NestingDecision(
         int rootId = RequiredInput.MissingInt,
         int itemId = RequiredInput.MissingInt,
@@ -177,7 +177,7 @@ public sealed partial class MgCommands
         string reason)
     {
         var nestedPath = parentPath.Push(nestedId);
-        Emit(new MgNestingDecisionResult
+        Emit(new MergeGroupNestingDecisionResult
         {
             RootId = rootId.Value,
             ItemId = itemId.Value,
@@ -202,7 +202,7 @@ public sealed partial class MgCommands
         string overrideApplied,
         string reason)
     {
-        Emit(new MgNestingDecisionResult
+        Emit(new MergeGroupNestingDecisionResult
         {
             RootId = rootId.Value,
             ItemId = itemId.Value,
@@ -226,7 +226,7 @@ public sealed partial class MgCommands
         bool decomposable,
         string message)
     {
-        Emit(new MgNestingDecisionResult
+        Emit(new MergeGroupNestingDecisionResult
         {
             RootId = rootId,
             ItemId = itemId,
@@ -243,7 +243,7 @@ public sealed partial class MgCommands
         });
     }
 
-    private static void Emit(MgNestingDecisionResult result)
+    private static void Emit(MergeGroupNestingDecisionResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
-            result, PolyphonyJsonContext.Default.MgNestingDecisionResult));
+            result, PolyphonyJsonContext.Default.MergeGroupNestingDecisionResult));
 }

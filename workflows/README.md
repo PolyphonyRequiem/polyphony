@@ -69,7 +69,7 @@ directly only when you want to *replay* or *override* a single leg of a run.
 
 ```powershell
 conductor run plan-level@polyphony           --input work_item_id=<ID> --web
-conductor run implement-pg@polyphony         --input work_item_id=<ID> --web
+conductor run implement-merge-group@polyphony --input work_item_id=<ID> --web
 conductor run feature-pr@polyphony           --input work_item_id=<ID> --web
 ```
 

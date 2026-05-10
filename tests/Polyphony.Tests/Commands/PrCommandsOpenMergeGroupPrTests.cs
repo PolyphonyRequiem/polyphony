@@ -45,7 +45,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
     public async Task OpenMgPr_InvalidRootId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMgPr(rootId: 0, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMergeGroupPr(rootId: 0, mgPath: "core"));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupResult)!;
         result.Error!.ShouldContain("rootId");
@@ -55,7 +55,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
     public async Task OpenMgPr_InvalidMgPath_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMgPr(rootId: 100, mgPath: "BAD"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMergeGroupPr(rootId: 100, mgPath: "BAD"));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupResult)!;
         result.Error!.ShouldContain("merge-group path");
@@ -67,7 +67,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubLsRemoteHas(runner, "refs/heads/mg/100_core", exists: false);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMgPr(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMergeGroupPr(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupResult)!;
         result.Error!.ShouldContain("head branch");
@@ -81,7 +81,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
         StubLsRemoteHas(runner, "refs/heads/mg/100_core", exists: true);
         StubLsRemoteHas(runner, "refs/heads/feature/100", exists: false);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMgPr(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMergeGroupPr(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupResult)!;
         result.Error!.ShouldContain("base branch");
@@ -95,7 +95,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
         StubLsRemoteHas(runner, "refs/heads/feature/100", exists: true);
         runner.WhenExact("git", ["remote", "get-url", "origin"], new ProcessResult(1, "", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMgPr(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMergeGroupPr(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupResult)!;
         result.Error!.ShouldContain("repo slug");
@@ -111,7 +111,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
         StubPrListEmpty(runner);
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/77");
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMgPr(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMergeGroupPr(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupResult)!;
         result.Created.ShouldBeTrue();
@@ -133,7 +133,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
         StubPrListEmpty(runner);
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/78");
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMgPr(rootId: 100, mgPath: "core_api"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMergeGroupPr(rootId: 100, mgPath: "core_api"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupResult)!;
         result.HeadBranch.ShouldBe("mg/100_core_api");
@@ -150,7 +150,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
         StubPrListExisting(runner, 50, "https://github.com/PolyphonyRequiem/polyphony/pull/50");
         // No StubPrCreate — must NOT be called.
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMgPr(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenMergeGroupPr(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupResult)!;
         result.Created.ShouldBeFalse();
@@ -173,7 +173,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/79");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgPr(rootId: 100, mgPath: "core", title: "explicit MG title"));
+            () => cmd.OpenMergeGroupPr(rootId: 100, mgPath: "core", title: "explicit MG title"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupResult)!;
         result.Title.ShouldBe("explicit MG title");
@@ -189,7 +189,7 @@ public sealed class PrCommandsOpenMgPrTests : CommandTestBase
         StubPrListEmpty(runner);
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/79");
 
-        var (_, output) = await CaptureConsoleAsync(() => cmd.OpenMgPr(rootId: 100, mgPath: "core"));
+        var (_, output) = await CaptureConsoleAsync(() => cmd.OpenMergeGroupPr(rootId: 100, mgPath: "core"));
 
         output.ShouldContain("\"pr_number\"");
         output.ShouldContain("\"pr_url\"");

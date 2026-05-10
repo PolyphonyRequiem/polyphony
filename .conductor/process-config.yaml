@@ -15,7 +15,9 @@ types:
       Decompose into Tasks when scope exceeds a single PG (~2000 LoC).
       Implement directly when the change is focused and fits one PG.
   Task:
-    facets: [implementable]
+    facets: [implementable, actionable]
+    facet_order: [actionable, implementable]
+    actionable_executor: polyphony
     filing_eligible: true
 
 transitions:
@@ -39,15 +41,15 @@ review_policies:
   planning:
     plan_pr: { agent_review: true, human_review: true, auto_merge: false }
   implementation:
-    mg_pr: { agent_review: true, human_review: false, auto_merge: true }
+    merge_group_pr: { agent_review: true, human_review: false, auto_merge: true }
     feature_pr: { agent_review: true, human_review: true, auto_merge: false }
   remediation:
-    mg_pr: { agent_review: true, human_review: false, auto_merge: true }
+    merge_group_pr: { agent_review: true, human_review: false, auto_merge: true }
 
 branch_strategy:
   feature_branch: "feature/{root_id}-{slug}"
   planning_branch: "planning/{root_id}"
-  mg_branch: "mg-{n}/{root_id}-{slug}"
+  merge_group_branch: "mg-{n}/{root_id}-{slug}"
   target: main
 
 platform: github

@@ -232,7 +232,7 @@ introduce new dependencies.
 
 ### `lifecycle-router.ps1 -WorkItemId N -ApexId A`
 - **Purpose**: classify item N's next dispatch lifecycle (plan-level /
-  actionable / implement-pg / feature-pr).
+  actionable / implement-merge-group / feature-pr).
 - **Pre**: ADO reachable.
 - **Post**: emits `{success, route: <enum>, ...}` consumed by
   `apex-item-dispatch.yaml`'s branch-on-router.

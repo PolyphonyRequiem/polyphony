@@ -1,12 +1,15 @@
-# implement-mg — Single MG (merge-group) lifecycle on the Rev 4 branch model.
+# implement-merge-group — Single MG (merge-group) lifecycle on the Rev 4 branch model.
+#
+# Drives one merge group through: branch creation → per-task implementation
+# loop with per-impl PRs → MG-level review and acceptance → MG PR creation
+# and merge → scope closure.
+# Single MG (merge-group) lifecycle on the Rev 4 branch model.
 #
 # Drives one merge group through: branch creation → per-task implementation
 # loop with per-impl PRs → MG-level review and acceptance → MG PR creation
 # and merge → scope closure.
 #
-# Companion to implement-pg.yaml. While implement-pg commits straight to the
-# MG branch and opens a single PR, implement-mg adopts the new ADR
-# (docs/decisions/branch-model.md) shape:
+# Adopts the Rev 4 ADR (docs/decisions/branch-model.md) shape:
 #
 #   - The merge group lives on `mg/{root}_{mg_path}` (per MergeGroupPath
 #     grammar). Created via `polyphony branch ensure-mg`.
@@ -70,20 +73,20 @@
 #   feature-branch promotion is missing.
 
 workflow:
-  name: implement-mg
+  name: implement-merge-group
   description: >-
     Single merge-group lifecycle on the Rev 4 branch model. Creates the
     MG branch, iterates tasks through coder → reviewer with per-task
     branches and PRs, runs scope-level review, and opens + merges the
     MG PR via the merge-commit-only path required by the ADR.
-  version: "2.3.0"
+  version: "2.4.0"
   entry_point: branch_ensure_mg
   metadata:
-    min_polyphony_version: "2.3.0"
+    min_polyphony_version: "2.4.0"
 
   limits:
-    # Per the rubber-duck pass — implement-mg's task loop is wider than
-    # implement-pg's because each task carries seven nodes
+    # Per the rubber-duck pass — implement-merge-group's task loop is wide because
+    # each task carries seven nodes
     # (ensure-impl → coder → reviewer → impl-pr-open → impl-pr-merge
     #  → completer → router). Ten tasks ≈ 70 iterations baseline; budget
     # 300 to cover changes-requested loops and the scope_reviewer
@@ -292,7 +295,7 @@ agents:
   # ── Coder agent ───────────────────────────────────────────────────────
   #
   # Implements a single task. Commits to the per-item impl branch.
-  # Uses Opus 4.6 — same model used by implement-pg.yaml. Lint check
+  # Uses Opus 4.6. Lint check
   # accepts any "opus" model so the choice can evolve without lint churn.
   #
   # Invariants:
@@ -839,8 +842,8 @@ agents:
   # ── PR platform router ────────────────────────────────────────────────
   #
   # Routes to the platform-specific MG-PR lifecycle leg based on the
-  # platform input (github | ado). Mirrors the pattern in
-  # implement-pg.yaml.
+  # platform input (github | ado). Same shape as feature-pr.yaml's
+  # pr_platform_router.
   #
   # The script ALSO computes `ado_inputs_ready` so the workflow can fail
   # early and clearly when platform=ado but the connection inputs

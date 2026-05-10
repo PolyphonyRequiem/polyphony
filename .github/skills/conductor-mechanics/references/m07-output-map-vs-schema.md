@@ -116,7 +116,7 @@ When workflow A calls workflow B as a sub-workflow:
 # in workflow A:
 - name: implementation
   type: workflow
-  workflow: implement-pg@polyphony
+  workflow: implement-merge-group@polyphony
   inputs:
     work_item_id: "{{ workflow.input.work_item_id }}"
   routes:

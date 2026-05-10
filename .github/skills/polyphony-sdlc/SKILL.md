@@ -26,7 +26,7 @@ appear in any YAML routing condition.
 > integrates each wave by merging per-item branches into the apex
 > feature branch, and re-evaluates the worklist until the apex root
 > reports `satisfied`. Per-item lifecycle dispatch (plan-level /
-> actionable / implement-pg / feature-pr) is now wired end-to-end as of
+> actionable / implement-merge-group / feature-pr) is now wired end-to-end as of
 > the Phase 7 follow-up. See "Invocation" below for the canonical
 > command line and the "Apex driver invocation" section further down
 > for the full input contract and re-entry semantics.
@@ -62,7 +62,7 @@ Start-Process -WindowStyle Hidden -FilePath conductor -ArgumentList @(
 )
 ```
 
-Sub-workflows (`plan-level`, `actionable`, `implement-pg`, `feature-pr`,
+Sub-workflows (`plan-level`, `actionable`, `implement-merge-group`, `feature-pr`,
 …) can be invoked directly to replay or override a single leg, but the
 apex-driver re-derives the right leg per item from observable state, so
 direct sub-workflow invocations should be rare. See the "Apex driver
@@ -93,7 +93,7 @@ skills) knows which provider's APIs and URL conventions to use.
 > (`twig` is the ADO CLI). GitHub is used only for code/PR hosting via the
 > `github-pr.yaml` sub-workflow. The `tracker=ado` metadata reflects the
 > work-item provider and is independent of the PR platform routing inside
-> `implement-pg.yaml` (`pr_platform_router`).
+> `implement-merge-group.yaml` (`pr_platform_router`).
 
 ## Per-Requirement State (replaces phase strings)
 
@@ -128,7 +128,7 @@ Depth 0: <driver / direct invocation>
 Depth 1: plan-level.yaml                      (recursive planning core)
 Depth 2-N: plan-level.yaml self-recursion     (nested plannable levels)
 Depth N+1: github-pr.yaml / ado-pr.yaml       (PR lifecycle — leaf)
-            OR implement-pg.yaml               (PG lifecycle)
+            OR implement-merge-group.yaml               (PG lifecycle)
 ```
 
 The `depth_guard` script in `plan-level.yaml` validates `depth < max_depth`
@@ -171,7 +171,7 @@ and seeds children. Self-recurses for nested plannable levels via `for_each`.
 
 ---
 
-### `implement-pg.yaml` — Single PG Lifecycle
+### `implement-merge-group.yaml` — Single PG Lifecycle
 
 **Responsibility:** Implements all tasks in a single Processing Group, creates and merges
 a PG-level PR, and closes completed work items in ADO after merge.
@@ -329,7 +329,7 @@ If the reviewer requests changes:
 1. `remediation_counter` increments the cycle count
 2. `remediation_planner` (Opus 1M) creates an addendum plan addressing the feedback
 3. `remediation_seeder` creates a new remediation PG with tasks from the addendum
-4. `remediation_implementer` runs the full `implement-pg.yaml` lifecycle for the new PG
+4. `remediation_implementer` runs the full `implement-merge-group.yaml` lifecycle for the new PG
 5. The feature PR is re-reviewed
 
 This cycle repeats up to **3 times**. If the cap is exceeded, a `remediation_cap_gate`
@@ -350,7 +350,7 @@ Both sub-workflows share the same **interface contract**:
 - **Inputs:** `pr_number`, `branch_name`, `target_branch`, `review_policy`
 - **Outputs:** `merged` (boolean), `pr_url` (string)
 
-The `platform` input (default: `github`) on `implement-pg.yaml` and `feature-pr.yaml`
+The `platform` input (default: `github`) on `implement-merge-group.yaml` and `feature-pr.yaml`
 controls which sub-workflow is selected. Platform selection is driven by
 `process-config.yaml` — not hardcoded in workflow routing.
 
@@ -468,7 +468,7 @@ Companion deterministic scripts (in `.conductor/registry/scripts/`):
 
 - `lifecycle-router.ps1` — wraps `polyphony state next-ready` to
   classify each item into one of `plan-level | actionable |
-  implement-pg | feature-pr | fast-path | monitoring | blocked |
+  implement-merge-group | feature-pr | fast-path | monitoring | blocked |
   error`. Same envelope shape as `route-actionable-executor.ps1`.
 - `worktree-manager.ps1` — spawns/tears down per-item git worktrees
   at `<repo-parent>/<repo-name>-item-<work_item_id>` on branch
@@ -571,7 +571,7 @@ organized per YAML:
   sub-prefix that bypassed `BranchNameBuilder`).
 - `spawn_worktree` branch-on-routers each of the four dispatchable
   verdicts (`plan-level` → `plan_level_dispatch`, `actionable` →
-  `actionable_dispatch`, `implement-pg` → `implement_pg_dispatch`,
+  `actionable_dispatch`, `implement-merge-group` → `implement_merge_group_dispatch`,
   `feature-pr` → `feature_pr_dispatch`) with the spawn-success guard
   in the `when:` clause. The M4 catch-all is the last entry and falls
   through to `terminal_spawn_error`.
@@ -611,14 +611,14 @@ organized per YAML:
 - `apex-item-dispatch` → `plan-level` threads `work_item_id` +
   `intent: resume` + ADO context. → `actionable` threads
   `work_item_id` + `apex_id` + `executor: polyphony`. →
-  `implement-pg` derives `pg_number` / `branch_name` /
+  `implement-merge-group` derives `pg_number` / `branch_name` /
   `feature_branch` from the apex+item ids. → `feature-pr` targets
   `main` on the apex feature branch.
 
 **lifecycle-router script ↔ YAML contract drift:**
 - The router script emits exactly the canonical set of
   `lifecycle_workflow` values: `plan-level`, `actionable`,
-  `implement-pg`, `feature-pr`, `fast-path`, `monitoring`, `blocked`,
+  `implement-merge-group`, `feature-pr`, `fast-path`, `monitoring`, `blocked`,
   `error`. No undocumented values, none missing.
 - Every value the router emits is handled by an
   `apex-item-dispatch.yaml` `when:` clause — short-circuit verdicts
@@ -681,7 +681,7 @@ most-specific-wins scoping: `root` → `type:<Name>` → `defaults`.
 |--------|-------------|------|-------------|
 | `approvals` | `plan-level.yaml` (review_router / plan_approval) | `mode`, `max_revision_cycles`, `quality_threshold` | Controls whether the plan approval gate fires and under what conditions |
 | `pr` | `github-pr.yaml` / `ado-pr.yaml` | `mode`, `max_fix_loops`, `max_remediation_cycles` | Controls PR merge gating and fix loop caps |
-| `concurrency` | the apex driver's MG dispatch and the recursive `plan-level.yaml` for_each blocks | `max_concurrent_children`, `max_concurrent_pgs` | Limits parallel sub-workflow and PG execution |
+| `concurrency` | the apex driver's merge-group dispatch and the recursive `plan-level.yaml` for_each blocks | `max_concurrent_children` | Limits parallel sub-workflow and merge-group execution |
 | `open_questions` | `plan-level.yaml` (open_questions_policy → routing) | `mode`, `min_severity`, `max_question_loops` | Controls whether architect open questions gate for user input |
 
 ### `open_questions` Domain

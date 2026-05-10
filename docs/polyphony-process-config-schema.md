@@ -37,15 +37,15 @@ review_policies:
   planning:
     plan_pr: { agent_review: true, human_review: true, auto_merge: false }
   implementation:
-    pg_pr:      { agent_review: true, human_review: false, auto_merge: true }
+    merge_group_pr:      { agent_review: true, human_review: false, auto_merge: true }
     feature_pr: { agent_review: true, human_review: true,  auto_merge: false }
   remediation:
-    pg_pr: { agent_review: true, human_review: false, auto_merge: true }
+    merge_group_pr: { agent_review: true, human_review: false, auto_merge: true }
 
 branch_strategy:
   feature_branch:  "feature/{root_id}-{slug}"
   planning_branch: "planning/{root_id}"
-  pg_branch:       "pg-{n}/{root_id}-{slug}"
+  merge_group_branch:       "pg-{n}/{root_id}-{slug}"
   target:          main
 ```
 
@@ -109,7 +109,7 @@ review_policies:
   remediation:     { <pr_kind>: { … } }
 ```
 
-`<pr_kind>` is workflow-defined (e.g. `plan_pr`, `pg_pr`, `feature_pr`). Each kind
+`<pr_kind>` is workflow-defined (e.g. `plan_pr`, `merge_group_pr`, `feature_pr`). Each kind
 maps to three booleans. Polyphony does not validate the shape of `review_policies`
 beyond YAML parseability.
 

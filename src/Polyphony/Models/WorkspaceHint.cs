@@ -3,14 +3,12 @@ using System.Text.Json.Serialization;
 namespace Polyphony;
 
 /// <summary>
-/// Branch-name hints emitted alongside routing decisions. JSON wire key
-/// <c>pg_branch</c> is preserved via <see cref="JsonPropertyNameAttribute"/>
-/// for legacy consumers.
+/// Branch-name hints emitted alongside routing decisions.
 /// </summary>
 public sealed record WorkspaceHint
 {
     public string? FeatureBranch { get; init; }
 
-    [JsonPropertyName("pg_branch")]
+    [JsonPropertyName("merge_group_branch")]
     public string? MergeGroupBranch { get; init; }
 }

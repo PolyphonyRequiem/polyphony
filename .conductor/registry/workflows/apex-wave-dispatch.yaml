@@ -23,7 +23,7 @@
 #         dispatch_items.errors. wave-integrator has been invoked.
 #
 # Per-item lifecycle dispatch is now wired (see apex-item-dispatch.yaml's
-# branch-on-router into plan-level / actionable / implement-pg /
+# branch-on-router into plan-level / actionable / implement-merge-group /
 # feature-pr / fast-path). After the wave dispatch settles, this
 # workflow:
 #   * Aggregates renegotiation_pending across the wave's items so
@@ -48,15 +48,15 @@ workflow:
   description: >-
     One wave of the apex-driver dispatch loop. Per-item worktree fanout
     + lifecycle classification + branch-on-router lifecycle dispatch
-    (plan-level / actionable / implement-pg / feature-pr / fast-path) +
+    (plan-level / actionable / implement-merge-group / feature-pr / fast-path) +
     wave integration via wave-integrator.ps1. Aggregates renegotiation
     bubble-up AND per-item progress counts (items_satisfied_count,
     items_dispatched_count) so the apex-driver outer loop (PR #9) can
     decide whether the iteration made progress.
-  version: "2.3.0"
+  version: "2.4.0"
   entry_point: check_prior_wave_status
   metadata:
-    min_polyphony_version: "2.3.0"
+    min_polyphony_version: "2.4.0"
 
   limits:
     # Each wave can hold dozens of items; the for_each iteration count
@@ -499,7 +499,7 @@ agents:
 # the eventual lifecycle dispatch (DEFERRED — see workflow header)
 # has an isolated checkout to operate on.
 #
-# max_concurrent: 3 mirrors policy.concurrency.max_concurrent_pgs and
+# max_concurrent: 3 mirrors policy.concurrency.max_concurrent_children and
 # is the conservative MVP cap — runs comfortably under most ADO rate
 # limits and saturates a typical developer workstation.
 #

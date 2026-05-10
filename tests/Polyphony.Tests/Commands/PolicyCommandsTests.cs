@@ -42,7 +42,6 @@ public sealed class PolicyCommandsTests : CommandTestBase
         result.Pr.DefaultsMaxFixLoops.ShouldBe(10);
         result.Pr.DefaultsMaxRemediationCycles.ShouldBe(3);
         result.Concurrency.MaxConcurrentChildren.ShouldBe(3);
-        result.Concurrency.MaxConcurrentPgs.ShouldBe(3);
     }
 
     [Fact]
@@ -108,8 +107,27 @@ public sealed class PolicyCommandsTests : CommandTestBase
         output.ShouldContain("\"defaults_mode\"");
         output.ShouldContain("\"defaults_max_revision_cycles\"");
         output.ShouldContain("\"max_concurrent_children\"");
-        output.ShouldContain("\"max_concurrent_pgs\"");
         output.ShouldNotContain("\"DefaultsMode\"");
+    }
+
+    [Fact]
+    public void Load_RetiredMaxConcurrentPgsKey_ReturnsConfigErrorWithRenameGuidance()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            concurrency:
+              max_concurrent_pgs: 3
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var doc = JsonDocument.Parse(output);
+        var error = doc.RootElement.GetProperty("error").GetString()!;
+        error.ShouldContain("max_concurrent_pgs");
+        error.ShouldContain("Polyphony 2.4.0");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -143,7 +161,6 @@ public sealed class PolicyCommandsTests : CommandTestBase
               defaults: { mode: warning, max_fix_loops: 10, max_remediation_cycles: 3 }
             concurrency:
               max_concurrent_children: 2
-              max_concurrent_pgs: 2
             """);
 
         var cmd = CreateCommand();

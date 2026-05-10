@@ -20,10 +20,10 @@ workflow:
   description: >-
     GitHub PR lifecycle. Reviews the PR with Opus 1M, fixes issues via
     Sonnet in a loop (max 10 iterations), and merges when approved.
-  version: "2.3.0"
+  version: "2.4.0"
   entry_point: pr_reviewer
   metadata:
-    min_polyphony_version: "2.3.0"
+    min_polyphony_version: "2.4.0"
 
   limits:
     max_iterations: 50
@@ -367,7 +367,7 @@ agents:
   #
   # Merges the approved PR using gh pr merge. Performs squash merge by
   # default for a clean history. Records the merge result and PR URL
-  # for downstream consumers (scope_closer in implement-pg.yaml).
+  # for downstream consumers (scope_closer in implement-merge-group.yaml).
   #
   # Invariants:
   #   Pre:  pr_reviewer.output.verdict == 'approved', OR human chose

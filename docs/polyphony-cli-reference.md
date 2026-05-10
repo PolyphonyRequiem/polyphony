@@ -211,7 +211,7 @@ take** for a given work item. The current model is:
   items already partitioned into PR groups (PGs) via `PG-N` tags, which PG
   needs work next, and what action does it need (create branch / submit PR /
   all complete)? This is the decision the implementation sub-workflow
-  (`implement-pg.yaml`) makes per PG.
+  (`implement-merge-group.yaml`) makes per PG.
 
 Both share a key design rule: **routing is computed from `StateCategory`
 plus `facets`, never from a hardcoded type name.** Polyphony does not
@@ -506,7 +506,7 @@ shouldn't be hardcoded in the YAML. Examples:
   (`pr.defaults.max_remediation_cycles`)
 - How many rounds of open-questions can the architect surface before forcing
   a decision? (`open_questions.defaults.max_question_loops`)
-- How many PGs can run in parallel? (`concurrency.max_concurrent_pgs`)
+- How many merge groups can run in parallel? (`concurrency.max_concurrent_children`)
 
 Three verbs implement load-/validate-/resolve:
 
@@ -769,7 +769,7 @@ delete the literal strings.
 
 Only one verb in this group today: `pr create-feature-pr`. The PG-level PR
 creation lives inside the implementation sub-workflow as an inline `gh pr
-create` call (the `pr_submit` agent in `implement-pg.yaml`); the *feature*
+create` call (the `pr_submit` agent in `implement-merge-group.yaml`); the *feature*
 PR (the umbrella PR for an entire epic, post-PG-merge) gets a dedicated
 verb because it has more complex logic (idempotent reuse of existing PRs).
 

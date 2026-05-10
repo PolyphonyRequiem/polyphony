@@ -202,7 +202,7 @@ pattern as `route-actionable-executor.ps1` (always exit 0; surface
 failure via `error_code` / `error_message`):
 
 - `lifecycle-router.ps1` — wraps `polyphony state next-ready` and
-  classifies each item into `plan-level | actionable | implement-pg
+  classifies each item into `plan-level | actionable | implement-merge-group
   | feature-pr | fast-path | monitoring | blocked | error`. The
   workflow YAML reads `classify_lifecycle.output.route` and
   dispatches; the YAML stays trivial because the classification
@@ -251,7 +251,7 @@ pattern instead:
 Canonical examples in this repo:
 - `apex-item-dispatch.yaml` — `classify_lifecycle` →
   {`plan_level_dispatch`, `actionable_dispatch`,
-  `implement_pg_dispatch`, `feature_pr_dispatch`}.
+  `implement_merge_group_dispatch`, `feature_pr_dispatch`}.
 - `feature-pr.yaml` — `pr_platform_router` →
   {`pr_lifecycle_github`, `pr_lifecycle_ado`}.
 
@@ -427,7 +427,7 @@ if ($validateResult.is_valid) {
 
 ### Wrong patterns (anti-patterns to be replaced)
 
-`workflows/implement-pg.yaml:370` — hardcoded `Done` in an inline pwsh `args` block:
+`workflows/implement-merge-group.yaml:370` — hardcoded `Done` in an inline pwsh `args` block:
 
 ```yaml
 args:

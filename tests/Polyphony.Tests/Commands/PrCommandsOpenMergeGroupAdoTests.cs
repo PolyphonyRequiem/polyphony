@@ -49,8 +49,8 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         StubLsRemoteHas(runner, $"refs/heads/{@base}", exists: true);
     }
 
-    private static PrOpenMgAdoResult Parse(string output)
-        => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMgAdoResult)!;
+    private static PrOpenMergeGroupAdoResult Parse(string output)
+        => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenMergeGroupAdoResult)!;
 
     private static AdoPullRequest MakePr(int id, string url, string sourceRef, string targetRef)
         => new(
@@ -73,7 +73,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
     {
         var (cmd, _, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(organization, project, repository, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(organization, project, repository, rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
@@ -88,7 +88,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
     {
         var (cmd, _, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(organization, project, repository, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(organization, project, repository, rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var envelope = JsonSerializer.Deserialize(
             output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
@@ -106,7 +106,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
     {
         var (cmd, _, _) = CreateCommand();
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId, mgPath: "core"));
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
         result.Error!.ShouldContain("rootId");
@@ -121,7 +121,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
     {
         var (cmd, _, _) = CreateCommand();
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: mgPath));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: mgPath));
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
         result.Error!.ShouldContain("merge-group path");
@@ -132,7 +132,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
     {
         var (cmd, _, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: ""));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: ""));
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var envelope = JsonSerializer.Deserialize(
             output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
@@ -156,7 +156,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             ado: null);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         var result = Parse(output);
         result.ErrorCode.ShouldBe("ado_failed");
         result.Error!.ShouldContain("IAdoClient");
@@ -173,7 +173,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         StubLsRemoteHas(runner, "refs/heads/mg/100_core", exists: false);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         var result = Parse(output);
         result.ErrorCode.ShouldBe("missing_head_branch");
         result.Error!.ShouldContain("head branch");
@@ -189,7 +189,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         StubLsRemoteHas(runner, "refs/heads/feature/100", exists: false);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         var result = Parse(output);
         result.ErrorCode.ShouldBe("missing_base_branch");
         result.Error!.ShouldContain("base branch");
@@ -211,7 +211,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.ErrorCode.ShouldBeEmpty();
@@ -235,7 +235,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/mg/100_core");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core_api"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core_api"));
         var result = Parse(output);
         result.ErrorCode.ShouldBeEmpty();
         result.HeadBranch.ShouldBe("mg/100_core_api");
@@ -256,7 +256,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/mg/100_core_api");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core_api_v2"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core_api_v2"));
         var result = Parse(output);
         result.HeadBranch.ShouldBe("mg/100_core_api_v2");
         result.BaseBranch.ShouldBe("mg/100_core_api");
@@ -279,7 +279,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         };
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         var result = Parse(output);
         result.ErrorCode.ShouldBeEmpty();
         result.Created.ShouldBeFalse();
@@ -309,7 +309,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         var result = Parse(output);
         result.Created.ShouldBeTrue();
         result.PrNumber.ShouldBe(99);
@@ -329,7 +329,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         var result = Parse(output);
         result.Title.ShouldContain("merge group core for root #100");
     }
@@ -345,7 +345,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core",
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core",
                 title: "custom MG title"));
         var result = Parse(output);
         result.Title.ShouldBe("custom MG title");
@@ -362,7 +362,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         ado.LastCreateDescription.ShouldNotBeNull();
         ado.LastCreateDescription!.ShouldContain("Merge group `core` for root #100");
         ado.LastCreateDescription.ShouldContain("mg/100_core");
@@ -380,7 +380,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core",
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core",
                 body: "explicit body content"));
         ado.LastCreateDescription.ShouldBe("explicit body content");
     }
@@ -398,7 +398,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         var result = Parse(output);
         result.PrUrl.ShouldBe("https://dev.azure.com/myorg/myproj/_git/myrepo/pullrequest/42");
     }
@@ -413,7 +413,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.ListPrsReturnsNull = true;
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         var result = Parse(output);
         result.ErrorCode.ShouldBe("pr_not_found");
         result.Error!.ShouldContain("not found");
@@ -427,7 +427,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.ThrowOnList = new InvalidOperationException("No PAT configured (set AZURE_DEVOPS_EXT_PAT).");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         var result = Parse(output);
         result.ErrorCode.ShouldBe("no_pat");
         result.Error!.ShouldContain("AZURE_DEVOPS_EXT_PAT");
@@ -441,7 +441,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.ThrowOnList = new HttpRequestException("unauthorized", null, HttpStatusCode.Unauthorized);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         Parse(output).ErrorCode.ShouldBe("no_pat");
     }
 
@@ -453,7 +453,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.ThrowOnList = new HttpRequestException("forbidden", null, HttpStatusCode.Forbidden);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         Parse(output).ErrorCode.ShouldBe("no_pat");
     }
 
@@ -465,7 +465,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.ThrowOnList = new HttpRequestException("not found", null, HttpStatusCode.NotFound);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         Parse(output).ErrorCode.ShouldBe("ado_failed");
     }
 
@@ -477,7 +477,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.ThrowOnList = new HttpRequestException("conflict", null, HttpStatusCode.Conflict);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         Parse(output).ErrorCode.ShouldBe("ado_failed");
     }
 
@@ -489,7 +489,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.ThrowOnList = new HttpRequestException("server died", null, HttpStatusCode.BadGateway);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         Parse(output).ErrorCode.ShouldBe("ado_failed");
     }
 
@@ -501,7 +501,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.ThrowOnList = new TimeoutException("attempts exhausted");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         Parse(output).ErrorCode.ShouldBe("ado_timeout");
     }
 
@@ -514,7 +514,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.CreatedPr = null;  // simulates 404 from CreatePullRequestAsync
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         Parse(output).ErrorCode.ShouldBe("pr_not_found");
     }
 
@@ -528,7 +528,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.ThrowOnList = new OperationCanceledException();
 
         await Should.ThrowAsync<OperationCanceledException>(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
     }
 
     // ─── JSON contract ───────────────────────────────────────────────────
@@ -544,7 +544,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
 
         output.ShouldContain("\"root_id\"");
         output.ShouldContain("\"mg_path\"");
@@ -572,7 +572,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenMgAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
         Parse(output).RepoSlug.ShouldBe("myorg/myproj/myrepo");
     }
 
