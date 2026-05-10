@@ -45,6 +45,17 @@ public sealed class ExternalToolTimeoutException : Exception
     /// <summary>Wall-clock elapsed time of the LAST timed-out attempt before the kill.</summary>
     public TimeSpan LastElapsed { get; }
 
+    /// <summary>
+    /// Optional path to a sidecar diagnostic JSON file written by
+    /// <see cref="GhHangDiagnostics"/> when this timeout was raised
+    /// from a real spawn (not a unit test). Includes process tree,
+    /// gh-relevant env vars, and handle counts at the moment of the
+    /// timeout. Empty when diagnostic capture was skipped or failed.
+    /// Surfaced by <see cref="FormatErrorMessage"/> so the operator
+    /// gate prompt can point at it.
+    /// </summary>
+    public string DiagnosticFilePath { get; }
+
     public ExternalToolTimeoutException(
         string executable,
         IReadOnlyList<string> arguments,
@@ -53,7 +64,8 @@ public sealed class ExternalToolTimeoutException : Exception
         : this(executable, arguments, attempts, timeoutPerAttempt,
                lastBufferedStdout: string.Empty,
                lastBufferedStderr: string.Empty,
-               lastElapsed: TimeSpan.Zero)
+               lastElapsed: TimeSpan.Zero,
+               diagnosticFilePath: string.Empty)
     {
     }
 
@@ -64,8 +76,9 @@ public sealed class ExternalToolTimeoutException : Exception
         TimeSpan timeoutPerAttempt,
         string lastBufferedStdout,
         string lastBufferedStderr,
-        TimeSpan lastElapsed)
-        : base(BuildMessage(executable, arguments, attempts, timeoutPerAttempt, lastBufferedStderr))
+        TimeSpan lastElapsed,
+        string diagnosticFilePath = "")
+        : base(BuildMessage(executable, arguments, attempts, timeoutPerAttempt, lastBufferedStderr, diagnosticFilePath))
     {
         Executable = executable;
         Arguments = arguments;
@@ -74,6 +87,7 @@ public sealed class ExternalToolTimeoutException : Exception
         LastBufferedStdout = lastBufferedStdout ?? string.Empty;
         LastBufferedStderr = lastBufferedStderr ?? string.Empty;
         LastElapsed = lastElapsed;
+        DiagnosticFilePath = diagnosticFilePath ?? string.Empty;
     }
 
     /// <summary>
@@ -120,6 +134,11 @@ public sealed class ExternalToolTimeoutException : Exception
             sb.AppendLine("Last attempt stderr (tail):");
             sb.Append(TakeTail(RedactTokens(LastBufferedStderr), StderrTailLimitChars));
         }
+        if (!string.IsNullOrEmpty(DiagnosticFilePath))
+        {
+            sb.AppendLine();
+            sb.Append("Diagnostic snapshot: ").Append(DiagnosticFilePath);
+        }
         return sb.ToString();
     }
 
@@ -128,7 +147,8 @@ public sealed class ExternalToolTimeoutException : Exception
         IReadOnlyList<string> args,
         int attempts,
         TimeSpan timeout,
-        string lastStderr)
+        string lastStderr,
+        string diagnosticFilePath)
     {
         var argLine = string.Join(' ', args);
         var sb = new StringBuilder();
@@ -147,6 +167,11 @@ public sealed class ExternalToolTimeoutException : Exception
             sb.AppendLine();
             sb.AppendLine("Last attempt stderr (tail):");
             sb.Append(tail);
+        }
+        if (!string.IsNullOrEmpty(diagnosticFilePath))
+        {
+            sb.AppendLine();
+            sb.Append("Diagnostic snapshot: ").Append(diagnosticFilePath);
         }
         return sb.ToString();
     }

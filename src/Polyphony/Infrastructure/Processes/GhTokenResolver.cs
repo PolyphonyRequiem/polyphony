@@ -95,6 +95,7 @@ public sealed class GhTokenResolver(IGitClient git)
                 var psi = new ProcessStartInfo
                 {
                     FileName = "gh",
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -107,6 +108,11 @@ public sealed class GhTokenResolver(IGitClient git)
 
                 using var proc = Process.Start(psi);
                 if (proc is null) continue;
+
+                // Issue #209: close stdin immediately so gh doesn't block on
+                // an inherited stale handle from a detached / hidden-window
+                // parent (Start-Process -WindowStyle Hidden).
+                proc.StandardInput.Close();
 
                 var stdoutTask = proc.StandardOutput.ReadToEndAsync(CancellationToken.None);
 

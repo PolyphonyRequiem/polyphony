@@ -213,4 +213,43 @@ public sealed class ProcessRunnerTests
         var actual = result.Stdout.Trim().TrimEnd(Path.DirectorySeparatorChar);
         actual.ShouldBe(tempDir, StringCompareShould.IgnoreCase);
     }
+
+    /// <summary>
+    /// Issue #209 regression: when <c>closeStdin: true</c> is requested
+    /// and no stdin payload is supplied, the child must see EOF on read
+    /// rather than block indefinitely on an inherited handle.
+    ///
+    /// Verifies by spawning a child that reads from stdin to completion
+    /// and echoes the byte count it saw — closeStdin should produce 0
+    /// bytes read, while the default (no closeStdin, no stdin payload)
+    /// would inherit the parent's stdin and hang in a non-interactive
+    /// runner without a TTY.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_CloseStdinTrue_ChildSeesEofImmediately()
+    {
+        var runner = new ProcessRunner();
+
+        // dotnet -e "Console.WriteLine(Console.In.ReadToEnd().Length);"
+        // is too brittle across SDKs. Use cmd's "more" on Windows (reads
+        // stdin to EOF and exits) and "cat" on POSIX (same behaviour).
+        var (exe, args) = IsWindows
+            ? ("cmd.exe", new[] { "/c", "more" })
+            : ("cat", Array.Empty<string>());
+
+        // Bound the test by an outer timeout — if closeStdin is broken the
+        // child hangs on stdin read and we'd hit this CTS, surfacing as
+        // a clear test failure rather than a CI-blocking infinite hang.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        var result = await runner.RunAsync(exe, args, cts.Token, closeStdin: true);
+
+        // Contract: the child sees EOF on stdin and exits promptly. The
+        // exact stdout content varies by tool ('more' emits a trailing
+        // newline; 'cat' emits nothing); what matters is that we got
+        // here without the outer CTS firing.
+        result.Succeeded.ShouldBeTrue();
+        cts.IsCancellationRequested.ShouldBeFalse(
+            "child should have exited well before the 15s outer timeout");
+    }
 }
