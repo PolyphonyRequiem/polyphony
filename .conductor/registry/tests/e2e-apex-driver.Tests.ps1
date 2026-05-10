@@ -21,7 +21,7 @@
         apex-item-dispatch.yaml, then aggregates renegotiation across
         the wave's outputs, then invokes the integrator.
       • apex-item-dispatch (the heart of PR #149) branch-on-routers
-        into one of {plan-level, actionable, implement-pg, feature-pr}
+        into one of {plan-level, actionable, implement-merge-group, feature-pr}
         based on the lifecycle-router's verdict, and short-circuits
         fast-path / monitoring / blocked / error before spawning a
         worktree.
@@ -694,7 +694,7 @@ Describe 'apex-driver e2e — outer iterate-until-stable loop (PR #9)' {
         # Reproduce the exact shape conductor emits for `dispatch_items.outputs`
         # when a wave has ONE item: a JSON array with one element.
         $singleIterJson = @'
-[{"work_item_id":3064,"apex_id":3064,"lifecycle_workflow":"plan-level","dispatched":true,"fast_pathed":false,"item_satisfied":false,"renegotiation_pending":false,"renegotiation_request":"","validate_scope_verdict":"","scope_violation_files":[],"actionable_satisfied":false,"implement_pg_merged":false,"feature_pr_merged":false,"error":"","error_code":""}]
+[{"work_item_id":3064,"apex_id":3064,"lifecycle_workflow":"plan-level","dispatched":true,"fast_pathed":false,"item_satisfied":false,"renegotiation_pending":false,"renegotiation_request":"","validate_scope_verdict":"","scope_violation_files":[],"actionable_satisfied":false,"implement_merge_group_merged":false,"feature_pr_merged":false,"error":"","error_code":""}]
 '@
         # Mirror the production aggregator logic.
         $values = @($singleIterJson | ConvertFrom-Json)
@@ -947,7 +947,7 @@ Describe 'apex-item-dispatch e2e — branch-on-router' {
         $expected = @{
             'plan-level'   = 'plan_level_dispatch'
             'actionable'   = 'actionable_dispatch'
-            'implement-pg' = 'implement_pg_dispatch'
+            'implement-merge-group' = 'implement_merge_group_dispatch'
             'feature-pr'   = 'feature_pr_dispatch'
         }
         foreach ($verdict in $expected.Keys) {
@@ -969,7 +969,7 @@ Describe 'apex-item-dispatch e2e — branch-on-router' {
         $expected = @{
             'plan_level_dispatch'   = './plan-level.yaml'
             'actionable_dispatch'   = './actionable.yaml'
-            'implement_pg_dispatch' = './implement-pg.yaml'
+            'implement_merge_group_dispatch' = './implement-merge-group.yaml'
             'feature_pr_dispatch'   = './feature-pr.yaml'
         }
         foreach ($name in $expected.Keys) {
@@ -981,7 +981,7 @@ Describe 'apex-item-dispatch e2e — branch-on-router' {
     }
 
     It 'All four lifecycle dispatch nodes converge on teardown_worktree' {
-        foreach ($name in 'plan_level_dispatch','actionable_dispatch','implement_pg_dispatch','feature_pr_dispatch') {
+        foreach ($name in 'plan_level_dispatch','actionable_dispatch','implement_merge_group_dispatch','feature_pr_dispatch') {
             $routes = Get-NodeRoutes -Agents $script:ItemAgents -NodeName $name
             $routes.Target | Should -Contain 'teardown_worktree' -Because (
                 "$name must funnel back through teardown_worktree so the per-item worktree is always cleaned up")
@@ -1018,7 +1018,7 @@ Describe 'apex-item-dispatch e2e — branch-on-router' {
 
     It 'All four lifecycle dispatch nodes are reachable from classify_lifecycle (no orphans)' {
         $reachable = Get-Reachable -Agents $script:ItemAgents -StartNode 'classify_lifecycle'
-        foreach ($n in 'plan_level_dispatch','actionable_dispatch','implement_pg_dispatch','feature_pr_dispatch') {
+        foreach ($n in 'plan_level_dispatch','actionable_dispatch','implement_merge_group_dispatch','feature_pr_dispatch') {
             $reachable | Should -Contain $n -Because (
                 "$n must be reachable from the classifier — otherwise the branch-on-router dispatch is dead code")
         }
@@ -1062,7 +1062,7 @@ Describe 'apex-driver e2e — renegotiation bubble-up table' {
         $body | Should -Match 'plan_level_dispatch is defined'
         # Lifecycle-specific outputs each guard with `is defined`
         $body | Should -Match 'actionable_dispatch is defined'
-        $body | Should -Match 'implement_pg_dispatch is defined'
+        $body | Should -Match 'implement_merge_group_dispatch is defined'
         $body | Should -Match 'feature_pr_dispatch is defined'
         # Per M7 booleans are piped through `| string | lower`.
         $body | Should -Match 'string \| lower'
@@ -1168,13 +1168,17 @@ Describe 'apex-driver e2e — input contracts thread through all three YAMLs' {
         $im.executor     | Should -Be 'polyphony'
     }
 
-    It 'apex-item-dispatch -> implement-pg derives pg_number/branch_name from the apex+item ids' {
-        $im = $script:ItemAgents['implement_pg_dispatch'].input_mapping
-        if (-not $im) { $im = $script:ItemAgents['implement_pg_dispatch'].agent.input_mapping }
+    It 'apex-item-dispatch -> implement-merge-group derives mg_path/root_id from the apex+item ids' {
+        $im = $script:ItemAgents['implement_merge_group_dispatch'].input_mapping
+        if (-not $im) { $im = $script:ItemAgents['implement_merge_group_dispatch'].agent.input_mapping }
         $im.pg_number      | Should -Match 'workflow\.input\.work_item_id'
         $im.work_item_ids  | Should -Match 'workflow\.input\.work_item_id'
-        $im.branch_name    | Should -Match '^feature/\{\{ workflow\.input\.apex_id \}\}-pg-'
+        $im.root_id        | Should -Match 'workflow\.input\.apex_id'
+        $im.mg_path        | Should -Match '^pg-\{\{ workflow\.input\.work_item_id \}\}$'
         $im.feature_branch | Should -Match '^feature/\{\{ workflow\.input\.apex_id \}\}$'
+        $im.organization   | Should -Match 'workflow\.input\.organization'
+        $im.project        | Should -Match 'workflow\.input\.project'
+        $im.repository     | Should -Match 'workflow\.input\.repository'
     }
 
     It 'apex-item-dispatch -> feature-pr targets main on the apex feature branch' {
@@ -1219,7 +1223,7 @@ Describe 'apex-driver e2e — lifecycle-router script and YAML contract drift' {
         # regex match groups) — using it as a normal local breaks
         # subsequent `-match` operators in the same scope. Use
         # `$emits` / `$branches` instead.
-        $canonical = @('plan-level','actionable','implement-pg','feature-pr','fast-path','terminal-satisfied','monitoring','blocked','error')
+        $canonical = @('plan-level','actionable','implement-merge-group','feature-pr','fast-path','terminal-satisfied','monitoring','blocked','error')
         $routerBody = $script:RouterRaw -replace '(?ms)^<#.*?#>',''
         $emits = [regex]::Matches($routerBody, "'([a-zA-Z\-]+)'")
         $set = New-Object System.Collections.Generic.HashSet[string]
@@ -1244,7 +1248,7 @@ Describe 'apex-driver e2e — lifecycle-router script and YAML contract drift' {
         $expected = @(
             'plan-level',
             'actionable',
-            'implement-pg',
+            'implement-merge-group',
             'feature-pr',
             'fast-path',
             'terminal-satisfied',
@@ -1266,7 +1270,7 @@ Describe 'apex-driver e2e — lifecycle-router script and YAML contract drift' {
 
     It 'Every lifecycle_workflow value the router emits is handled by an apex-item-dispatch.yaml when: clause OR by the success-route fork (no silent dropping)' {
         # The four "dispatchable" verdicts (plan-level / actionable /
-        # implement-pg / feature-pr) are NOT branched on in
+        # implement-merge-group / feature-pr) are NOT branched on in
         # classify_lifecycle's routes; they are gated by the
         # `success | string | lower == 'true'` route to spawn_worktree
         # and then split by spawn_worktree's per-verdict branches.
@@ -1276,7 +1280,7 @@ Describe 'apex-driver e2e — lifecycle-router script and YAML contract drift' {
         # — same pattern (worktree-less terminal that performs the ADO
         # state transition for items whose only ready kind is item_satisfied).
         $shortCircuit = @('fast-path', 'terminal-satisfied', 'monitoring', 'blocked', 'error')
-        $dispatch     = @('plan-level', 'actionable', 'implement-pg', 'feature-pr')
+        $dispatch     = @('plan-level', 'actionable', 'implement-merge-group', 'feature-pr')
 
         # Short-circuit verdicts must appear as YAML branch values.
         foreach ($v in $shortCircuit) {
@@ -1328,7 +1332,7 @@ Describe 'apex-driver e2e — lifecycle-router script and YAML contract drift' {
 # MGs because there were no children PGs to aggregate. The router now
 # consults `polyphony hierarchy` on the apex-root + implementable
 # branch and splits decomposed (>=1 child → feature-pr) from indivisible
-# (0 children → implement-pg).
+# (0 children → implement-merge-group).
 
 Describe 'apex-driver e2e — F6 indivisible-apex-root routing' {
 
@@ -1371,7 +1375,7 @@ Write-Error "unexpected stub invocation: $($args -join ' ')"; exit 9
         }
     }
 
-    It 'F6: apex-root + implementable + ZERO children routes to implement-pg (indivisible apex)' {
+    It 'F6: apex-root + implementable + ZERO children routes to implement-merge-group (indivisible apex)' {
         $env:PSE_F6_FIXTURE = 'children-empty'
         try {
             $stdout = pwsh -NoProfile -File $script:F6Router `
@@ -1380,8 +1384,8 @@ Write-Error "unexpected stub invocation: $($args -join ' ')"; exit 9
             $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
             $envelope.success | Should -Be $true -Because 'an indivisible implementable apex is a valid dispatchable item'
             $envelope.is_root | Should -Be $true
-            $envelope.lifecycle_workflow | Should -Be 'implement-pg' -Because (
-                'apex root with no children IS the PG — must route to implement-pg, not feature-pr (empty-MG bug AB#3064)')
+            $envelope.lifecycle_workflow | Should -Be 'implement-merge-group' -Because (
+                'apex root with no children IS the PG — must route to implement-merge-group, not feature-pr (empty-MG bug AB#3064)')
             $envelope.error_code | Should -BeNullOrEmpty
         }
         finally { Remove-Item env:PSE_F6_FIXTURE -ErrorAction SilentlyContinue }
@@ -1502,7 +1506,7 @@ Describe 'apex-item-dispatch terminal canonical output schema (#178)' {
             'validate_scope_verdict',
             'scope_violation_files',
             'actionable_satisfied',
-            'implement_pg_merged',
+            'implement_merge_group_merged',
             'feature_pr_merged'
         )
         $script:TerminalNames = @(

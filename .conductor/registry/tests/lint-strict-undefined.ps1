@@ -9,7 +9,7 @@
     So in branched workflows where only one of several mutually-exclusive agents runs,
     referencing a non-running agent inside `default(...)` raises UndefinedError at render time.
 
-    Correct pattern (from implement-pg.yaml):
+    Correct pattern (from implement-merge-group.yaml):
         {% if other_agent is defined %}{{ other_agent.output.field }}{% else %}fallback{% endif %}
 
     This lint walks every YAML under .conductor/registry/workflows/ and flags any line

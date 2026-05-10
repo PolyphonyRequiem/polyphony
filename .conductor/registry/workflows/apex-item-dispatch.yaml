@@ -3,7 +3,7 @@
 # Dispatches a single work item from a wave through:
 #
 #   1. lifecycle-router.ps1 — classify which lifecycle workflow this
-#      item belongs in (plan-level / actionable / implement-pg /
+#      item belongs in (plan-level / actionable / implement-merge-group /
 #      feature-pr / fast-path) using `polyphony state next-ready`.
 #   2. worktree-manager.ps1 spawn — create a per-item worktree so the
 #      lifecycle dispatch can run in parallel with siblings without
@@ -19,7 +19,7 @@
 # ── Branch-on-router pattern ─────────────────────────────────────────
 #
 # Each lifecycle gets its own `type: workflow` agent node
-# (`plan_level_dispatch`, `actionable_dispatch`, `implement_pg_dispatch`,
+# (`plan_level_dispatch`, `actionable_dispatch`, `implement_merge_group_dispatch`,
 # `feature_pr_dispatch`). The classifier emits a `lifecycle_workflow`
 # string and the routes from `spawn_worktree` (and the catch-all branch
 # from classify) fan into the right node based on that value. The
@@ -71,7 +71,7 @@ workflow:
   description: >-
     Dispatches a single work item: classify lifecycle, spawn per-item
     worktree, branch-on-router into the classified lifecycle
-    sub-workflow (plan-level / actionable / implement-pg / feature-pr /
+    sub-workflow (plan-level / actionable / implement-merge-group / feature-pr /
     fast-path), tear down worktree. Inner sub-workflow of
     apex-wave-dispatch.
   version: "2.3.0"
@@ -172,8 +172,8 @@ output:
   actionable_satisfied: >-
     {%- if actionable_dispatch is defined -%}{{ (actionable_dispatch.output.satisfied | default(false)) | string | lower }}
     {%- else -%}false{%- endif -%}
-  implement_pg_merged: >-
-    {%- if implement_pg_dispatch is defined -%}{{ (implement_pg_dispatch.output.merged | default(false)) | string | lower }}
+  implement_merge_group_merged: >-
+    {%- if implement_merge_group_dispatch is defined -%}{{ (implement_merge_group_dispatch.output.merged | default(false)) | string | lower }}
     {%- else -%}false{%- endif -%}
   feature_pr_merged: >-
     {%- if feature_pr_dispatch is defined -%}{{ (feature_pr_dispatch.output.merged | default(false)) | string | lower }}
@@ -257,8 +257,8 @@ agents:
         when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'plan-level' }}"
       - to: actionable_dispatch
         when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'actionable' }}"
-      - to: implement_pg_dispatch
-        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'implement-pg' }}"
+      - to: implement_merge_group_dispatch
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'implement-merge-group' }}"
       - to: feature_pr_dispatch
         when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'feature-pr' }}"
       - to: terminal_spawn_error
@@ -310,31 +310,35 @@ agents:
     routes:
       - to: teardown_worktree
 
-  # ── Lifecycle dispatch — implement-pg ────────────────────────────────────
+  # ── Lifecycle dispatch — implement-merge-group ───────────────────────────
   #
-  # Single PG implementation lifecycle. The apex-driver's per-item
-  # dispatch model treats each work item as its own PG container —
-  # `pg_number` = work_item_id, `work_item_ids` = [work_item_id],
-  # `branch_name` = feature/{apex_id}-pg-{work_item_id} (sits
-  # alongside the per-item worktree branch convention). The
-  # `feature_branch` is the apex's feature branch; implement-pg's
-  # internal `pg_router` detects existing state on re-entry.
+  # Single merge-group implementation lifecycle. The apex-driver's per-item
+  # dispatch model treats each work item as its own MG container —
+  # `pg_number` = work_item_id (transitional input — see implement-merge-group
+  # comment block re: `PG-N` tag dependency), `work_item_ids` =
+  # [work_item_id], `mg_path` = `pg-{work_item_id}` (synthesized to satisfy
+  # the Rev 4 grammar while the legacy `PG-N` tagging is in place). The
+  # `feature_branch` is the apex's feature branch.
   #
   # NOTE: This input mapping is the MVP shape for the apex-driver →
-  # implement-pg bridge. A richer mapping (multiple work_item_ids per
-  # PG, planner-declared branch names) requires the apex-driver to
-  # surface PG grouping from the worklist build, which is a follow-up.
-  - name: implement_pg_dispatch
+  # implement-merge-group bridge. A richer mapping (multiple work_item_ids
+  # per MG, planner-declared MG paths) requires the apex-driver to surface
+  # MG grouping from the worklist build, which is a follow-up.
+  - name: implement_merge_group_dispatch
     type: workflow
-    description: Single-PG implementation lifecycle (implement-pg.yaml)
-    workflow: ./implement-pg.yaml
+    description: Single merge-group implementation lifecycle (implement-merge-group.yaml)
+    workflow: ./implement-merge-group.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
+      root_id: "{{ workflow.input.apex_id }}"
       pg_number: "{{ workflow.input.work_item_id }}"
+      mg_path: "pg-{{ workflow.input.work_item_id }}"
       work_item_ids: "[{{ workflow.input.work_item_id }}]"
-      branch_name: "feature/{{ workflow.input.apex_id }}-pg-{{ workflow.input.work_item_id }}"
       feature_branch: "feature/{{ workflow.input.apex_id }}"
       platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
     routes:
       - to: teardown_worktree
 
@@ -393,7 +397,7 @@ agents:
   # Canonical fields (13): work_item_id, apex_id, lifecycle_workflow,
   # dispatched, fast_pathed, item_satisfied, renegotiation_pending,
   # renegotiation_request, validate_scope_verdict, scope_violation_files,
-  # actionable_satisfied, implement_pg_merged, feature_pr_merged. Error
+  # actionable_satisfied, implement_merge_group_merged, feature_pr_merged. Error
   # terminals add `error` and `error_code`. `monitoring`/`blocked` legs
   # keep their additive boolean as a non-canonical convenience — harmless
   # to consumers that ignore unknown keys.
@@ -417,7 +421,7 @@ agents:
           validate_scope_verdict = '';
           scope_violation_files = @();
           actionable_satisfied = $false;
-          implement_pg_merged = $false;
+          implement_merge_group_merged = $false;
           feature_pr_merged = $false;
         } | ConvertTo-Json -Compress
     routes:
@@ -443,7 +447,7 @@ agents:
           validate_scope_verdict = '';
           scope_violation_files = @();
           actionable_satisfied = $false;
-          implement_pg_merged = $false;
+          implement_merge_group_merged = $false;
           feature_pr_merged = $false;
         } | ConvertTo-Json -Compress
     routes:
@@ -504,7 +508,7 @@ agents:
           validate_scope_verdict = '';
           scope_violation_files = @();
           actionable_satisfied = $false;
-          implement_pg_merged = $false;
+          implement_merge_group_merged = $false;
           feature_pr_merged = $false;
         };
         if ($errMsg -ne '') {
@@ -535,7 +539,7 @@ agents:
           validate_scope_verdict = '';
           scope_violation_files = @();
           actionable_satisfied = $false;
-          implement_pg_merged = $false;
+          implement_merge_group_merged = $false;
           feature_pr_merged = $false;
           monitoring = $true;
         } | ConvertTo-Json -Compress
@@ -562,7 +566,7 @@ agents:
           validate_scope_verdict = '';
           scope_violation_files = @();
           actionable_satisfied = $false;
-          implement_pg_merged = $false;
+          implement_merge_group_merged = $false;
           feature_pr_merged = $false;
           blocked = $true;
         } | ConvertTo-Json -Compress
@@ -589,7 +593,7 @@ agents:
           validate_scope_verdict = '';
           scope_violation_files = @();
           actionable_satisfied = $false;
-          implement_pg_merged = $false;
+          implement_merge_group_merged = $false;
           feature_pr_merged = $false;
           error = 'lifecycle classification failed';
           error_code = '{{ classify_lifecycle.output.error_code | default('classification_failed') }}';
@@ -617,7 +621,7 @@ agents:
           validate_scope_verdict = '';
           scope_violation_files = @();
           actionable_satisfied = $false;
-          implement_pg_merged = $false;
+          implement_merge_group_merged = $false;
           feature_pr_merged = $false;
           error = 'worktree spawn failed';
           error_code = '{{ spawn_worktree.output.error_code | default('worktree_spawn_failed') }}';

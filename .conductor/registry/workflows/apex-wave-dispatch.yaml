@@ -23,7 +23,7 @@
 #         dispatch_items.errors. wave-integrator has been invoked.
 #
 # Per-item lifecycle dispatch is now wired (see apex-item-dispatch.yaml's
-# branch-on-router into plan-level / actionable / implement-pg /
+# branch-on-router into plan-level / actionable / implement-merge-group /
 # feature-pr / fast-path). After the wave dispatch settles, this
 # workflow:
 #   * Aggregates renegotiation_pending across the wave's items so
@@ -48,7 +48,7 @@ workflow:
   description: >-
     One wave of the apex-driver dispatch loop. Per-item worktree fanout
     + lifecycle classification + branch-on-router lifecycle dispatch
-    (plan-level / actionable / implement-pg / feature-pr / fast-path) +
+    (plan-level / actionable / implement-merge-group / feature-pr / fast-path) +
     wave integration via wave-integrator.ps1. Aggregates renegotiation
     bubble-up AND per-item progress counts (items_satisfied_count,
     items_dispatched_count) so the apex-driver outer loop (PR #9) can

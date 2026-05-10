@@ -1,6 +1,6 @@
 #requires -Modules Pester, powershell-yaml
 
-# F8 regression: the scope_reviewer agent in implement-mg.yaml MUST
+# F8 regression: the scope_reviewer agent in implement-merge-group.yaml MUST
 # instruct the LLM to fail loudly on an empty merge group instead of
 # rationalizing the void and punting to the user_acceptance gate.
 #
@@ -17,17 +17,17 @@
 # prompt so the protective language can't drift away under future edits
 # without an explicit lint update.
 
-Describe 'implement-mg.yaml — scope_reviewer empty-MG structural check (F8)' {
+Describe 'implement-merge-group.yaml — scope_reviewer empty-MG structural check (F8)' {
 
     BeforeAll {
-        $script:WorkflowPath = Join-Path $PSScriptRoot '..' 'workflows' 'implement-mg.yaml'
+        $script:WorkflowPath = Join-Path $PSScriptRoot '..' 'workflows' 'implement-merge-group.yaml'
         $script:WorkflowPath | Should -Exist
         $raw = Get-Content -Raw $script:WorkflowPath
         $script:Yaml = ConvertFrom-Yaml $raw
         # `agents:` is a TOP-LEVEL key in this workflow YAML (not nested
         # under `workflow:` like name/version/entry_point).
         $script:ScopeReviewer = $script:Yaml.agents | Where-Object { $_.name -eq 'scope_reviewer' } | Select-Object -First 1
-        $script:ScopeReviewer | Should -Not -BeNullOrEmpty -Because 'scope_reviewer agent must exist in implement-mg.yaml'
+        $script:ScopeReviewer | Should -Not -BeNullOrEmpty -Because 'scope_reviewer agent must exist in implement-merge-group.yaml'
         $script:Prompt = [string]$script:ScopeReviewer.prompt
     }
 

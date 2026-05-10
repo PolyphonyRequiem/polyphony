@@ -41,7 +41,7 @@
          — shape produced by the Phase 7 follow-up):
            a. apex-item-dispatch declares all four named branches
               (plan_level_dispatch, actionable_dispatch,
-              implement_pg_dispatch, feature_pr_dispatch).
+              implement_merge_group_dispatch, feature_pr_dispatch).
            b. apex-item-dispatch references all four lifecycle workflow
               files via parent-relative paths.
            c. The renegotiation bubble-up is wired end-to-end:
@@ -138,13 +138,13 @@ if (-not (Test-Path $itemYaml)) {
 } else {
     $itemContent = Get-Content $itemYaml -Raw
     $hasPlaceholder = $itemContent -match 'lifecycle_dispatch_placeholder'
-    $lifecycleRefs = @('plan-level.yaml', 'actionable.yaml', 'implement-pg.yaml', 'feature-pr.yaml')
+    $lifecycleRefs = @('plan-level.yaml', 'actionable.yaml', 'implement-merge-group.yaml', 'feature-pr.yaml')
     $hasAnyLifecycle = $false
     foreach ($lc in $lifecycleRefs) {
         if ($itemContent.Contains($lc)) { $hasAnyLifecycle = $true; break }
     }
     if (-not $hasPlaceholder -and -not $hasAnyLifecycle) {
-        Add-Violation 'missing-lifecycle-dispatch' "apex-item-dispatch.yaml must either reference a lifecycle workflow (plan-level/actionable/implement-pg/feature-pr) OR contain the deferred 'lifecycle_dispatch_placeholder' step."
+        Add-Violation 'missing-lifecycle-dispatch' "apex-item-dispatch.yaml must either reference a lifecycle workflow (plan-level/actionable/implement-merge-group/feature-pr) OR contain the deferred 'lifecycle_dispatch_placeholder' step."
     }
 }
 
@@ -249,19 +249,19 @@ if (Test-Path $itemYaml) {
         $expectedDispatchNodes = @(
             'plan_level_dispatch',
             'actionable_dispatch',
-            'implement_pg_dispatch',
+            'implement_merge_group_dispatch',
             'feature_pr_dispatch'
         )
         foreach ($n in $expectedDispatchNodes) {
             if ($itemContentForDispatch -notmatch "(?m)^\s*-\s+name:\s*$n\s*$") {
-                Add-Violation 'missing-lifecycle-branch' "apex-item-dispatch.yaml: lifecycle dispatch node '$n' not declared. Branch-on-router shape requires one named node per lifecycle (plan_level_dispatch / actionable_dispatch / implement_pg_dispatch / feature_pr_dispatch)."
+                Add-Violation 'missing-lifecycle-branch' "apex-item-dispatch.yaml: lifecycle dispatch node '$n' not declared. Branch-on-router shape requires one named node per lifecycle (plan_level_dispatch / actionable_dispatch / implement_merge_group_dispatch / feature_pr_dispatch)."
             }
         }
 
         $expectedLifecycleRefs = @(
             './plan-level.yaml',
             './actionable.yaml',
-            './implement-pg.yaml',
+            './implement-merge-group.yaml',
             './feature-pr.yaml'
         )
         foreach ($r in $expectedLifecycleRefs) {

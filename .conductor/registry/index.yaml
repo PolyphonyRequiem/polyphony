@@ -3,13 +3,9 @@ workflows:
     description: "Recursive planning core — single hierarchy level (sub-workflow)"
     path: workflows/plan-level.yaml
     versions: ["1.0.0", "1.0.1", "2.2.0", "2.2.1", "2.2.2", "2.3.0"]
-  implement-pg:
-    description: "Implement a single PR group — coding, review, PR (sub-workflow, called by apex-driver / feature-pr remediation)"
-    path: workflows/implement-pg.yaml
-    versions: ["1.0.0", "1.0.1", "2.2.0", "2.2.1", "2.2.2", "2.3.0"]
-  implement-mg:
+  implement-merge-group:
     description: "Implement a single merge group — coding, review, MG-PR open + merge (sub-workflow, called by apex-driver / feature-pr remediation)"
-    path: workflows/implement-mg.yaml
+    path: workflows/implement-merge-group.yaml
     versions: ["1.0.0", "1.1.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0"]
   feature-pr:
     description: "Feature PR lifecycle — review, fix loop, merge (sub-workflow)"
@@ -55,4 +51,3 @@ workflows:
     description: "Per-descendant stale-merge remedy — rebases or re-derives one descendant after an upstream PR merge (sub-workflow)"
     path: workflows/remedy-stale-descendant.yaml
     versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0"]
-

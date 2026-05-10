@@ -12,7 +12,7 @@ namespace Polyphony.Tests.Infrastructure;
 /// </summary>
 /// <remarks>
 /// The apex-driver dispatches each work-item into one of five lifecycle
-/// workflows (plan-level, actionable, implement-pg, feature-pr,
+/// workflows (plan-level, actionable, implement-merge-group, feature-pr,
 /// fast-path) plus three non-dispatch outcomes (monitoring, blocked,
 /// error). This script is the deterministic classifier — its envelope
 /// is the workflow's input schema for the routing step.

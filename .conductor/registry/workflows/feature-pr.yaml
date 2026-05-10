@@ -6,7 +6,7 @@
 # the sub-workflow cannot resolve issues (merged=false).
 #
 # Remediation cycle: merged=false → remediation_planner → remediation_seeder
-# → implement-mg (remediation MG) → feature_pr_updater (re-request review)
+# → implement-merge-group (remediation MG) → feature_pr_updater (re-request review)
 # → pr_platform_router (re-review). Capped at 3 cycles;
 # after that, a human gate fires for escalation.
 #
@@ -123,7 +123,7 @@ agents:
   # platform input AND, for ADO, the presence of all three connection
   # inputs (organization, project, repository).
   #
-  # Mirrors the pattern in implement-mg.yaml's pr_platform_router (PR #118).
+  # Mirrors the pattern in implement-merge-group.yaml's pr_platform_router (PR #118).
   # The router fires BEFORE the creator so ADO can use its own creator
   # verb (`pr create-feature-ado`) rather than the GitHub-only
   # `pr create-feature-pr`.
@@ -677,13 +677,13 @@ agents:
 
   # ── Remediation implementer ─────────────────────────────────────────────
   #
-  # Invokes implement-mg.yaml as a sub-workflow to execute the remediation
+  # Invokes implement-merge-group.yaml as a sub-workflow to execute the remediation
   # MG. The remediation MG branch targets the feature branch (not main)
   # so fixes land on the feature branch for the next review cycle. After
   # remediation merges, routes to feature_pr_updater which re-requests
   # review on the feature PR before looping back to pr_platform_router.
   #
-  # Uses implement-mg.yaml (not implement-pg.yaml) so the remediation
+  # Uses implement-merge-group.yaml so the remediation
   # path benefits from its pr_platform_router — both GitHub and ADO MG
   # PRs are supported there (PRs #110 / #118).
   #
@@ -694,13 +694,13 @@ agents:
   #   Post: Remediation MG is implemented and merged into the feature branch.
   - name: remediation_implementer
     type: workflow
-    description: Execute remediation MG via implement-mg sub-workflow
-    workflow: ./implement-mg.yaml
+    description: Execute remediation MG via implement-merge-group sub-workflow
+    workflow: ./implement-merge-group.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
       # Remediation runs at the apex layer — the apex IS the root for the
       # remediation MG. Mirrors the root_id synthesis the apex driver uses
-      # when dispatching MGs to implement-mg.yaml.
+      # when dispatching MGs to implement-merge-group.yaml.
       root_id: "{{ workflow.input.work_item_id }}"
       pg_number: "{{ remediation_seeder.output.pg_number }}"
       # Synthesize Rev 4-valid mg_path from the legacy pg_number using the

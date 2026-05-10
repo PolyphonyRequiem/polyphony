@@ -23,7 +23,7 @@
                        ready requirement is action_satisfied or
                        evidence_accepted.
 
-      implement-pg   — Item has an implementable facet, the next
+      implement-merge-group   — Item has an implementable facet, the next
                        ready requirement is implementation_merged,
                        AND either (a) the item is NOT the apex root,
                        or (b) the item IS the apex root but has zero
@@ -80,7 +80,7 @@
           work_item_id: <int>,
           work_item_type: '<string>',
           status: 'dispatchable' | 'monitoring' | 'satisfied' | 'empty' | 'blocked' | 'error',
-          lifecycle_workflow: 'plan-level' | 'actionable' | 'implement-pg' | 'feature-pr' | 'fast-path' | 'terminal-satisfied' | 'monitoring' | 'blocked' | 'error',
+          lifecycle_workflow: 'plan-level' | 'actionable' | 'implement-merge-group' | 'feature-pr' | 'fast-path' | 'terminal-satisfied' | 'monitoring' | 'blocked' | 'error',
           next_kinds: [<string>...],
           fulfilling_kinds: [<string>...],
           is_root: <bool>,
@@ -96,7 +96,7 @@
       hierarchy_failed            — `polyphony hierarchy` exited non-zero or returned non-JSON.
                                     Surfaces only on the apex-root + implementable
                                     branch, where children-count drives the choice
-                                    between `implement-pg` and `feature-pr`. We FAIL
+                                    between `implement-merge-group` and `feature-pr`. We FAIL
                                     LOUDLY here rather than silently defaulting,
                                     because either default is wrong roughly half the
                                     time (decomposed apex → wrong-default skips real
@@ -108,7 +108,7 @@
 
 .PARAMETER ApexId
     Apex root work item id (the value the apex-driver was invoked with).
-    Used to disambiguate implement-pg vs feature-pr.
+    Used to disambiguate implement-merge-group vs feature-pr.
 
 .PARAMETER PolyphonyExe
     Override for the polyphony executable path. Defaults to `polyphony`.
@@ -263,7 +263,7 @@ try {
     # Order matters when a multi-facet item has more than one ready kind:
     #   1. planning kinds win (plan-level always sequences before action/impl)
     #   2. actionable kinds next (action-evidence before implementation)
-    #   3. implementation kinds last (routed root -> feature-pr, else implement-pg)
+    #   3. implementation kinds last (routed root -> feature-pr, else implement-merge-group)
     #   4. terminal kinds win ONLY when no other dispatchable kind is ready
     #      — item_satisfied is the close-out act once every facet-driven
     #      requirement has settled.
@@ -290,7 +290,7 @@ try {
         if ($envelope.is_root) {
             # Apex-root + implementable splits on decomposition state:
             #   • zero children → indivisible apex; the apex IS the
-            #     PG; route to implement-pg so an actual impl PR gets
+            #     PG; route to implement-merge-group so an actual impl PR gets
             #     opened against `impl/{root}-{root}`.
             #   • >=1 child   → decomposed apex; children's PGs were
             #     merged in earlier waves; route to feature-pr to
@@ -311,10 +311,10 @@ try {
                 Write-Envelope $envelope
                 exit 0
             }
-            $envelope.lifecycle_workflow = if ($childCount -gt 0) { 'feature-pr' } else { 'implement-pg' }
+            $envelope.lifecycle_workflow = if ($childCount -gt 0) { 'feature-pr' } else { 'implement-merge-group' }
         }
         else {
-            $envelope.lifecycle_workflow = 'implement-pg'
+            $envelope.lifecycle_workflow = 'implement-merge-group'
         }
     }
     elseif ($hasTerminalReady) {

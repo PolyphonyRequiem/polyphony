@@ -57,7 +57,7 @@ pr:
   # — Auto-merges if no major issues remain at fix-loop cap
   # — Gates only if major issues unresolved at cap
   defaults:
-    mode: warning
+    mode: auto
     max_fix_loops: 10
     max_remediation_cycles: 3
 

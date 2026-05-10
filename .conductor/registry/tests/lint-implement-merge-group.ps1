@@ -1,19 +1,16 @@
 <#
 .SYNOPSIS
-    CI lint — validates implement-mg.yaml structural requirements.
+    CI lint — validates implement-merge-group.yaml structural requirements.
 .DESCRIPTION
-    Parses workflows/implement-mg.yaml and verifies:
-    1. Workflow name is 'implement-mg' with entry_point: branch_ensure_mg
+    Parses workflows/implement-merge-group.yaml and verifies:
+    1. Workflow name is 'implement-merge-group' with entry_point: branch_ensure_mg
     2. Required inputs: work_item_id, root_id, pg_number, mg_path,
        work_item_ids, feature_branch
     3. Required outputs: merged, pr_url, pr_number, mg_path
     4. Primary loop agents: primary_router, impl_branch_ensure, coder,
        primary_reviewer, impl_pr_open, impl_pr_merge, primary_completer
     5. Coder + scope_reviewer use an "opus" model (flexible match — versioning
-       drift across opus revisions does not break this lint, unlike
-       lint-implement-pg.ps1 which pins claude-opus-4.7-1m-internal and
-       therefore fails on main today against the actual implement-pg.yaml
-       which uses claude-opus-4.6).
+       drift across opus revisions does not break this lint).
     6. Scope review agent: scope_reviewer
     7. MG PR creation + merge: mg_pr_open, mg_pr_merge
     8. Dependency gate: dependency_check script + dependency_gate human_gate
@@ -31,7 +28,7 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Join-Path $PSScriptRoot '..'
-$yamlPath = Join-Path $repoRoot 'workflows' 'implement-mg.yaml'
+$yamlPath = Join-Path $repoRoot 'workflows' 'implement-merge-group.yaml'
 
 if (-not (Test-Path $yamlPath)) {
     Write-Host "SKIP: $yamlPath not found" -ForegroundColor Yellow
@@ -44,10 +41,10 @@ $lines = @(Get-Content $yamlPath)
 $violations = @()
 
 # ── Check 1: Workflow name ────────────────────────────────────────────────
-if ($content -notmatch 'name:\s*implement-mg') {
+if ($content -notmatch 'name:\s*implement-merge-group') {
     $violations += [PSCustomObject]@{
         Rule   = 'wrong-workflow-name'
-        Detail = "Workflow name should be 'implement-mg'"
+        Detail = "Workflow name should be 'implement-merge-group'"
     }
 }
 
@@ -124,9 +121,9 @@ foreach ($agent in $primaryLoopAgents) {
 # ── Check 6: Coder uses an Opus model ────────────────────────────────────
 # Flexible "contains opus" match — versioning drift across opus revisions
 # (4.5 / 4.6 / 4.7 / 4.7-1m / 4.7-high / 4.7-xhigh / future 5.x) should
-# not break this lint. Lint-implement-pg.ps1 pinning a specific opus version
-# is a known fragility — see commit history for the long tail of model-pin
-# bumps. We codify the principle ("must be an opus-class model") instead.
+# not break this lint. Pinning a specific opus version is a known
+# fragility — see commit history for the long tail of model-pin bumps.
+# We codify the principle ("must be an opus-class model") instead.
 $coderBlock = ''
 $inCoder = $false
 foreach ($line in $lines) {
@@ -183,9 +180,9 @@ foreach ($agent in $prAgents) {
 }
 
 # ── Check 10: Rev 4 grammar verbs are wired ──────────────────────────────
-# Implement-mg differs from implement-pg primarily in adopting the new
-# branch grammar verbs. If these go missing, the workflow has degenerated
-# back to the implement-pg shape and PR C's purpose is defeated.
+# implement-merge-group adopts the Rev 4 branch grammar verbs. If these
+# go missing, the workflow has degenerated and the Rev 4 ADR's purpose
+# is defeated.
 $grammarVerbs = @(
     @{ Verb = 'branch ensure-mg';     Pattern = '"ensure-mg"' },
     @{ Verb = 'branch ensure-impl';   Pattern = '"ensure-impl"' },
@@ -268,7 +265,7 @@ foreach ($agentName in $schemaAgents) {
 }
 
 # ── Check 16: max_iterations is high enough for the task loop ────────────
-# The MG task loop is wider than implement-pg's because each task has
+# The MG task loop is wide because each task has
 # seven nodes (ensure-impl → coder → reviewer → impl-pr-open → impl-pr-merge
 # → completer → router). Ten tasks ~= 70 iterations baseline, doubled by
 # changes-requested loops. Anything < 200 risks hitting the cap on
@@ -288,7 +285,7 @@ $agentNames = @()
 foreach ($line in $lines) {
     if ($line -match '^\s*-?\s*name:\s*(\S+)') {
         $name = $Matches[1]
-        if ($name -ne 'implement-mg') {
+        if ($name -ne 'implement-merge-group') {
             $agentNames += $name
         }
     }
@@ -320,7 +317,7 @@ foreach ($route in $invalidRoutes) {
 
 # ── Report ────────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
-    Write-Host "FAIL: $($violations.Count) implement-mg.yaml violation(s)" -ForegroundColor Red
+    Write-Host "FAIL: $($violations.Count) implement-merge-group.yaml violation(s)" -ForegroundColor Red
     Write-Host ''
     foreach ($v in $violations) {
         Write-Host "  [$($v.Rule)]: $($v.Detail)" -ForegroundColor Yellow
@@ -328,5 +325,5 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: implement-mg.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, $($primaryLoopAgents.Count) primary-loop agents, scope review, dependency gate, MG PR open+merge, Rev 4 grammar verbs)" -ForegroundColor Green
+Write-Host "PASS: implement-merge-group.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, $($primaryLoopAgents.Count) primary-loop agents, scope review, dependency gate, MG PR open+merge, Rev 4 grammar verbs)" -ForegroundColor Green
 exit 0

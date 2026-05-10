@@ -1,13 +1,13 @@
 BeforeAll {
-    $script:LintScript = Join-Path $PSScriptRoot 'lint-implement-mg.ps1'
-    $script:ImplementMgYaml = Join-Path $PSScriptRoot '..' 'workflows' 'implement-mg.yaml'
+    $script:LintScript = Join-Path $PSScriptRoot 'lint-implement-merge-group.ps1'
+    $script:ImplementMgYaml = Join-Path $PSScriptRoot '..' 'workflows' 'implement-merge-group.yaml'
 }
 
-Describe 'lint-implement-mg.ps1' {
+Describe 'lint-implement-merge-group.ps1' {
 
-    Context 'Production implement-mg.yaml validation' {
+    Context 'Production implement-merge-group.yaml validation' {
 
-        It 'Passes on the real implement-mg.yaml' {
+        It 'Passes on the real implement-merge-group.yaml' {
             $script:ImplementMgYaml | Should -Exist
             $output = pwsh -NoProfile -File $script:LintScript 2>&1
             $LASTEXITCODE | Should -Be 0
@@ -18,14 +18,14 @@ Describe 'lint-implement-mg.ps1' {
 
         BeforeAll {
             # Helper: minimal valid YAML with all required structure for
-            # implement-mg. Must include every Rev 4 grammar verb the lint
+            # implement-merge-group. Must include every Rev 4 grammar verb the lint
             # checks for (ensure-mg, ensure-impl, open-mg-pr, open-impl-pr,
             # merge-mg-pr, merge-impl-pr) plus all required agents and
             # output schemas. max_iterations is set to 300 to satisfy the
             # task-loop-budget check.
             $script:ValidYaml = @'
 workflow:
-  name: implement-mg
+  name: implement-merge-group
   entry_point: branch_ensure_mg
   limits:
     max_iterations: 300
@@ -194,12 +194,12 @@ agents:
         }
 
         BeforeEach {
-            $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-implement-mg-test-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+            $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-implement-merge-group-test-$([guid]::NewGuid().ToString('N').Substring(0,8))"
             $script:WorkflowsDir = Join-Path $script:TempRoot 'workflows'
             $script:TestsDir = Join-Path $script:TempRoot 'tests'
             New-Item $script:WorkflowsDir -ItemType Directory -Force | Out-Null
             New-Item $script:TestsDir -ItemType Directory -Force | Out-Null
-            Copy-Item $script:LintScript (Join-Path $script:TestsDir 'lint-implement-mg.ps1')
+            Copy-Item $script:LintScript (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1')
         }
 
         AfterEach {
@@ -208,23 +208,23 @@ agents:
 
         It 'Passes when all structural requirements are met' {
             $yaml = $script:ValidYaml
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 0
         }
 
         It 'Fails when work_item_id input is missing' {
             $yaml = ($script:ValidYaml) -replace 'work_item_id:', 'parent_item_id:'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-input'
         }
 
         It 'Fails when root_id input is missing' {
             $yaml = ($script:ValidYaml) -replace 'root_id:', 'apex_id:'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-input'
         }
@@ -235,48 +235,48 @@ agents:
             # specific input-missing violation. (We only assert on input;
             # the output check will also fire, which is fine.)
             $yaml = ($script:ValidYaml) -replace '(?m)^\s+mg_path:', '    mg_branch_path:'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-input.*mg_path'
         }
 
         It 'Fails when merged output is missing' {
             $yaml = ($script:ValidYaml) -replace '(?m)^\s+merged:.*\n', ''
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-output'
         }
 
         It 'Fails when pr_number output is missing' {
             $yaml = ($script:ValidYaml) -replace '(?m)^\s+pr_number:.*\n', ''
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-output'
         }
 
         It 'Fails when primary_router agent is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: primary_router', 'name: task_dispatcher'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-primary-loop-agent'
         }
 
         It 'Fails when impl_branch_ensure agent is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: impl_branch_ensure', 'name: task_branch_make'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-primary-loop-agent'
         }
 
         It 'Fails when impl_pr_open agent is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: impl_pr_open', 'name: task_pr_create'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-primary-loop-agent'
         }
@@ -284,118 +284,116 @@ agents:
         It 'Fails when coder uses a non-opus model' {
             # Coder must be opus-class. Sonnet is rejected.
             $yaml = ($script:ValidYaml) -replace '(name: coder[\s\S]*?model: )claude-opus-4.6', '$1claude-sonnet-4.6'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'wrong-coder-model'
         }
 
         It 'Accepts the coder using a different opus revision' {
             # The "contains opus" rule is intentionally flexible — bumping
-            # opus revisions should not require a lint update. This
-            # codifies the lesson from lint-implement-pg.ps1, which pins
-            # 4.7-1m and fails on main against the actual 4.6 yaml.
+            # opus revisions should not require a lint update.
             $yaml = ($script:ValidYaml) -replace '(name: coder[\s\S]*?model: )claude-opus-4.6', '$1claude-opus-4.7-1m-internal'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 0
         }
 
         It 'Fails when scope_reviewer agent is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: scope_reviewer', 'name: mg_reviewer'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-scope-review-agent'
         }
 
         It 'Fails when scope_reviewer uses a non-opus model' {
             $yaml = ($script:ValidYaml) -replace '(name: scope_reviewer[\s\S]*?model: )claude-opus-4.7', '$1claude-sonnet-4.6'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'wrong-scope-reviewer-model'
         }
 
         It 'Fails when mg_pr_open agent is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: mg_pr_open', 'name: pr_open'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-pr-agent'
         }
 
         It 'Fails when ensure-mg verb is not invoked' {
             # Replacing the verb string drops Rev 4 grammar usage; the
-            # lint must catch this since the workflow loses its reason
-            # to exist alongside implement-pg.
+            # lint must catch this since the workflow loses its Rev 4
+            # branch-model commitment.
             $yaml = ($script:ValidYaml) -replace '"ensure-mg"', '"create-mg-branch"'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-rev4-grammar-verb'
         }
 
         It 'Fails when merge-mg-pr verb is not invoked' {
             $yaml = ($script:ValidYaml) -replace '"merge-mg-pr"', '"merge-merge-group"'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-rev4-grammar-verb'
         }
 
         It 'Fails when merge-impl-pr verb is not invoked' {
             $yaml = ($script:ValidYaml) -replace '"merge-impl-pr"', '"finalize-task"'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-rev4-grammar-verb'
         }
 
         It 'Fails when dependency_check is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: dependency_check', 'name: dep_checker'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-dependency-check'
         }
 
         It 'Fails when dependency_gate is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: dependency_gate', 'name: dep_gate'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-dependency-gate'
         }
 
         It 'Fails when dependency gate wait option is missing' {
             $yaml = ($script:ValidYaml) -replace 'value: wait', 'value: pause'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-gate-option'
         }
 
         It 'Fails when user_acceptance gate is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: user_acceptance', 'name: user_review'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-user-acceptance'
         }
 
         It 'Fails when scope_closer is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: scope_closer', 'name: mg_closer'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-scope-closer'
         }
 
         It 'Fails when entry point is wrong' {
             $yaml = ($script:ValidYaml) -replace 'entry_point: branch_ensure_mg', 'entry_point: primary_router'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'wrong-entry-point'
         }
@@ -405,32 +403,32 @@ agents:
             # routes MUST declare an output schema. Without it the
             # response packs into output.result and the routes break.
             $yaml = ($script:ValidYaml) -replace '(?ms)(name: primary_reviewer.*?)\n\s+output:\s*\n\s+verdict:\s*\n\s+type: string\s*\n\s+feedback:\s*\n\s+type: string\s*\n\s+issues:\s*\n\s+type: array\s*\n\s+items:\s*\n\s+type: string', '$1'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-output-schema'
         }
 
         It 'Fails when scope_reviewer lacks an output schema' {
             $yaml = ($script:ValidYaml) -replace '(?ms)(name: scope_reviewer.*?)\n\s+output:\s*\n\s+verdict:\s*\n\s+type: string\s*\n\s+feedback:\s*\n\s+type: string\s*\n\s+issues:\s*\n\s+type: array\s*\n\s+items:\s*\n\s+type: string', '$1'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-output-schema'
         }
 
         It 'Fails when max_iterations is too low' {
             $yaml = ($script:ValidYaml) -replace 'max_iterations: 300', 'max_iterations: 100'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'max-iterations-too-low'
         }
 
         It 'Fails when route target references nonexistent agent' {
             $yaml = ($script:ValidYaml) -replace 'to: scope_closer', 'to: nonexistent_closer'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-mg.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-mg.ps1') 2>&1
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'invalid-route-target'
         }

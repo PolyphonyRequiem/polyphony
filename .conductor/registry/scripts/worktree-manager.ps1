@@ -7,7 +7,7 @@
 
     The apex-driver fans work-items out across waves and dispatches
     each item into a per-item git worktree so multiple lifecycle
-    sub-workflows (plan-level, actionable, implement-pg, feature-pr)
+    sub-workflows (plan-level, actionable, implement-merge-group, feature-pr)
     can run in parallel without racing branch checkouts in the
     primary working tree.
 

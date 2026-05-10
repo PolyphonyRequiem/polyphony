@@ -15,7 +15,9 @@ types:
       Decompose into Tasks when scope exceeds a single PG (~2000 LoC).
       Implement directly when the change is focused and fits one PG.
   Task:
-    facets: [implementable]
+    facets: [implementable, actionable]
+    facet_order: [actionable, implementable]
+    actionable_executor: polyphony
     filing_eligible: true
 
 transitions:

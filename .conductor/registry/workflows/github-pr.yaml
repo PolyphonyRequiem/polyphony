@@ -367,7 +367,7 @@ agents:
   #
   # Merges the approved PR using gh pr merge. Performs squash merge by
   # default for a clean history. Records the merge result and PR URL
-  # for downstream consumers (scope_closer in implement-pg.yaml).
+  # for downstream consumers (scope_closer in implement-merge-group.yaml).
   #
   # Invariants:
   #   Pre:  pr_reviewer.output.verdict == 'approved', OR human chose

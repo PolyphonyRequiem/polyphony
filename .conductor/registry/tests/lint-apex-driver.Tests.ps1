@@ -304,9 +304,9 @@ agents:
     workflow: ./actionable.yaml
     routes:
       - to: `$end
-  - name: implement_pg_dispatch
+  - name: implement_merge_group_dispatch
     type: workflow
-    workflow: ./implement-pg.yaml
+    workflow: ./implement-merge-group.yaml
     routes:
       - to: `$end
 "@
@@ -327,7 +327,7 @@ agents:
     args: ["-NoProfile", "-Command", "Write-Host"]
     routes:
       - to: `$end
-  - name: implement_pg_dispatch
+  - name: implement_merge_group_dispatch
     type: script
     command: pwsh
     args: ["-NoProfile", "-Command", "Write-Host"]
@@ -383,9 +383,9 @@ agents:
     workflow: ./actionable.yaml
     routes:
       - to: $end
-  - name: implement_pg_dispatch
+  - name: implement_merge_group_dispatch
     type: workflow
-    workflow: ./implement-pg.yaml
+    workflow: ./implement-merge-group.yaml
     routes:
       - to: $end
   - name: feature_pr_dispatch
@@ -406,14 +406,14 @@ agents:
 
         It 'Real apex-item-dispatch.yaml has all four lifecycle dispatch nodes by name' {
             $itemContent = Get-Content $script:ItemYaml -Raw
-            foreach ($n in @('plan_level_dispatch', 'actionable_dispatch', 'implement_pg_dispatch', 'feature_pr_dispatch')) {
+            foreach ($n in @('plan_level_dispatch', 'actionable_dispatch', 'implement_merge_group_dispatch', 'feature_pr_dispatch')) {
                 $itemContent | Should -Match "(?m)^\s*-\s+name:\s*$n\s*$"
             }
         }
 
         It 'Real apex-item-dispatch.yaml references all four lifecycle workflow files' {
             $itemContent = Get-Content $script:ItemYaml -Raw
-            foreach ($r in @('./plan-level.yaml', './actionable.yaml', './implement-pg.yaml', './feature-pr.yaml')) {
+            foreach ($r in @('./plan-level.yaml', './actionable.yaml', './implement-merge-group.yaml', './feature-pr.yaml')) {
                 $itemContent.Contains($r) | Should -BeTrue -Because "Expected '$r' to be referenced from apex-item-dispatch.yaml"
             }
         }
@@ -441,7 +441,7 @@ agents:
 
         It 'Real apex-item-dispatch.yaml routes from spawn_worktree to all four lifecycle nodes' {
             $itemContent = Get-Content $script:ItemYaml -Raw
-            foreach ($n in @('plan_level_dispatch', 'actionable_dispatch', 'implement_pg_dispatch', 'feature_pr_dispatch')) {
+            foreach ($n in @('plan_level_dispatch', 'actionable_dispatch', 'implement_merge_group_dispatch', 'feature_pr_dispatch')) {
                 $itemContent | Should -Match "to:\s*$n"
             }
         }

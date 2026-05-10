@@ -114,7 +114,7 @@ workflow:
   description: >-
     Tree-walking apex-level SDLC orchestrator. Dispatches each work
     item under `apex_id` into the right lifecycle sub-workflow
-    (plan-level / actionable / implement-pg / feature-pr / fast-path)
+    (plan-level / actionable / implement-merge-group / feature-pr / fast-path)
     in topological wave order, with per-item worktree isolation and
     edge-correct wave integration. Wraps the wave dispatch in an
     outer iterate-until-stable loop (PR #9) so multi-facet items
