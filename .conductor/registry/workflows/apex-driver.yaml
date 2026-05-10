@@ -121,10 +121,10 @@ workflow:
     (plannable+implementable, etc.) traverse plan → impl → close in a
     single invocation rather than requiring per-facet re-invocation.
     Replaces the deleted polyphony-full.yaml.
-  version: "2.2.2"
+  version: "2.3.0"
   entry_point: preflight_sync
   metadata:
-    min_polyphony_version: "2.2.2"
+    min_polyphony_version: "2.3.0"
 
   limits:
     # The dispatch loop is a for_each over waves; each wave is itself a
@@ -504,11 +504,48 @@ agents:
         when: "{{ check_conflicts.output.error is defined and check_conflicts.output.error != '' }}"
       - to: conflict_resolution_gate
         when: "{{ check_conflicts.output.has_conflicts | string | lower == 'true' }}"
-      - to: wave_dispatch_loop
+      - to: reset_wave_failure_flags
         when: "{{ check_conflicts.output.has_conflicts | string | lower == 'false' }}"
       # M4 catch-all — undefined has_conflicts means the JSON envelope
       # wasn't shaped as expected; treat as a worklist-layer failure.
       - to: worklist_failure_gate
+
+  # ── Reset wave failure flags ─────────────────────────────────────────────
+  #
+  # Per-pass cleanup of the wave-failure sentinel store (see
+  # scripts/wave-dispatch-guard.ps1). Runs IMMEDIATELY before every entry
+  # into wave_dispatch_loop so each dispatch pass starts with a clean
+  # slate:
+  #
+  #   * First-time entry from build_worklist → check_conflicts.
+  #   * Operator retries the conflict_resolution_gate → build_worklist.
+  #   * Outer loop continues (decision='continue') → build_worklist
+  #     → check_conflicts → here.
+  #   * Operator picks `retry` at wave_failed_gate or `renegotiate` at
+  #     renegotiation_gate — both route back to build_worklist.
+  #
+  # No path back into wave_dispatch_loop bypasses check_conflicts (and
+  # therefore this step), so we never inherit a stale flag from a prior
+  # dispatch pass.
+  #
+  # The script always exits 0; on git-common-dir resolution failure the
+  # envelope reports `error_code: git_common_dir_failed` but routing
+  # proceeds — the system degrades to today's continue_on_error behavior
+  # rather than blocking the loop.
+  - name: reset_wave_failure_flags
+    type: script
+    description: Clear stale per-wave failure sentinels at the start of every dispatch pass
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/wave-dispatch-guard.ps1"
+      - "-Op"
+      - "clear"
+      - "-RootId"
+      - "{{ workflow.input.apex_id }}"
+    routes:
+      - to: wave_dispatch_loop
 
   # ── Conflict resolution gate ─────────────────────────────────────────────
   #

@@ -183,7 +183,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ApexYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ApexYaml.workflow.name        | Should -Be 'apex-driver'
         $script:ApexYaml.workflow.entry_point | Should -Be 'preflight_sync'
-        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.2'
+        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.3.0'
         $script:ApexYaml.tools                | Should -Contain 'twig'
         $script:ApexYaml.agents.Count         | Should -BeGreaterThan 10
     }
@@ -191,8 +191,8 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
     It 'apex-wave-dispatch.yaml parses and exposes the expected top-level shape' {
         $script:WaveYaml.workflow | Should -Not -BeNullOrEmpty
         $script:WaveYaml.workflow.name        | Should -Be 'apex-wave-dispatch'
-        $script:WaveYaml.workflow.entry_point | Should -Be 'dispatch_items'
-        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.2'
+        $script:WaveYaml.workflow.entry_point | Should -Be 'check_prior_wave_status'
+        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.3.0'
         $script:WaveYaml.tools                | Should -Contain 'twig'
         # Per-M8 the workflow exposes 2 agents (aggregate_renegotiation,
         # integrate_wave) and 1 top-level for_each entry (dispatch_items).
@@ -204,7 +204,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ItemYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ItemYaml.workflow.name        | Should -Be 'apex-item-dispatch'
         $script:ItemYaml.workflow.entry_point | Should -Be 'classify_lifecycle'
-        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.2.2'
+        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.3.0'
         $script:ItemYaml.agents.Count         | Should -BeGreaterThan 8
     }
 
@@ -303,14 +303,17 @@ Describe 'apex-driver e2e — outer loop reachability' {
         $catchAll.Target | Should -Be 'worklist_failure_gate'
     }
 
-    It 'check_conflicts dispatches to wave_dispatch_loop on no-conflicts, gates on conflicts, surfaces envelope errors via worklist_failure_gate' {
+    It 'check_conflicts dispatches to reset_wave_failure_flags on no-conflicts, gates on conflicts, surfaces envelope errors via worklist_failure_gate' {
         $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'check_conflicts')
         $err   = $routes | Where-Object { $_.When -match 'check_conflicts\.output\.error is defined' }
         $confl = $routes | Where-Object { $_.When -match "has_conflicts \| string \| lower == 'true'" }
         $clear = $routes | Where-Object { $_.When -match "has_conflicts \| string \| lower == 'false'" }
         $err.Target   | Should -Be 'worklist_failure_gate'
         $confl.Target | Should -Be 'conflict_resolution_gate'
-        $clear.Target | Should -Be 'wave_dispatch_loop'
+        # Fail-fast-across-waves wiring: check_conflicts now routes through
+        # reset_wave_failure_flags before wave_dispatch_loop so each
+        # dispatch pass starts with a clean per-root sentinel store.
+        $clear.Target | Should -Be 'reset_wave_failure_flags'
         # M4 catch-all — undefined has_conflicts means the JSON envelope
         # didn't shape correctly; treat as a worklist-layer failure
         # rather than silently dispatching waves.
@@ -393,6 +396,39 @@ Describe 'apex-driver e2e — outer loop reachability' {
     It 'close_mark_satisfied routes to terminal_apex_satisfied' {
         $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'close_mark_satisfied')
         $routes.Target | Should -Contain 'terminal_apex_satisfied'
+    }
+
+    # ── Fail-fast across waves (PR: feat/wave-dispatch-fail-fast-on-failure) ──
+    #
+    # apex-driver inserts `reset_wave_failure_flags` between
+    # `check_conflicts` and `wave_dispatch_loop` so each dispatch pass
+    # starts with a clean per-root sentinel store. Combined with
+    # apex-wave-dispatch's `check_prior_wave_status` entry step + the
+    # `record_wave_failure_flag` step, this gives wave-level fail-fast
+    # without crashing the parent workflow (conductor's native
+    # `failure_mode: fail_fast` would raise ExecutionError and bypass
+    # gates).
+
+    It 'reset_wave_failure_flags exists, lives between check_conflicts and wave_dispatch_loop, and invokes wave-dispatch-guard.ps1 -Op clear' {
+        $node = $script:ApexAgents['reset_wave_failure_flags']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'wave-dispatch-guard\.ps1'
+        $argLine | Should -Match '-Op\s+clear'
+        $argLine | Should -Match '-RootId'
+        $argLine | Should -Match 'workflow\.input\.apex_id'
+        # Single forward route; no conditional wiring.
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'reset_wave_failure_flags')
+        $routes.Count    | Should -Be 1
+        $routes[0].Target | Should -Be 'wave_dispatch_loop'
+    }
+
+    It 'reset_wave_failure_flags is reached from check_conflicts on the no-conflicts edge (every dispatch pass clears stale sentinels)' {
+        $reachable = Get-Reachable -Agents $script:ApexAgents -StartNode 'check_conflicts'
+        $reachable | Should -Contain 'reset_wave_failure_flags'
+        $reachable | Should -Contain 'wave_dispatch_loop'
     }
 
     It 'All terminals route to $end (PR #9 added terminal_apex_iteration_cap and terminal_apex_blocked alongside the original three; AB#3067 added terminal_apex_dispatch_failures)' {
@@ -733,14 +769,109 @@ Describe 'apex-wave-dispatch e2e — wave fan-out' {
         $routes.Target | Should -Contain 'aggregate_renegotiation'
     }
 
-    It 'aggregate_renegotiation reads dispatch_items.outputs (per M8) and routes to integrate_wave' {
+    It 'aggregate_renegotiation reads dispatch_items.outputs (per M8) and routes to record_wave_failure_flag on items_failed_count > 0, otherwise integrate_wave' {
         $node = $script:WaveAgents['aggregate_renegotiation']
         $node.type | Should -Be 'script'
         # The script reads the .outputs dict and inspects renegotiation_pending.
         ($node.args -join ' ') | Should -Match 'dispatch_items\.outputs'
         ($node.args -join ' ') | Should -Match 'renegotiation_pending'
-        $routes = Get-NodeRoutes -Agents $script:WaveAgents -NodeName 'aggregate_renegotiation'
+        $routes = @(Get-NodeRoutes -Agents $script:WaveAgents -NodeName 'aggregate_renegotiation')
+        # Conditional fan-out for fail-fast-across-waves: when this wave
+        # had item failures, persist a sentinel BEFORE integrate_wave so
+        # subsequent waves' check_prior_wave_status short-circuits.
+        # Renegotiation is NOT short-circuited (preserves
+        # renegotiation_gate.override semantics).
+        $hot = $routes | Where-Object { $_.When -match 'items_failed_count \| int > 0' }
+        $hot | Should -Not -BeNullOrEmpty
+        $hot.Target | Should -Be 'record_wave_failure_flag'
+        # M4 catch-all + happy path both go to integrate_wave.
         $routes.Target | Should -Contain 'integrate_wave'
+        $routes[-1].When   | Should -BeNullOrEmpty
+        $routes[-1].Target | Should -Be 'integrate_wave'
+    }
+
+    # ── Fail-fast across waves (PR: feat/wave-dispatch-fail-fast-on-failure) ──
+    #
+    # apex-wave-dispatch.entry_point switches to check_prior_wave_status,
+    # which short-circuits to terminal_wave_skipped when an earlier wave
+    # under the same apex run wrote a failure sentinel. record_wave_failure_flag
+    # writes the sentinel after a wave's aggregate_renegotiation reports
+    # items_failed_count > 0. Renegotiation does NOT trigger the sentinel —
+    # see check_prior_wave_status header for rationale.
+
+    It 'check_prior_wave_status is the entry point and invokes wave-dispatch-guard.ps1 -Op check' {
+        $script:WaveYaml.workflow.entry_point | Should -Be 'check_prior_wave_status'
+        $node = $script:WaveAgents['check_prior_wave_status']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'wave-dispatch-guard\.ps1'
+        $argLine | Should -Match '-Op\s+check'
+        $argLine | Should -Match '-RootId'
+        $argLine | Should -Match 'workflow\.input\.apex_id'
+    }
+
+    It 'check_prior_wave_status routes blocked->terminal_wave_skipped, else dispatch_items (with M4 catch-all)' {
+        $routes = @(Get-NodeRoutes -Agents $script:WaveAgents -NodeName 'check_prior_wave_status')
+        $blocked = $routes | Where-Object { $_.When -match "blocked \| string \| lower == 'true'" }
+        $blocked | Should -Not -BeNullOrEmpty
+        $blocked.Target | Should -Be 'terminal_wave_skipped'
+        # Default + M4 catch-all both flow to dispatch_items so undefined
+        # `blocked` (e.g. git-common-dir resolution failure) degrades to
+        # today's continue_on_error behavior rather than silently
+        # skipping the wave.
+        $routes.Target | Should -Contain 'dispatch_items'
+        $routes[-1].When   | Should -BeNullOrEmpty
+        $routes[-1].Target | Should -Be 'dispatch_items'
+    }
+
+    It 'terminal_wave_skipped emits a wave_skipped envelope and ends the wave' {
+        $node = $script:WaveAgents['terminal_wave_skipped']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'skipped\s*=\s*\$true'
+        $argLine | Should -Match 'skip_reason'
+        $argLine | Should -Match 'wave_index'
+        $routes = @(Get-NodeRoutes -Agents $script:WaveAgents -NodeName 'terminal_wave_skipped')
+        $routes.Count    | Should -Be 1
+        $routes[0].Target | Should -Be '$end'
+    }
+
+    It 'record_wave_failure_flag invokes wave-dispatch-guard.ps1 -Op record with the wave index and routes to integrate_wave' {
+        $node = $script:WaveAgents['record_wave_failure_flag']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'wave-dispatch-guard\.ps1'
+        $argLine | Should -Match '-Op\s+record'
+        $argLine | Should -Match '-RootId'
+        $argLine | Should -Match 'workflow\.input\.apex_id'
+        $argLine | Should -Match '-WaveIndex'
+        $argLine | Should -Match 'workflow\.input\.wave_index'
+        $argLine | Should -Match '-Reason\s+failure'
+        $routes = @(Get-NodeRoutes -Agents $script:WaveAgents -NodeName 'record_wave_failure_flag')
+        $routes.Count    | Should -Be 1
+        $routes[0].Target | Should -Be 'integrate_wave'
+    }
+
+    It 'apex-wave-dispatch.output exposes wave_skipped + skip_reason for operator observability' {
+        # Workflow output template lives at the top-level `output:` map;
+        # we assert the literal Jinja shape here because the YAML loader
+        # collapses long folded scalars and the template itself is the
+        # contract apex-driver consumes via wave_dispatch_loop.outputs[].
+        $script:WaveRaw | Should -Match 'wave_skipped:\s*>-'
+        $script:WaveRaw | Should -Match 'terminal_wave_skipped is defined'
+        $script:WaveRaw | Should -Match 'skip_reason:\s*>-'
+    }
+
+    It 'Wave skip path is reachable from check_prior_wave_status to $end without touching dispatch_items' {
+        $reachable = Get-Reachable -Agents $script:WaveAgents -StartNode 'check_prior_wave_status'
+        $reachable | Should -Contain 'terminal_wave_skipped'
+        $reachable | Should -Contain 'dispatch_items'
     }
 
     It 'integrate_wave invokes wave-integrator.ps1 and ends the wave' {

@@ -76,10 +76,10 @@ workflow:
     MG branch, iterates tasks through coder → reviewer with per-task
     branches and PRs, runs scope-level review, and opens + merges the
     MG PR via the merge-commit-only path required by the ADR.
-  version: "2.2.2"
+  version: "2.3.0"
   entry_point: branch_ensure_mg
   metadata:
-    min_polyphony_version: "2.2.2"
+    min_polyphony_version: "2.3.0"
 
   limits:
     # Per the rubber-duck pass — implement-mg's task loop is wider than
