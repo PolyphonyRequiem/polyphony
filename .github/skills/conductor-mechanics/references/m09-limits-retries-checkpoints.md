@@ -137,7 +137,7 @@ file is still in the same place it always was.
 
 For portable references, use:
 - An absolute path (rare; usually wrong for shipping workflows).
-- A registry reference (`workflow: implement-pg@polyphony`) — registry resolves regardless of caller location.
+- A registry reference (`workflow: implement-merge-group@polyphony`) — registry resolves regardless of caller location.
 - `{{ workflow.dir }}` interpolation (where supported).
 
 ## Sub-workflow input coercion (`engine/workflow.py:629-639`)

@@ -499,7 +499,7 @@ agents:
 # the eventual lifecycle dispatch (DEFERRED — see workflow header)
 # has an isolated checkout to operate on.
 #
-# max_concurrent: 3 mirrors policy.concurrency.max_concurrent_pgs and
+# max_concurrent: 3 mirrors policy.concurrency.max_concurrent_children and
 # is the conservative MVP cap — runs comfortably under most ADO rate
 # limits and saturates a typical developer workstation.
 #

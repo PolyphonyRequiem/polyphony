@@ -749,7 +749,7 @@ Describe 'apex-wave-dispatch e2e — wave fan-out' {
         $node.as             | Should -Be 'item'
         $node.agent.type     | Should -Be 'workflow'
         $node.agent.workflow | Should -Be './apex-item-dispatch.yaml'
-        # MVP cap aligns with policy.concurrency.max_concurrent_pgs.
+        # MVP cap aligns with policy.concurrency.max_concurrent_children.
         [int]$node.max_concurrent | Should -Be 3
         $node.failure_mode   | Should -Be 'continue_on_error'
     }

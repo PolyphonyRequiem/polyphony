@@ -30,7 +30,7 @@ The dispatch contract is:
        based on its observable state (`polyphony state next-ready`).
      - Spawn an isolated worktree.
      - Run the appropriate lifecycle workflow (plan-level / actionable
-       / implement-pg / feature-pr).
+       / implement-merge-group / feature-pr).
      - Tear down the worktree.
    - Integrate the wave (merge per-item branches into the apex feature
      branch in topological order).
@@ -87,7 +87,7 @@ We ship `lifecycle-router.ps1` — a deterministic classifier that
 wraps the `polyphony state next-ready` call, applies the priority
 rules (plan > action > impl with the action-before-impl rule per the
 implicit `action_satisfied → implementation_merged` edge), and emits
-a routing envelope (`route: plan-level | actionable | implement-pg |
+a routing envelope (`route: plan-level | actionable | implement-merge-group |
 feature-pr | fast-path | monitoring | blocked | error`). The workflow
 just reads `classify_lifecycle.output.route` and dispatches.
 
@@ -234,7 +234,7 @@ in-flight apex:
 ```powershell
 conductor run plan-level@polyphony           --input work_item_id=<ID> --web
 conductor run actionable@polyphony           --input work_item_id=<ID> --web
-conductor run implement-pg@polyphony         --input work_item_id=<ID> --web
+conductor run implement-merge-group@polyphony         --input work_item_id=<ID> --web
 conductor run feature-pr@polyphony           --input work_item_id=<ID> --web
 ```
 
@@ -255,7 +255,7 @@ In priority order:
 | dispatchable + plan_*        | `plan-level`         |
 | dispatchable + action_*      | `actionable`         |
 | dispatchable + impl_* + root | `feature-pr`         |
-| dispatchable + impl_* + ¬root| `implement-pg`       |
+| dispatchable + impl_* + ¬root| `implement-merge-group`       |
 
 Plan > action > impl handles multi-facet items (action evidence
 must land before implementation per the implicit edge
@@ -281,7 +281,7 @@ The MVP wires the **dispatch skeleton** end-to-end: build worklist,
 loop over waves, classify each item, spawn worktree, tear down
 worktree, integrate wave, gate on conflicts, close on satisfaction.
 The actual *lifecycle dispatch* — invoking `plan-level.yaml`,
-`actionable.yaml`, `implement-pg.yaml`, `feature-pr.yaml` from inside
+`actionable.yaml`, `implement-merge-group.yaml`, `feature-pr.yaml` from inside
 `apex-item-dispatch.yaml` — was deferred to a follow-up PR, behind
 a `lifecycle_dispatch_placeholder` step. **The follow-up has now
 landed; see "Lifecycle dispatch wiring (Phase 7 follow-up)" below.**
@@ -291,7 +291,7 @@ landed; see "Lifecycle dispatch wiring (Phase 7 follow-up)" below.**
 The deferred lifecycle dispatch is now wired. The placeholder
 in `apex-item-dispatch.yaml` is replaced with four typed `workflow:`
 nodes — `plan_level_dispatch`, `actionable_dispatch`,
-`implement_pg_dispatch`, `feature_pr_dispatch` — each fanned to from
+`implement_merge_group_dispatch`, `feature_pr_dispatch` — each fanned to from
 `spawn_worktree` via a `when:` clause matching the lifecycle router's
 `route` field.
 
@@ -334,12 +334,12 @@ per facet anyway.
 that currently fall through to `prompt`; full handling (loop
 restart vs continue) is deferred to a future PR.
 
-**implement-pg input mapping is the MVP shape.** `implement-pg.yaml`
+**implement-merge-group input mapping is the MVP shape.** `implement-merge-group.yaml`
 expects `pg_number`, `work_item_ids`, `branch_name`,
 `feature_branch`. apex-item-dispatch synthesizes these from
-`work_item_id` + `apex_id` (one item per "PG", branch name derived
-from apex+item IDs). Richer mappings — multi-item PGs,
-planner-declared branch names — require apex-driver to surface PG
+`work_item_id` + `apex_id` (one item per merge group, branch name derived
+from apex+item IDs). Richer mappings — multi-item merge groups,
+planner-declared branch names — require apex-driver to surface merge-group
 grouping and are deferred.
 
 **Still deferred after this PR:**
@@ -350,7 +350,7 @@ grouping and are deferred.
 - Planner-declared executor for actionable items (currently relies
   on `route-actionable-executor.ps1` heuristics inside
   `actionable.yaml`).
-- Richer implement-pg input mapping (multi-item PGs,
+- Richer implement-merge-group input mapping (multi-item PGs,
   planner-declared branch names).
 
 ## Forward references

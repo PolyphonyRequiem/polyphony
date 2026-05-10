@@ -72,7 +72,7 @@ You are not changing anything; you want the model.
   re-entry, human gates. Use the **conductor** skill.
 - **The polyphony SDLC workflow suite** — `apex-driver.yaml` (the canonical
   entry point) plus the sub-workflow library (`plan-level`, `actionable`,
-  `implement-pg`, `implement-mg`, `feature-pr`, `github-pr`, `ado-pr`,
+  `implement-merge-group`, `implement-mg`, `feature-pr`, `github-pr`, `ado-pr`,
   `close-out`, …), recursion budget, parallel PG execution. Use the
   **polyphony-sdlc** skill (`.github/skills/polyphony-sdlc/SKILL.md`).
   The workflow YAMLs themselves live in `.conductor/registry/workflows/`

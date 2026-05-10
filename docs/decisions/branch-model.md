@@ -129,11 +129,20 @@ named `data-layer-migrations` collided with a nested `migrations` under
 
 ### Promote chain
 
+> **Naming asymmetry callout (post-G2, Polyphony 2.4.0):** the `mg`
+> token below is **branch grammar only**. The matching config key in
+> `process-config.yaml` is `merge_group_pr` (review policy) and
+> `merge_group_branch` (branch template); the CLI verb group is
+> `polyphony merge-group`; the C# type is `MergeGroupCommands`; the
+> workflow file is `implement-merge-group.yaml`. Branch tokens stay
+> terse for `git` ergonomics; everything else is self-describing.
+> See `docs/glossary.md` → **Merge-group naming asymmetry**.
+
 | Layer | Head | Base | Merge mode policy key | Merge method |
 |---|---|---|---|---|
 | Impl PR | `impl/{r}-{item_id}` | enclosing `mg/{r}_{mg_path}` | `(scope, impl_pr)` | squash OR merge — operator choice |
-| Nested MG PR | `mg/{r}_{mg_path}` (terminal segment is the nested id) | `mg/{r}_{parent_mg_path}` | `(scope, mg_pr)` | **merge commit** (mandatory) |
-| Top MG PR | `mg/{r}_{mg_id}` | `feature/{r}` | `(scope, mg_pr)` | **merge commit** (mandatory) |
+| Nested MG PR | `mg/{r}_{mg_path}` (terminal segment is the nested id) | `mg/{r}_{parent_mg_path}` | `(scope, merge_group_pr)` | **merge commit** (mandatory) |
+| Top MG PR | `mg/{r}_{mg_id}` | `feature/{r}` | `(scope, merge_group_pr)` | **merge commit** (mandatory) |
 | Plan PR (descendant) | `plan/{r}-{item_id}` | parent's plan branch | `(scope, plan_pr)` | **merge commit** (mandatory) |
 | Plan PR (root) | `plan/{r}` | `feature/{r}` | `(scope, plan_pr)` | **merge commit** (mandatory) |
 | Evidence PR | `evidence/{r}-{i}` | `feature/{r}` | `(scope, evidence_pr)` | squash OR merge — operator choice |

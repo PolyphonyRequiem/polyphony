@@ -24,7 +24,7 @@
 #        (planner-declared on the parent MG container) serializes the
 #        wave's items inside a shared MG worktree; `per_item` (default)
 #        spawns a fresh worktree per item and runs them in parallel
-#        bounded by `concurrency.max_concurrent_pgs`. MVP ships
+#        bounded by `concurrency.max_concurrent_children`. MVP ships
 #        per_item; per_mg serialization is a stub (defers to per_item
 #        until a follow-up wires the MG container check).
 #

@@ -125,7 +125,7 @@ The intuitive "fan out N sub-workflows from a list" pattern works:
   agent:
     name: implement_one
     type: workflow
-    workflow: ./implement-pg.yaml
+    workflow: ./implement-merge-group.yaml
     input_mapping:
       pg_id: "{{ pg.id }}"
 ```

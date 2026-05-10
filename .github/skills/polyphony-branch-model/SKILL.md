@@ -95,11 +95,20 @@ main
 
 ## Promote chain (head → base)
 
+> **Naming asymmetry (post-G2, Polyphony 2.4.0):** the `mg` token in
+> branch names below is **branch grammar only**. Config keys
+> (`merge_group_pr`, `merge_group_branch`), the CLI verb group
+> (`polyphony merge-group`), the C# type (`MergeGroupCommands`), and
+> the workflow file (`implement-merge-group.yaml`) all use the long
+> form. Branch tokens stay terse for git ergonomics; everything else
+> is self-describing. See `docs/glossary.md` → **Merge-group naming
+> asymmetry**.
+
 | Layer | Head | Base | Merge mode policy | Merge method |
 |---|---|---|---|---|
 | Impl PR | `impl/{r}-{item_id}` | enclosing `mg/{r}_{mg_path}` | `(scope, impl_pr)` | squash OR merge |
-| Nested MG PR | `mg/{r}_{mg_path}` (terminal segment is the nested id) | `mg/{r}_{parent_mg_path}` | `(scope, mg_pr)` | **merge commit (mandatory)** |
-| Top MG PR | `mg/{r}_{mg_id}` | `feature/{r}` | `(scope, mg_pr)` | **merge commit (mandatory)** |
+| Nested MG PR | `mg/{r}_{mg_path}` (terminal segment is the nested id) | `mg/{r}_{parent_mg_path}` | `(scope, merge_group_pr)` | **merge commit (mandatory)** |
+| Top MG PR | `mg/{r}_{mg_id}` | `feature/{r}` | `(scope, merge_group_pr)` | **merge commit (mandatory)** |
 | Plan PR (descendant) | `plan/{r}-{item_id}` | parent's plan branch | `(scope, plan_pr)` | **merge commit (mandatory)** |
 | Plan PR (root) | `plan/{r}` | `feature/{r}` | `(scope, plan_pr)` | **merge commit (mandatory)** |
 | Evidence PR | `evidence/{r}-{i}` | `feature/{r}` | `(scope, evidence_pr)` | squash OR merge |

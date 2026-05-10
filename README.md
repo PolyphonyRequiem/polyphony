@@ -37,7 +37,7 @@ YAML workflow files driving `conductor` (the multi-agent orchestrator). The
 **`apex-driver@polyphony`** workflow is the canonical SDLC entry point — a
 tree-walking dispatcher built on the EdgeGraph + `state next-ready` model
 that drives an apex (run-root) work item end-to-end through planning
-(`plan-level`), implementation (`implement-pg`, `implement-mg`), PR
+(`plan-level`), implementation (`implement-merge-group`, `implement-mg`), PR
 lifecycle (`feature-pr`, `github-pr`, `ado-pr`), and close-out. The
 workflows shell out to the polyphony CLI for every routing decision and
 every configuration query, so the YAML itself contains zero type-name
@@ -185,7 +185,7 @@ Start-Process -WindowStyle Hidden -FilePath conductor -ArgumentList @(
 Use `--input intent=resume` to re-enter an in-flight apex after a human gate
 or interruption; the dispatch loop is observable-state-driven and re-derives
 the next wave from the work-item tree on every iteration. Sub-workflows
-(`plan-level`, `implement-pg`, `feature-pr`, …) can be invoked directly to
+(`plan-level`, `implement-merge-group`, `feature-pr`, …) can be invoked directly to
 replay or override a single leg — see [`workflows/README.md`](workflows/README.md).
 
 The full set of metadata fields (and what each does in the dashboard) is
@@ -330,7 +330,7 @@ The YAMLs in `.conductor/registry/workflows/`:
 | `apex-item-dispatch.yaml`          | Per-item innermost sub-workflow invoked by apex-wave-dispatch — classify lifecycle, spawn/teardown worktree, dispatch lifecycle. |
 | `plan-level.yaml`                  | Recursive planning core. Self-recurses for nested plannable levels. |
 | `actionable.yaml`                  | Actionable-facet workflow — executor router, polyphony evidence PR or human satisfaction gate. |
-| `implement-pg.yaml`                | Single PG lifecycle: tasks → review → PR → merge → scope close.     |
+| `implement-merge-group.yaml`                | Single PG lifecycle: tasks → review → PR → merge → scope close.     |
 | `implement-mg.yaml`                | Single merge-group lifecycle.                                       |
 | `github-pr.yaml`                   | GitHub PR lifecycle (review + fix loop, max 10 iterations).         |
 | `ado-pr.yaml`                      | ADO PR lifecycle (currently a manual-gate stub).                    |

@@ -801,7 +801,7 @@ conductor run apex-driver@polyphony `
 
 The apex-driver re-derives the right leg per item per wave from observable
 state, so individual sub-workflows (`plan-level`, `actionable`,
-`implement-pg`, `feature-pr`, …) should rarely be invoked directly. Reach
+`implement-merge-group`, `feature-pr`, …) should rarely be invoked directly. Reach
 for a sub-workflow invocation only when you want to *replay* or *override* a
 single leg of an in-flight apex — see `workflows/README.md` for the per-leg
 contracts.
@@ -976,7 +976,7 @@ review_policies:
       human_review: true             # Humans review architectural plans
       auto_merge: false
   implementation:
-    pg_pr:
+    merge_group_pr:
       agent_review: true
       human_review: false            # PG PRs auto-merge after agent review
       auto_merge: true
@@ -985,7 +985,7 @@ review_policies:
       human_review: true             # Feature PRs require human review (crypto)
       auto_merge: false
   remediation:
-    pg_pr:
+    merge_group_pr:
       agent_review: true
       human_review: false
       auto_merge: true
@@ -995,7 +995,7 @@ review_policies:
 branch_strategy:
   feature_branch: "feature/{root_id}-{slug}"
   planning_branch: "planning/{root_id}"
-  pg_branch: "pg-{n}/{root_id}-{slug}"
+  merge_group_branch: "pg-{n}/{root_id}-{slug}"
   target: main
 
 # Platform for PR operations.
