@@ -60,7 +60,8 @@ public sealed class ManifestCommandsCommitAndPushTests : IDisposable
     {
         var runner = new FakeProcessRunner();
         var git = new GitClient(runner);
-        return (new ManifestCommands(git, new PostconditionVerifier(git)), runner);
+        return (new ManifestCommands(git, new PostconditionVerifier(git),
+            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git)), runner);
     }
 
     private static ManifestCommitAndPushResult Parse(string output) =>

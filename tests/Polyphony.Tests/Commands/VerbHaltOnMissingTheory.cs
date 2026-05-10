@@ -41,6 +41,24 @@ public sealed class VerbHaltOnMissingTheory(ITestOutputHelper output)
         "Polyphony.Commands.PlanCommands.CommitAndPush",
     };
 
+    /// <summary>
+    /// Stage 4 (Rev 4.2 manifest path resolution): these read-only manifest
+    /// verbs accept <c>--path</c> and <c>--root-id</c> as <em>both optional</em>
+    /// because they support a Stage-8-transitional legacy fallback path
+    /// (<c>.polyphony/run.yaml</c>). The <c>path = ""</c> default is a
+    /// "derive-from-root-id-or-fall-back" sentinel, NOT a Move #2
+    /// "missing required" sentinel — there is genuinely nothing to halt on
+    /// when both flags are omitted. Stage 8 will eliminate the legacy
+    /// fallback and require <c>--root-id</c> at every caller; once that
+    /// lands, these verbs can drop the empty-string default and these
+    /// exclusions can be removed.
+    /// </summary>
+    private static readonly HashSet<string> Stage4OptionalSentinelZone = new(StringComparer.Ordinal)
+    {
+        "Polyphony.Commands.ManifestCommands.Read",
+        "Polyphony.Commands.ManifestCommands.TopologyHash",
+    };
+
     public static IEnumerable<object[]> SentinelVerbs()
     {
         foreach (var type in PolyphonyAssembly.GetTypes())
@@ -54,6 +72,7 @@ public sealed class VerbHaltOnMissingTheory(ITestOutputHelper output)
                 if (!HasSentinelRequiredParam(method)) continue;
                 var fqn = $"{type.FullName}.{method.Name}";
                 if (Move3ConflictZone.Contains(fqn)) continue;
+                if (Stage4OptionalSentinelZone.Contains(fqn)) continue;
                 yield return new object[] { fqn };
             }
         }
