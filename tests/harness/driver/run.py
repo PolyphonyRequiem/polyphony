@@ -2,11 +2,12 @@
 
 Usage::
 
-    python -m harness.driver.run <scenario-dir>
+    python -m driver.run <scenario-dir>
 
 Loads the scenario, constructs a ``FakeProvider`` over conductor's
-existing provider seam, runs the workflow, captures the event trace,
-checks expectations, and prints a JSON result document to stdout.
+existing provider seam, stages a per-scenario shim bin/ that intercepts
+polyphony / twig / gh subprocess calls, runs the workflow, captures the
+event trace, checks expectations, and prints a JSON result document.
 
 Exit codes:
   0 — scenario passed
@@ -20,6 +21,7 @@ import argparse
 import asyncio
 import json
 import sys
+import tempfile
 import traceback
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,7 @@ from conductor.events import WorkflowEventEmitter
 
 from .fakes.provider import FakeProvider
 from .scenario import Scenario, load_scenario
+from .shim_runtime import patched_environment, read_audit_log, stage_scenario_bin
 from .trace import TraceRecorder, check_expectations
 
 
@@ -37,7 +40,7 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-async def _run_scenario(scenario: Scenario) -> tuple[int, dict[str, Any]]:
+async def _run_scenario(scenario: Scenario, *, verbose: bool = False) -> tuple[int, dict[str, Any]]:
     provider = FakeProvider(scripts=scenario.agent_scripts)
     emitter = WorkflowEventEmitter()
     recorder = TraceRecorder()
@@ -55,10 +58,17 @@ async def _run_scenario(scenario: Scenario) -> tuple[int, dict[str, Any]]:
 
     workflow_output: dict[str, Any] | None = None
     error_text: str | None = None
-    try:
-        workflow_output = await engine.run(scenario.inputs)
-    except Exception as exc:
-        error_text = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+    cli_calls: list[dict[str, str]] = []
+
+    with tempfile.TemporaryDirectory(prefix=f"harness-{scenario.name}-") as tmp:
+        bin_dir = Path(tmp) / "bin"
+        shim_ctx = stage_scenario_bin(bin_dir, scenario.cli_scripts, verbose=verbose)
+        with patched_environment(shim_ctx):
+            try:
+                workflow_output = await engine.run(scenario.inputs)
+            except Exception as exc:
+                error_text = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+        cli_calls = read_audit_log(shim_ctx)
 
     failures = check_expectations(scenario.expected_trace, recorder, workflow_output)
     if error_text and not failures:
@@ -70,7 +80,8 @@ async def _run_scenario(scenario: Scenario) -> tuple[int, dict[str, Any]]:
         "passed": not failures,
         "failures": failures,
         "trace": recorder.to_dict(),
-        "calls": provider.calls,
+        "agent_calls": provider.calls,
+        "cli_calls": cli_calls,
         "workflow_output": workflow_output,
     }
     if error_text:
@@ -93,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
             "ConvertFrom-Json."
         ),
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print build / setup chatter to stderr.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -102,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        exit_code, result = asyncio.run(_run_scenario(scenario))
+        exit_code, result = asyncio.run(_run_scenario(scenario, verbose=args.verbose))
     except Exception as exc:  # pragma: no cover - guarded for unknown failure
         _emit_result(
             {

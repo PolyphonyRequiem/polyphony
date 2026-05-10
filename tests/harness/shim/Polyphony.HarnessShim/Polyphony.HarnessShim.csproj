@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Polyphony.HarnessShim</RootNamespace>
+    <AssemblyName>Polyphony.HarnessShim</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- This shim is built and copied per-scenario by the harness driver as
+         polyphony / twig / gh into an ephemeral bin/ that is prepended to
+         PATH. -->
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Polyphony.HarnessShim.Tests" />
+  </ItemGroup>
+
+</Project>
