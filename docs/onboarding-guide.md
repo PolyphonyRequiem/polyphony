@@ -84,6 +84,9 @@ After installing Polyphony, run `polyphony health` to verify your environment an
   - Ensure your PATH includes required binaries
   - Re-run `polyphony health` after making changes
 - If you are unable to resolve an issue, copy the full output and seek help in the project support channel.
+- If the launcher fails with a GitHub authentication error (`gh` not found,
+  no cached token, or token validation failure), see the
+  [launcher gh-auth troubleshooting guide](troubleshooting/launcher-gh-auth.md).
 
 ---
 

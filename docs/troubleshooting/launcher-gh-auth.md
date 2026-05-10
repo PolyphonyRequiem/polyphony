@@ -2,14 +2,17 @@
 
 The polyphony SDLC launcher runs a **gh-identity probe** at startup to
 capture and validate the active GitHub CLI identity before any workflow
-begins. This page explains how the probe works, what its diagnostic output
-means, and how to fix each failure mode.
+begins. This probe was introduced in
+[PR #250](https://github.com/PolyphonyRequiem/polyphony/pull/250). This
+page explains how the probe works, what its diagnostic output means, and
+how to fix each failure mode.
 
 ## When the probe runs
 
 The probe runs when **both** conditions are true:
 
-1. `-Platform github` is passed to `Invoke-PolyphonySdlc.ps1`.
+1. `-Platform github` is passed to
+   [`Invoke-PolyphonySdlc.ps1`](../../scripts/Invoke-PolyphonySdlc.ps1).
 2. `-DryRun` is **not** set.
 
 When `-Platform ado` is used (Azure DevOps) or when `-DryRun` is active,
@@ -17,7 +20,7 @@ the probe is skipped entirely — no `gh` CLI is required.
 
 ## What the probe does
 
-On launch, `Resolve-GhIdentity` captures whichever `gh` user is active at
+On launch, [`Resolve-GhIdentity`](../../scripts/Resolve-GhIdentity.ps1) captures whichever `gh` user is active at
 that moment, validates the captured token against the GitHub API, and
 returns the resolved identity. The launcher then **pins** the validated
 token into `GH_TOKEN` and `GH_HOST` environment variables for the entire
@@ -60,7 +63,8 @@ hours later.
 
 ## Symptoms and remediation
 
-Each error below is quoted verbatim from `scripts/Resolve-GhIdentity.ps1`.
+Each error below is quoted verbatim from
+[`scripts/Resolve-GhIdentity.ps1`](../../scripts/Resolve-GhIdentity.ps1).
 
 ### `gh CLI not found on PATH`
 
@@ -189,3 +193,14 @@ gh auth login --hostname github.com
 
 # If the network is unreachable, check connectivity to github.com
 ```
+
+## See also
+
+- [`scripts/Invoke-PolyphonySdlc.ps1`](../../scripts/Invoke-PolyphonySdlc.ps1) — the
+  launcher script that invokes the probe.
+- [`scripts/Resolve-GhIdentity.ps1`](../../scripts/Resolve-GhIdentity.ps1) — the probe
+  implementation.
+- [PR #250](https://github.com/PolyphonyRequiem/polyphony/pull/250) — the pull request
+  that shipped the gh-identity probe.
+- [Onboarding guide](../onboarding-guide.md) — full setup walkthrough including
+  prerequisite checks.
