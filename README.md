@@ -53,10 +53,10 @@ register the workflow suite with `conductor`.
 
 ### Plus: agent skills and per-target config
 
-- **`.github/skills/`** — eight skills (CLI dev, workflow author, SDLC
-  operator, conductor mechanics, bootstrap onboarding, twig CLI / SDLC, and
-  the design/mechanics design pair) loaded by Copilot CLI / Claude Code when
-  working in this codebase.
+- **`.github/skills/`** — nine skills (CLI dev, workflow author, SDLC
+  operator, conductor mechanics, bootstrap onboarding, twig CLI / SDLC, the
+  design/mechanics design pair, and the workflow path-coverage harness)
+  loaded by Copilot CLI / Claude Code when working in this codebase.
 - **`.conductor/`** — the configuration consumed by both the CLI and the
   workflow suite at runtime. Polyphony's *own* `.conductor/` directory is
   the dogfood example: this repo runs itself through the polyphony workflow
@@ -400,6 +400,24 @@ Workflow scripts under `.conductor/registry/scripts/` are tested with Pester:
 ```powershell
 Invoke-Pester tests/
 ```
+
+### Workflow path-coverage harness
+
+For testing the conductor workflows themselves, this repo ships a
+**scenario-based path-coverage harness** under
+[`tests/harness/`](tests/harness/README.md). It runs the real conductor
+engine in-process from Python with a scripted `FakeProvider` for the LLM
+boundary and a .NET shim binary on PATH for `script:` calls — no real LLM
+tokens, no ADO writes, no git mutations. Scenarios live under
+`tests/harness/scenarios/<name>/scenario.yaml` and run on every PR build
+via the existing Pester step in CI.
+
+Add a scenario when you want to pin a workflow path against regression
+(e.g. a real dogfood incident). See
+[`docs/decisions/harness-mvp.md`](docs/decisions/harness-mvp.md) for the
+design ADR and
+[`.github/skills/polyphony-harness/SKILL.md`](.github/skills/polyphony-harness/SKILL.md)
+for scenario-authoring conventions.
 
 Polyphony dogfoods itself — feature work on this repo is normally driven by
 the polyphony workflow suite. Direct commits to `main` are reserved for hotfixes

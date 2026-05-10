@@ -93,6 +93,16 @@ invalidate on whitespace edits. Sub-workflow paths are parent-relative.
 
 → [Full details](references/m09-limits-retries-checkpoints.md)
 
+## M10: Iterate-Until-Stable Loop Pattern
+Conductor has no first-class loop primitive. The canonical pattern is a
+graph-cycle-with-conditional-route plus a per-instance temp-file iteration
+counter plus priority-ordered `when:` clauses (terminals first, cycle last)
+plus a defensive M4 catch-all routing to a TERMINAL — never back to the
+cycle. Reversing the `when:` priority or routing the catch-all back into
+the cycle is the infinite-loop bug.
+
+→ [Full details](references/m10-iterate-until-stable.md)
+
 ---
 
 ## Quick Footgun Index
