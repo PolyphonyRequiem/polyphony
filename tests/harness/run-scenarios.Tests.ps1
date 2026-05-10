@@ -33,8 +33,11 @@ BeforeAll {
     }
 
     # Probe prereqs. The harness needs the `conductor` Python package and
-    # `ruamel.yaml`. When either is missing, scenario tests skip with the
-    # diagnostic so CI doesn't fail just because conductor isn't installed.
+    # `ruamel.yaml`. CI installs both via setup-python + pip; developer
+    # machines either set HARNESS_PYTHON to a conductor-equipped venv or
+    # rely on the well-known dev path below. When neither produces a
+    # working interpreter, scenario tests skip with a diagnostic so a
+    # missing local setup doesn't masquerade as a code failure.
     $cmd = Get-Command $script:Python -ErrorAction SilentlyContinue
     if (-not $cmd) {
         $script:PrereqReady  = $false
