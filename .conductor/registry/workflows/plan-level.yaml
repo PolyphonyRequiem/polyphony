@@ -1748,6 +1748,15 @@ agents:
   # `(architect is defined and ...)` short-circuits cleanly so the seeder
   # is invoked with `[]`. The verb tolerates the empty array, reconciles
   # against existing children (idempotent), and sets polyphony:planned.
+  #
+  # Routing-style envelope: the seeder verb exits 0 even on per-child
+  # failures (errors arrive as a populated `errors[]` array with
+  # `error_count > 0`). Without an error gate, downstream child_router
+  # then walks into a half-seeded tree and the apex silently terminates
+  # blocked. AB#3067 dogfood reproduced this exact pattern when a child
+  # title clashed during ADO `twig new` and the parent had no plannable
+  # children to discover. Mirrors the write_plan error-gate pattern at
+  # line 710-736 above.
   - name: seeder
     type: script
     description: Idempotent seeder — marker-aware reconciliation, sets polyphony:planned tag
@@ -1760,7 +1769,65 @@ agents:
       - "--children-json"
       - "{{ architect.output.children | tojson if (architect is defined and architect.output.children is defined) else '[]' }}"
     routes:
+      - to: seeder_error_gate
+        when: "{{ seeder.output.error_count is defined and seeder.output.error_count > 0 }}"
       - to: child_router
+
+  # ── Seeder error gate (AB#3067) ─────────────────────────────────────────
+  #
+  # `polyphony plan seed-children` always exits 0 and carries per-child
+  # failures in `errors[]`. This gate fires when `error_count > 0` so the
+  # operator sees the failure rather than continuing into child_router with
+  # a half-seeded tree (which silently terminates the apex blocked).
+  #
+  # Retry routes back to `seeder` because the verb is idempotent — it
+  # reconciles against existing children via marker-aware matching, so
+  # re-running after fixing the upstream cause (e.g. resolving a duplicate
+  # title) is safe.
+  - name: seeder_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Seeder Reported Errors
+
+      `polyphony plan seed-children` for work item
+      **{{ workflow.input.work_item_id }}** returned
+      `error_count = {{ seeder.output.error_count if seeder.output.error_count is defined else 'unknown' }}`.
+
+      The seeder is idempotent — it reconciles architect-emitted
+      children against existing children of the parent work item.
+      Common causes:
+      - Duplicate child title under the parent (twig dedup conflict).
+      - Invalid or inaccessible parent ID at the platform layer.
+      - Twig workspace misconfiguration.
+
+      **Errors (truncated to a first line per item):**
+      {%- if seeder.output.errors is defined %}
+      {%- for e in seeder.output.errors %}
+      - `{{ e.child_id if e.child_id is defined and e.child_id else (e.title if e.title is defined and e.title else '(unknown)') }}` — {{ e.error if e.error is defined else '(no detail)' }}
+      {%- endfor %}
+      {%- else %}
+      _(no per-child error envelopes — see verb stderr in run logs)_
+      {%- endif %}
+
+      ---
+
+      Choose an action:
+      - **Retry** — re-run the seeder (idempotent; safe after fixing the
+        upstream cause, e.g. resolving a duplicate title)
+      - **Continue** — proceed to `child_router` anyway (a partial seed is
+        usually still useful; the next driver iteration will revisit any
+        children that did get created)
+      - **Abort** — cancel planning
+    options:
+      - label: "🔁 Retry"
+        value: retry
+        route: seeder
+      - label: "▶️  Continue"
+        value: continue
+        route: child_router
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
 
   # ── Child router ─────────────────────────────────────────────────────────
   #
