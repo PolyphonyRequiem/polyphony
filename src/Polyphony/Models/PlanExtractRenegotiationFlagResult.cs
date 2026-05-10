@@ -1,5 +1,7 @@
 namespace Polyphony;
 
+using System.Text.Json.Serialization;
+
 /// <summary>
 /// Output of <c>polyphony plan extract-renegotiation-flag &lt;pr-number&gt;</c>.
 /// Routing-style envelope (always exit 0): consumers branch on
@@ -32,7 +34,29 @@ public sealed record PlanExtractRenegotiationFlagResult
     /// Concatenated trimmed renegotiation reason(s), or null when no
     /// well-formed block was present. Multiple blocks are joined with a
     /// single blank line.
+    ///
+    /// <para>
+    /// Always serialized to JSON (overrides the per-context
+    /// <c>WhenWritingNull</c> default) so workflow Jinja consumers under
+    /// <c>strict_undefined</c> can reference
+    /// <c>output.renegotiation_request</c> unconditionally without
+    /// raising on a missing dict key. Mirrors the
+    /// <see cref="PlanDeriveAncestorChainResult.ParentItemId"/> precedent
+    /// (Bug #8 fix, 2026-05-08).
+    /// </para>
+    /// <para>
+    /// AB#3067 dogfood (2026-05-10) reproduced the same trap shape:
+    /// <c>plan-level.yaml</c>'s output map referenced
+    /// <c>extract_renegotiation_flag.output.renegotiation_request</c>
+    /// guarded only by <c>extract_renegotiation_flag is defined</c>; the
+    /// agent-level guard passed but the dict key was elided per
+    /// <c>WhenWritingNull</c>, raising TemplateError. PR #263 tightened
+    /// the YAML to a two-level guard (defense-in-depth at the workflow);
+    /// this attribute closes the underlying source so the workflow guard
+    /// is no longer load-bearing.
+    /// </para>
     /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     public string? RenegotiationRequest { get; init; }
 
     /// <summary>

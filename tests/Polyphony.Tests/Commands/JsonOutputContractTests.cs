@@ -1443,8 +1443,11 @@ public sealed class JsonOutputContractTests : CommandTestBase
         json.ShouldContain("\"error_code\"");
         json.ShouldContain("\"error_message\"");
         json.ShouldContain("malformed_renegotiation_block");
-        // RenegotiationRequest is null and must be omitted.
-        json.ShouldNotContain("\"renegotiation_request\"");
+        // RenegotiationRequest is null but always emitted (overrides
+        // WhenWritingNull via [JsonIgnore(Never)]) so workflow Jinja
+        // consumers under strict_undefined can reference
+        // output.renegotiation_request unconditionally.
+        json.ShouldContain("\"renegotiation_request\":null");
     }
 
     // =========================================================================
