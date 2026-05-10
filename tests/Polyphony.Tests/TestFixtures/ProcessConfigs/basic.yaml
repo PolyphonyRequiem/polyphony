@@ -33,6 +33,20 @@ transitions:
     begin_implementation: Doing
     implementation_complete: Done
 
+states:
+  Epic:
+    To Do: proposed
+    Doing: in_progress
+    Done: completed
+  Issue:
+    To Do: proposed
+    Doing: in_progress
+    Done: completed
+  Task:
+    To Do: proposed
+    Doing: in_progress
+    Done: completed
+
 branch_strategy:
   feature_branch: "feature/{root_id}-{slug}"
   planning_branch: "planning/{root_id}"

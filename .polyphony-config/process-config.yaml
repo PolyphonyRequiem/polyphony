@@ -37,6 +37,24 @@ transitions:
     implementation_complete: Done
     item_satisfied: Done
 
+# Per-type state→category mapping. The user-owned source of truth for what
+# category each named state belongs to. Required as of issue #281; V-21
+# blocks loading when missing or incomplete. Categories: proposed,
+# in_progress, resolved, completed, removed.
+states:
+  Epic:
+    To Do: proposed
+    Doing: in_progress
+    Done: completed
+  Issue:
+    To Do: proposed
+    Doing: in_progress
+    Done: completed
+  Task:
+    To Do: proposed
+    Doing: in_progress
+    Done: completed
+
 review_policies:
   planning:
     plan_pr: { agent_review: true, human_review: true, auto_merge: false }

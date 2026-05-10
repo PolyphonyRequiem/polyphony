@@ -139,6 +139,15 @@ want auto-mapping by category."*
 
 ## 6. Hand-waving `scope_removed: Removed` as "footgun" without identifying that it'd actually fail at runtime against ADO Basic
 
+> **Resolved 2026-05-10 by V-21 (issue #281).** The class of failure described
+> below is now a hard preflight error. Authors must declare every state per
+> type in `process-config.yaml`'s `states:` block, and a transition target not
+> declared in `states:` produces V-21 at `polyphony validate-config` time.
+> The `StateCategoryResolver` heuristic is gone from polyphony entirely
+> (replaced by `ProcessConfig.GetCategory`). See
+> `docs/decisions/states-in-process-config.md`. The narrative below is
+> retained for historical context.
+
 **What happened:** I flagged `scope_removed: Removed` in `.polyphony-config/process-config.yaml`
 (lines 25, 30, 34) as "feels off" but didn't dig into *why*. The actual problem is
 concrete and verifiable: ADO's Basic process template has only three states — `To Do`,

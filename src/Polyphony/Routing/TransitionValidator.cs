@@ -1,7 +1,6 @@
 using Polyphony.Configuration;
 using Twig.Domain.Aggregates;
 using Twig.Domain.Enums;
-using Twig.Domain.Services.Process;
 
 namespace Polyphony.Routing;
 
@@ -58,10 +57,10 @@ public sealed class TransitionValidator(ProcessConfig processConfig)
             $"Transition '{eventName}' is valid. Target state: '{targetState}'.");
     }
 
-    private static TransitionOutcome? CheckPrecondition(
+    private TransitionOutcome? CheckPrecondition(
         int workItemId, string eventName, string targetState, WorkItem item, IReadOnlyList<WorkItem> children)
     {
-        var itemCategory = StateCategoryResolver.Resolve(item.State, entries: null);
+        var itemCategory = processConfig.GetCategory(item.Type.Value, item.State);
 
         return eventName switch
         {
@@ -74,7 +73,7 @@ public sealed class TransitionValidator(ProcessConfig processConfig)
         };
     }
 
-    private static TransitionOutcome? CheckAllChildrenComplete(
+    private TransitionOutcome? CheckAllChildrenComplete(
         int workItemId, string eventName, string targetState, IReadOnlyList<WorkItem> children)
     {
         if (children.Count == 0)
@@ -83,7 +82,7 @@ public sealed class TransitionValidator(ProcessConfig processConfig)
 
         for (var i = 0; i < children.Count; i++)
         {
-            var childCategory = StateCategoryResolver.Resolve(children[i].State, entries: null);
+            var childCategory = processConfig.GetCategory(children[i].Type.Value, children[i].State);
             if (childCategory != StateCategory.Completed)
             {
                 return new InvalidTransition(workItemId, eventName, targetState,
