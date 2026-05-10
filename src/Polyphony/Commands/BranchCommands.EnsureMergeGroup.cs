@@ -22,7 +22,7 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-mg")]
     [VerbResult(typeof(BranchEnsureMergeGroupResult))]
-    public async Task<int> EnsureMg(
+    public async Task<int> EnsureMergeGroup(
         int rootId = RequiredInput.MissingInt,
         string mgPath = "",
         string remote = "origin",
@@ -159,7 +159,7 @@ public sealed partial class BranchCommands
                 DepthWarning = path.RequiresDepthWarning,
                 DepthExceeded = false,
             };
-            EmitMg(result);
+            EmitMergeGroup(result);
             return ExitCodes.Success;
         }
         catch (OperationCanceledException) { throw; }
@@ -182,7 +182,7 @@ public sealed partial class BranchCommands
         return refs.Count > 0;
     }
 
-    private static void EmitMg(BranchEnsureMergeGroupResult result)
+    private static void EmitMergeGroup(BranchEnsureMergeGroupResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
             result, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult));
 
@@ -211,6 +211,6 @@ public sealed partial class BranchCommands
             DepthExceeded = depthExceeded,
             Error = message,
         };
-        EmitMg(result);
+        EmitMergeGroup(result);
     }
 }

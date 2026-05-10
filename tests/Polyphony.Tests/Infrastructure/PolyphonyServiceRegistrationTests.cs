@@ -138,7 +138,7 @@ public sealed class PolyphonyServiceRegistrationTests
     [InlineData(typeof(Polyphony.Commands.ScopeCommands))]
     [InlineData(typeof(Polyphony.Commands.RootCommands))]
     [InlineData(typeof(Polyphony.Commands.RequirementsCommands))]
-    [InlineData(typeof(Polyphony.Commands.MgCommands))]
+    [InlineData(typeof(Polyphony.Commands.MergeGroupCommands))]
     [InlineData(typeof(Polyphony.Commands.ManifestCommands))]
     [InlineData(typeof(Polyphony.Commands.LockCommands))]
     [InlineData(typeof(Polyphony.Commands.WorktreeCommands))]

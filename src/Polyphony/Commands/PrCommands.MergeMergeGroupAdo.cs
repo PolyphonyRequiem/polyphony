@@ -31,7 +31,7 @@ public sealed partial class PrCommands
     /// is deferred — same deferral as #104 (<c>merge-plan-ado</c>).</para>
     ///
     /// <para><b>Routing-style exit code</b> — always exits 0; consumers
-    /// branch on <see cref="PrMergeMgAdoResult.ErrorCode"/>.</para>
+    /// branch on <see cref="PrMergeMergeGroupAdoResult.ErrorCode"/>.</para>
     /// </summary>
     /// <param name="organization">ADO organization name (e.g. <c>contoso</c>).</param>
     /// <param name="project">ADO project name.</param>
@@ -48,8 +48,8 @@ public sealed partial class PrCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-mg-ado")]
-    [VerbResult(typeof(PrMergeMgAdoResult))]
-    public async Task<int> MergeMgAdo(
+    [VerbResult(typeof(PrMergeMergeGroupAdoResult))]
+    public async Task<int> MergeMergeGroupAdo(
         string organization = "",
         string project = "",
         string repository = "",
@@ -178,7 +178,7 @@ public sealed partial class PrCommands
                     return ExitCodes.Success;
                 }
 
-                EmitMergeMgAdo(new PrMergeMgAdoResult
+                EmitMergeMgAdo(new PrMergeMergeGroupAdoResult
                 {
                     RootId = rootId,
                     MgPath = canonicalMgPath,
@@ -283,7 +283,7 @@ public sealed partial class PrCommands
                     return ExitCodes.Success;
                 }
 
-                EmitMergeMgAdo(new PrMergeMgAdoResult
+                EmitMergeMgAdo(new PrMergeMergeGroupAdoResult
                 {
                     RootId = rootId,
                     MgPath = canonicalMgPath,
@@ -389,7 +389,7 @@ public sealed partial class PrCommands
                             merged: true, alreadyMerged: false);
                         return ExitCodes.Success;
                     }
-                    EmitMergeMgAdo(new PrMergeMgAdoResult
+                    EmitMergeMgAdo(new PrMergeMergeGroupAdoResult
                     {
                         RootId = rootId,
                         MgPath = canonicalMgPath,
@@ -467,9 +467,9 @@ public sealed partial class PrCommands
         }
     }
 
-    private static void EmitMergeMgAdo(PrMergeMgAdoResult result)
+    private static void EmitMergeMgAdo(PrMergeMergeGroupAdoResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
-            result, PolyphonyJsonContext.Default.PrMergeMgAdoResult));
+            result, PolyphonyJsonContext.Default.PrMergeMergeGroupAdoResult));
 
     private static void EmitMergeMgAdoError(
         int rootId,
@@ -489,7 +489,7 @@ public sealed partial class PrCommands
         bool alreadyMerged = false,
         string mergeCommit = "")
     {
-        EmitMergeMgAdo(new PrMergeMgAdoResult
+        EmitMergeMgAdo(new PrMergeMergeGroupAdoResult
         {
             RootId = rootId,
             MgPath = mgPath ?? string.Empty,

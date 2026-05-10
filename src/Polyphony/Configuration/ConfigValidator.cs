@@ -132,7 +132,7 @@ public static class ConfigValidator
         errors.AddRange(FacetProfileValidator.Validate(config));
 
         // V-17: deprecation warning for legacy `branch_strategy.pg_branch` key.
-        // The loader has already copied PgBranch onto MgBranch for back-compat;
+        // The loader has already copied PgBranch onto MergeGroupBranch for back-compat;
         // we surface the warning here so operators see it via validate-config.
         if (config.BranchStrategy is { } branchStrategy
             && !string.IsNullOrEmpty(branchStrategy.PgBranch))

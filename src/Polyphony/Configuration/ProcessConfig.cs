@@ -128,9 +128,11 @@ public sealed class BranchStrategy
 
     /// <summary>
     /// Canonical branch template for merge-group branches. YAML key
-    /// <c>mg_branch:</c>. Substitution placeholders: <c>{root_id}</c>,
-    /// <c>{slug}</c>, plus the legacy template tokens <c>{n}</c>/<c>{pg}</c>
-    /// (the merge-group number) accepted by
+    /// <c>merge_group_branch:</c> (long form) — also accepts <c>mg_branch:</c>
+    /// as a transitional alias retained alongside the rest of the
+    /// G2 PG→MergeGroup consolidation. Substitution placeholders:
+    /// <c>{root_id}</c>, <c>{slug}</c>, plus the legacy template tokens
+    /// <c>{n}</c>/<c>{pg}</c> (the merge-group number) accepted by
     /// <see cref="Routing.BranchNameResolver"/> for back-compat.
     /// </summary>
     /// <remarks>
@@ -140,12 +142,13 @@ public sealed class BranchStrategy
     /// <c>branch route</c> / <c>branch next-impl</c> code paths via
     /// <see cref="Routing.BranchNameResolver"/>.
     /// </remarks>
-    public string MgBranch { get; set; } = "";
+    [YamlMember(Alias = "mg_branch")]
+    public string MergeGroupBranch { get; set; } = "";
 
     /// <summary>
-    /// Deprecated alias for <see cref="MgBranch"/>. Accepted for back-compat with
+    /// Deprecated alias for <see cref="MergeGroupBranch"/>. Accepted for back-compat with
     /// process configs written before the PG→MergeGroup rename. The loader copies
-    /// this onto <see cref="MgBranch"/> when the new key is absent. The validator
+    /// this onto <see cref="MergeGroupBranch"/> when the new key is absent. The validator
     /// emits a deprecation warning (V-17) when only the legacy key is present.
     /// New configs must use <c>mg_branch:</c>.
     /// </summary>

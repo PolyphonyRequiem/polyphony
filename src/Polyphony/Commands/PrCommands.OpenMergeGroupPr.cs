@@ -22,7 +22,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("open-mg-pr")]
     [VerbResult(typeof(PrOpenMergeGroupResult))]
-    public async Task<int> OpenMgPr(
+    public async Task<int> OpenMergeGroupPr(
         int rootId = RequiredInput.MissingInt,
         string mgPath = "",
         string title = "",
@@ -94,7 +94,7 @@ public sealed partial class PrCommands
             if (existing.Count > 0)
             {
                 var found = existing[0];
-                EmitMg(new PrOpenMergeGroupResult
+                EmitMergeGroup(new PrOpenMergeGroupResult
                 {
                     PrNumber = found.Number,
                     PrUrl = found.Url ?? "",
@@ -116,7 +116,7 @@ public sealed partial class PrCommands
             }
 
             var trimmedUrl = url.Trim();
-            EmitMg(new PrOpenMergeGroupResult
+            EmitMergeGroup(new PrOpenMergeGroupResult
             {
                 PrNumber = ExtractPrNumber(trimmedUrl),
                 PrUrl = trimmedUrl,
@@ -146,7 +146,7 @@ public sealed partial class PrCommands
         return sb.ToString();
     }
 
-    private static void EmitMg(PrOpenMergeGroupResult result)
+    private static void EmitMergeGroup(PrOpenMergeGroupResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
             result, PolyphonyJsonContext.Default.PrOpenMergeGroupResult));
 
@@ -157,7 +157,7 @@ public sealed partial class PrCommands
         string headBranch = "",
         string baseBranch = "")
     {
-        EmitMg(new PrOpenMergeGroupResult
+        EmitMergeGroup(new PrOpenMergeGroupResult
         {
             PrNumber = 0,
             PrUrl = "",

@@ -23,7 +23,7 @@ namespace Polyphony;
 /// <para>Snake-case via the global JsonSerializerOptions on
 /// <see cref="PolyphonyJsonContext"/>.</para>
 /// </summary>
-public sealed record PrMergeMgAdoResult
+public sealed record PrMergeMergeGroupAdoResult
 {
     /// <summary>The root work-item id, echoed for traceability.</summary>
     public required int RootId { get; init; }

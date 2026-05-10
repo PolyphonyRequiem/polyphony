@@ -63,7 +63,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
     public async Task EnsureMg_InvalidRootId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 0, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 0, mgPath: "core"));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Error.ShouldNotBeNullOrEmpty();
@@ -75,7 +75,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
     {
         // MergeGroupId grammar requires lowercase-letter prefix; bare numbers fail.
         var (cmd, _) = CreateCommand();
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "1"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "1"));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Error.ShouldNotBeNullOrEmpty();
@@ -88,7 +88,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         // 6-segment path exceeds hard-stop limit (5).
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureMg(rootId: 100, mgPath: "a_b_c_d_e_f"));
+            () => cmd.EnsureMergeGroup(rootId: 100, mgPath: "a_b_c_d_e_f"));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.DepthExceeded.ShouldBeTrue();
@@ -104,7 +104,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubCheckout(runner, "mg/100_core");
         StubLsRemote(runner, "feature/100", exists: true); // base existence check
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Branch.ShouldBe("mg/100_core");
@@ -128,7 +128,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubCreateBranch(runner, "mg/100_core", "feature/100");
         StubPush(runner, "mg/100_core");
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Action.ShouldBe("created");
@@ -151,7 +151,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubCreateBranch(runner, "mg/100_core", "feature/100");
         StubPush(runner, "mg/100_core");
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Action.ShouldBe("created");
@@ -166,7 +166,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubLocalBranchExists(runner, "mg/100_core", exists: false);
         StubLsRemote(runner, "feature/100", exists: false); // base missing on remote
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Error.ShouldNotBeNullOrEmpty();
@@ -185,7 +185,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubCreateBranch(runner, "mg/100_core_api", "mg/100_core");
         StubPush(runner, "mg/100_core_api");
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "core_api"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "core_api"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Branch.ShouldBe("mg/100_core_api");
@@ -202,7 +202,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubLocalBranchExists(runner, "mg/100_core_api", exists: false);
         StubLsRemote(runner, "mg/100_core", exists: false);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "core_api"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "core_api"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Error!.ShouldContain("ensure-mg");
@@ -219,7 +219,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubCheckoutTracking(runner, "mg/100_core");
         StubLsRemote(runner, "feature/100", exists: true);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Action.ShouldBe("checked_out");
@@ -237,7 +237,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubPush(runner, "mg/100_core");
         StubLsRemote(runner, "feature/100", exists: true);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Action.ShouldBe("checked_out");
@@ -254,7 +254,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubCheckout(runner, "mg/100_a_b_c");
         StubLsRemote(runner, "mg/100_a_b", exists: true);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "a_b_c"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "a_b_c"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureMergeGroupResult)!;
         result.Depth.ShouldBe(3);
@@ -271,7 +271,7 @@ public sealed class BranchCommandsEnsureMgTests : CommandTestBase
         StubCheckout(runner, "mg/100_core");
         StubLsRemote(runner, "feature/100", exists: true);
 
-        var (_, output) = await CaptureConsoleAsync(() => cmd.EnsureMg(rootId: 100, mgPath: "core"));
+        var (_, output) = await CaptureConsoleAsync(() => cmd.EnsureMergeGroup(rootId: 100, mgPath: "core"));
 
         // Lock the JSON wire contract that workflow YAMLs read.
         output.ShouldContain("\"branch\"");

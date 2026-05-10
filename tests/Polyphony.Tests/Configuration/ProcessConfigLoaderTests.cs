@@ -178,7 +178,7 @@ public sealed class ProcessConfigLoaderTests
 
         config.BranchStrategy.ShouldNotBeNull();
         config.BranchStrategy!.PgBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
-        config.BranchStrategy.MgBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
+        config.BranchStrategy.MergeGroupBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
     }
 
     [Fact]
@@ -200,7 +200,7 @@ public sealed class ProcessConfigLoaderTests
         var config = ProcessConfigLoader.Load(path);
 
         config.BranchStrategy.ShouldNotBeNull();
-        config.BranchStrategy!.MgBranch.ShouldBe("mg-{n}/{root_id}-{slug}");
+        config.BranchStrategy!.MergeGroupBranch.ShouldBe("mg-{n}/{root_id}-{slug}");
         config.BranchStrategy.PgBranch.ShouldBe("pg-{n}/{root_id}-{slug}");
     }
 

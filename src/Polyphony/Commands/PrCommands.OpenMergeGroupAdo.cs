@@ -21,7 +21,7 @@ public sealed partial class PrCommands
     /// creating a duplicate (idempotent).</para>
     ///
     /// <para><b>Routing-style exit code</b> — always exits 0; consumers
-    /// branch on <see cref="PrOpenMgAdoResult.ErrorCode"/>. Mirrors
+    /// branch on <see cref="PrOpenMergeGroupAdoResult.ErrorCode"/>. Mirrors
     /// <c>open-plan-ado</c> (#104).</para>
     /// </summary>
     /// <param name="organization">ADO organization name (e.g. <c>contoso</c>).</param>
@@ -33,8 +33,8 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-mg-ado")]
-    [VerbResult(typeof(PrOpenMgAdoResult))]
-    public async Task<int> OpenMgAdo(
+    [VerbResult(typeof(PrOpenMergeGroupAdoResult))]
+    public async Task<int> OpenMergeGroupAdo(
         string organization = "",
         string project = "",
         string repository = "",
@@ -158,7 +158,7 @@ public sealed partial class PrCommands
 
             if (existing is not null)
             {
-                EmitOpenMgAdo(new PrOpenMgAdoResult
+                EmitOpenMgAdo(new PrOpenMergeGroupAdoResult
                 {
                     RootId = rootId,
                     MgPath = path.Canonical,
@@ -197,7 +197,7 @@ public sealed partial class PrCommands
                 return ExitCodes.Success;
             }
 
-            EmitOpenMgAdo(new PrOpenMgAdoResult
+            EmitOpenMgAdo(new PrOpenMergeGroupAdoResult
             {
                 RootId = rootId,
                 MgPath = path.Canonical,
@@ -258,9 +258,9 @@ public sealed partial class PrCommands
         return sb.ToString();
     }
 
-    private static void EmitOpenMgAdo(PrOpenMgAdoResult result)
+    private static void EmitOpenMgAdo(PrOpenMergeGroupAdoResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
-            result, PolyphonyJsonContext.Default.PrOpenMgAdoResult));
+            result, PolyphonyJsonContext.Default.PrOpenMergeGroupAdoResult));
 
     private static void EmitOpenMgAdoError(
         int rootId,
@@ -274,7 +274,7 @@ public sealed partial class PrCommands
         string headBranch = "",
         string baseBranch = "")
     {
-        EmitOpenMgAdo(new PrOpenMgAdoResult
+        EmitOpenMgAdo(new PrOpenMergeGroupAdoResult
         {
             RootId = rootId,
             MgPath = mgPath ?? string.Empty,

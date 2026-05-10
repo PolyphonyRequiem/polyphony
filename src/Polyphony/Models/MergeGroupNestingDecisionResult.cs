@@ -8,7 +8,7 @@ namespace Polyphony;
 /// nest when child is implementable AND decomposable; planner can
 /// override either way per child.
 /// </summary>
-public sealed record MgNestingDecisionResult
+public sealed record MergeGroupNestingDecisionResult
 {
     /// <summary>Echoed root work-item id.</summary>
     public required int RootId { get; init; }

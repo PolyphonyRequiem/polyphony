@@ -66,7 +66,7 @@ public sealed class PrCommandsMergeMgTests : CommandTestBase
     public async Task MergeMgPr_InvalidRootId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMgPr(rootId: 0, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMergeGroupPr(rootId: 0, mgPath: "core"));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeMergeGroupResult)!;
         result.Error!.ShouldContain("rootId");
@@ -76,7 +76,7 @@ public sealed class PrCommandsMergeMgTests : CommandTestBase
     public async Task MergeMgPr_InvalidMgPath_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMgPr(rootId: 100, mgPath: "BAD!"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMergeGroupPr(rootId: 100, mgPath: "BAD!"));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeMergeGroupResult)!;
         result.Error!.ShouldContain("merge-group path");
@@ -91,7 +91,7 @@ public sealed class PrCommandsMergeMgTests : CommandTestBase
         StubPrMergeOk(runner);
         StubPrViewMerged(runner);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMgPr(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMergeGroupPr(rootId: 100, mgPath: "core"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeMergeGroupResult)!;
@@ -108,7 +108,7 @@ public sealed class PrCommandsMergeMgTests : CommandTestBase
         StubPrMergeOk(runner);
         StubPrViewMerged(runner);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMgPr(rootId: 100, mgPath: "core_auth"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMergeGroupPr(rootId: 100, mgPath: "core_auth"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeMergeGroupResult)!;
@@ -127,7 +127,7 @@ public sealed class PrCommandsMergeMgTests : CommandTestBase
         StubPrMergeOk(runner);
         StubPrViewMerged(runner);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMgPr(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMergeGroupPr(rootId: 100, mgPath: "core"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeMergeGroupResult)!;
@@ -148,7 +148,7 @@ public sealed class PrCommandsMergeMgTests : CommandTestBase
         StubGitRemoteOrigin(runner, "https://github.com/o/r.git");
         StubPrListBothEmpty(runner);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMgPr(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMergeGroupPr(rootId: 100, mgPath: "core"));
 
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeMergeGroupResult)!;
@@ -163,7 +163,7 @@ public sealed class PrCommandsMergeMgTests : CommandTestBase
         StubPrListOpenEmpty(runner);
         StubPrListMerged(runner, prNumber: 17, headRef: "mg/100_core");
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMgPr(rootId: 100, mgPath: "core"));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.MergeMergeGroupPr(rootId: 100, mgPath: "core"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeMergeGroupResult)!;
@@ -183,7 +183,7 @@ public sealed class PrCommandsMergeMgTests : CommandTestBase
         StubPrMergeOk(runner);
         StubPrViewMerged(runner);
 
-        await CaptureConsoleAsync(() => cmd.MergeMgPr(rootId: 100, mgPath: "core", admin: true));
+        await CaptureConsoleAsync(() => cmd.MergeMergeGroupPr(rootId: 100, mgPath: "core", admin: true));
 
         runner.Invocations.Single(i => i.Arguments[1] == "merge").Arguments.ShouldContain("--admin");
     }
@@ -198,7 +198,7 @@ public sealed class PrCommandsMergeMgTests : CommandTestBase
         StubPrViewMerged(runner);
 
         await CaptureConsoleAsync(
-            () => cmd.MergeMgPr(rootId: 100, mgPath: "core", matchHeadCommit: "cafef00d"));
+            () => cmd.MergeMergeGroupPr(rootId: 100, mgPath: "core", matchHeadCommit: "cafef00d"));
 
         var merge = runner.Invocations.Single(i => i.Arguments[1] == "merge");
         var idx = merge.Arguments.ToList().IndexOf("--match-head-commit");

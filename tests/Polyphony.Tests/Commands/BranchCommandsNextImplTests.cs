@@ -195,7 +195,7 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
             {
                 ["begin_implementation"] = "Doing",
             })
-            .WithBranchStrategy(featureBranch: "feature/{id}", mgBranch: "feature/{id}-pg-{n}")
+            .WithBranchStrategy(featureBranch: "feature/{id}", MergeGroupBranch: "feature/{id}-pg-{n}")
             .Build();
         var (cmd, runner) = CreateCommand(cfg);
         StubSync(runner);

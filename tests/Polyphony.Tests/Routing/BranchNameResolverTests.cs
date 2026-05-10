@@ -60,7 +60,7 @@ public sealed class BranchNameResolverTests
     {
         var config = new ProcessConfigBuilder()
             .WithType("Epic", ["plannable"])
-            .WithBranchStrategy(mgBranch: "feature/{id}-mg-{slug}")
+            .WithBranchStrategy(MergeGroupBranch: "feature/{id}-mg-{slug}")
             .Build();
         var item = new WorkItemBuilder().WithId(50).WithType("Epic").WithTitle("Test").WithState("To Do").Build();
 
@@ -68,7 +68,7 @@ public sealed class BranchNameResolverTests
 
         hint.ShouldNotBeNull();
         // The canonical YAML key is `mg_branch:`, populated into
-        // BranchStrategy.MgBranch. The resolver substitutes the same
+        // BranchStrategy.MergeGroupBranch. The resolver substitutes the same
         // placeholders ({id}, {root_id}, {slug}) and surfaces the result via
         // WorkspaceHint.MergeGroupBranch (JSON wire key still "pg_branch"
         // until the workflow rewire PR removes the bridge).
@@ -79,19 +79,19 @@ public sealed class BranchNameResolverTests
     public void Resolve_LegacyPgBranchOnly_FallsBackViaLoader()
     {
         // Configures only the deprecated pg_branch field (with no mg_branch).
-        // ProcessConfigLoader copies PgBranch -> MgBranch when the new key is
+        // ProcessConfigLoader copies PgBranch -> MergeGroupBranch when the new key is
         // absent; this test exercises that bridge against the in-memory builder
         // path (which writes PgBranch directly when pgBranchLegacy is set).
         var config = new ProcessConfigBuilder()
             .WithType("Epic", ["plannable"])
-            .WithBranchStrategy(mgBranch: "", pgBranchLegacy: "feature/{id}-pg-{slug}")
+            .WithBranchStrategy(MergeGroupBranch: "", pgBranchLegacy: "feature/{id}-pg-{slug}")
             .Build();
 
         // Simulate the loader's legacy-key migration (the in-memory builder
         // does not run the loader path).
-        if (string.IsNullOrEmpty(config.BranchStrategy!.MgBranch))
+        if (string.IsNullOrEmpty(config.BranchStrategy!.MergeGroupBranch))
         {
-            config.BranchStrategy.MgBranch = config.BranchStrategy.PgBranch;
+            config.BranchStrategy.MergeGroupBranch = config.BranchStrategy.PgBranch;
         }
 
         var item = new WorkItemBuilder().WithId(50).WithType("Epic").WithTitle("Test").WithState("To Do").Build();
