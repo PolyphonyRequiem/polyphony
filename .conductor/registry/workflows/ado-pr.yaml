@@ -37,10 +37,10 @@ workflow:
     the platform-aggregated decision. When approved, merges via
     `pr merge-feature-ado`. Operator-driven human gates for changes_requested,
     pending, closed, error, and merge-failed states.
-  version: "2.3.0"
+  version: "2.4.0"
   entry_point: ado_inputs_validator
   metadata:
-    min_polyphony_version: "2.3.0"
+    min_polyphony_version: "2.4.0"
 
   limits:
     # Generous cap — operator may re-poll many times via the pending /
