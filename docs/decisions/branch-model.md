@@ -1,13 +1,19 @@
 # Polyphony Branch Model — Feature Trunk + Plan / Merge-Group / Task Tree
 
-> **Status:** Proposed, **Rev 4** (2026-05). Awaiting sign-off as part of
+> **Status:** Proposed, **Rev 4.2** (2026-05). Awaiting sign-off as part of
 > Phase 4 of the PR/branch lifecycle overhaul. Rev 2 incorporated a hostile
 > design pass that found 8 blocking ambiguities in Rev 1; Rev 3 incorporated
 > a second pass that found 2 blockers and 3 worth-addressing items against
 > Rev 2. Rev 4 incorporates a third pass focused on branch-name grammar that
 > uncovered a real collision bug in the Rev 3 hyphen-joined `mg_path` and
 > moves MG branches to a `_`-delimited path encoding while flattening
-> impl/plan/evidence branches to leaf-id only. See [§ Revision history](#revision-history).
+> impl/plan/evidence branches to leaf-id only. Rev 4.1 added the
+> `merged_plan_prs` idempotency ledger as an additive operational field.
+> Rev 4.2 moves per-root state (run manifest, run lock) out of the
+> worktree-and-git into the git common dir at
+> `<git-common-dir>/polyphony/<root_id>/`, addressing a stale-state-bleed
+> bug found by the AB#3067 dogfood; see [§ State location](#state-location-rev-42-amendment).
+> See [§ Revision history](#revision-history).
 > **Driver:** Phase 4 of the lifecycle redesign locks in the branch tree the
 > driver and PR machinery operate on. Branch names are one-way doors — once a
 > run is in flight the names cannot be cheaply renamed without confusing
@@ -62,7 +68,8 @@ The model has to satisfy:
 ```
 main
  └── feature/{root_id}                          ← single integration trunk
-      │   plus committed run manifest at .polyphony/run.yaml (see §Run manifest)
+      │   (run manifest lives under the git common dir — see §Run manifest
+      │    and the Rev 4.2 § State location amendment)
       │
       ├── plan/{root_id}                        ← root-level plan branch
       │    └── plan/{root_id}-{item_id}         ← descendant plan branch (recursive;
@@ -526,8 +533,18 @@ merges into the MG branch."
 
 ### Run manifest + concurrent-run lock
 
-Every run commits a **run manifest** at `.polyphony/run.yaml` on the
-feature branch on first push:
+> **Superseded in part by the Rev 4.2 amendment** below
+> (§ State location). The manifest schema in this section remains
+> normative; the *physical placement* of the manifest moves out of
+> the feature branch and into the worktree-shared git common dir.
+> Read this section for the schema and resume rules; read § State
+> location for where the file actually lives and which verbs read
+> and write it.
+
+Every run records a **run manifest** with the schema shown below.
+Through Rev 4.1, that file lived at `.polyphony/run.yaml` on the
+feature branch and was pushed on first commit; the post-Rev-4.2
+location is the git common dir. The schema does not change.
 
 ```yaml
 schema: 1
@@ -716,6 +733,126 @@ The lock implementation is a Phase 4b detail. Reasonable options:
 - A row in the SQLite cache twig already maintains.
 - A heartbeat file on the feature branch.
 - An advisory file lock on a sentinel path.
+
+> Phase 4b adopted the advisory file-lock option. Through Rev 4.1
+> the lock file lived under the worktree at
+> `<worktree>/.polyphony/locks/run-{root_id}.lock`. Per the Rev 4.2
+> amendment below, it now lives under the git common dir at
+> `<git-common-dir>/polyphony/<root_id>/locks/run.lock`, which makes
+> a single lock cover every linked worktree of the same clone. The
+> rename-to-tombstone release semantics are unchanged.
+
+#### State location (Rev 4.2 amendment)
+
+**Decision.** Polyphony per-root state — the run manifest, the run
+lock, and any future per-root operational files — moves out of the
+worktree (where it was tracked in git) and into the git common
+directory (where it is local-only and shared across linked worktrees
+of the same clone):
+
+```
+<git-common-dir>/polyphony/<root_id>/
+  run.yaml
+  locks/
+    run.lock
+```
+
+`<git-common-dir>` is the absolute path returned by
+`git rev-parse --path-format=absolute --git-common-dir`. The
+`--path-format=absolute` qualifier is **required**: the default
+output is relative to the current working directory (`.git` in the
+main worktree, `<main-worktree>/.git/worktrees/<linked-name>` in a
+linked worktree), and any path resolver that consumes the relative
+form silently produces inconsistent absolute paths between worktrees.
+The `--git-common-dir` qualifier is what makes the path converge
+across linked worktrees: `--git-dir` would resolve to the per-worktree
+`.git/worktrees/<name>` directory and re-introduce the divergence.
+
+**Bug this addresses.** Through Rev 4.1, `.polyphony/run.yaml` was
+tracked in git on the feature branch (so downstream verbs could read
+it from `origin/feature/{root}:.polyphony/run.yaml`). Daniel's AB#3067
+dogfood found the failure mode this baked in: `git worktree add -b
+sdlc/apex/<new_root> ../polyphony-<new_root> main` checks out main's
+tree, which carries the *previous* run's `run.yaml` with a stale
+`root_id`. The new run's `init_manifest` step then tripped a
+`manifest_root_mismatch` preflight error (`manifest root_id=3066 does
+not match requested apex_id=3067`), bricking every fresh-from-main
+synthetic apex. Removing the file from git eliminates the bleed at
+the source; the per-root subdirectory under the common dir prevents
+collisions between concurrent root runs of the same clone.
+
+**Cross-clone scope (intentional).** The state is local to the clone
+and does not propagate via git. CI runners, fresh clones, and
+cross-machine resumes do not see prior runs; if cross-clone
+visibility ever becomes a real requirement, it will arrive as an
+explicit synchronization mechanism (e.g. a sidecar branch under the
+operator's control) rather than the implicit "everything rides on
+the feature branch" coupling that the Rev 4.1 design carried. This
+matches the actual usage pattern (single-operator dogfood) and
+removes a class of subtle bugs (stale-state bleed, fetch-rebase
+loops on the manifest commit, branch protection on the feature
+branch refusing the manifest push) that Rev 4.1 had to defend
+against.
+
+**Verb surface affected.** Every verb that previously read or wrote
+the manifest from the feature branch is rewired to address the
+common-dir path through a `PolyphonyStatePaths` helper:
+
+- *Readers* — `manifest read`, `manifest topology-hash`,
+  `pr open-plan-pr`, `pr open-plan-ado`, `plan classify-stale-descendants`,
+  `pr merge-plan-pr` (pre-merge stale check),
+  `pr merge-plan-ado` (pre-merge stale check). All five PR/plan
+  verbs previously called `git show origin/feature/{root}:.polyphony/run.yaml`;
+  they now load from `<common-dir>/polyphony/<root_id>/run.yaml`
+  directly.
+- *Writers* — `manifest init`, `manifest record-rebase`,
+  `manifest record-approval`, `manifest record-plan-merge`. All four
+  save through `RunManifestStore.Save` to the common-dir path.
+- *Compound verbs* — `pr merge-plan-pr` and `pr merge-plan-ado` lose
+  the entire `checkout feature → reset --hard origin/feature → load
+  → modify → save → stage → commit → push → on-reject reset` git
+  transaction around the manifest mutation. The new flow is
+  *acquire run lock → load common-dir manifest → apply ledger via
+  `ManifestPlanLedger.Apply` → save common-dir manifest → release
+  lock*. The PR-side `gh pr merge` (or ADO equivalent) is unchanged;
+  only the manifest half of the transaction is re-homed.
+- *Workflow* — `apex-driver.yaml` drops the `commit_and_push_manifest`
+  step (PR #179, originally added to make `feature/{root}:.polyphony/run.yaml`
+  the canonical readable manifest). The corresponding
+  `commit_and_push_manifest_error` arm of the preflight failure
+  template is removed.
+- *Bootstrap script* — `manifest-bootstrap.ps1` distinguishes
+  `manifest_not_found` (init) from `manifest_malformed` /
+  `manifest_root_mismatch` (fail) so that a corrupt or wrong-root
+  state is not silently re-initialized over the top of a real
+  manifest.
+
+**Testing-seam consistency rule.** Every manifest verb continues to
+accept an explicit `--path` argument as a testing seam. To prevent
+the seam from silently defeating root isolation, the verbs apply
+this rule:
+
+- `--path` and `--root-id` may be passed independently.
+- When **both** are passed, the verb loads the manifest from `--path`
+  and then validates `manifest.root_id == --root-id`. A mismatch
+  fails with `manifest_root_mismatch` *without* mutating the file.
+- The verb's JSON output carries a `path_source` field with value
+  `"explicit"` (when `--path` was passed) or `"derived"` (when the
+  path was resolved from the common dir via `--root-id`). This makes
+  diagnostic output distinguishable across the seam.
+
+**Concurrency model.** The same-root run lock is the
+serialization boundary; manifest reads and writes happen under it.
+An OS-level file lock (`FileShare.None`) on `RunManifestStore.Save`
+is a follow-up — useful as a defense in depth against verbs that
+forget to acquire the run lock, but not a blocker for the placement
+move.
+
+**.gitignore.** `.polyphony/` is added to `.gitignore` and any
+existing `.polyphony/` content is removed from git tracking
+(`git rm -r .polyphony`). A defense-in-depth lint that fails CI if
+`.polyphony/` re-appears under git tracking is captured as a
+follow-up issue.
 
 ### Phase 7 cross-item edges — how they map to branches
 
@@ -947,10 +1084,12 @@ not *which branches exist*.
   feature PR. Mitigated by per-PR-kind merge mode policy: routine impl PRs
   default to `auto` merge; the human attention focuses on plan PRs and the
   feature PR.
-- **Manifest discipline.** The driver must read/write `.polyphony/run.yaml`
-  on every dispatch decision. Conflict resolution if two operators each
-  edit the manifest concurrently is the same answer as the run lock — only
-  one run holds the lock.
+- **Manifest discipline.** The driver must read/write the run manifest
+  on every dispatch decision. Per the Rev 4.2 amendment, the manifest
+  lives at `<git-common-dir>/polyphony/<root_id>/run.yaml` (not on the
+  feature branch); concurrent edits within the same clone are
+  serialized by the same-root run lock, which now lives alongside the
+  manifest under the common dir.
 - **Sibling code-dependency rebases.** Cross-sibling MG code edges trigger
   rebases of the downstream MG. Reviewers see the rebase commit; PR diff
   may grow.
@@ -1044,6 +1183,27 @@ not *which branches exist*.
   interleave. Field-addition policy clarified: hashed fields are frozen
   for `schema: 1`; additive operational fields with backward-compat
   readers are permitted at the same schema.
+- **Rev 4.2** (state-location move, structural): per-root state
+  (`run.yaml` and `run.lock`) moves out of the worktree-and-git into
+  the git common dir at `<git-common-dir>/polyphony/<root_id>/`. The
+  schema is unchanged; the *placement* changes. Rationale: AB#3067
+  dogfood found that tracking `.polyphony/run.yaml` in git made
+  `git worktree add` from main carry the previous run's stale
+  `root_id` into every fresh apex, tripping `manifest_root_mismatch`
+  at preflight. Five PR/plan verbs (`pr open-plan-pr/ado`,
+  `pr merge-plan-pr/ado`, `plan classify-stale-descendants`) that
+  read the manifest from `origin/feature/{root}:.polyphony/run.yaml`
+  are rewired to read from the common-dir path. The
+  `apex-driver.yaml` `commit_and_push_manifest` step is dropped
+  entirely. The `pr merge-plan-*` verbs lose their git-side manifest
+  transaction (checkout/reset/stage/commit/push) and run *load
+  → apply → save* under the same-root run lock instead. State is
+  intentionally local-to-the-clone — cross-clone or CI visibility
+  is out of scope for this amendment. A `--path`/`--root-id`
+  consistency rule and a `path_source: explicit|derived` field
+  added to the manifest verbs prevent the testing seam from
+  silently defeating root isolation. Captured in detail under
+  § State location.
 
 ## References
 
