@@ -146,11 +146,20 @@ output:
   # ── Renegotiation bubble-up (PR #144 — plan-level outputs) ──
   # Only plan-level emits these; the other lifecycles leave them
   # undefined. The `is defined` guards collapse to safe defaults.
+  #
+  # `renegotiation_request` is bubbled up from
+  # PlanExtractRenegotiationFlagResult.RenegotiationRequest which is
+  # `string?` and OMITTED when null. plan-level.yaml's output: block
+  # always emits the field as a string (post-fix at the plan-level
+  # source) but if plan-level itself crashes mid-run, the .output
+  # dict can be partial. Two-level guard is defense-in-depth against
+  # any future plan-level failure mode that leaves outputs incomplete.
+  # Cf. plan-level.yaml output: block for the source-of-truth fix.
   renegotiation_pending: >-
     {%- if plan_level_dispatch is defined -%}{{ (plan_level_dispatch.output.renegotiation_pending | default(false)) | string | lower }}
     {%- else -%}false{%- endif -%}
   renegotiation_request: >-
-    {%- if plan_level_dispatch is defined -%}{{ plan_level_dispatch.output.renegotiation_request | default('') }}
+    {%- if plan_level_dispatch is defined and plan_level_dispatch.output.renegotiation_request is defined -%}{{ plan_level_dispatch.output.renegotiation_request }}
     {%- else -%}{%- endif -%}
   validate_scope_verdict: >-
     {%- if plan_level_dispatch is defined -%}{{ plan_level_dispatch.output.validate_scope_verdict | default('') }}
