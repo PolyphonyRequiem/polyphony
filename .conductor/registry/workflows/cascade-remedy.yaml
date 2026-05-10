@@ -43,11 +43,6 @@ workflow:
       type: number
       required: true
       description: Run-root work item id whose descendant tree to scan.
-    manifest_path:
-      type: string
-      required: false
-      default: ".polyphony/run.yaml"
-      description: Manifest path inside origin/feature/{root_id}.
 
 # Workflow-scope output: bare Jinja template strings (M7). Auto-coerced
 # by _maybe_parse_json — numeric strings become ints, lowercase
@@ -73,8 +68,6 @@ agents:
       - "classify-stale-descendants"
       - "--root-id"
       - "{{ workflow.input.root_id }}"
-      - "--manifest-path"
-      - "{{ workflow.input.manifest_path }}"
     routes:
       # Verb-level error (manifest read/parse, repo slug, etc.) — surface
       # to the cascade-error gate so the operator can decide.
@@ -98,8 +91,8 @@ agents:
       - **Error code:** `{{ classify.output.error_code }}`
       - **Error:** {{ classify.output.error | default('(none)') }}
 
-      Common causes: manifest missing or malformed at
-      `origin/feature/{{ workflow.input.root_id }}:{{ workflow.input.manifest_path }}`,
+      Common causes: manifest missing or malformed in the per-root state
+      directory (`<git-common-dir>/polyphony/{{ workflow.input.root_id }}/run.yaml`),
       repo slug not resolvable from `origin`, twig cache stale.
 
       ---

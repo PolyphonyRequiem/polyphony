@@ -41,8 +41,7 @@ public sealed partial class PlanCommands
     /// integration branch and is the manifest's owner).</param>
     /// <param name="itemId">Work item the plan is for. Equal to <paramref name="rootId"/>
     /// for the root plan; otherwise a descendant.</param>
-    /// <param name="manifestPath">Run manifest path within the
-    /// <c>origin/feature/{root}</c> blob. Defaults to <c>.polyphony/run.yaml</c>.</param>
+    /// <param name="manifestPath">Optional override of the run manifest path. When empty (default), derived under the git common dir via <c>PolyphonyStatePaths</c>. Pass an explicit path only as a testing seam.</param>
     /// <param name="plannedTag">Tag value applied by <c>plan seed-children</c>
     /// to mark the parent as seeded. Used to discriminate
     /// <c>merged_unseeded</c> from <c>complete</c>. Defaults to
@@ -53,7 +52,7 @@ public sealed partial class PlanCommands
     public async Task<int> DetectState(
         int rootId = RequiredInput.MissingInt,
         int itemId = RequiredInput.MissingInt,
-        string manifestPath = ".polyphony/run.yaml",
+        string manifestPath = "",
         string plannedTag = PlannedTagDefault,
         CancellationToken ct = default)
     {
@@ -79,7 +78,16 @@ public sealed partial class PlanCommands
             ? BranchNameBuilder.RootPlan(root).Value
             : BranchNameBuilder.DescendantPlan(root, item).Value;
         var featureBranch = BranchNameBuilder.Feature(root).Value;
-        var manifestRef = $"origin/{featureBranch}";
+
+        // Resolve the local manifest path once. Rev 4.2: manifest is a
+        // canonical local file under <git-common-dir>/polyphony/{rootId}/.
+        var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
+        if (resolvedPath.Error is not null)
+        {
+            EmitDetectStateError(rootId, itemId, planBranch, resolvedPath.Error);
+            return ExitCodes.Success;
+        }
+        var localManifestPath = resolvedPath.Path;
 
         // ── 2. Slug. ──────────────────────────────────────────────────────
         var slug = await observer.TryResolveSlugAsync(ct).ConfigureAwait(false);
@@ -172,7 +180,7 @@ public sealed partial class PlanCommands
             // has advanced past the snapshot, the PR was opened against an
             // older parent plan and needs to be re-derived.
             var stale = await ComputeStaleAncestorsAsync(
-                manifestRef, manifestPath, pollData.Body, ct).ConfigureAwait(false);
+                localManifestPath, pollData.Body, ct).ConfigureAwait(false);
             if (stale.Count > 0)
             {
                 EmitDetectState(new PlanDetectStateResult
@@ -244,7 +252,7 @@ public sealed partial class PlanCommands
         // current plan generation. If so, override to parent_change_pending
         // so plan-level.yaml routes to the parent replan loop.
         var pendingChildren = await CheckChildrenForParentChangeRequestsAsync(
-            rootId, itemId, slug, manifestRef, manifestPath, ct)
+            rootId, itemId, slug, localManifestPath, ct)
             .ConfigureAwait(false);
 
         EmitDetectState(new PlanDetectStateResult
@@ -280,7 +288,6 @@ public sealed partial class PlanCommands
         int rootId,
         int parentItemId,
         string slug,
-        string manifestRef,
         string manifestPath,
         CancellationToken ct)
     {
@@ -294,12 +301,7 @@ public sealed partial class PlanCommands
         int parentCurrentGen;
         try
         {
-            var manifestYaml = await git.ShowFileAtRefAsync(manifestRef, manifestPath, ct)
-                .ConfigureAwait(false);
-            if (manifestYaml is null) return [];
-
-            var manifest = RunManifestStore.Parse(manifestYaml, manifestPath);
-            RunManifestValidator.ValidateOrThrow(manifest);
+            var manifest = RunManifestStore.LoadOrThrow(manifestPath);
             if (!manifest.PlanGenerations.TryGetValue(snapshotKey, out parentCurrentGen))
             {
                 // Parent is "complete" but manifest has no generation entry —
@@ -397,7 +399,6 @@ public sealed partial class PlanCommands
     }
 
     private async Task<IReadOnlyList<string>> ComputeStaleAncestorsAsync(
-        string manifestRef,
         string manifestPath,
         string prBody,
         CancellationToken ct)
@@ -407,26 +408,11 @@ public sealed partial class PlanCommands
         var metadata = PlanPrFrontMatter.Parse(prBody);
         if (metadata.AncestorPlanGenerations.Count == 0) return [];
 
-        // Manifest read mirrors PrCommands.OpenPlanPr: pull from the feature
-        // branch blob, not the local working tree (the workflow runs on the
-        // plan branch where the manifest doesn't exist).
-        string? manifestYaml;
-        try
-        {
-            manifestYaml = await git.ShowFileAtRefAsync(manifestRef, manifestPath, ct)
-                .ConfigureAwait(false);
-        }
-        catch (ExternalToolException)
-        {
-            return [];
-        }
-        if (manifestYaml is null) return [];
-
+        // Manifest is local + canonical (Rev 4.2): no git fetch/show needed.
         RunManifest manifest;
         try
         {
-            manifest = RunManifestStore.Parse(manifestYaml, manifestPath);
-            RunManifestValidator.ValidateOrThrow(manifest);
+            manifest = RunManifestStore.LoadOrThrow(manifestPath);
         }
         catch
         {

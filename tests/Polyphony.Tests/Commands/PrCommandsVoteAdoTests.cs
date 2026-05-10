@@ -35,6 +35,7 @@ public sealed class PrCommandsVoteAdoTests : CommandTestBase
             git, gh, twig, Repository, Config,
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
+            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
             ado);
         return (cmd, ado);
     }

@@ -16,20 +16,40 @@ namespace Polyphony.Tests.Commands;
 /// via <see cref="FakeProcessRunner"/>, and asserts on the JSON the
 /// verb emits.
 /// </summary>
-public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase
+public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase, IDisposable
 {
     private const int RootId = 100;
     private const int ChildA = 200;
     private const int ChildB = 300;
     private const string FeatureBranch = "feature/100";
-    private const string ManifestPath = ".polyphony/run.yaml";
+
+    private readonly string tempCommonDir;
+    private readonly string localManifestPath;
+
+    public PlanCommandsClassifyStaleDescendantsTests()
+    {
+        this.tempCommonDir = Path.Combine(Path.GetTempPath(), $"polytest-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(this.tempCommonDir);
+        this.localManifestPath = Path.Combine(this.tempCommonDir, "polyphony", RootId.ToString(), "run.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(this.localManifestPath)!);
+    }
+
+    public override void Dispose()
+    {
+        try { if (Directory.Exists(this.tempCommonDir)) Directory.Delete(this.tempCommonDir, recursive: true); } catch { }
+        base.Dispose();
+    }
 
     private (PlanCommands Command, FakeProcessRunner Runner) CreateCommand()
     {
         var runner = new FakeProcessRunner();
+        // Stub git common-dir so PolyphonyStatePaths resolves into our temp dir.
+        runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, this.tempCommonDir + "\n", ""));
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier()), runner);
+        var git = new GitClient(runner);
+        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git)), runner);
     }
 
     private static PlanClassifyStaleDescendantsResult Parse(string output) =>
@@ -40,17 +60,25 @@ public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase
     private static void StubRemoteUrl(FakeProcessRunner runner, string url = "https://github.com/acme/repo.git")
         => runner.WhenExact("git", ["remote", "get-url", "origin"], new ProcessResult(0, url + "\n", ""));
 
-    private static void StubGitShowManifest(FakeProcessRunner runner, string yaml)
-        => runner.WhenExact("git", ["show", $"origin/{FeatureBranch}:{ManifestPath}"],
-            new ProcessResult(0, yaml, ""));
+    // Rev 4.2: manifest is read from local disk under <git-common-dir>/polyphony/{rootId}/run.yaml.
+    // Helpers below seed that file rather than stubbing `git show origin/...:.polyphony/run.yaml`.
+    private void StubGitShowManifest(FakeProcessRunner runner, string yaml)
+    {
+        _ = runner; // signature kept for call-site compat
+        File.WriteAllText(this.localManifestPath, yaml);
+    }
 
-    private static void StubGitShowManifestMissing(FakeProcessRunner runner)
-        => runner.WhenExact("git", ["show", $"origin/{FeatureBranch}:{ManifestPath}"],
-            new ProcessResult(128, "", $"fatal: path '{ManifestPath}' does not exist in 'origin/{FeatureBranch}'"));
+    private void StubGitShowManifestMissing(FakeProcessRunner runner)
+    {
+        _ = runner;
+        if (File.Exists(this.localManifestPath)) File.Delete(this.localManifestPath);
+    }
 
-    private static void StubGitShowManifestFatal(FakeProcessRunner runner)
-        => runner.WhenExact("git", ["show", $"origin/{FeatureBranch}:{ManifestPath}"],
-            new ProcessResult(128, "", "fatal: bad object origin/feature/100"));
+    private void StubGitShowManifestFatal(FakeProcessRunner runner)
+    {
+        _ = runner;
+        File.WriteAllText(this.localManifestPath, "::: not yaml :::");
+    }
 
     private static void StubPrListEmpty(FakeProcessRunner runner)
         => runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(0, "[]", ""));
@@ -167,7 +195,8 @@ public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.ErrorCode.ShouldBe("manifest_not_found");
-        result.ManifestRef.ShouldBe($"origin/{FeatureBranch}");
+        // Rev 4.2: manifest is local now; no remote ref.
+        result.ManifestPath.ShouldBe(this.localManifestPath);
     }
 
     [Fact]
@@ -180,7 +209,8 @@ public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase
             () => cmd.ClassifyStaleDescendants(RootId));
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
-        result.ErrorCode.ShouldBe("manifest_read_failed");
+        // Rev 4.2: parse failures collapse into manifest_invalid.
+        result.ErrorCode.ShouldBe("manifest_invalid");
     }
 
     [Fact]

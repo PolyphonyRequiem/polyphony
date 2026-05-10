@@ -14,21 +14,40 @@ namespace Polyphony.Tests.Commands;
 /// minimal stub set (slug → ls-remote → gh pr list → gh pr view → twig show)
 /// needed for a single state-machine arm and asserts the emitted JSON.
 /// </summary>
-public sealed class PlanCommandsDetectStateTests : CommandTestBase
+public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
 {
     private const int RootId = 100;
     private const int ChildId = 200;
     private const string RootPlanBranch = "plan/100";
     private const string ChildPlanBranch = "plan/100-200";
     private const string FeatureBranch = "feature/100";
-    private const string ManifestPath = ".polyphony/run.yaml";
+
+    private readonly string tempCommonDir;
+    private readonly string localManifestPath;
+
+    public PlanCommandsDetectStateTests()
+    {
+        this.tempCommonDir = Path.Combine(Path.GetTempPath(), $"polytest-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(this.tempCommonDir);
+        this.localManifestPath = Path.Combine(this.tempCommonDir, "polyphony", RootId.ToString(), "run.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(this.localManifestPath)!);
+    }
+
+    public override void Dispose()
+    {
+        try { if (Directory.Exists(this.tempCommonDir)) Directory.Delete(this.tempCommonDir, recursive: true); } catch { }
+        base.Dispose();
+    }
 
     private (PlanCommands Command, FakeProcessRunner Runner) CreateCommand()
     {
         var runner = new FakeProcessRunner();
+        runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, this.tempCommonDir + "\n", ""));
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier()), runner);
+        var git = new GitClient(runner);
+        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git)), runner);
     }
 
     private static PlanDetectStateResult Parse(string output) =>
@@ -84,9 +103,11 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase
         => runner.WhenExact("twig", ["show", itemId.ToString(), "--output", "json"],
             new ProcessResult(0, $$"""{"id":{{itemId}},"title":"Item","tags":"{{tags}}"}""", ""));
 
-    private static void StubGitShowManifest(FakeProcessRunner runner, string yaml)
-        => runner.WhenExact("git", ["show", $"origin/{FeatureBranch}:{ManifestPath}"],
-            new ProcessResult(0, yaml, ""));
+    private void StubGitShowManifest(FakeProcessRunner runner, string yaml)
+    {
+        _ = runner;
+        File.WriteAllText(this.localManifestPath, yaml);
+    }
 
     private static string MakeManifest(IDictionary<string, int> planGenerations)
     {
@@ -312,8 +333,8 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase
         StubLsRemote(runner, ChildPlanBranch, exists: true);
         StubPrListSingle(runner, 42, ChildPlanBranch);
         StubPrPoll(runner, 42, "OPEN", MakePrBodyWithSnapshot(new Dictionary<string, int> { ["root"] = 1 }));
-        runner.WhenExact("git", ["show", $"origin/{FeatureBranch}:{ManifestPath}"],
-            new ProcessResult(128, "", $"fatal: path '{ManifestPath}' does not exist"));
+        // Manifest absent locally — verb should fall through to awaiting_review.
+        if (File.Exists(this.localManifestPath)) File.Delete(this.localManifestPath);
 
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.DetectState(RootId, ChildId));

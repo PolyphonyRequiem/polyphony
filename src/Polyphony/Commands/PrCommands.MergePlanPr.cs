@@ -58,7 +58,7 @@ public sealed partial class PrCommands
     /// <param name="prNumber">PR number to merge (positive).</param>
     /// <param name="parentItemId">Immediate plan-tree parent's id; required for descendants of descendants. Omit for root plan and direct children of root plan.</param>
     /// <param name="ancestorIds">Comma-separated ancestor ids ABOVE the immediate parent, ending in the literal token <c>root</c>. Empty when item is root or a direct child of root. Required for the P8b diff-validation guard to detect ancestor-plan touches; when omitted the guard runs in degraded mode (no ancestor check). Format matches the <c>ancestor_ids</c> field emitted by <c>plan derive-ancestor-chain</c> minus the leading parent id.</param>
-    /// <param name="manifestPath">Path to the run manifest. Defaults to <c>.polyphony/run.yaml</c>.</param>
+    /// <param name="manifestPath">Optional override of the run manifest path. When empty (default), derived under the git common dir via <c>PolyphonyStatePaths</c>. Pass an explicit path only as a testing seam.</param>
     /// <param name="admin">Pass <c>--admin</c> to bypass branch-protection on the platform-side merge.</param>
     /// <param name="lockTtlHours">Run-lock TTL (default 24).</param>
     /// <param name="by">Lock acquirer name; defaults to <c>USERNAME</c>/<c>USER</c> env.</param>
@@ -71,7 +71,7 @@ public sealed partial class PrCommands
         int prNumber = RequiredInput.MissingInt,
         int parentItemId = 0,
         string ancestorIds = "",
-        string manifestPath = RunManifestStore.DefaultRelativePath,
+        string manifestPath = "",
         bool admin = false,
         int lockTtlHours = 24,
         string by = "",
@@ -138,6 +138,16 @@ public sealed partial class PrCommands
 
         var manifestBranch = BranchNameBuilder.Feature(root).Value;
 
+        // ── 1b. Resolve local manifest path (Rev 4.2). ─────────────────────
+        // Manifest lives under <git-common-dir>/polyphony/{rootId}/run.yaml
+        // unless the caller passed an explicit --path (testing seam).
+        // Resolved here so we can fail-fast without holding a lock.
+        var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
+        if (resolvedPath.Error is not null)
+            return EmitMergePlanError(rootId, itemId, resolvedParent, prNumber, "internal_error", resolvedPath.Error,
+                isRootPlan, itemKey, headBranch, baseBranch, manifestBranch);
+        var localManifestPath = resolvedPath.Path;
+
         // ── 2. Resolve repo slug. ──────────────────────────────────────────
         string slug;
         try
@@ -203,7 +213,7 @@ public sealed partial class PrCommands
         {
             return await MergePlanPrUnderLockAsync(
                 rootId, itemId, resolvedParent, prNumber, isRootPlan, itemKey,
-                headBranch, baseBranch, manifestBranch, manifestPath, slug,
+                headBranch, baseBranch, manifestBranch, localManifestPath, slug,
                 lockToken, admin, ancestorIds, ct).ConfigureAwait(false);
         }
         finally
@@ -262,18 +272,11 @@ public sealed partial class PrCommands
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken);
         }
 
-        // ── 5. Fetch the feature branch. ───────────────────────────────────
-        try
-        {
-            await git.FetchAsync("origin", manifestBranch, ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
-                $"git fetch origin {manifestBranch} failed: {ex.Message}",
-                isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken);
-        }
+        // ── 5. Skipped (Rev 4.2): no need to fetch the feature branch.
+        // The manifest is local + canonical; PR-side staleness checks read
+        // from disk (next step). Keeping the FetchAsync here would only
+        // serve the dropped post-merge "checkout + reset" step, which no
+        // longer exists.
 
         // ── 6. Poll PR + validate identity. ────────────────────────────────
         GhPullRequestPollData? poll;
@@ -313,39 +316,28 @@ public sealed partial class PrCommands
         {
             var snapshot = PlanPrFrontMatter.Parse(poll.Body).AncestorPlanGenerations;
 
-            // Read the current manifest from the feature-branch tip without
-            // disturbing the worktree. If the file doesn't exist there yet,
-            // there's nothing to be stale against — fall through.
-            string? manifestYaml = null;
-            try
+            // Read the current manifest from local disk (Rev 4.2). If the
+            // file doesn't exist yet, there's nothing to be stale against
+            // — fall through.
+            RunManifest? localManifest = null;
+            if (File.Exists(manifestPath))
             {
-                manifestYaml = await git.ShowFileAtRefAsync($"origin/{manifestBranch}", manifestPath, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
-                    $"Could not read manifest at origin/{manifestBranch}:{manifestPath} for staleness check: {ex.Message}",
-                    isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
-                    prState: poll.State);
-            }
-
-            if (manifestYaml is not null)
-            {
-                IReadOnlyDictionary<string, int> currentGens;
                 try
                 {
-                    var remoteManifest = RunManifestStore.Parse(manifestYaml);
-                    currentGens = remoteManifest.PlanGenerations;
+                    localManifest = RunManifestStore.LoadOrThrow(manifestPath);
                 }
                 catch (Exception ex)
                 {
                     return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
-                        $"Could not parse manifest at origin/{manifestBranch}:{manifestPath} for staleness check: {ex.Message}",
+                        $"Could not parse manifest at {manifestPath} for staleness check: {ex.Message}",
                         isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                         prState: poll.State);
                 }
+            }
 
+            if (localManifest is not null)
+            {
+                var currentGens = localManifest.PlanGenerations;
                 var staleness = PlanGenerationStaleness.Check(snapshot, currentGens);
                 if (staleness.IsEmpty)
                 {
@@ -490,29 +482,12 @@ public sealed partial class PrCommands
                 prState: poll.State);
         }
 
-        // ── 8. Checkout feature branch + reset to remote tip. ──────────────
-        // We re-fetch here because step 5's fetch happened BEFORE the gh-API
-        // merge in step 7, which advanced origin/{manifestBranch} on the
-        // server side (the merge commit landed there). Without a second
-        // fetch, our local origin/{manifestBranch} ref is stale and the
-        // post-merge manifest commit will fail to push as non-fast-forward.
-        try
-        {
-            await git.FetchAsync("origin", manifestBranch, ct).ConfigureAwait(false);
-            await git.CheckoutAsync(manifestBranch, ct).ConfigureAwait(false);
-            await git.ResetHardAsync($"origin/{manifestBranch}", ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            // We've already merged — surface the partial success so the caller can retry the manifest half.
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
-                $"Could not checkout/reset {manifestBranch}: {ex.Message}",
-                isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
-                prState: "MERGED", merged: true, alreadyMerged: alreadyMerged, mergeCommit: mergeCommit);
-        }
+        // ── 8. Skipped (Rev 4.2): no checkout/reset needed.
+        // The manifest is local + canonical; the plan-PR merge that just
+        // landed on origin doesn't touch the manifest file (which lives
+        // outside the worktree under <git-common-dir>/polyphony/...).
 
-        // ── 9. Apply ledger; save+stage+commit+push only on fresh entry. ───
+        // ── 9. Apply ledger; save under run lock. ──────────────────────────
         RunManifest manifest;
         try
         {
@@ -534,6 +509,9 @@ public sealed partial class PrCommands
                 prevGen: ledger.PreviousGeneration, currGen: ledger.CurrentGeneration);
 
         bool manifestRecorded = ledger.Recorded;
+        // Rev 4.2: "pushed" no longer means anything (manifest is local-only),
+        // but the result field is preserved for back-compat. We set it equal
+        // to manifestRecorded — meaning "manifest mutation persisted to disk".
         bool manifestPushed = false;
 
         if (manifestRecorded)
@@ -541,31 +519,12 @@ public sealed partial class PrCommands
             try
             {
                 RunManifestStore.Save(manifestPath, manifest);
-                await git.StageAsync(manifestPath, ct).ConfigureAwait(false);
-                await git.CommitAsync(
-                    $"chore(manifest): record plan PR #{prNumber} merge for {itemKey}", ct).ConfigureAwait(false);
-                await git.PushAsync(manifestBranch, "origin", ct).ConfigureAwait(false);
                 manifestPushed = true;
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (ExternalToolException pushEx) when (pushEx.Stderr?.Contains("rejected", StringComparison.OrdinalIgnoreCase) == true
-                                                       || pushEx.Stderr?.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                // Roll back the local checkout so a retry sees a clean tip.
-                try { await git.ResetHardAsync($"origin/{manifestBranch}", ct).ConfigureAwait(false); }
-                catch { /* best-effort; surface the original push failure */ }
-
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "manifest_push_rejected",
-                    $"Manifest push to origin/{manifestBranch} rejected (likely a concurrent push). Re-run the verb to retry; the ledger will pick up the existing merge commit and bump exactly once. Detail: {pushEx.Stderr}",
-                    isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
-                    prState: "MERGED", merged: true, alreadyMerged: alreadyMerged, mergeCommit: mergeCommit,
-                    prevGen: ledger.PreviousGeneration, currGen: ledger.CurrentGeneration,
-                    manifestRecorded: false, manifestPushed: false);
             }
             catch (Exception ex)
             {
                 return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
-                    $"Manifest commit/push failed: {ex.Message}",
+                    $"Manifest save failed: {ex.Message}",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                     prState: "MERGED", merged: true, alreadyMerged: alreadyMerged, mergeCommit: mergeCommit,
                     prevGen: ledger.PreviousGeneration, currGen: ledger.CurrentGeneration,

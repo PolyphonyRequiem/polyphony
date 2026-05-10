@@ -38,6 +38,7 @@ public sealed class PrCommandsOpenPlanAdoTests : CommandTestBase
             git, gh, twig, Repository, Config,
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
+            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
             ado);
         return (cmd, runner, ado);
     }
@@ -212,16 +213,15 @@ public sealed class PrCommandsOpenPlanAdoTests : CommandTestBase
     [Fact]
     public async Task OpenPlanAdo_ManifestMissing_RoutesManifestReadFailed()
     {
-        var (cmd, runner, _) = CreateCommand();
+        var (cmd, _, _) = CreateCommand();
         var bogusPath = Path.Combine(Path.GetTempPath(),
             "polyphony-missing-" + Guid.NewGuid().ToString("N") + ".yaml");
-        StubManifestMissing(runner, rootId: 100, path: bogusPath);
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.OpenPlanAdo(Org, Project, Repo, rootId: 100, itemId: 100, manifestPath: bogusPath));
         var result = Parse(output);
         result.ErrorCode.ShouldBe("manifest_read_failed");
-        result.Error!.ShouldContain("origin/feature/100");
+        result.Error!.ShouldContain("manifest not found at");
     }
 
     // ─── Happy paths: create new PR ──────────────────────────────────────

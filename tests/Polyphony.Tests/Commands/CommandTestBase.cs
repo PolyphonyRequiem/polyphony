@@ -130,7 +130,7 @@ public abstract class CommandTestBase : IDisposable
         }
     }
 
-    public void Dispose()
+    public virtual void Dispose()
     {
         Store.Dispose();
         GC.SuppressFinalize(this);

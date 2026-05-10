@@ -37,7 +37,6 @@ public sealed class VerbHaltOnMissingTheory(ITestOutputHelper output)
     /// </summary>
     private static readonly HashSet<string> Move3ConflictZone = new(StringComparer.Ordinal)
     {
-        "Polyphony.Commands.ManifestCommands.CommitAndPush",
         "Polyphony.Commands.PlanCommands.CommitAndPush",
     };
 

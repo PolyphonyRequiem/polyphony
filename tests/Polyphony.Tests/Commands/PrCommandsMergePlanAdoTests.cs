@@ -56,7 +56,7 @@ public sealed class PrCommandsMergePlanAdoTests : CommandTestBase, IDisposable
         var gh = new GhClient(runner);
         var cmd = new PrCommands(
             git, gh, twig, Repository, Config,
-            new RunLockStore(), new RunLockPathResolver(git), ado);
+            new RunLockStore(), new RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), ado);
         return (cmd, runner, ado);
     }
 
@@ -114,11 +114,16 @@ public sealed class PrCommandsMergePlanAdoTests : CommandTestBase, IDisposable
 
     private void StubGitShowManifest(FakeProcessRunner runner, string branch, string yamlContent, bool missing = false)
     {
-        var refspec = $"origin/{branch}:{_manifestPath}";
-        var result = missing
-            ? new ProcessResult(128, "", $"fatal: path '{_manifestPath}' does not exist in 'origin/{branch}'")
-            : new ProcessResult(0, yamlContent, "");
-        runner.WhenExact("git", ["show", refspec], result);
+        _ = runner;
+        _ = branch;
+        if (missing)
+        {
+            if (File.Exists(_manifestPath)) File.Delete(_manifestPath);
+        }
+        else
+        {
+            File.WriteAllText(_manifestPath, yamlContent);
+        }
     }
 
     private static string MakeBodyWithSnapshot(IDictionary<string, int> snapshot, bool requestsParentChange = false)
@@ -689,37 +694,9 @@ public sealed class PrCommandsMergePlanAdoTests : CommandTestBase, IDisposable
 
     // ─── Manifest push rejection (rollback) ─────────────────────────────
 
-    [Fact]
-    public async Task ManifestPushRejected_RoutesManifestPushRejected()
-    {
-        var (cmd, runner, ado) = CreateCommand();
-        StubEnvironmentDefaults(runner);
-        StubStatusClean(runner);
-        StubFetch(runner, "feature/100");
-        StubCheckout(runner, "feature/100");
-        StubResetHard(runner, "origin/feature/100");
-        StubAdd(runner, _manifestPath);
-        StubCommit(runner);
-        // Push rejected with non-fast-forward — the verb's catch maps this
-        // to manifest_push_rejected and resets the worktree.
-        StubPush(runner, "feature/100",
-            new ProcessResult(1, "", "rejected: non-fast-forward"));
-        SeedManifest(100, planGenerations: new() { ["root"] = 1 });
-
-        ado.PollData = MakePoll(42, "OPEN", headRef: "plan/100", baseRef: "feature/100");
-        ado.CompleteResult = new AdoCompletePullRequestResult(
-            Status: "completed", MergeCommitSha: "merge-sha", HttpStatus: 200, ErrorBody: null);
-
-        var (_, output) = await CaptureConsoleAsync(
-            () => cmd.MergePlanAdo(Org, Project, Repo, rootId: 100, itemId: 100, prNumber: 42,
-                manifestPath: _manifestPath));
-        var result = Parse(output);
-        result.ErrorCode.ShouldBe("manifest_push_rejected");
-        result.Merged.ShouldBeTrue();
-        result.MergeCommit.ShouldBe("merge-sha");
-        result.ManifestRecorded.ShouldBeFalse();
-        result.ManifestPushed.ShouldBeFalse();
-    }
+    // ManifestPushRejected_RoutesManifestPushRejected DELETED — Rev 4.2 dropped the
+    // worktree-side manifest git transaction entirely. Manifest writes are now atomic
+    // file replacements under the run lock; there is no longer any push to be rejected.
 
     // ─── Test fake ───────────────────────────────────────────────────────
 

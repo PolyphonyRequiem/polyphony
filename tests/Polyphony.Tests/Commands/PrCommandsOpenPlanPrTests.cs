@@ -27,7 +27,7 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new PrCommands(git, gh, twig, Repository, Config, new Polyphony.Locking.RunLockStore(), new Polyphony.Locking.RunLockPathResolver(git)), runner);
+        return (new PrCommands(git, gh, twig, Repository, Config, new Polyphony.Locking.RunLockStore(), new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git)), runner);
     }
 
     private static string SeedManifest(FakeProcessRunner runner, int rootId, Dictionary<string, int>? planGenerations = null)
@@ -217,15 +217,14 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
     [Fact]
     public async Task OpenPlanPr_ManifestMissing_ReturnsCacheError()
     {
-        var (cmd, runner) = CreateCommand();
+        var (cmd, _) = CreateCommand();
         var bogusPath = Path.Combine(Path.GetTempPath(),
             "polyphony-missing-" + Guid.NewGuid().ToString("N") + ".yaml");
-        StubManifestMissingAtRef(runner, rootId: 100, path: bogusPath);
 
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.OpenPlanPr(rootId: 100, itemId: 100, manifestPath: bogusPath));
         exit.ShouldBe(ExitCodes.CacheError);
-        Parse(output).Error!.ShouldContain("manifest not found at origin/feature/100");
+        Parse(output).Error!.ShouldContain("manifest not found at");
     }
 
     // ─── Branch existence ────────────────────────────────────────────────

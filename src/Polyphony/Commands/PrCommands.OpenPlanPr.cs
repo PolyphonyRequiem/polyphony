@@ -32,7 +32,7 @@ public sealed partial class PrCommands
     /// <param name="itemId">ADO work-item id of the item this plan PR belongs to. Equal to <paramref name="rootId"/> for the root plan.</param>
     /// <param name="parentItemId">Immediate plan-tree parent's work-item id. Required for descendants of descendants; omit for root plan and direct children of root plan.</param>
     /// <param name="ancestorIds">Comma-separated ancestor chain (immediate parent first), used to compute the snapshot. For a child of root: <c>"root"</c>. For a deeper descendant: e.g. <c>"5678,root"</c>. Empty for the root plan.</param>
-    /// <param name="manifestPath">Path to the run manifest within the <c>origin/feature/{root}</c> blob. Defaults to <c>.polyphony/run.yaml</c>.</param>
+    /// <param name="manifestPath">Optional override of the run manifest path. When empty (default), the verb derives the local path under <c>&lt;git-common-dir&gt;/polyphony/{rootId}/run.yaml</c> via <c>PolyphonyStatePaths</c>. Pass an explicit path only as a testing seam.</param>
     /// <param name="title">Optional PR title; deterministic fallback derived from the cached work-item title.</param>
     /// <param name="body">Optional PR body summary (rendered after the front-matter); minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
@@ -43,7 +43,7 @@ public sealed partial class PrCommands
         int itemId = RequiredInput.MissingInt,
         int parentItemId = 0,
         string ancestorIds = "",
-        string manifestPath = RunManifestStore.DefaultRelativePath,
+        string manifestPath = "",
         string title = "",
         string body = "",
         CancellationToken ct = default)
@@ -123,39 +123,37 @@ public sealed partial class PrCommands
             return ExitCodes.ConfigError;
         }
 
-        // ── 2. Read manifest from origin/feature/{root} + compute snapshot. ─
-        // The manifest is owned by the feature branch, NOT by the plan branch
-        // we are PR-promoting from. Reading the local working tree would pick
-        // up whatever the workflow happens to have checked out (often the
-        // plan branch itself). Always read from the remote feature ref so the
-        // snapshot reflects the authoritative manifest at PR-open time.
+        // ── 2. Read manifest + compute snapshot. ───────────────────────────
+        // Rev 4.2: the manifest is a single-source-of-truth local file under
+        // <git-common-dir>/polyphony/{rootId}/run.yaml, mutated under the
+        // run lock by `pr merge-plan-pr` / `merge-plan-ado` /
+        // `plan rebase-stale-descendant` / `recreate-stale-descendant`.
+        // No git transaction needed: the file is canonical on disk and
+        // reads do not need to fetch or check out the feature branch.
         IReadOnlyDictionary<string, int> snapshot;
         var featureBranch = BranchNameBuilder.Feature(root).Value;
-        var manifestRef = $"origin/{featureBranch}";
+        var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
+        if (resolvedPath.Error is not null)
+        {
+            EmitPlanPrError(rootId, itemId, parentItemId, resolvedPath.Error, headBranch, baseBranch);
+            return ExitCodes.CacheError;
+        }
+        var localManifestPath = resolvedPath.Path;
         try
         {
-            var manifestYaml = await git.ShowFileAtRefAsync(manifestRef, manifestPath, ct).ConfigureAwait(false);
-            if (manifestYaml is null)
-            {
-                EmitPlanPrError(rootId, itemId, parentItemId,
-                    $"manifest not found at {manifestRef}:{manifestPath} — ensure the feature branch has the manifest committed and pushed",
-                    headBranch, baseBranch);
-                return ExitCodes.CacheError;
-            }
-            var manifest = RunManifestStore.Parse(manifestYaml, $"{manifestRef}:{manifestPath}");
-            RunManifestValidator.ValidateOrThrow(manifest, $"{manifestRef}:{manifestPath}");
+            var manifest = RunManifestStore.LoadOrThrow(localManifestPath);
             snapshot = ComputeSnapshot(manifest.PlanGenerations, ancestorKeys);
+        }
+        catch (FileNotFoundException)
+        {
+            EmitPlanPrError(rootId, itemId, parentItemId,
+                $"manifest not found at {localManifestPath} — run `polyphony manifest init --root-id {rootId} ...` first",
+                headBranch, baseBranch);
+            return ExitCodes.CacheError;
         }
         catch (InvalidOperationException ex)
         {
             EmitPlanPrError(rootId, itemId, parentItemId, $"manifest invalid: {ex.Message}", headBranch, baseBranch);
-            return ExitCodes.CacheError;
-        }
-        catch (ExternalToolException ex)
-        {
-            EmitPlanPrError(rootId, itemId, parentItemId,
-                $"git show failed for {manifestRef}:{manifestPath}: {ex.Message}",
-                headBranch, baseBranch);
             return ExitCodes.CacheError;
         }
 

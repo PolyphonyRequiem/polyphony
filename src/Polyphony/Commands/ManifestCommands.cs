@@ -3,9 +3,7 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Paths;
-using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
-using Polyphony.Postconditions;
 
 namespace Polyphony.Commands;
 
@@ -23,7 +21,7 @@ namespace Polyphony.Commands;
 ///   <item><description>Empty <c>--path</c> + <c>--root-id N</c> →
 ///   derive via <see cref="PolyphonyStatePaths.GetManifestPathAsync"/>
 ///   (<c>path_source = "derived"</c>). The Rev 4.2 default that keeps
-///   manifests out of the worktree.</description></item>
+///   manifests out of the worktree (under <c>&lt;git-common-dir&gt;/polyphony/&lt;rootId&gt;/run.yaml</c>).</description></item>
 ///   <item><description>Empty <c>--path</c> + missing <c>--root-id</c>
 ///   → fall back to <c>.polyphony/run.yaml</c>
 ///   (<c>path_source = "default_legacy"</c>). Transitional only;
@@ -38,21 +36,17 @@ namespace Polyphony.Commands;
 ///
 /// <para>Mutating verbs use the atomic write semantics in
 /// <see cref="RunManifestStore"/>; the manifest's <c>topology_hash</c>
-/// is recomputed on every save.</para>
+/// is recomputed on every save. The manifest is local-only (Rev 4.2);
+/// no commit-and-push verb exists — concurrent runs against the same
+/// root are serialized by the run lock at
+/// <c>&lt;git-common-dir&gt;/polyphony/&lt;rootId&gt;/locks/run.lock</c>.</para>
 ///
-/// <para><see cref="IGitClient"/> and <see cref="IPostconditionVerifier"/>
-/// are injected for the <see cref="CommitAndPush"/> verb only;
-/// <see cref="PolyphonyStatePaths"/> backs the path-derivation branch
-/// shared by every verb.</para>
+/// <para><see cref="PolyphonyStatePaths"/> backs the path-derivation
+/// branch shared by every verb.</para>
 /// </summary>
 [VerbGroup("manifest")]
-public sealed partial class ManifestCommands(
-    IGitClient git,
-    IPostconditionVerifier postconditions,
-    PolyphonyStatePaths statePaths)
+public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
 {
-    private readonly IGitClient git = git;
-    private readonly IPostconditionVerifier postconditions = postconditions;
     private readonly PolyphonyStatePaths statePaths = statePaths;
 
     // ── Path resolution helpers (Rev 4.2) ──────────────────────────────
