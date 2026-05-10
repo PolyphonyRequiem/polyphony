@@ -69,8 +69,18 @@ output:
   # several routes (pr_router action='all_complete', pr_lifecycle merged=
   # false, dependency_gate reassign, user_acceptance abort) reach $end
   # without running scope_closer.
+  #
+  # pr_submit is an LLM agent whose `pr_url` field is NOT marked
+  # `required: true` in its output schema, so the LLM may emit a
+  # well-formed envelope without the field. The `pr_submit is defined`
+  # guard alone is insufficient; we also need to check
+  # `pr_submit.output.pr_url is defined` to avoid StrictUndefined on a
+  # missing dict key. Cf. plan-level.yaml output: block for the same
+  # trap on a verb-side nullable field.
   merged: "{% if scope_closer is defined %}{{ (scope_closer.output.exit_code == 0) | string | lower }}{% else %}false{% endif %}"
-  pr_url: "{% if pr_submit is defined %}{{ pr_submit.output.pr_url | default('') }}{% else %}{% endif %}"
+  pr_url: >-
+    {%- if pr_submit is defined and pr_submit.output.pr_url is defined -%}{{ pr_submit.output.pr_url }}
+    {%- else -%}{%- endif -%}
 
 agents:
   # ── PG router ──────────────────────────────────────────────────────────

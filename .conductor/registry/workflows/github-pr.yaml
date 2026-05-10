@@ -55,8 +55,18 @@ output:
   # Lowercase-coerce so the parent workflow's _maybe_parse_json sees
   # 'true'/'false' rather than the capital 'True'/'False' Jinja produces
   # for Python booleans (see conductor-mechanics M7).
-  merged: "{{ (pr_merger.output.merged | default(false)) | string | lower }}"
-  pr_url: "{{ pr_merger.output.pr_url | default('') }}"
+  #
+  # pr_merger may not run — review_router routes around it on
+  # changes_requested, on rev-cap exhaustion (force-abort), and on
+  # human-gate abort. Per M3 (StrictUndefined), guard `pr_merger is
+  # defined` first; without the guard, accessing pr_merger.output
+  # raises TemplateError on every non-merge terminal.
+  merged: >-
+    {%- if pr_merger is defined -%}{{ (pr_merger.output.merged | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  pr_url: >-
+    {%- if pr_merger is defined -%}{{ pr_merger.output.pr_url | default('') }}
+    {%- else -%}{%- endif -%}
 
 agents:
   # ── PR reviewer ────────────────────────────────────────────────────────
