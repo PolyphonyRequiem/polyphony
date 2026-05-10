@@ -1,7 +1,7 @@
 namespace Polyphony.Policy;
 
 /// <summary>
-/// Root-level policy configuration loaded from <c>.conductor/policy.yaml</c>.
+/// Root-level policy configuration loaded from <c>.polyphony-config/policy.yaml</c>.
 /// Workflows call <c>polyphony policy load</c> at start-of-run and pass the
 /// resolved JSON downstream; individual route conditions invoke
 /// <c>polyphony policy resolve --scope &lt;…&gt; --domain &lt;…&gt;</c> for the

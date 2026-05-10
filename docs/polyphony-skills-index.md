@@ -8,7 +8,7 @@ which document to read first based on what you are about to do.
 
 Polyphony is a .NET 11 CLI that decides *what should happen* to a
 work item in an SDLC pipeline — phase, transition, branch hint — based on a
-per-repo `.conductor/process-config.yaml`. It pairs with `twig` (which
+per-repo `.polyphony-config/process-config.yaml`. It pairs with `twig` (which
 *executes* the decisions against ADO) and with `conductor` (which orchestrates
 the surrounding AI workflows); polyphony itself never writes to ADO.
 
@@ -16,12 +16,12 @@ the surrounding AI workflows); polyphony itself never writes to ADO.
 
 ### 1 · Bootstrap a fresh repo for polyphony
 You have twig installed and the polyphony CLI on PATH. The repo has no
-`.conductor/` yet.
+`.polyphony-config/` yet.
 
 1. **`polyphony-bootstrap.skill.md`** — the step-by-step (prereqs → directory
    → `process-config.yaml` → `validate-config` → 6-step smoke test → workflow
    wiring → pitfalls).
-2. **`polyphony-conductor-directory.md`** — what every file in `.conductor/`
+2. **`polyphony-conductor-directory.md`** — what every file in `.polyphony-config/`
    is for; minimum-viable vs. complete checklists.
 3. **`polyphony-process-config-schema.md`** — full YAML schema, V-1..V-14
    rules, worked examples per ADO process template (Basic / Agile / Scrum /
@@ -85,8 +85,8 @@ You are not changing anything; you want the model.
 | Doc / skill                                  | Size | Audience                       | One-line purpose                                                       |
 |----------------------------------------------|-----:|--------------------------------|------------------------------------------------------------------------|
 | `polyphony-skills-index.md`                  |  ~6K | Anyone landing fresh           | This file. Which doc to read first based on what you're about to do.   |
-| `polyphony-bootstrap.skill.md`               | ~18K | Repo onboarder                 | How to wire a repo from zero `.conductor/` to running workflows.       |
-| `polyphony-conductor-directory.md`           | ~15K | Repo onboarder / config author | Reference for every file inside `.conductor/` other than the schema.   |
+| `polyphony-bootstrap.skill.md`               | ~18K | Repo onboarder                 | How to wire a repo from zero `.polyphony-config/` to running workflows.       |
+| `polyphony-conductor-directory.md`           | ~15K | Repo onboarder / config author | Reference for every file inside `.polyphony-config/` other than the schema.   |
 | `polyphony-process-config-schema.md`         | ~17K | Config author                  | Full YAML schema, V-1..V-14, per-template worked examples.             |
 | `polyphony-cli-reference.md`                 | ~15K | Workflow author / CLI consumer | The four verbs, JSON shapes, exit codes, worked examples.              |
 | `polyphony-architecture.md`                  | ~18K | Anyone changing layers         | Layering, platform abstraction, three-vocabulary contract, data flow.  |

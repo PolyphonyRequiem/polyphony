@@ -131,7 +131,7 @@ public sealed partial class PlanCommands(
     /// <c>work-item-types/&lt;slug&gt;.md</c> and optional templates.</param>
     [Command("load-type")]
     [VerbResult(typeof(PlanLoadTypeResult))]
-    public async Task<int> LoadType(int workItem = RequiredInput.MissingInt, string configDir = ".conductor", CancellationToken ct = default)
+    public async Task<int> LoadType(int workItem = RequiredInput.MissingInt, string configDir = ".polyphony-config", CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan load-type",
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
@@ -195,7 +195,7 @@ public sealed partial class PlanCommands(
     /// <c>agent-guidance/*.md</c>.</param>
     [Command("load-guidance")]
     [VerbResult(typeof(Dictionary<string, string>))]
-    public int LoadGuidance(string configDir = ".conductor")
+    public int LoadGuidance(string configDir = ".polyphony-config")
     {
         var guidancePath = Path.Combine(configDir, "agent-guidance");
         var roleMap = new Dictionary<string, string>(StringComparer.Ordinal);

@@ -52,7 +52,7 @@ A canonical, correct example: `scripts/scope-closer.ps1:53-72`.
 | Is this transition even legal right now?                         | `polyphony validate --work-item N --event X`      | `Commands/ValidateCommand.cs`   |
 | Walk children: facets, states, tags                        | `polyphony hierarchy --work-item N --depth 3`     | `Commands/HierarchyCommand.cs`  |
 | What's ready to work on next? (per-requirement disposition)      | `polyphony state next-ready --work-item N`        | `Commands/StateCommands.NextReady.cs` |
-| Validate `.conductor/process-config.yaml` itself                 | `polyphony validate-config --config .conductor`   | `Commands/ValidateConfigCommand.cs` |
+| Validate `.polyphony-config/process-config.yaml` itself                 | `polyphony validate-config --config .polyphony-config`   | `Commands/ValidateConfigCommand.cs` |
 | Build the cross-item edge graph; surface conflicts               | `polyphony edges check --work-item N`             | `Commands/EdgesCommands.Check.cs` |
 | Ensure an evidence branch exists (orphan or apex-scoped)         | `polyphony branch ensure-evidence-branch N`       | `Commands/BranchCommands.EnsureEvidenceBranch.cs` |
 | Open or reuse the evidence PR against `feature/<apex>`           | `polyphony pr open-evidence-pr N`                 | `Commands/PrCommands.OpenEvidencePr.cs` |
@@ -173,7 +173,7 @@ Consume the envelope from the parent workflow with `is defined` guards on
 each terminal — never assume the user-prompted branch ran. The gate is
 the single source-of-truth for fallback behavior; do **not** re-implement
 the policy lookup inline. The policy schema lives at
-`.conductor/policy.yaml` under the `root_fallback:` key, and is validated
+`.polyphony-config/policy.yaml` under the `root_fallback:` key, and is validated
 by `polyphony policy validate`.
 
 ---

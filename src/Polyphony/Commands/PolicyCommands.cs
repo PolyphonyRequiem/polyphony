@@ -8,7 +8,7 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// Policy verbs (<c>polyphony policy ...</c>). Phase 7 of Epic 2978 — load and
-/// resolve <c>.conductor/policy.yaml</c> at the start of a workflow run, then
+/// resolve <c>.polyphony-config/policy.yaml</c> at the start of a workflow run, then
 /// per-step query the effective mode + caps for each scope.
 ///
 /// <list type="bullet">
@@ -21,15 +21,15 @@ namespace Polyphony.Commands;
 public sealed class PolicyCommands
 {
     /// <summary>
-    /// Loads <c>.conductor/policy.yaml</c> (or <paramref name="path"/> if specified)
+    /// Loads <c>.polyphony-config/policy.yaml</c> (or <paramref name="path"/> if specified)
     /// and emits a snapshot of the resolved configuration with built-in defaults
     /// applied. When the file does not exist, returns a defaults-only snapshot
     /// with <c>used_defaults: true</c>.
     /// </summary>
-    /// <param name="path">Path to the policy file. Defaults to <c>.conductor/policy.yaml</c>.</param>
+    /// <param name="path">Path to the policy file. Defaults to <c>.polyphony-config/policy.yaml</c>.</param>
     [Command("load")]
     [VerbResult(typeof(PolicyLoadResult))]
-    public int Load(string path = ".conductor/policy.yaml")
+    public int Load(string path = ".polyphony-config/policy.yaml")
     {
         PolicyConfig config;
         try
@@ -68,10 +68,10 @@ public sealed class PolicyCommands
     /// missing required fields and unknown enum values as warnings/errors so the
     /// operator can choose to opt into defaults explicitly.
     /// </summary>
-    /// <param name="path">Path to the policy file. Defaults to <c>.conductor/policy.yaml</c>.</param>
+    /// <param name="path">Path to the policy file. Defaults to <c>.polyphony-config/policy.yaml</c>.</param>
     [Command("validate")]
     [VerbResult(typeof(PolicyValidateResult))]
-    public int Validate(string path = ".conductor/policy.yaml")
+    public int Validate(string path = ".polyphony-config/policy.yaml")
     {
         if (!File.Exists(path))
         {
@@ -126,10 +126,10 @@ public sealed class PolicyCommands
     /// </summary>
     /// <param name="scope">Scope token: <c>root</c>, <c>default</c>, or <c>type:Name</c>.</param>
     /// <param name="domain">Either <c>approvals</c> or <c>pr</c>.</param>
-    /// <param name="path">Path to the policy file. Defaults to <c>.conductor/policy.yaml</c>.</param>
+    /// <param name="path">Path to the policy file. Defaults to <c>.polyphony-config/policy.yaml</c>.</param>
     [Command("resolve")]
     [VerbResult(typeof(ResolvedRule))]
-    public int Resolve(string scope = "", string domain = "", string path = ".conductor/policy.yaml")
+    public int Resolve(string scope = "", string domain = "", string path = ".polyphony-config/policy.yaml")
     {
         if (RequiredInput.HaltIfMissing("policy resolve",
             ("--scope", string.IsNullOrEmpty(scope)),

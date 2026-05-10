@@ -28,7 +28,7 @@ intended_consumer: polyphony-conductor-workflows architect agent (plan-level.yam
 - There is no per-scope tuning. An root Epic should probably always gate;
   a leaf Task probably never should — but today they get the same treatment.
 
-Meanwhile `.conductor/policy.yaml` already has the right machinery for this
+Meanwhile `.polyphony-config/policy.yaml` already has the right machinery for this
 exact shape — `auto`/`warning`/`manual` modes, per-scope overrides
 (`defaults` / `root` / `by_type`), and caps — applied today to two domains
 (`approvals`, `pr`). Open-questions is a third gate that begs for the same
@@ -41,11 +41,11 @@ the user had no way to express that without editing the workflow YAML.
 ## Goal
 
 Add `open_questions` as a third policy domain so users can configure
-plan-level open-question handling in `.conductor/policy.yaml`, with the
+plan-level open-question handling in `.polyphony-config/policy.yaml`, with the
 same `auto/warning/manual` × `defaults/root/by_type` shape used by
 `approvals` and `pr`.
 
-After this work, `.conductor/policy.yaml` can express things like:
+After this work, `.polyphony-config/policy.yaml` can express things like:
 
 ```yaml
 open_questions:
@@ -161,7 +161,7 @@ The architect should refine into ordered Tasks/PGs. This is the v1 scope:
    - Update the gate's human-facing prompt to surface the current mode +
      remaining cap ("loop 2 of 3, max_question_loops cap").
 
-9. **Policy file example** — `.conductor/policy.yaml`:
+9. **Policy file example** — `.polyphony-config/policy.yaml`:
    - Add a commented `open_questions:` block showing the example above
      plus behavioral notes, mirroring the `approvals` / `pr` comment style.
 

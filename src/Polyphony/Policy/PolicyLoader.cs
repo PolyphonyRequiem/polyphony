@@ -6,7 +6,7 @@ using YamlDotNet.Serialization.NamingConventions;
 namespace Polyphony.Policy;
 
 /// <summary>
-/// Loads <c>.conductor/policy.yaml</c> into a <see cref="PolicyConfig"/> with
+/// Loads <c>.polyphony-config/policy.yaml</c> into a <see cref="PolicyConfig"/> with
 /// sensible built-in defaults applied when a file is missing or partial.
 /// Defaults match the plan-of-record:
 /// <list type="bullet">

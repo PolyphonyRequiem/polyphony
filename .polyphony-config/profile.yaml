@@ -5,7 +5,7 @@ project:
   name: Polyphony
   description: >
     .NET 11 CLI that routes work items through SDLC phases
-    based on per-repo process configuration. Reads .conductor/process-config.yaml
+    based on per-repo process configuration. Reads .polyphony-config/process-config.yaml
     to determine hierarchy roles, state transitions, and branch strategy.
   repository: PolyphonyRequiem/polyphony
 

@@ -19,7 +19,7 @@ The Polyphony engine (`src/Polyphony/`) is type-agnostic — `PhaseDetector.cs`
 routes by facet lookup, with zero hardcoded type strings. The planning
 workflow (`plan-level.yaml` + `load-type-context.ps1`) honors this pattern by
 loading the user's actual work-item-type definition from
-`.conductor/work-item-types/{slug}.md` at runtime and injecting it into the
+`.polyphony-config/work-item-types/{slug}.md` at runtime and injecting it into the
 architect prompt.
 
 The **implementation layer regresses against this pattern.**
@@ -50,7 +50,7 @@ strictly separated vocabularies:
 | Vocabulary | Lives in | Talks about | Stable across repos? |
 |---|---|---|---|
 | **Workflow vocab** | YAML, scripts, agent role names, schema field names | Roles (`architect`, `reviewer`, `coder`), phases (`planning`, `implementation`), structural relations (`focus`, `parent`, `plannable_child`, `implementable_child`, `level`, `PG`) | Yes — same words for every repo, every process template |
-| **User vocab** | `.conductor/work-item-types/*.md` and runtime twig lookup | The customer's actual type names: `Task`, `Issue`, `User Story`, `PBI`, `Scenario`, `Deliverable`, `Bug`, ... | No — varies per process template; loaded into prompts at runtime |
+| **User vocab** | `.polyphony-config/work-item-types/*.md` and runtime twig lookup | The customer's actual type names: `Task`, `Issue`, `User Story`, `PBI`, `Scenario`, `Deliverable`, `Bug`, ... | No — varies per process template; loaded into prompts at runtime |
 
 After this work: a Scrum repo's reviewer prompt renders as *"Review PG N
 for PBI 2930 against its acceptance criteria"*; a CMMI repo's renders as
@@ -144,7 +144,7 @@ architect to decide rather than rubber-stamp:
    `load-implementable-context.ps1` for PG iteration)? User lean: extend the
    existing one for DRY, accept the slightly broader parameter surface.
 2. **Depth of user-vocab in prompts.** Just `{ type, title }` substitution,
-   or also pipe full `definition` (the type's `.conductor/work-item-types/
+   or also pipe full `definition` (the type's `.polyphony-config/work-item-types/
    {slug}.md` content) into the implementable_reviewer the way `plan-level.
    yaml` does for the architect? Latter is more powerful + more consistent
    with planning, costlier to roll out. User lean: yes, do the deep version

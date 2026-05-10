@@ -459,7 +459,7 @@ agents:
   # requirement is `item_satisfied` — every facet-driven kind has
   # already settled. Mirrors apex-driver.yaml's `close_mark_satisfied`
   # (validate-then-twig-state) so the same terminal-state mapping
-  # rules apply (per `.conductor/process-config.yaml > transitions`).
+  # rules apply (per `.polyphony-config/process-config.yaml > transitions`).
   #
   # The `polyphony validate --event item_satisfied` call is the
   # canonical event-to-target-state lookup. When it returns a

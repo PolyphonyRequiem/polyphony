@@ -152,8 +152,8 @@ itself drive a pass; this workflow does. Prerequisites (verify before invoking):
 - `conductor` is on PATH and the polyphony registry is registered:
   `conductor registry add polyphony PolyphonyRequiem/polyphony` (or a local
   path).
-- The target repo has `.conductor/process-config.yaml` and
-  `polyphony validate-config --config .conductor` exits 0.
+- The target repo has `.polyphony-config/process-config.yaml` and
+  `polyphony validate-config --config .polyphony-config` exits 0.
 
 ### Minimum invocation
 
@@ -215,7 +215,7 @@ conductor run apex-driver@polyphony --input apex_id=2930 --input intent=resume -
 **Renegotiation pending** — a child plan-level invocation reported
 `renegotiation_pending: true`. The driver consults
 `policy.renegotiation.auto_decide` (`prompt` / `auto_restart` / `ignore`) in
-`.conductor/policy.yaml` and surfaces `renegotiation_gate`. The workflow's
+`.polyphony-config/policy.yaml` and surfaces `renegotiation_gate`. The workflow's
 output carries `renegotiation_pending=true`; the operator either accepts
 the renegotiation (loop continues with the mutated tree) or aborts.
 
@@ -362,7 +362,7 @@ grouping and are deferred.
 - `polyphony edges check` — topological order generator consumed by
   `wave-integrator.ps1`.
 - `policy.renegotiation` — renegotiation policy block (introduced
-  alongside this driver in `.conductor/policy.yaml`).
+  alongside this driver in `.polyphony-config/policy.yaml`).
 - ADR `scope-renegotiation.md` — broader renegotiation contract this
   driver hooks into.
 - ADR `actionable-executor-split.md` — the prior application of the

@@ -320,11 +320,11 @@ agents:
 
   # ── Type loader ──────────────────────────────────────────────────────────
   #
-  # Loads type-specific context from .conductor/work-item-types/. Outputs
+  # Loads type-specific context from .polyphony-config/work-item-types/. Outputs
   # type name, semantic definition, plan template, and decomposition guidance.
   - name: type_loader
     type: script
-    description: Load type-specific context from .conductor/work-item-types/
+    description: Load type-specific context from .polyphony-config/work-item-types/
     command: polyphony
     args:
       - "plan"
@@ -345,7 +345,7 @@ agents:
       Planning for work item **{{ workflow.input.work_item_id }}** cannot continue
       because the type context could not be loaded.
 
-      **Error:** {{ type_loader.output.error if type_loader.output.error is defined else "Unknown error — check that .conductor/work-item-types/ is configured and the work item exists in ADO." }}
+      **Error:** {{ type_loader.output.error if type_loader.output.error is defined else "Unknown error — check that .polyphony-config/work-item-types/ is configured and the work item exists in ADO." }}
 
       ---
 

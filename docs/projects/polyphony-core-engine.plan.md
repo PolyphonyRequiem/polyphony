@@ -69,7 +69,7 @@ Polyphony serves as the routing oracle for conductor SDLC workflows (defined in 
 
 ### Process Config Semantics
 
-The `.conductor/process-config.yaml` defines the type system:
+The `.polyphony-config/process-config.yaml` defines the type system:
 
 - **Facets**: `plannable` (can have a plan document), `implementable` (can have code changes)
 - **Transitions**: Event → target state mappings per type (e.g., `begin_planning` → `Doing`)
@@ -132,7 +132,7 @@ Conductor SDLC workflows currently cannot invoke Polyphony for routing decisions
 | FR-3 | `validate` command checks lifecycle event against process config transitions and current work item state |
 | FR-4 | `validate` command evaluates preconditions (e.g., `all_children_complete` requires all children in Completed category) |
 | FR-5 | `hierarchy` command walks the work item tree to specified depth, annotating each node with facets |
-| FR-6 | All commands load process config from `--config` path (default `.conductor/process-config.yaml`) |
+| FR-6 | All commands load process config from `--config` path (default `.polyphony-config/process-config.yaml`) |
 | FR-7 | All commands accept `--twig-dir` to locate the twig cache directory (default `.twig`) |
 | FR-8 | Exit codes follow a defined scheme: 0 (success), 1 (routing/validation failure), 2 (config error), 3 (cache error) |
 
@@ -350,7 +350,7 @@ Registers:
 #### Route Command Flow
 
 ```
-1. CLI receives: --work-item 1234 --config .conductor/process-config.yaml
+1. CLI receives: --work-item 1234 --config .polyphony-config/process-config.yaml
 2. DI resolves: ProcessConfig, IWorkItemRepository, PhaseDetector
 3. Load work item: repository.GetByIdAsync(1234)
    → If null: exit 3 (cache error — work item not in cache)
@@ -660,6 +660,6 @@ Registers:
 
 - [Conductor Design Principles](../../.github/skills/conductor-design/SKILL.md) — Especially P5 (type-agnostic), P8 (scripts over agents)
 - [Twig SDLC Workflow](../../.github/skills/twig-sdlc/SKILL.md) — Full workflow definition
-- [Process Config](../../.conductor/process-config.yaml) — Type facets, transitions, branch strategy
-- [Work Item Type Definitions](../../.conductor/work-item-types/) — Epic, Issue, Task definitions
+- [Process Config](../../.polyphony-config/process-config.yaml) — Type facets, transitions, branch strategy
+- [Work Item Type Definitions](../../.polyphony-config/work-item-types/) — Epic, Issue, Task definitions
 

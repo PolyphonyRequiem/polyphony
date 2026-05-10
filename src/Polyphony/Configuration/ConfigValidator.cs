@@ -139,20 +139,20 @@ public static class ConfigValidator
                 var slug = ToSlug(typeName);
 
                 // V-9: type definition file
-                var typeDefPath = Path.Combine(repoRoot, ".conductor", "work-item-types", $"{slug}.md");
+                var typeDefPath = Path.Combine(repoRoot, ".polyphony-config", "work-item-types", $"{slug}.md");
                 if (!File.Exists(typeDefPath))
                 {
                     warnings.Add(Warning("V-9",
-                        $"Type definition file missing: .conductor/work-item-types/{slug}.md"));
+                        $"Type definition file missing: .polyphony-config/work-item-types/{slug}.md"));
                 }
 
                 // V-10: template file
-                var templatePath = Path.Combine(repoRoot, ".conductor", "work-item-types", "templates",
+                var templatePath = Path.Combine(repoRoot, ".polyphony-config", "work-item-types", "templates",
                     $"{slug}-template.md");
                 if (!File.Exists(templatePath))
                 {
                     warnings.Add(Warning("V-10",
-                        $"Template file missing: .conductor/work-item-types/templates/{slug}-template.md"));
+                        $"Template file missing: .polyphony-config/work-item-types/templates/{slug}-template.md"));
                 }
             }
 
@@ -160,19 +160,19 @@ public static class ConfigValidator
             foreach (var typeName in config.Types.Keys)
             {
                 var slug = ToSlug(typeName);
-                var guidancePath = Path.Combine(repoRoot, ".conductor", "agent-guidance", $"{slug}.md");
+                var guidancePath = Path.Combine(repoRoot, ".polyphony-config", "agent-guidance", $"{slug}.md");
                 if (!File.Exists(guidancePath))
                 {
                     warnings.Add(Warning("V-11",
-                        $"Agent guidance file missing: .conductor/agent-guidance/{slug}.md"));
+                        $"Agent guidance file missing: .polyphony-config/agent-guidance/{slug}.md"));
                 }
             }
 
             // V-14: profile.yaml
-            if (!File.Exists(Path.Combine(repoRoot, ".conductor", "profile.yaml")))
+            if (!File.Exists(Path.Combine(repoRoot, ".polyphony-config", "profile.yaml")))
             {
                 warnings.Add(Warning("V-14",
-                    "Profile file missing: .conductor/profile.yaml"));
+                    "Profile file missing: .polyphony-config/profile.yaml"));
             }
         }
 

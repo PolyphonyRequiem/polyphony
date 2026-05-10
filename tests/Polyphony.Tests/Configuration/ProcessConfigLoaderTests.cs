@@ -10,7 +10,7 @@ public sealed class ProcessConfigLoaderTests
     public void Load_BasicProcessConfig_ParsesTypes()
     {
         // Arrange — use twig's actual config
-        var configPath = Path.Combine(TestHelpers.FindRepoRoot("twig2"), ".conductor", "process-config.yaml");
+        var configPath = Path.Combine(TestHelpers.FindRepoRoot("twig2"), ".polyphony-config", "process-config.yaml");
 
         if (!File.Exists(configPath))
         {

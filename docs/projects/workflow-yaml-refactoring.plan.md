@@ -22,7 +22,7 @@ The existing `twig-sdlc-full@twig` workflow (registered from `PolyphonyRequiem/t
 
 | Phase | Status | What It Delivered |
 |-------|--------|-------------------|
-| Phase 0: Foundations | ✅ Done | `.conductor/` config, process-config.yaml, work-item-types, P12 principle |
+| Phase 0: Foundations | ✅ Done | `.polyphony-config/` config, process-config.yaml, work-item-types, P12 principle |
 | Phase 1: Polyphony Core Engine | ✅ Done | `route`, `validate`, `hierarchy` commands with full routing engine |
 | Phase 2: Generic Workflow Scripts | ✅ Done | Type-agnostic `detect-state.ps1`, `pg-router.ps1`, `impl-router.ps1`, `scope-closer.ps1`, `load-work-tree.ps1` |
 
@@ -142,7 +142,7 @@ The existing `twig-sdlc-full` workflow hardcodes Epic → Issue → Task hierarc
 | FR3 | Planning sub-workflow handles any plannable level via a single `plan-level.yaml` | §3.2 |
 | FR4 | Planning sub-workflow recursively invokes itself for nested plannable children | §3.2 |
 | FR5 | Planning recursion is capped at 6 levels (C3 depth budget) | §3.2 |
-| FR6 | Planning sub-workflow injects type definition + template from `.conductor/work-item-types/` into architect prompt | §3.2 |
+| FR6 | Planning sub-workflow injects type definition + template from `.polyphony-config/work-item-types/` into architect prompt | §3.2 |
 | FR7 | Implementation sub-workflow supports full parallel PG execution | §3.3 |
 | FR8 | PR lifecycle is delegated to platform-specific sub-workflows | §3.3 |
 | FR9 | Feature PR is created after all PGs merge into the feature branch | §3.4 |
@@ -283,7 +283,7 @@ depth_guard (script: checks depth < max_depth)
   → depth >= max_depth → depth_exceeded_gate (human gate) → $end
   → depth < max_depth →
 
-type_loader (script: reads .conductor/work-item-types/<type>.md and templates/<type>-template.md)
+type_loader (script: reads .polyphony-config/work-item-types/<type>.md and templates/<type>-template.md)
   →
 
 route_check (script: polyphony route --work-item <id>)
@@ -460,7 +460,7 @@ detect-state.ps1 ──→ polyphony route ──→ { phase, action, workspace_
   ├── needs_planning ──→ plan-level.yaml
   │     │
   │     ├── polyphony hierarchy ──→ { type, facets, children }
-  │     ├── .conductor/work-item-types/<type>.md ──→ architect prompt context
+  │     ├── .polyphony-config/work-item-types/<type>.md ──→ architect prompt context
   │     ├── architect agent ──→ .plan.md artifact
   │     ├── seeder agent ──→ ADO work items created
   │     └── recursive: plan-level.yaml for each plannable child
@@ -490,7 +490,7 @@ detect-state.ps1 ──→ polyphony route ──→ { phase, action, workspace_
 | Platform-specific PR sub-workflows | Separate `github-pr.yaml` / `ado-pr.yaml` | Clean interface contract; platform logic is isolated; ADO can be implemented later without touching implementation workflow |
 | Feature PR as separate workflow | `feature-pr.yaml` with remediation loop | Separates PG-level PRs (auto-merge) from feature-level PRs (human review); remediation is a self-contained cycle |
 | Depth guard in `plan-level.yaml` | Script checks `depth < max_depth` + conductor `max_depth` enforcement | Defense in depth: script provides human-readable gate; conductor provides hard limit |
-| Type injection via file loading | Script reads `.conductor/work-item-types/<type>.md` | No type names in YAML; type knowledge is in config files, injected dynamically |
+| Type injection via file loading | Script reads `.polyphony-config/work-item-types/<type>.md` | No type names in YAML; type knowledge is in config files, injected dynamically |
 | Sub-workflow input passing | `input_mapping` with Jinja2 expressions | Enables parent context to flow into child sub-workflows with explicit field mapping; supports dynamic values from script outputs |
 | v2 registry name | `twig-sdlc-v2-full@twig` | Parallel deployment alongside v1; config-presence gated adoption |
 | Workflow location | `twig-conductor-workflows` repo | Follows existing pattern; workflows registered via conductor registry |
@@ -510,7 +510,7 @@ detect-state.ps1 ──→ polyphony route ──→ { phase, action, workspace_
 
 - **Phase 1: Polyphony Core Engine** — ✅ Complete (provides `route`, `validate`, `hierarchy`)
 - **Phase 2: Generic Workflow Scripts** — ✅ Complete (provides `detect-state.ps1`, `pg-router.ps1`, `impl-router.ps1`, `scope-closer.ps1`, `load-work-tree.ps1`)
-- **`.conductor/` config** — ✅ Complete (provides `process-config.yaml`, `work-item-types/`, `templates/`)
+- **`.polyphony-config/` config** — ✅ Complete (provides `process-config.yaml`, `work-item-types/`, `templates/`)
 - **`twig-conductor-workflows` repo** — Existing repo where v2 YAMLs will be added
 
 ### Sequencing Constraints
@@ -607,7 +607,7 @@ This Epic (#2583) is decomposed into 4 Issues, each with concrete Tasks.
 |---------|-------------|-------|--------|
 | 3.2.1 | Create `twig-sdlc-v2-planning.yaml` orchestration workflow with preflight_lite, plan_level sub-workflow invocation, and seed_check | `workflows/twig-sdlc-v2-planning.yaml` | 2h |
 | 3.2.2 | Create `plan-level.yaml` with depth_guard, type_loader, route_check, architect agent, review pipeline, and child_router | `workflows/plan-level.yaml` | 6h |
-| 3.2.3 | Create `scripts/load-type-context.ps1` that reads `.conductor/work-item-types/<type>.md` and `templates/<type>-template.md` for a given work item ID | `scripts/load-type-context.ps1` | 2h |
+| 3.2.3 | Create `scripts/load-type-context.ps1` that reads `.polyphony-config/work-item-types/<type>.md` and `templates/<type>-template.md` for a given work item ID | `scripts/load-type-context.ps1` | 2h |
 | 3.2.4 | Create `scripts/depth-guard.ps1` that validates current recursion depth against max_depth | `scripts/depth-guard.ps1` | 1h |
 | 3.2.5 | Implement self-recursion for child plannable levels: child_router script discovers plannable children via `polyphony hierarchy`, plan-level.yaml invokes itself per child with depth+1 | `workflows/plan-level.yaml` | 3h |
 | 3.2.6 | Add architect agent prompt with type definition injection, user_plan_path support, and decomposition_guidance from process-config.yaml | `workflows/plan-level.yaml` | 2h |
@@ -745,8 +745,8 @@ All four PR groups are self-contained. The work is purely additive (no existing 
 - [Type-Agnostic SDLC Plan](type-agnostic-sdlc.plan.md) — Parent Epic implementation plan with full architecture
 - [Polyphony Core Engine Plan](polyphony-core-engine.plan.md) — Phase 1 implementation (completed)
 - [Conductor Design Principles](../../.github/skills/conductor-design/SKILL.md) — P1-P13 governing workflow design
-- [Process Config](../../.conductor/process-config.yaml) — Type facets, transitions, review policies, branch strategy
-- [Work Item Type Definitions](../../.conductor/work-item-types/) — Epic, Issue, Task semantic definitions
+- [Process Config](../../.polyphony-config/process-config.yaml) — Type facets, transitions, review policies, branch strategy
+- [Work Item Type Definitions](../../.polyphony-config/work-item-types/) — Epic, Issue, Task semantic definitions
 - [twig-conductor-workflows repo](https://github.com/PolyphonyRequiem/twig-conductor-workflows) — Target repo for v2 YAML files
 
 

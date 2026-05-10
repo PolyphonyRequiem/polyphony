@@ -369,7 +369,7 @@ public sealed class ConfigValidatorTests
     {
         var config = SingleTypeConfig("Bug");
         var repoRoot = CreateTempRepoRoot();
-        CreateFile(repoRoot, ".conductor", "work-item-types", "bug.md");
+        CreateFile(repoRoot, ".polyphony-config", "work-item-types", "bug.md");
 
         var result = ConfigValidator.Validate(config, repoRoot);
 
@@ -392,7 +392,7 @@ public sealed class ConfigValidatorTests
     {
         var config = SingleTypeConfig("Bug");
         var repoRoot = CreateTempRepoRoot();
-        CreateFile(repoRoot, ".conductor", "work-item-types", "templates", "bug-template.md");
+        CreateFile(repoRoot, ".polyphony-config", "work-item-types", "templates", "bug-template.md");
 
         var result = ConfigValidator.Validate(config, repoRoot);
 
@@ -408,7 +408,7 @@ public sealed class ConfigValidatorTests
     {
         var config = SingleTypeConfig("Task Group");
         var repoRoot = CreateTempRepoRoot();
-        CreateFile(repoRoot, ".conductor", "work-item-types", "task-group.md");
+        CreateFile(repoRoot, ".polyphony-config", "work-item-types", "task-group.md");
 
         var result = ConfigValidator.Validate(config, repoRoot);
 
@@ -420,7 +420,7 @@ public sealed class ConfigValidatorTests
     {
         var config = SingleTypeConfig("Task Group");
         var repoRoot = CreateTempRepoRoot();
-        CreateFile(repoRoot, ".conductor", "work-item-types", "templates", "task-group-template.md");
+        CreateFile(repoRoot, ".polyphony-config", "work-item-types", "templates", "task-group-template.md");
 
         var result = ConfigValidator.Validate(config, repoRoot);
 
@@ -458,7 +458,7 @@ public sealed class ConfigValidatorTests
         foreach (var type in config.Types.Keys)
         {
             var slug = ConfigValidator.ToSlug(type);
-            var path = Path.Combine(repoRoot, ".conductor", "agent-guidance", $"{slug}.md");
+            var path = Path.Combine(repoRoot, ".polyphony-config", "agent-guidance", $"{slug}.md");
             if (File.Exists(path)) File.Delete(path);
         }
         var result = ConfigValidator.Validate(config, repoRoot);
@@ -476,7 +476,7 @@ public sealed class ConfigValidatorTests
         foreach (var type in config.Types.Keys)
         {
             var slug = ConfigValidator.ToSlug(type);
-            CreateFile(repoRoot, ".conductor", "agent-guidance", $"{slug}.md");
+            CreateFile(repoRoot, ".polyphony-config", "agent-guidance", $"{slug}.md");
         }
         var result = ConfigValidator.Validate(config, repoRoot);
         foreach (var type in config.Types.Keys)
@@ -501,7 +501,7 @@ public sealed class ConfigValidatorTests
     {
         var config = ValidConfig();
         var repoRoot = CreateTempRepoRoot();
-        CreateFile(repoRoot, ".conductor", "profile.yaml");
+        CreateFile(repoRoot, ".polyphony-config", "profile.yaml");
 
         var result = ConfigValidator.Validate(config, repoRoot);
 
@@ -529,10 +529,10 @@ public sealed class ConfigValidatorTests
         var config = SingleTypeConfig("Bug");
         var repoRoot = CreateTempRepoRoot();
 
-        CreateFile(repoRoot, ".conductor", "work-item-types", "bug.md");
-        CreateFile(repoRoot, ".conductor", "work-item-types", "templates", "bug-template.md");
-        CreateFile(repoRoot, ".conductor", "agent-guidance", "bug.md");
-        CreateFile(repoRoot, ".conductor", "profile.yaml");
+        CreateFile(repoRoot, ".polyphony-config", "work-item-types", "bug.md");
+        CreateFile(repoRoot, ".polyphony-config", "work-item-types", "templates", "bug-template.md");
+        CreateFile(repoRoot, ".polyphony-config", "agent-guidance", "bug.md");
+        CreateFile(repoRoot, ".polyphony-config", "profile.yaml");
 
         var result = ConfigValidator.Validate(config, repoRoot);
 
@@ -543,7 +543,7 @@ public sealed class ConfigValidatorTests
         var missingGuidance = result.Warnings.Where(w => w.RuleId == "V-11").Select(w => w.Message).ToList();
         foreach (var slug in expectedGuidanceFiles)
         {
-            missingGuidance.ShouldNotContain($"Agent guidance file missing: .conductor/agent-guidance/{slug}.md");
+            missingGuidance.ShouldNotContain($"Agent guidance file missing: .polyphony-config/agent-guidance/{slug}.md");
         }
     }
 

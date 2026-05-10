@@ -84,7 +84,7 @@ User direction (verbatim, 2026-05-06):
 
 The policy elevation would require:
 
-1. A new domain in `.conductor/policy.yaml` schema (`timeouts`).
+1. A new domain in `.polyphony-config/policy.yaml` schema (`timeouts`).
 2. A new `polyphony policy resolve --domain timeouts --pr-kind X`
    verb wiring + JSON contract test.
 3. A wiring step in each workflow that resolves the cap before the
@@ -106,7 +106,7 @@ churn.
 ## What the policy schema would look like when promoted
 
 ```yaml
-# .conductor/policy.yaml
+# .polyphony-config/policy.yaml
 timeouts:
   review_pending:
     by_pr_kind:

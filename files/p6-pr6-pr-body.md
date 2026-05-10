@@ -48,7 +48,7 @@ fenced block is under the prompt-injection trust boundary.
 ### New CLI verb
 
 ```
-polyphony guidance extract --work-item N [--policy .conductor/policy.yaml]
+polyphony guidance extract --work-item N [--policy .polyphony-config/policy.yaml]
 ```
 
 Output:

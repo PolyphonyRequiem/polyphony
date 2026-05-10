@@ -46,7 +46,7 @@ Two outcomes, delivered together:
   without copying any PowerShell into its own repo. All workflow logic lives
   in the binary.
 
-- **B) Per-consumer policy.** A consumer repo's `.conductor/policy.yaml`
+- **B) Per-consumer policy.** A consumer repo's `.polyphony-config/policy.yaml`
   controls plan-approval behavior, PR review/merge behavior, and concurrency —
   scoped by `root` (the root work item) / `by_type` / `defaults`, with three
   semantically clear modes (`auto` / `manual` / `warning`).
@@ -74,7 +74,7 @@ Existing top-level verbs (`route`, `validate`, `validate-config`, `hierarchy`)
 may move into the `state` group or stay top-level — architect decides in
 Phase 0 (see Open Questions).
 
-**Track B — `.conductor/policy.yaml` config layer**, three resolution scopes
+**Track B — `.polyphony-config/policy.yaml` config layer**, three resolution scopes
 (most-specific wins) and three modes:
 
 | Scope | Applies when |
@@ -92,7 +92,7 @@ Phase 0 (see Open Questions).
 Schema sketch:
 
 ```yaml
-# .conductor/policy.yaml
+# .polyphony-config/policy.yaml
 approvals:
   defaults:
     mode: warning
@@ -246,7 +246,7 @@ before.
 
 - Define the `policy.yaml` schema (see Approach for the sketch; finalize
   schema in this phase).
-- Add `polyphony policy load` — reads `.conductor/policy.yaml` (or
+- Add `polyphony policy load` — reads `.polyphony-config/policy.yaml` (or
   `--input policy=<path>`), validates against schema, emits resolved JSON
   for workflow consumption.
 - Add `polyphony policy resolve --scope <root|type:Issue|default> --domain
@@ -342,7 +342,7 @@ architect to decide rather than rubber-stamp:
 These belong to follow-on Epics. The v1 design must not preclude them.
 
 - **`bootstrap-conductor.ps1` migration.** This script bootstraps
-  `~/.conductor/` for first-time users. Lives at a different layer
+  `~/.polyphony-config/` for first-time users. Lives at a different layer
   (one-time install vs per-run workflow) and has 22 KB of Pester tests.
   Out of scope here — separate decision later about whether and how it
   becomes a verb (`polyphony bootstrap`?).
@@ -373,8 +373,8 @@ These belong to follow-on Epics. The v1 design must not preclude them.
 - A fresh repo (one without polyphony source on disk) can consume
   polyphony as a github registry and run `polyphony-full@polyphony`
   successfully, given only the polyphony binary on PATH and a
-  `.conductor/process-config.yaml`.
-- A `.conductor/policy.yaml` with non-default values materially changes
+  `.polyphony-config/process-config.yaml`.
+- A `.polyphony-config/policy.yaml` with non-default values materially changes
   workflow behavior end-to-end (gate suppression, cap overrides,
   auto-merge thresholds).
 - All existing tests green; new contract tests cover JSON-output parity

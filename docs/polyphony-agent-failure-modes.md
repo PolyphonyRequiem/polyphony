@@ -139,7 +139,7 @@ want auto-mapping by category."*
 
 ## 6. Hand-waving `scope_removed: Removed` as "footgun" without identifying that it'd actually fail at runtime against ADO Basic
 
-**What happened:** I flagged `scope_removed: Removed` in `.conductor/process-config.yaml`
+**What happened:** I flagged `scope_removed: Removed` in `.polyphony-config/process-config.yaml`
 (lines 25, 30, 34) as "feels off" but didn't dig into *why*. The actual problem is
 concrete and verifiable: ADO's Basic process template has only three states — `To Do`,
 `Doing`, `Done` — and no `Removed`. (Reference state set:

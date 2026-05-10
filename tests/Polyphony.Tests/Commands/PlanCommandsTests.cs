@@ -592,7 +592,7 @@ public sealed class PlanCommandsTests : CommandTestBase
 }
 
 /// <summary>
-/// Disposable fixture for a temporary <c>.conductor</c> directory used by
+/// Disposable fixture for a temporary <c>.polyphony-config</c> directory used by
 /// <c>load-type</c> and <c>load-guidance</c> tests.
 /// </summary>
 internal sealed class ConductorDirFixture : IDisposable

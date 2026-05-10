@@ -34,7 +34,7 @@ public sealed class HealthCommand
 
     [Command("health")]
     [VerbResult(typeof(HealthResult))]
-    public int Health(string config = ".conductor/process-config.yaml")
+    public int Health(string config = ".polyphony-config/process-config.yaml")
     {
         var checks = new List<HealthCheckResult>();
 
