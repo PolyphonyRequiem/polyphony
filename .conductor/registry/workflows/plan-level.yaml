@@ -1081,7 +1081,11 @@ agents:
       It does not vote — human review is the merge gate._
       ```
 
-      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
+      {% if guidance_loader is defined and guidance_loader.output.agents.plan_reviewer is defined and guidance_loader.output.agents.plan_reviewer %}
+      ## Repo-Specific Guidance — plan_reviewer (override)
+
+      {{ guidance_loader.output.agents.plan_reviewer }}
+      {% elif guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
       ## Repo-Specific Guidance
 
       {{ guidance_loader.output.reviewer.role }}

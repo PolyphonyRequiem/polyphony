@@ -185,7 +185,11 @@ Create a comprehensive implementation plan for the given work item, using
 type-specific definitions and decomposition guidance to produce a well-structured
 plan that can be reviewed and approved by humans and downstream agents.
 
-{% if guidance_loader.output.architect is defined and guidance_loader.output.architect.role %}
+{% if guidance_loader is defined and guidance_loader.output.agents.architect is defined and guidance_loader.output.agents.architect %}
+## Repo-Specific Guidance — architect (override)
+
+{{ guidance_loader.output.agents.architect }}
+{% elif guidance_loader is defined and guidance_loader.output.architect is defined and guidance_loader.output.architect.role %}
 ## Repo-Specific Guidance
 
 {{ guidance_loader.output.architect.role }}

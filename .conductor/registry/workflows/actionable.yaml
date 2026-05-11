@@ -440,7 +440,11 @@ agents:
       {% if evidence_reviewer is defined %}{{ evidence_reviewer.output.comment }}{% endif %}
       {% endif %}
 
-      {% if guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
+      {% if guidance_loader is defined and guidance_loader.output.agents.actionable_agent is defined and guidance_loader.output.agents.actionable_agent %}
+      ## Repo-Specific Guidance — actionable_agent (override)
+
+      {{ guidance_loader.output.agents.actionable_agent }}
+      {% elif guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
       ## Repo-Specific Guidance
 
       {{ guidance_loader.output.coder.role }}
@@ -679,7 +683,11 @@ agents:
       { "decision": "approve | request_changes | block", "comment": "..." }
       ```
 
-      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
+      {% if guidance_loader is defined and guidance_loader.output.agents.evidence_reviewer is defined and guidance_loader.output.agents.evidence_reviewer %}
+      ## Repo-Specific Guidance — evidence_reviewer (override)
+
+      {{ guidance_loader.output.agents.evidence_reviewer }}
+      {% elif guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
       ## Repo-Specific Guidance
 
       {{ guidance_loader.output.reviewer.role }}

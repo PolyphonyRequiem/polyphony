@@ -167,7 +167,11 @@ agents:
         broken requirements
       - Do NOT request changes for style preferences or minor formatting
 
-      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
+      {% if guidance_loader is defined and guidance_loader.output.agents.pr_reviewer is defined and guidance_loader.output.agents.pr_reviewer %}
+      ## Repo-Specific Guidance — pr_reviewer (override)
+
+      {{ guidance_loader.output.agents.pr_reviewer }}
+      {% elif guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
       ## Repo-Specific Guidance
 
       {{ guidance_loader.output.reviewer.role }}
@@ -319,7 +323,11 @@ agents:
       - Do NOT change unrelated files
       - Every fix must be tested
 
-      {% if guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
+      {% if guidance_loader is defined and guidance_loader.output.agents.pr_fixer is defined and guidance_loader.output.agents.pr_fixer %}
+      ## Repo-Specific Guidance — pr_fixer (override)
+
+      {{ guidance_loader.output.agents.pr_fixer }}
+      {% elif guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
       ## Repo-Specific Guidance
 
       {{ guidance_loader.output.coder.role }}

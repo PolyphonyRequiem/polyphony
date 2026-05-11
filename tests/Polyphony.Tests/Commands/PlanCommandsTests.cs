@@ -418,6 +418,7 @@ public sealed class PlanCommandsTests : CommandTestBase
         result.Architect.TypeRefinement.ShouldBe(string.Empty);
         result.Coder.Role.ShouldBe(string.Empty);
         result.Reviewer.Role.ShouldBe(string.Empty);
+        result.Agents.ShouldBeEmpty();
         result.Error.ShouldBeNull();
     }
 
@@ -494,6 +495,49 @@ public sealed class PlanCommandsTests : CommandTestBase
         var (exitCode, _) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(workItem: RequiredInput.MissingInt));
 
         exitCode.ShouldNotBe(ExitCodes.Success);
+    }
+
+    [Fact]
+    public async Task LoadAgentGuidance_AgentOverrides_LoadedFromAgentsSubdirectory()
+    {
+        // agents/<name>.md files are loaded into result.Agents keyed by basename.
+        using var fx = new ConductorDirFixture();
+        fx.WriteAgentGuidance("reviewer", "Reviewer role-wide.");
+        fx.WriteAgentOverride("pr_reviewer", "PR-reviewer override.");
+        fx.WriteAgentOverride("scope_reviewer", "Scope-reviewer override.");
+
+        var item = new WorkItemBuilder().WithId(710).WithType("Issue").WithTitle("X").WithState("New").Build();
+        await SeedAsync(item);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(710, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult);
+        result.ShouldNotBeNull();
+        result.Reviewer.Role.ShouldBe("Reviewer role-wide.");
+        result.Agents.Count.ShouldBe(2);
+        result.Agents["pr_reviewer"].ShouldBe("PR-reviewer override.");
+        result.Agents["scope_reviewer"].ShouldBe("Scope-reviewer override.");
+    }
+
+    [Fact]
+    public async Task LoadAgentGuidance_NoAgentsSubdirectory_ReturnsEmptyAgentsDict()
+    {
+        // Missing agents/ directory must NOT error — graceful degradation.
+        using var fx = new ConductorDirFixture();
+        fx.WriteAgentGuidance("reviewer", "Reviewer role-wide.");
+
+        var item = new WorkItemBuilder().WithId(711).WithType("Issue").WithTitle("X").WithState("New").Build();
+        await SeedAsync(item);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(711, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult);
+        result.ShouldNotBeNull();
+        result.Agents.ShouldBeEmpty();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -690,6 +734,13 @@ internal sealed class ConductorDirFixture : IDisposable
 
     public void WriteRawGuidanceFile(string fileName, string content) =>
         File.WriteAllText(Path.Combine(ConfigDir, "agent-guidance", fileName), content);
+
+    public void WriteAgentOverride(string agentName, string content)
+    {
+        var dir = Path.Combine(ConfigDir, "agent-guidance", "agents");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, $"{agentName}.md"), content);
+    }
 
     public void Dispose()
     {

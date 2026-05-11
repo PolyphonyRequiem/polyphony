@@ -379,7 +379,11 @@ agents:
       {{ scope_reviewer.output.feedback }}
       {% endif %}
 
-      {% if guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
+      {% if guidance_loader is defined and guidance_loader.output.agents.coder is defined and guidance_loader.output.agents.coder %}
+      ## Repo-Specific Guidance — coder (override)
+
+      {{ guidance_loader.output.agents.coder }}
+      {% elif guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
       ## Repo-Specific Guidance
 
       {{ guidance_loader.output.coder.role }}
@@ -492,7 +496,11 @@ agents:
       - **Request changes** only for substantive issues (bugs, missing requirements, no tests).
       - Do NOT request changes for style preferences or minor nits.
 
-      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
+      {% if guidance_loader is defined and guidance_loader.output.agents.primary_reviewer is defined and guidance_loader.output.agents.primary_reviewer %}
+      ## Repo-Specific Guidance — primary_reviewer (override)
+
+      {{ guidance_loader.output.agents.primary_reviewer }}
+      {% elif guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
       ## Repo-Specific Guidance
 
       {{ guidance_loader.output.reviewer.role }}
@@ -806,7 +814,11 @@ agents:
       }
       ```
 
-      {% if scope_guidance_loader is defined and scope_guidance_loader.output.reviewer is defined and scope_guidance_loader.output.reviewer.role %}
+      {% if scope_guidance_loader is defined and scope_guidance_loader.output.agents.scope_reviewer is defined and scope_guidance_loader.output.agents.scope_reviewer %}
+      ## Repo-Specific Guidance — scope_reviewer (override)
+
+      {{ scope_guidance_loader.output.agents.scope_reviewer }}
+      {% elif scope_guidance_loader is defined and scope_guidance_loader.output.reviewer is defined and scope_guidance_loader.output.reviewer.role %}
       ## Repo-Specific Guidance
 
       {{ scope_guidance_loader.output.reviewer.role }}

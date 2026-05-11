@@ -164,7 +164,11 @@ agents:
       - Focus on the hierarchy under work item {{ workflow.input.work_item_id }} only
       - If no observations are warranted, return an empty observations array
 
-      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
+      {% if guidance_loader is defined and guidance_loader.output.agents.close_out is defined and guidance_loader.output.agents.close_out %}
+      ## Repo-Specific Guidance — close_out (override)
+
+      {{ guidance_loader.output.agents.close_out }}
+      {% elif guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
       ## Repo-Specific Guidance
 
       {{ guidance_loader.output.reviewer.role }}
