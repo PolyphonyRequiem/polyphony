@@ -581,6 +581,73 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
+    public async Task SeedChildren_TwigReturnsOnlyMessageField_RecoversFromMessageFallback()
+    {
+        // AB#3075 dogfood (2026-05-11): twig new returned ONLY a message
+        // field — no id, no url. The work items WERE created in ADO; we
+        // just couldn't tell because the JSON had nothing structured.
+        // Recovery: parse "Created #NNNN" out of the message text.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 100);
+        runner.WhenStartsWith("twig", new[] { "new" },
+            new ProcessResult(0,
+                """{"message":"Created #3080 Archivist agent + decision schema (Task)"}""",
+                ""));
+        StubShowParent(runner, 100, tagsField: "");
+        StubPatchOk(runner);
+
+        var children = """[{"child_id":"task-1","title":"Archivist agent + decision schema","type":"Task","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(0);
+        result.SeededCount.ShouldBe(1);
+        result.SeededItems[0].WorkItemId.ShouldBe(3080);
+        result.Warnings.Count.ShouldBe(1);
+        result.Warnings[0].ShouldContain("recovered id by parsing 'Created #N'");
+    }
+
+    [Fact]
+    public void ExtractCreatedId_OnlyMessageField_ParsesIdFromCreatedHash()
+    {
+        // Real payload from AB#3075 dogfood (2026-05-11).
+        var node = System.Text.Json.Nodes.JsonNode.Parse(
+            """{"message":"Created #3080 Archivist agent + decision schema (Task)"}""")!;
+        var id = PlanCommands.ExtractCreatedId(node, out var source);
+        id.ShouldBe(3080);
+        source.ShouldBe("message");
+    }
+
+    [Theory]
+    [InlineData("Created #42 Foo", 42)]
+    [InlineData("Created #999 something with (Task)", 999)]
+    [InlineData("Already exists #42", 0)]                  // wrong verb — must not match
+    [InlineData("Created task #42", 0)]                    // missing the literal "Created #"
+    [InlineData("created #42 lowercase", 42)]              // \b ensures word boundary; \s+ matches single space
+    [InlineData("", 0)]
+    public void ExtractCreatedId_MessageVariants(string message, int expected)
+    {
+        var encoded = JsonSerializer.Serialize(message);
+        var node = System.Text.Json.Nodes.JsonNode.Parse($$"""{"message":{{encoded}}}""")!;
+        var id = PlanCommands.ExtractCreatedId(node, out var source);
+        id.ShouldBe(expected);
+        source.ShouldBe(expected == 0 ? "none" : "message");
+    }
+
+    [Fact]
+    public void ExtractCreatedId_StructuredIdWinsOverMessage()
+    {
+        // If twig returns BOTH a structured id AND a created-message, the
+        // structured id takes precedence (regression guard).
+        var node = System.Text.Json.Nodes.JsonNode.Parse(
+            """{"id":7777,"message":"Created #3080 Foo (Task)"}""")!;
+        var id = PlanCommands.ExtractCreatedId(node, out var source);
+        id.ShouldBe(7777);
+        source.ShouldBe("id");
+    }
+
+    [Fact]
     public void TruncateForError_ShortString_ReturnedAsIs()
     {
         PlanCommands.TruncateForError("hello").ShouldBe("hello");

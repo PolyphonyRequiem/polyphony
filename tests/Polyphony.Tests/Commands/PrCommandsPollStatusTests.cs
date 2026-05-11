@@ -713,22 +713,231 @@ public sealed class PrCommandsPollStatusTests : CommandTestBase
     }
 
     [Fact]
-    public async Task PollStatus_MagicApprove_AppendsDeprecationWarning()
+    public async Task PollStatus_MagicApprove_BareForm_AppendsDeprecationWarning()
     {
-        // Magic-approve still works as a fallback (single-author convenience)
-        // but emits a deprecation warning so authors know to use native
-        // approve going forward.
+        // Bare polyphony:approve still works as a fallback (single-author
+        // convenience) but emits a deprecation warning recommending the
+        // SHA-bound canonical form (which self-invalidates on new commits).
+        // The warning must include the current head SHA so the user can
+        // copy-paste the canonical form.
         var (cmd, runner) = CreateCommand();
         var comments = $"[{Comment("dangreen", "polyphony:approve", "2026-05-08T19:00:00Z")}]";
         StubGhPrView(runner, "owner/repo", 42,
             PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: "deadbeef1234567890abcdef1234567890abcdef",
                 authorLogin: "dangreen",
                 commentsJson: comments));
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
         var result = Parse(output);
         result.State.ShouldBe("approved");
+        result.Reviewers.ShouldContain(r =>
+            r.Identity == "dangreen" && r.Vote == "approved" && r.Source == "magic_comment");
         result.Warnings.ShouldNotBeNull();
         result.Warnings.ShouldContain(w => w.Contains("polyphony:approve", StringComparison.OrdinalIgnoreCase));
+        // Warning surfaces the current head SHA so the user can paste the canonical form.
+        result.Warnings.ShouldContain(w => w.Contains("deadbeef1234567890abcdef1234567890abcdef", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // ----------------------------------------------------------------------
+    // SHA-bound magic approve (canonical form, replaces bare-form fallback)
+    //
+    // Recognized: `polyphony:approve <head-sha>` from the PR author. The
+    // SHA pins approval to a specific commit; any new commit silently
+    // invalidates the old comment without timestamp comparison. Accepts
+    // the conventional 7-char short form through the canonical 40-char
+    // form (case-insensitive).
+    //
+    // Stale SHA-bound comments (SHA does NOT match current head) are
+    // ignored entirely — the structural self-invalidation rule. The
+    // user's old approval doesn't follow them onto a new commit.
+    //
+    // The SHA-bound form does NOT emit a deprecation warning. Only the
+    // bare form does.
+    // ----------------------------------------------------------------------
+
+    private const string CanonicalHeadSha = "deadbeef1234567890abcdef1234567890abcdef";
+
+    [Fact]
+    public async Task PollStatus_MagicApprove_ShaBoundMatch_FullSha_ApprovedNoWarning()
+    {
+        var (cmd, runner) = CreateCommand();
+        var comments = $"[{Comment("dangreen", $"polyphony:approve {CanonicalHeadSha}", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+        result.Reviewers.ShouldContain(r =>
+            r.Identity == "dangreen" && r.Vote == "approved" && r.Source == "magic_comment_sha_bound");
+        // Canonical form must NOT emit the deprecation warning.
+        if (result.Warnings is not null)
+        {
+            result.Warnings.ShouldNotContain(w => w.Contains("polyphony:approve", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicApprove_ShaBoundMatch_ShortSha7Char_ApprovedNoWarning()
+    {
+        // 7-char prefix matches the canonical 40-char head SHA.
+        var (cmd, runner) = CreateCommand();
+        var shortSha = CanonicalHeadSha.Substring(0, 7);
+        var comments = $"[{Comment("dangreen", $"polyphony:approve {shortSha}", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+        result.Reviewers.ShouldContain(r => r.Source == "magic_comment_sha_bound");
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicApprove_ShaBoundMatch_CaseInsensitive_Approved()
+    {
+        var (cmd, runner) = CreateCommand();
+        var upperSha = CanonicalHeadSha.ToUpperInvariant();
+        var comments = $"[{Comment("dangreen", $"polyphony:approve {upperSha}", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+        result.Reviewers.ShouldContain(r => r.Source == "magic_comment_sha_bound");
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicApprove_ShaBoundStale_Ignored()
+    {
+        // Author approved an OLD commit, then a new commit landed. The
+        // stale SHA-bound comment must NOT propagate to the new commit —
+        // structural self-invalidation. State stays pending.
+        var (cmd, runner) = CreateCommand();
+        var staleSha = "1111111111111111111111111111111111111111";
+        var comments = $"[{Comment("dangreen", $"polyphony:approve {staleSha}", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("pending");
+        result.Reviewers.ShouldNotContain(r =>
+            r.Source == "magic_comment" || r.Source == "magic_comment_sha_bound");
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicApprove_BareThenShaBoundMatch_NoWarning()
+    {
+        // Author posted bare approve earlier, then the canonical SHA-bound
+        // form. The newer SHA-bound wins; no deprecation warning.
+        var (cmd, runner) = CreateCommand();
+        var comments = $$"""
+            [
+              {{Comment("dangreen", "polyphony:approve", "2026-05-08T19:00:00Z")}},
+              {{Comment("dangreen", $"polyphony:approve {CanonicalHeadSha}", "2026-05-08T20:00:00Z")}}
+            ]
+            """;
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+        result.Reviewers.ShouldContain(r => r.Source == "magic_comment_sha_bound");
+        if (result.Warnings is not null)
+        {
+            result.Warnings.ShouldNotContain(w => w.Contains("polyphony:approve", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicApprove_ShaBoundMatchThenBare_BareWinsWithWarning()
+    {
+        // Author posted SHA-bound earlier, then bare later. The newer bare
+        // form wins (most-recent-wins) and triggers the deprecation warning.
+        var (cmd, runner) = CreateCommand();
+        var comments = $$"""
+            [
+              {{Comment("dangreen", $"polyphony:approve {CanonicalHeadSha}", "2026-05-08T19:00:00Z")}},
+              {{Comment("dangreen", "polyphony:approve",                     "2026-05-08T20:00:00Z")}}
+            ]
+            """;
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+        result.Reviewers.ShouldContain(r => r.Source == "magic_comment");
+        result.Warnings.ShouldNotBeNull();
+        result.Warnings.ShouldContain(w => w.Contains("polyphony:approve", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicApprove_ShaBoundStalePlusBare_BareWinsWithWarning()
+    {
+        // Stale SHA-bound is silently ignored, but the bare form still
+        // counts as approval. Warning is emitted (bare contributed).
+        var (cmd, runner) = CreateCommand();
+        var staleSha = "1111111111111111111111111111111111111111";
+        var comments = $$"""
+            [
+              {{Comment("dangreen", $"polyphony:approve {staleSha}",  "2026-05-08T19:00:00Z")}},
+              {{Comment("dangreen", "polyphony:approve",              "2026-05-08T20:00:00Z")}}
+            ]
+            """;
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+        result.Reviewers.ShouldContain(r => r.Source == "magic_comment");
+        result.Warnings.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicApprove_ShaBoundFromNonAuthor_Ignored()
+    {
+        // SHA-bound from someone other than the PR author is ignored —
+        // single-author rule still applies. Non-authors should leave a
+        // native review.
+        var (cmd, runner) = CreateCommand();
+        var comments = $"[{Comment("alice", $"polyphony:approve {CanonicalHeadSha}", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("pending");
+        result.Reviewers.ShouldNotContain(r =>
+            r.Source == "magic_comment" || r.Source == "magic_comment_sha_bound");
     }
 }

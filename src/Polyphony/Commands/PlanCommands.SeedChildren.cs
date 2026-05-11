@@ -41,13 +41,23 @@ public sealed partial class PlanCommands
     private static readonly Regex EditUrlIdRegex =
         new(@"/edit/(\d+)(?:[/?#]|$)", RegexOptions.Compiled);
 
+    // Pattern: twig new -o json sometimes returns ONLY a `message` field
+    // (e.g. `{"message":"Created #3080 Foo (Task)"}`) with no structured
+    // `id` or `url`. We extract the `#NNNN` from the message text as a
+    // last-resort fallback so the seeder doesn't fail in this case.
+    // Observed in dogfood AB#3075 (2026-05-11) — the items were created
+    // in ADO but the JSON had no machine-readable id field.
+    private static readonly Regex MessageCreatedIdRegex =
+        new(@"\bCreated\s+#(\d+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>
     /// Extract the new work-item id from a <c>twig new -o json</c> response.
     /// Tries the structured <c>id</c> field first; falls back to parsing the
-    /// id out of the <c>url</c> field when <c>id</c> is missing or zero.
-    /// Returns 0 only when both paths fail. <paramref name="source"/> is set
-    /// to <c>"id"</c>, <c>"url"</c>, or <c>"none"</c> so the caller can
-    /// surface a warning when the fallback path fired.
+    /// id out of the <c>url</c> field; falls back again to parsing
+    /// <c>"Created #NNNN"</c> out of the <c>message</c> field. Returns 0
+    /// only when all three paths fail. <paramref name="source"/> is set to
+    /// <c>"id"</c>, <c>"url"</c>, <c>"message"</c>, or <c>"none"</c> so
+    /// the caller can surface a warning when a fallback path fired.
     /// </summary>
     internal static int ExtractCreatedId(JsonNode created, out string source)
     {
@@ -76,7 +86,7 @@ public sealed partial class PlanCommands
             }
         }
 
-        // Fallback: parse the work-item id out of the url field.
+        // Fallback 1: parse the work-item id out of the url field.
         var url = created["url"]?.GetValue<string>();
         if (!string.IsNullOrEmpty(url))
         {
@@ -85,6 +95,21 @@ public sealed partial class PlanCommands
             {
                 source = "url";
                 return urlId;
+            }
+        }
+
+        // Fallback 2: parse "Created #NNNN" out of the message field.
+        // Some twig code paths emit only a human-readable message and no
+        // structured id/url (observed AB#3075 dogfood). The work item was
+        // genuinely created on ADO; we just need the id.
+        var message = created["message"]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(message))
+        {
+            var match = MessageCreatedIdRegex.Match(message);
+            if (match.Success && int.TryParse(match.Groups[1].Value, out var msgId) && msgId > 0)
+            {
+                source = "message";
+                return msgId;
             }
         }
 
@@ -267,7 +292,7 @@ public sealed partial class PlanCommands
                     {
                         ChildId = childId,
                         Title = title,
-                        Error = $"twig new returned no usable id (id field and url fallback both failed); raw payload: {snippet}",
+                        Error = $"twig new returned no usable id (id field, url fallback, and message-text fallback all failed); raw payload: {snippet}",
                     });
                     continue;
                 }
@@ -276,6 +301,14 @@ public sealed partial class PlanCommands
                     // Recovered via url fallback — flag it so we know the upstream
                     // twig race is still happening and we shouldn't quietly forget.
                     warnings.Add($"child {childId} → #{newId}: twig new returned id=0 in JSON; recovered id from url field (likely twig fetch-back race in NewCommand.cs)");
+                }
+                else if (idSource == "message")
+                {
+                    // Recovered via message-text fallback — twig returned only a
+                    // human-readable "Created #NNNN" line with no structured id
+                    // or url. Less reliable than the url fallback (depends on
+                    // twig's message phrasing) but better than failing closed.
+                    warnings.Add($"child {childId} → #{newId}: twig new returned only a 'message' field; recovered id by parsing 'Created #N' (observed AB#3075 dogfood)");
                 }
                 seeded.Add(new SeedReconciliation { ChildId = childId, WorkItemId = newId, MatchedBy = "created" });
             }

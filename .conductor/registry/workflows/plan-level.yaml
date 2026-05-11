@@ -1303,10 +1303,16 @@ agents:
       return here and click **Continue**.
 
       **GitHub note:** if you opened the PR yourself, GitHub blocks
-      self-approval. Post a top-level comment containing
-      `polyphony:approve` (or `polyphony:request-changes`) on the PR
-      instead — `polyphony pr poll-status` recognizes these as your
-      vote. See issue #207 for context.
+      self-approval. Post a top-level comment containing exactly:
+
+          polyphony:approve {{ poll_status.output.head_sha if (poll_status is defined and poll_status.output.head_sha is defined) else "<head-sha>" }}
+
+      The SHA pins the approval to this specific commit, so any new push
+      automatically invalidates it (no review-loop bug). A bare
+      `polyphony:approve` (no SHA) still works as a deprecation fallback
+      but emits a warning. `polyphony:request-changes` is no longer
+      recognized — leave a review thread to block merge instead. See
+      issue #207 for context.
 
       ---
 
