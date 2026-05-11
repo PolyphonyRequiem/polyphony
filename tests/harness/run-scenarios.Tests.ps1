@@ -54,7 +54,7 @@ BeforeAll {
     }
 }
 
-Describe 'polyphony harness scenarios' {
+Describe 'polyphony harness scenarios' -Tag 'Integration' {
     It 'has at least one discoverable scenario' -ForEach @(@{ Count = $scenarioDirs.Count }) {
         $Count | Should -BeGreaterThan 0
     }

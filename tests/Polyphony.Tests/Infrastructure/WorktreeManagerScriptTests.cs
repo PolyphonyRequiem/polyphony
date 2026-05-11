@@ -21,6 +21,7 @@ namespace Polyphony.Tests.Infrastructure;
 /// Tests are skipped when <c>pwsh</c> is not on PATH (e.g., on a CI
 /// runner without PowerShell 7).
 /// </remarks>
+[Trait("Category", "Slow")] // see #286 — forks pwsh per test
 public sealed class WorktreeManagerScriptTests
 {
     private static readonly string ScriptPath = Path.GetFullPath(

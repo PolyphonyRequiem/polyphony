@@ -12,6 +12,7 @@ namespace Polyphony.Tests.Routing;
 /// Validates that lifecycle event transitions route correctly across
 /// Basic, Agile, Scrum, and CMMI process templates.
 /// </summary>
+[Trait("Category", "Slow")] // see #286 — forks polyphony.exe per test
 public sealed class CrossProcessTransitionValidatorTests
 {
     /// <summary>

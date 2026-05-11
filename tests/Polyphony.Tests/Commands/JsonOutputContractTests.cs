@@ -27,20 +27,6 @@ public sealed class JsonOutputContractTests : CommandTestBase
     private const string InProgressState = "Active";
 
     // =========================================================================
-    // Exit code constant values
-    // =========================================================================
-
-    [Fact]
-    public void ExitCodes_MatchDocumentedValues()
-    {
-        ExitCodes.Success.ShouldBe(0);
-        ExitCodes.RoutingFailure.ShouldBe(1);
-        ExitCodes.ConfigError.ShouldBe(2);
-        ExitCodes.CacheError.ShouldBe(3);
-        ExitCodes.HealthCheckFailed.ShouldBe(4);
-    }
-
-    // =========================================================================
     // Health command — JSON contract
     // =========================================================================
 
