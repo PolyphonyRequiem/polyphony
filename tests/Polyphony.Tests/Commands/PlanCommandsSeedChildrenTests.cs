@@ -661,4 +661,187 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         truncated.Length.ShouldBe(501); // 500 chars + 1-char ellipsis
         truncated.ShouldEndWith("…");
     }
+
+    // ---- Type template merge (B option) ----
+    //
+    // When a child type's template exists at
+    // `{configDir}/work-item-types/templates/{typeslug}-template.md`, the
+    // seeder uses it as the description scaffold and slots architect content
+    // into known sections (first narrative section's placeholder body for the
+    // free-form description, `## Acceptance Criteria` placeholders for AC
+    // items). Other template placeholders pass through as TODOs for the
+    // implementer. Without a template, the legacy verbatim+AC behaviour
+    // stands.
+    //
+    // AB#3077 (2026-05-11) was the motivating dogfood — child Issues had
+    // brief unstructured descriptions despite issue-template.md existing.
+
+    private static string WriteTempTemplate(string typeSlug, string templateBody)
+    {
+        var configDir = Path.Combine(Path.GetTempPath(), $"polyphony-tmpl-{Guid.NewGuid():N}");
+        var templateDir = Path.Combine(configDir, "work-item-types", "templates");
+        Directory.CreateDirectory(templateDir);
+        File.WriteAllText(Path.Combine(templateDir, $"{typeSlug}-template.md"), templateBody);
+        return configDir;
+    }
+
+    [Fact]
+    public async Task SeedChildren_TemplateExists_AppliesScaffoldAndSlotsArchitectContent()
+    {
+        var configDir = WriteTempTemplate("task", string.Join("\n", new[]
+        {
+            "## What to Change",
+            "<Specific files, classes, methods to modify.>",
+            "",
+            "## How to Change",
+            "<Implementation approach.>",
+            "",
+            "## Acceptance Criteria",
+            "- [ ] <Task-specific criterion>",
+            "- [ ] Build passes with zero errors and warnings",
+            "- [ ] Relevant tests pass",
+            "",
+            "## Context (optional)",
+            "<Dependencies, gotchas, related code paths.>",
+        }));
+
+        try
+        {
+            var (cmd, runner) = CreateCommand();
+            StubShowTreeNoChildren(runner, 100);
+            StubCreateChild(runner, newId: 555);
+            StubShowParent(runner, 100, tagsField: "");
+            StubPatchOk(runner);
+
+            var children = """[{"child_id":"task-1","title":"X","type":"Task","description":"Wire up the foo module to the bar pipeline.","acceptance_criteria":["Foo emits BarEvent","Bar accepts FooEvent"]}]""";
+            var (exit, _) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(100, children, "polyphony:planned", "", configDir));
+            exit.ShouldBe(ExitCodes.Success);
+
+            var createCall = runner.Invocations.First(i => i.Executable == "twig" && i.Arguments.Contains("new"));
+            var descIdx = createCall.Arguments.ToList().IndexOf("--description");
+            var desc = createCall.Arguments[descIdx + 1];
+
+            // Template scaffold preserved.
+            desc.ShouldContain("## What to Change");
+            desc.ShouldContain("## How to Change");
+            desc.ShouldContain("## Acceptance Criteria");
+            desc.ShouldContain("## Context (optional)");
+
+            // Architect's free-form description slotted into first narrative section.
+            desc.ShouldContain("Wire up the foo module to the bar pipeline.");
+            desc.ShouldNotContain("<Specific files, classes, methods to modify.>");
+
+            // Architect's AC items rendered as checkboxes.
+            desc.ShouldContain("- [ ] Foo emits BarEvent");
+            desc.ShouldContain("- [ ] Bar accepts FooEvent");
+            // Placeholder AC item dropped.
+            desc.ShouldNotContain("<Task-specific criterion>");
+            // Hardcoded template AC items preserved.
+            desc.ShouldContain("- [ ] Build passes with zero errors and warnings");
+            desc.ShouldContain("- [ ] Relevant tests pass");
+
+            // Other placeholders remain as TODOs for the implementer.
+            desc.ShouldContain("<Implementation approach.>");
+            desc.ShouldContain("<Dependencies, gotchas, related code paths.>");
+
+            // Marker still at the bottom.
+            desc.ShouldEndWith("<!-- polyphony:plan-child-id=task-1 -->");
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(Path.Combine(configDir, "work-item-types", "templates", "task-template.md"))))!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_NoTemplateForType_FallsBackToVerbatimDescription()
+    {
+        // No templates directory exists — legacy behaviour: architect's
+        // description verbatim, AC as plain bullets (not checkboxes), marker.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 100);
+        StubCreateChild(runner, newId: 555);
+        StubShowParent(runner, 100, tagsField: "");
+        StubPatchOk(runner);
+
+        // Point configDir at a non-existent path so the template lookup misses.
+        var nonexistentConfig = Path.Combine(Path.GetTempPath(), $"polyphony-no-tmpl-{Guid.NewGuid():N}");
+        var children = """[{"child_id":"task-1","title":"X","type":"Task","description":"Body.","acceptance_criteria":["AC one"]}]""";
+        var (exit, _) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(100, children, "polyphony:planned", "", nonexistentConfig));
+        exit.ShouldBe(ExitCodes.Success);
+
+        var createCall = runner.Invocations.First(i => i.Executable == "twig" && i.Arguments.Contains("new"));
+        var descIdx = createCall.Arguments.ToList().IndexOf("--description");
+        var desc = createCall.Arguments[descIdx + 1];
+
+        desc.ShouldStartWith("Body.");
+        desc.ShouldContain("## Acceptance Criteria");
+        // No-template path uses plain `- ` bullets, not `- [ ]` checkboxes.
+        desc.ShouldContain("- AC one");
+        desc.ShouldNotContain("- [ ]");
+        desc.ShouldEndWith("<!-- polyphony:plan-child-id=task-1 -->");
+    }
+
+    [Fact]
+    public void ApplyTypeTemplate_NoNarrativePlaceholder_PrependsArchitectNotes()
+    {
+        // Template has been hand-edited to remove the `<...>` placeholder
+        // bodies. Architect content must NOT be silently dropped — falls
+        // back to prepending an Architect Notes section.
+        var template = "## Pre-filled Section\nThis was filled by the template author.\n\n## Acceptance Criteria\n- [ ] <criterion>\n";
+        var result = PlanCommands.ApplyTypeTemplate(template, "Architect's intent here.", new[] { "AC" });
+        result.ShouldStartWith("## Architect Notes");
+        result.ShouldContain("Architect's intent here.");
+        result.ShouldContain("## Pre-filled Section");
+        result.ShouldContain("- [ ] AC");
+    }
+
+    [Fact]
+    public void ApplyTypeTemplate_NoAcSection_AppendsAcAtBottom()
+    {
+        // Template has no `## Acceptance Criteria` heading at all (rare —
+        // task-template / issue-template both have one, but defensive).
+        var template = "## What to Change\n<placeholder>\n";
+        var result = PlanCommands.ApplyTypeTemplate(template, "body", new[] { "AC1", "AC2" });
+        result.ShouldContain("body");
+        result.ShouldContain("## Acceptance Criteria");
+        result.ShouldContain("- [ ] AC1");
+        result.ShouldContain("- [ ] AC2");
+    }
+
+    [Fact]
+    public void ApplyTypeTemplate_EmptyArchitectBody_KeepsTemplatePlaceholders()
+    {
+        // Defensive: architect emitted no description. Template placeholders
+        // should remain intact (as TODOs); no spurious "Architect Notes"
+        // section gets prepended for an empty body.
+        var template = "## Section\n<placeholder>\n\n## Acceptance Criteria\n- [ ] <crit>\n";
+        var result = PlanCommands.ApplyTypeTemplate(template, "", new[] { "AC" });
+        result.ShouldContain("<placeholder>");
+        result.ShouldNotContain("## Architect Notes");
+        result.ShouldContain("- [ ] AC");
+    }
+
+    [Fact]
+    public void TryLoadTypeTemplate_PathTraversal_AndCaseInsensitiveSlug()
+    {
+        // Slug = lowercase + whitespace-to-dash. "User Story" → "user-story".
+        // Verify slug derivation matches the load-type SlugifyType behaviour
+        // so they look up the same file.
+        var configDir = WriteTempTemplate("user-story", "## Test\n<x>\n");
+        try
+        {
+            PlanCommands.TryLoadTypeTemplate(configDir, "User Story").ShouldNotBeNull();
+            PlanCommands.TryLoadTypeTemplate(configDir, "user story").ShouldNotBeNull();
+            PlanCommands.TryLoadTypeTemplate(configDir, "USER STORY").ShouldNotBeNull();
+            PlanCommands.TryLoadTypeTemplate(configDir, "Bug").ShouldBeNull();
+            PlanCommands.TryLoadTypeTemplate(configDir, "").ShouldBeNull();
+        }
+        finally
+        {
+            Directory.Delete(configDir, recursive: true);
+        }
+    }
 }

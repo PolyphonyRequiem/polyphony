@@ -139,6 +139,14 @@ public sealed partial class PlanCommands
     /// defaults to <c>plans/plan-{workItem}.md</c> relative to cwd. Missing
     /// file is treated as "no front-matter declared" and behaviour is
     /// unchanged.</param>
+    /// <param name="configDir">Polyphony config directory containing
+    /// <c>work-item-types/templates/&lt;typeslug&gt;-template.md</c> files.
+    /// When a template exists for the child's type, it's applied as the
+    /// description scaffold (architect's free-form description fills the
+    /// first narrative section; architect's <c>acceptance_criteria</c> fill
+    /// the AC section; other template placeholders pass through as TODOs
+    /// for the implementer). When no template exists, the previous
+    /// behaviour stands (architect's description verbatim + AC + marker).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("seed-children")]
     [VerbResult(typeof(PlanSeedChildrenResult))]
@@ -147,6 +155,7 @@ public sealed partial class PlanCommands
         string childrenJson = "",
         string plannedTag = "polyphony:planned",
         string planFile = "",
+        string configDir = ".polyphony-config",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan seed-children",
@@ -275,7 +284,7 @@ public sealed partial class PlanCommands
                     continue;
                 }
 
-                var description = BuildDescription(child, childId);
+                var description = BuildDescription(child, childId, configDir);
                 var created = await twig.CreateChildAsync(workItem, type, title, description, ct).ConfigureAwait(false);
                 var newId = ExtractCreatedId(created, out var idSource);
                 if (newId == 0)
@@ -472,24 +481,197 @@ public sealed partial class PlanCommands
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    private static string BuildDescription(JsonObject child, string childId)
+    private static string BuildDescription(JsonObject child, string childId, string configDir)
     {
         var body = child["description"]?.GetValue<string>()?.TrimEnd() ?? "";
-        var sb = new System.Text.StringBuilder(body);
+        var ac = child["acceptance_criteria"] is JsonArray acArr
+            ? acArr.Select(c => c?.GetValue<string>() ?? "")
+                   .Where(s => !string.IsNullOrWhiteSpace(s))
+                   .ToList()
+            : new List<string>();
 
-        if (child["acceptance_criteria"] is JsonArray ac && ac.Count > 0)
+        var type = child["type"]?.GetValue<string>() ?? "";
+        var template = TryLoadTypeTemplate(configDir, type);
+
+        var content = template is null
+            ? RenderWithoutTemplate(body, ac)
+            : ApplyTypeTemplate(template, body, ac);
+
+        return content + "\n\n<!-- polyphony:plan-child-id=" + childId + " -->";
+    }
+
+    private static string RenderWithoutTemplate(string body, IReadOnlyList<string> ac)
+    {
+        var sb = new System.Text.StringBuilder(body);
+        if (ac.Count > 0)
         {
             sb.Append("\n\n## Acceptance Criteria\n");
-            foreach (var criterion in ac)
-            {
-                sb.Append("- ").Append(criterion?.GetValue<string>() ?? "").Append('\n');
-            }
-            // Trim the trailing newline added by the last "- ...\n" so we don't double-blank-line the marker.
+            foreach (var c in ac) sb.Append("- ").Append(c).Append('\n');
             if (sb.Length > 0 && sb[^1] == '\n') sb.Length--;
         }
-
-        sb.Append("\n\n<!-- polyphony:plan-child-id=").Append(childId).Append(" -->");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Read <c>{configDir}/work-item-types/templates/{typeslug}-template.md</c>
+    /// if present. Returns <c>null</c> when the directory is absent, the file
+    /// does not exist, or any IO error occurs — the seeder degrades to the
+    /// no-template behaviour rather than failing the whole seed.
+    /// </summary>
+    internal static string? TryLoadTypeTemplate(string configDir, string typeName)
+    {
+        if (string.IsNullOrWhiteSpace(typeName) || string.IsNullOrWhiteSpace(configDir))
+            return null;
+        var slug = SlugifyTypeForTemplate(typeName);
+        var path = Path.Combine(configDir, "work-item-types", "templates", $"{slug}-template.md");
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    private static string SlugifyTypeForTemplate(string typeName)
+        => Regex.Replace(typeName.ToLowerInvariant(), @"\s+", "-");
+
+    /// <summary>
+    /// Apply a type template as the description scaffold, slotting in the
+    /// architect's free-form <paramref name="body"/> (into the first
+    /// narrative section's placeholder line) and <paramref name="ac"/>
+    /// (replacing the placeholder lines under <c>## Acceptance Criteria</c>,
+    /// preserving the template's hardcoded items like "Build passes" /
+    /// "tests pass"). Other template placeholders (<c>&lt;...&gt;</c>) pass
+    /// through as TODOs for the implementer.
+    /// </summary>
+    /// <remarks>
+    /// Idempotency: only the first <c>&lt;...&gt;</c> placeholder body of the
+    /// first narrative section is replaced — re-rendering with the same
+    /// inputs produces the same output. Architect content is never silently
+    /// dropped: if there's no narrative placeholder to replace (template
+    /// hand-edited), architect's body is appended at the top under an
+    /// <c>## Architect Notes</c> heading instead.
+    /// </remarks>
+    internal static string ApplyTypeTemplate(string template, string body, IReadOnlyList<string> ac)
+    {
+        // Normalise template line endings to LF for processing.
+        var normalised = template.Replace("\r\n", "\n");
+        var lines = normalised.Split('\n').ToList();
+
+        // 1) Slot architect body into the first narrative section's
+        //    placeholder line. A "narrative placeholder" is a single line
+        //    starting with `<` that follows a `## Header` (other than
+        //    Acceptance Criteria, which is handled separately because its
+        //    placeholders are list items).
+        var bodySlotted = false;
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            for (int i = 0; i < lines.Count - 1 && !bodySlotted; i++)
+            {
+                var header = lines[i];
+                if (!header.StartsWith("## ")) continue;
+                if (header.Contains("Acceptance Criteria", StringComparison.OrdinalIgnoreCase)) continue;
+
+                // Find the first non-blank line in the section.
+                int j = i + 1;
+                while (j < lines.Count && string.IsNullOrWhiteSpace(lines[j])) j++;
+                if (j >= lines.Count) continue;
+                if (lines[j].StartsWith("## ")) continue;
+
+                // Only replace if it looks like a placeholder (single `<...>` chunk).
+                var trimmed = lines[j].TrimStart();
+                if (!trimmed.StartsWith("<")) continue;
+
+                // Find the end of the contiguous placeholder block (consecutive
+                // non-blank, non-header lines that are part of the angle-bracket
+                // chunk — handles multi-line `<...>` placeholders).
+                int end = j;
+                while (end + 1 < lines.Count
+                       && !string.IsNullOrWhiteSpace(lines[end + 1])
+                       && !lines[end + 1].StartsWith("## ")
+                       && !lines[end + 1].StartsWith("- "))
+                {
+                    end++;
+                }
+
+                var replacement = body.Replace("\r\n", "\n").TrimEnd().Split('\n');
+                lines.RemoveRange(j, end - j + 1);
+                lines.InsertRange(j, replacement);
+                bodySlotted = true;
+            }
+
+            if (!bodySlotted)
+            {
+                // No narrative placeholder available — prepend an Architect
+                // Notes section at the top so architect content is never
+                // silently dropped.
+                lines.InsertRange(0, new[]
+                {
+                    "## Architect Notes",
+                    "",
+                    body.Replace("\r\n", "\n").TrimEnd(),
+                    "",
+                });
+            }
+        }
+
+        // 2) Slot architect AC into the `## Acceptance Criteria` section.
+        //    Replace each `- [ ] <...>` placeholder line with `- [ ] {item}`.
+        //    Preserve hardcoded items (those without `<>` markers) — typically
+        //    "Build passes" / "Tests pass" boilerplate the template author
+        //    wants on every child of this type.
+        if (ac.Count > 0)
+        {
+            int acHeader = lines.FindIndex(l => l.StartsWith("## ") && l.Contains("Acceptance Criteria", StringComparison.OrdinalIgnoreCase));
+            if (acHeader >= 0)
+            {
+                int sectionEnd = acHeader + 1;
+                while (sectionEnd < lines.Count && !lines[sectionEnd].StartsWith("## ")) sectionEnd++;
+
+                var preserved = new List<string>();
+                var hadPlaceholder = false;
+                for (int i = acHeader + 1; i < sectionEnd; i++)
+                {
+                    var line = lines[i];
+                    var trimmed = line.TrimStart();
+                    if (trimmed.StartsWith("- [ ]") || trimmed.StartsWith("- ["))
+                    {
+                        if (line.Contains('<') && line.Contains('>'))
+                        {
+                            // Placeholder list item — drop, will be replaced.
+                            hadPlaceholder = true;
+                            continue;
+                        }
+                        preserved.Add(line);
+                    }
+                }
+
+                var rebuilt = new List<string> { "" };
+                foreach (var c in ac) rebuilt.Add($"- [ ] {c}");
+                if (preserved.Count > 0)
+                {
+                    rebuilt.AddRange(preserved);
+                }
+                rebuilt.Add("");
+                _ = hadPlaceholder;
+
+                lines.RemoveRange(acHeader + 1, sectionEnd - acHeader - 1);
+                lines.InsertRange(acHeader + 1, rebuilt);
+            }
+            else
+            {
+                // No AC section in template — append one at the bottom.
+                while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1])) lines.RemoveAt(lines.Count - 1);
+                lines.Add("");
+                lines.Add("## Acceptance Criteria");
+                lines.Add("");
+                foreach (var c in ac) lines.Add($"- [ ] {c}");
+            }
+        }
+
+        // Trim trailing blank lines so the marker sits cleanly at the bottom.
+        while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1])) lines.RemoveAt(lines.Count - 1);
+        return string.Join("\n", lines);
     }
 
     private async Task<IReadOnlyList<string>> GetParentTagsAsync(int parentId, CancellationToken ct)
