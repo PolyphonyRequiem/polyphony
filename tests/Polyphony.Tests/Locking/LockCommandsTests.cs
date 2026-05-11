@@ -333,6 +333,7 @@ public sealed class LockCommandsTests : IDisposable
         public Task ResetHardAsync(string refspec, CancellationToken ct = default) => Task.CompletedTask;
         public Task<string?> ShowFileAtRefAsync(string refspec, string path, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<ProcessResult> WorktreeAddAsync(string branch, string path, string? gitRef, CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
+        public Task<ProcessResult> WorktreeAddAttachAsync(string branch, string path, CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
         public Task<ProcessResult> WorktreeRemoveAsync(string path, bool force, CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
         public Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
         public Task<RebaseOutcome> RebaseOntoAsync(string newBase, string oldBase, string head, CancellationToken ct = default)

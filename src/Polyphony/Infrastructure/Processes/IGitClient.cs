@@ -235,6 +235,26 @@ public interface IGitClient
     Task<ProcessResult> WorktreeAddAsync(string branch, string path, string? gitRef, CancellationToken ct = default);
 
     /// <summary>
+    /// <c>git worktree add {path} {branch}</c>. Creates a new linked
+    /// worktree at <paramref name="path"/> that <b>attaches</b> the
+    /// existing local branch <paramref name="branch"/>; no <c>-b</c>, no
+    /// <c>gitRef</c>. Fails (non-zero <see cref="ProcessResult"/>) when
+    /// the branch does not exist locally OR is already checked out in
+    /// another worktree — git handles both cases natively.
+    ///
+    /// <para>Sister method to <see cref="WorktreeAddAsync"/>: the
+    /// <c>create-or-attach</c> matrix in <c>polyphony worktree create</c>
+    /// (AB#3085, PR 1b3) calls <see cref="WorktreeAddAsync"/> when the
+    /// branch is missing and this method when the branch already exists.
+    /// Splitting the calls keeps each git invocation single-purpose so
+    /// stderr discrimination at the verb layer remains tractable.</para>
+    ///
+    /// <para>Returns the raw <see cref="ProcessResult"/> so the verb can
+    /// branch on success/failure without losing stderr.</para>
+    /// </summary>
+    Task<ProcessResult> WorktreeAddAttachAsync(string branch, string path, CancellationToken ct = default);
+
+    /// <summary>
     /// <c>git worktree remove [--force] {path}</c>. Removes the linked
     /// worktree at <paramref name="path"/>. Pass <paramref name="force"/>
     /// to allow removal of dirty worktrees.

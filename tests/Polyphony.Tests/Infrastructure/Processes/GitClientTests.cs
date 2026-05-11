@@ -183,4 +183,48 @@ public sealed class GitClientTests
 
         (await client.LsRemoteHeadsAsync("origin", "no-such-*")).ShouldBeEmpty();
     }
+
+    [Fact]
+    public async Task WorktreeAddAttachAsync_Success_PassesPathThenBranchWithoutDashB()
+    {
+        // Argument order is `git worktree add <path> <branch>` — NOT
+        // `<branch> <path>`, NOT `-b <branch> <path>`. Inverting either
+        // would silently change git's semantics (attach vs create).
+        var fake = new FakeProcessRunner();
+        fake.WhenExact("git",
+            ["worktree", "add", "/runs/apex-3085/impl-3085-3072", "impl/3085-3072"],
+            new ProcessResult(0, "Preparing worktree...\n", ""));
+        var client = new GitClient(fake);
+
+        var result = await client.WorktreeAddAttachAsync(
+            branch: "impl/3085-3072",
+            path: "/runs/apex-3085/impl-3085-3072");
+
+        result.Succeeded.ShouldBeTrue();
+        var invocation = fake.Invocations.ShouldHaveSingleItem();
+        invocation.Arguments.ShouldNotContain("-b");
+    }
+
+    [Fact]
+    public async Task WorktreeAddAttachAsync_GitFails_ReturnsResultWithoutThrowing()
+    {
+        var fake = new FakeProcessRunner();
+        fake.WhenExact("git",
+            ["worktree", "add", "/runs/apex-3085/impl-3085-3072", "impl/3085-3072"],
+            new ProcessResult(128, "", "fatal: 'impl/3085-3072' is already checked out at '/elsewhere'\n"));
+        var client = new GitClient(fake);
+
+        var result = await client.WorktreeAddAttachAsync("impl/3085-3072", "/runs/apex-3085/impl-3085-3072");
+
+        result.Succeeded.ShouldBeFalse();
+        result.Stderr.ShouldContain("already checked out");
+    }
+
+    [Fact]
+    public async Task WorktreeAddAttachAsync_EmptyBranchOrPath_Throws()
+    {
+        var client = new GitClient(new FakeProcessRunner());
+        await Should.ThrowAsync<ArgumentException>(() => client.WorktreeAddAttachAsync("", "/p"));
+        await Should.ThrowAsync<ArgumentException>(() => client.WorktreeAddAttachAsync("b", ""));
+    }
 }
