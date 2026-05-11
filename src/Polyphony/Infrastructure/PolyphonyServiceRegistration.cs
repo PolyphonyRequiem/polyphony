@@ -3,6 +3,7 @@ using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Postconditions;
+using Polyphony.Research;
 using Polyphony.Routing;
 using Twig.Infrastructure;
 
@@ -79,8 +80,24 @@ public static class PolyphonyServiceRegistration
         // run-lock paths under <git-common-dir>/polyphony/<root_id>/.
         services.AddSingleton<Polyphony.Infrastructure.Paths.PolyphonyStatePaths>();
 
+        // Research storage abstraction (AB#3072). ProfileConfig is loaded
+        // lazily via LoadOrDefault so missing profile.yaml yields safe defaults
+        // rather than a throw. The factory is registered as a singleton;
+        // EffectiveResearchConfig is resolved lazily via ProfileConfig. Commands
+        // that don't touch research pay no cost.
+        services.AddSingleton<ResearchStoreFactory>();
+        services.AddSingleton(sp =>
+        {
+            var processConfig = sp.GetRequiredService<ProcessConfig>();
+            var repoRoot = Path.GetDirectoryName(configPath)
+                is string configDir
+                    ? Path.GetDirectoryName(configDir) ?? "."
+                    : ".";
+            return ProfileConfigLoader.LoadOrDefaultFromRepo(repoRoot);
+        });
+
         // Command classes that are referenced as constructor dependencies of
-        // OTHER command classes must be registered explicitly. ConsoleAppFramework
+        // OTHER command classes must be registered explicitly.ConsoleAppFramework
         // resolves top-level command parameters from the container but does not
         // auto-register sibling command classes. RootCommands depends on
         // ScopeCommands; without this registration, ScopeCommands resolves to
