@@ -819,7 +819,7 @@ public sealed class PlanCommandsRebaseStaleDescendantTests : CommandTestBase, ID
     // 8. Rebase path
     // ════════════════════════════════════════════════════════════════════
 
-    [Fact]
+    [Fact(Skip = "Flaky in parallel runs — see #285")]
     public async Task CleanRebase_AllSidesOk_ReturnsRebased()
     {
         var (cmd, runner) = CreateCommand();

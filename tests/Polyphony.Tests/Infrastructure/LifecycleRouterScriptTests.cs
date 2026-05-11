@@ -22,6 +22,7 @@ namespace Polyphony.Tests.Infrastructure;
 /// covered by the verb's own xUnit suite; this script's mapping logic
 /// is exercised end-to-end by the Phase 7 e2e PR (forward reference).
 /// </remarks>
+[Trait("Category", "Slow")] // see #286 — forks pwsh per test
 public sealed class LifecycleRouterScriptTests
 {
     private static readonly string ScriptPath = Path.GetFullPath(

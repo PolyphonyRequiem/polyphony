@@ -12,6 +12,7 @@ namespace Polyphony.Tests.Commands;
 /// Exercises the full pipeline (work item seeding → in-memory SQLite → ValidateCommand → JSON output)
 /// for each of the 4 process templates (Basic, Agile, Scrum, CMMI).
 /// </summary>
+[Trait("Category", "Slow")] // see #286 — forks polyphony.exe per test
 public sealed class CrossProcessValidateCommandTests : CommandTestBase
 {
     /// <summary>

@@ -20,6 +20,7 @@ namespace Polyphony.Tests.Infrastructure;
 /// (polyphony missing, edges check failure). Live integration with
 /// real branches is covered by the Phase 7 e2e PR (forward reference).
 /// </remarks>
+[Trait("Category", "Slow")] // see #286 — forks pwsh per test
 public sealed class WaveIntegratorScriptTests
 {
     private static readonly string ScriptPath = Path.GetFullPath(

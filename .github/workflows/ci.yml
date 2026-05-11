@@ -43,7 +43,10 @@ jobs:
 
       - name: Test (xUnit)
         working-directory: polyphony
-        run: dotnet test --no-build
+        # Fast loop excludes Slow (forks pwsh / polyphony.exe) and Integration
+        # (e2e harness scenarios). See #286 / #287. Run the full suite locally
+        # with `dotnet test --no-build` (or via the workflow_dispatch job).
+        run: dotnet test --no-build --filter "Category!=Slow&Category!=Integration"
 
       - name: Lint (type-agnosticism)
         # Runs the lint script against the actual repo (scripts/ + workflow YAMLs).
@@ -128,7 +131,14 @@ jobs:
         shell: pwsh
         working-directory: polyphony
         run: |
-          $result = Invoke-Pester -Path tests/ -Output Detailed -PassThru
+          # Fast loop excludes Integration-tagged Pester tests (e.g. harness
+          # scenarios that boot real polyphony+conductor processes — see #287).
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'tests/'
+          $config.Run.PassThru = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.Filter.ExcludeTag = @('Integration', 'Slow')
+          $result = Invoke-Pester -Configuration $config
           if ($result.FailedCount -gt 0) { exit 1 }
 
       - name: Lint workflow YAMLs (StrictUndefined default-trap)

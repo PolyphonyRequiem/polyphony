@@ -12,6 +12,7 @@ namespace Polyphony.Tests.Routing;
 /// Validates that phase detection routes correctly at each level of a three-tier hierarchy
 /// across Basic, Agile, Scrum, and CMMI process templates.
 /// </summary>
+[Trait("Category", "Slow")] // see #286 — forks polyphony.exe per test
 public sealed class CrossProcessPhaseDetectorTests
 {
     /// <summary>
