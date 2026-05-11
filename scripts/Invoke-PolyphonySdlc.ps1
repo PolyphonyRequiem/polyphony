@@ -8,7 +8,10 @@
     six `--metadata` (`-m`) fields the dashboard / observation filer / post-mortem skills
     consume. Validates that the worktree contains a `.twig/` directory (preflight gate
     addressing AB#3010 symptom), resolves org/project/repo from `.twig/config`, and
-    launches conductor detached with `--web` so the dashboard streams the run.
+    launches conductor with the `--web` dashboard. By default opens conductor in a new
+    PowerShell console window (TTY-attached) so gate agents can read stdin and the
+    operator's launching shell stays free. Pass `-NoDetach` to run synchronously in
+    the current shell instead.
 
     Closes AB#3011. Replaces the prose recipe at .github/skills/polyphony-sdlc/SKILL.md.
 
@@ -193,17 +196,23 @@ if (-not $PSBoundParameters.ContainsKey('Repository')) {
 
 # ─── Build the command ───────────────────────────────────────────────────────
 
-# Build the command. Web-dashboard flag depends on detach mode:
-#   --web    runs the dashboard in the foreground console (NoDetach).
-#   --web-bg daemonizes conductor + dashboard, prints the URL to stdout,
-#            and exits the parent immediately. Required for Start-Process
-#            -WindowStyle Hidden launches — `--web` would hang on first
-#            console output flush since there is no attached TTY.
-$webFlag = if ($NoDetach) { '--web' } else { '--web-bg' }
-
+# Always use foreground --web. We previously tried --web-bg for the
+# detached path, but conductor's bg_runner spawns the workflow child
+# with stdin=DEVNULL (cli/bg_runner.py:172,178,210). Any agent that
+# reads stdin — most notably gate agents waiting for the operator's
+# answer fallback — hits EOFError immediately on startup, kills the
+# subworkflow, and cascades up through for_each_item_failed. The web
+# dashboard's "Answer" button never gets a listener because the gate
+# agent died before it could register one. See AB#3071 dogfood
+# 2026-05-11 (PR #300 regression).
+#
+# The detached path below spawns conductor inside a *new* PowerShell
+# console window so it inherits a real TTY (stdin attached). That
+# satisfies foreground --web's TTY requirement without blocking the
+# operator's launching shell.
 $conductorArgs = @(
     'run', 'apex-driver@polyphony'
-    $webFlag
+    '--web'
     '--input', "apex_id=$ApexId"
     '--input', "intent=$Intent"
     '--input', "platform=$Platform"
@@ -308,25 +317,61 @@ if ($NoDetach) {
 $logDir = Join-Path ([System.IO.Path]::GetTempPath()) 'polyphony-sdlc-runs'
 [void](New-Item -ItemType Directory -Path $logDir -Force)
 $logTimestamp = (Get-Date -Format 'yyyyMMdd-HHmmss')
-$stdoutLog = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-stdout.log"
-$stderrLog = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-stderr.log"
+$transcriptLog = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-transcript.log"
 
-# Start-Process -WindowStyle Hidden inherits no console handles, which
-# causes conductor (Rich/Textual rendering) to hang on first output flush
-# without ever opening its dashboard port. Redirecting stdout/stderr to
-# files gives the child valid file handles AND captures output for the
-# operator to tail. Without this redirection the process sits at 0%
-# CPU forever, never serves the dashboard, and silently leaks.
-$proc = Start-Process -FilePath 'conductor' `
-    -ArgumentList $conductorArgs `
+# Spawn conductor inside a new PowerShell console window. The new console
+# gives conductor a real TTY (stdin attached), which is required for both:
+#   1. foreground --web mode itself (Rich/Textual rendering),
+#   2. gate agents that fall back to stdin when no web answer arrives.
+#
+# Why not Start-Process conductor directly with -RedirectStandard*?
+#   Start-Process redirected stdin → conductor's gate agents EOFError on
+#   startup (same failure shape as --web-bg's stdin=DEVNULL).
+#
+# Why not -WindowStyle Hidden?
+#   No console handles → conductor (Rich) hangs at 0% CPU on first output
+#   flush, dashboard port never opens.
+#
+# Why -NoExit?
+#   Keeps the new window open after conductor exits so the operator can
+#   read the final stack trace / exit code without losing it.
+#
+# The launching shell stays free; the operator can minimize the new
+# window. Output is also tee'd to a transcript file under
+# %TEMP%\polyphony-sdlc-runs\ for post-mortem.
+
+# Build the conductor command line as a single string. Quote individual
+# args defensively in case any value contains whitespace or quotes.
+$conductorCmd = 'conductor ' + (($conductorArgs | ForEach-Object {
+    if ($_ -match '[\s"'']') { "'" + ($_ -replace "'", "''") + "'" }
+    else { $_ }
+}) -join ' ')
+
+$childCommand = @"
+Set-Location -LiteralPath '$($WorktreeRoot.Replace("'","''"))'
+`$Host.UI.RawUI.WindowTitle = 'polyphony-sdlc apex=$ApexId'
+Write-Host '[polyphony-sdlc] Worktree: $WorktreeRoot' -ForegroundColor Cyan
+Write-Host '[polyphony-sdlc] Command : $conductorCmd' -ForegroundColor Cyan
+Write-Host '[polyphony-sdlc] Transcript: $transcriptLog' -ForegroundColor Cyan
+Write-Host ''
+Start-Transcript -LiteralPath '$transcriptLog' -Append | Out-Null
+try {
+    $conductorCmd
+    `$exit = `$LASTEXITCODE
+} finally {
+    Stop-Transcript | Out-Null
+}
+Write-Host ''
+Write-Host "[polyphony-sdlc] conductor exited with code: `$exit" -ForegroundColor Yellow
+Write-Host '[polyphony-sdlc] Window kept open (-NoExit). Close manually.' -ForegroundColor DarkGray
+"@
+
+$proc = Start-Process -FilePath 'pwsh' `
+    -ArgumentList @('-NoExit', '-NoProfile', '-Command', $childCommand) `
     -WorkingDirectory $WorktreeRoot `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $stdoutLog `
-    -RedirectStandardError $stderrLog `
     -PassThru
 
 $resolved | Add-Member -NotePropertyName pid -NotePropertyValue $proc.Id
-$resolved | Add-Member -NotePropertyName stdout_log -NotePropertyValue $stdoutLog
-$resolved | Add-Member -NotePropertyName stderr_log -NotePropertyValue $stderrLog
-$resolved | Add-Member -NotePropertyName note -NotePropertyValue "Conductor launched detached. Tail stdout: Get-Content -Wait '$stdoutLog'  Dashboard URL: appears in stdout once the server starts."
+$resolved | Add-Member -NotePropertyName transcript_log -NotePropertyValue $transcriptLog
+$resolved | Add-Member -NotePropertyName note -NotePropertyValue "Conductor launched in a new PowerShell window (TTY-attached). Dashboard URL appears in that window's first few lines. Tail transcript: Get-Content -Wait '$transcriptLog'"
 $resolved | ConvertTo-Json -Depth 5
