@@ -1,4 +1,4 @@
-# Issue Guidance — polyphony
+# Coder Guidance — polyphony
 
 You are implementing changes to **polyphony**: a .NET 11 CLI (preview
 LangVersion) that routes work items through SDLC phases. Polyphony is the

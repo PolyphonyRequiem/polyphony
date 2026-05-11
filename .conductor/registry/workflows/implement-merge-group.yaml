@@ -209,28 +209,6 @@ agents:
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
     routes:
-      - to: guidance_loader
-
-  # ── Guidance loader ────────────────────────────────────────────────────
-  #
-  # Loads repo-specific agent guidance markdown from
-  # `.polyphony-config/agent-guidance/` via `polyphony plan load-guidance`.
-  # Outputs a JSON role map (keys like "coder", "reviewer"). Coder and
-  # primary_reviewer consume their respective role keys via Jinja2
-  # conditionals so prompts degrade gracefully when no guidance files
-  # exist.
-  #
-  # Invariants:
-  #   Pre:  MG branch is checked out.
-  #   Post: output is a JSON object mapping role names to guidance content.
-  - name: guidance_loader
-    type: script
-    description: Load agent guidance markdown files for coder and reviewer prompts
-    command: polyphony
-    args:
-      - "plan"
-      - "load-guidance"
-    routes:
       - to: primary_router
 
   # ── Per-item router ───────────────────────────────────────────────────
@@ -289,6 +267,32 @@ agents:
       - "{{ primary_router.output.primary_id }}"
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
+    routes:
+      - to: guidance_loader
+
+  # ── Guidance loader ────────────────────────────────────────────────────
+  #
+  # Loads repo-specific agent guidance for the per-task work item being
+  # implemented. Returns role-wide guidance + per-type refinement for each
+  # of the three canonical roles (architect / coder / reviewer); coder and
+  # primary_reviewer prompts read their respective role + type_refinement
+  # blocks via Jinja2 conditionals so prompts degrade gracefully when no
+  # guidance files exist. Runs per task (not once per MG) so per-task type
+  # drives the refinement lookup when an MG mixes types.
+  #
+  # Invariants:
+  #   Pre:  primary_router selected a task; impl branch is checked out.
+  #   Post: output exposes architect/coder/reviewer keys, each with
+  #         role + type_refinement strings (empty when files absent).
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for coder and reviewer prompts
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ primary_router.output.primary_id }}"
     routes:
       - to: coder
 
@@ -375,10 +379,16 @@ agents:
       {{ scope_reviewer.output.feedback }}
       {% endif %}
 
-      {% if guidance_loader.output.issue is defined and guidance_loader.output.issue %}
+      {% if guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
       ## Repo-Specific Guidance
 
-      {{ guidance_loader.output.issue }}
+      {{ guidance_loader.output.coder.role }}
+      {% endif %}
+
+      {% if guidance_loader.output.coder is defined and guidance_loader.output.coder.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.coder.type_refinement }}
       {% endif %}
     routes:
       - to: primary_reviewer
@@ -482,10 +492,16 @@ agents:
       - **Request changes** only for substantive issues (bugs, missing requirements, no tests).
       - Do NOT request changes for style preferences or minor nits.
 
-      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
+      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
       ## Repo-Specific Guidance
 
-      {{ guidance_loader.output.reviewer }}
+      {{ guidance_loader.output.reviewer.role }}
+      {% endif %}
+
+      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.reviewer.type_refinement }}
       {% endif %}
     routes:
       - to: impl_pr_open

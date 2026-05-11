@@ -1,4 +1,4 @@
-# Task Guidance — polyphony
+# Reviewer Guidance — polyphony
 
 You are reviewing changes (plans or PRs) for **polyphony** — the .NET 11
 CLI that routes work items through SDLC phases. You apply the same

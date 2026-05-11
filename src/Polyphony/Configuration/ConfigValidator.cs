@@ -224,15 +224,16 @@ public static class ConfigValidator
                 }
             }
 
-            // V-11–V-13: agent-guidance/<type>.md for each type
-            foreach (var typeName in config.Types.Keys)
+            // V-11: agent-guidance/<role>.md for each canonical role
+            // (architect, coder, reviewer). Per-type refinements at
+            // agent-guidance/<role>/<typeslug>.md are optional and not warned.
+            foreach (var role in new[] { "architect", "coder", "reviewer" })
             {
-                var slug = ToSlug(typeName);
-                var guidancePath = Path.Combine(repoRoot, ".polyphony-config", "agent-guidance", $"{slug}.md");
-                if (!File.Exists(guidancePath))
+                var rolePath = Path.Combine(repoRoot, ".polyphony-config", "agent-guidance", $"{role}.md");
+                if (!File.Exists(rolePath))
                 {
                     warnings.Add(Warning("V-11",
-                        $"Agent guidance file missing: .polyphony-config/agent-guidance/{slug}.md"));
+                        $"Agent guidance file missing: .polyphony-config/agent-guidance/{role}.md"));
                 }
             }
 
