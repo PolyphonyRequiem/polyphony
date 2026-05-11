@@ -154,6 +154,42 @@ public sealed record GhPullRequestPollData(
     IReadOnlyList<GhPullRequestComment> Comments);
 
 /// <summary>
+/// One review thread on a pull request, returned by
+/// <see cref="IGhClient.GetPullRequestReviewThreadsAsync"/>. Sourced from
+/// the GraphQL <c>pullRequest.reviewThreads</c> connection, which the
+/// <c>gh pr view --json</c> surface does NOT expose. After this record's
+/// "option B" rewrite (issue #207) review threads are the source of
+/// truth for the PR-level <c>changes_requested</c> gate.
+/// </summary>
+/// <param name="Id">GraphQL node id (opaque string). Stable across polls.</param>
+/// <param name="IsResolved">True when the thread has been marked resolved.</param>
+/// <param name="IsOutdated">True when the anchored hunk has been rewritten beyond GitHub's recognition. Outdated unresolved threads do NOT block merge.</param>
+/// <param name="AuthorLogin">Login of the first comment's author; empty when the platform omits it.</param>
+/// <param name="CreatedAt">When the first comment was posted; null when the platform omits it.</param>
+/// <param name="CommentCount">Total comments in the thread (GraphQL <c>comments.totalCount</c> when available; otherwise the visible count).</param>
+public sealed record GhReviewThread(
+    string Id,
+    bool IsResolved,
+    bool IsOutdated,
+    string AuthorLogin,
+    DateTimeOffset? CreatedAt,
+    int CommentCount);
+
+/// <summary>
+/// Result of <see cref="IGhClient.GetPullRequestReviewThreadsAsync"/>.
+/// Threads is the page of threads visible to the verb; <see cref="HasMorePages"/>
+/// signals that the PR has more threads than were fetched on this call —
+/// the verb fails closed by appending a warning when this is true and no
+/// blocking thread was visible (since a blocking thread on a later page
+/// would be missed).
+/// </summary>
+/// <param name="Threads">Visible review threads (oldest first per GraphQL ordering).</param>
+/// <param name="HasMorePages">True when the GraphQL <c>pageInfo.hasNextPage</c> indicated more threads exist beyond what was fetched.</param>
+public sealed record GhReviewThreadsRead(
+    IReadOnlyList<GhReviewThread> Threads,
+    bool HasMorePages);
+
+/// <summary>
 /// One file changed in a pull request, as reported by
 /// <c>gh pr view --json files</c>. Path is repo-relative and uses
 /// forward slashes regardless of platform.

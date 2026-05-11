@@ -27,16 +27,53 @@ public sealed class PrCommandsPollStatusTests : CommandTestBase
     }
 
     private static void StubGhPrView(FakeProcessRunner runner, string repoSlug, int prNumber, string json)
-        => runner.WhenStartsWith(
+    {
+        runner.WhenStartsWith(
             "gh",
             new[] { "pr", "view", prNumber.ToString(), "--repo", repoSlug, "--json" },
             new ProcessResult(0, json, ""));
+        // Option B: poll-status now also calls `gh api graphql` to fetch
+        // review threads. Tests that don't care about threads get an empty
+        // page by default; tests that do care can override by registering
+        // a more specific responder before the call.
+        StubGhReviewThreads(runner, EmptyThreadsResponse);
+    }
 
     private static void StubGhPrViewNotFound(FakeProcessRunner runner, string repoSlug, int prNumber)
-        => runner.WhenStartsWith(
+    {
+        runner.WhenStartsWith(
             "gh",
             new[] { "pr", "view", prNumber.ToString(), "--repo", repoSlug, "--json" },
             new ProcessResult(1, "", "no pull requests found"));
+        // The poll-data error short-circuits before the graphql call, but
+        // register a defensive stub anyway in case future verb logic changes.
+        StubGhReviewThreads(runner, EmptyThreadsResponse);
+    }
+
+    private const string EmptyThreadsResponse =
+        """{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}""";
+
+    private static void StubGhReviewThreads(FakeProcessRunner runner, string graphqlResponse)
+        => runner.WhenStartsWith(
+            "gh",
+            new[] { "api", "graphql" },
+            new ProcessResult(0, graphqlResponse, ""));
+
+    private static string ThreadsResponse(bool hasNextPage, params (string Id, bool IsResolved, bool IsOutdated, string Author, string CreatedAt, int CommentCount)[] threads)
+    {
+        var nodes = string.Join(",", threads.Select(t =>
+            "{\"id\":\"" + t.Id + "\"," +
+            "\"isResolved\":" + (t.IsResolved ? "true" : "false") + "," +
+            "\"isOutdated\":" + (t.IsOutdated ? "true" : "false") + "," +
+            "\"comments\":{" +
+                "\"totalCount\":" + t.CommentCount + "," +
+                "\"nodes\":[{\"author\":{\"login\":\"" + t.Author + "\"},\"createdAt\":\"" + t.CreatedAt + "\"}]" +
+            "}}"));
+        return "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{" +
+            "\"pageInfo\":{\"hasNextPage\":" + (hasNextPage ? "true" : "false") + "}," +
+            "\"nodes\":[" + nodes + "]" +
+            "}}}}}";
+    }
 
     private static PrPollStatusResult Parse(string output)
         => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrPollStatusResult)!;
@@ -389,8 +426,13 @@ public sealed class PrCommandsPollStatusTests : CommandTestBase
     }
 
     [Fact]
-    public async Task PollStatus_MagicComment_AuthorRequestChanges_BlocksMerge()
+    public async Task PollStatus_MagicComment_RequestChanges_NoLongerRecognized()
     {
+        // Option B: `polyphony:request-changes` magic comment was the loop bug
+        // (every poll re-read it). It is no longer recognized — reviewers must
+        // use native review threads or platform CHANGES_REQUESTED reviews.
+        // The author's comment here is treated as a normal comment with no
+        // effect on derived state.
         var (cmd, runner) = CreateCommand();
         var comments = $"[{Comment("dangreen", "polyphony:request-changes plan needs work", "2026-05-08T19:00:00Z")}]";
         StubGhPrView(runner, "owner/repo", 42,
@@ -400,10 +442,8 @@ public sealed class PrCommandsPollStatusTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
         var result = Parse(output);
-        result.State.ShouldBe("changes_requested");
-        result.Policy.MergeAllowed.ShouldBeFalse();
-        result.Reviewers.ShouldContain(r =>
-            r.Identity == "dangreen" && r.Vote == "changes_requested" && r.Source == "magic_comment");
+        result.State.ShouldBe("pending");
+        result.Reviewers.ShouldNotContain(r => r.Source == "magic_comment");
     }
 
     [Fact]
@@ -480,10 +520,15 @@ public sealed class PrCommandsPollStatusTests : CommandTestBase
     }
 
     [Fact]
-    public async Task PollStatus_MagicComment_NewerThanAuthorNativeReview_Wins()
+    public async Task PollStatus_MagicApprove_DoesNotOverrideNativeChangesRequested()
     {
-        // Hypothetical: author somehow has a native review (e.g. ADO author
-        // or future scenario), then posts a magic comment LATER. Magic wins.
+        // Option B: native CHANGES_REQUESTED is canonical. Magic approve is a
+        // deprecated fallback that ONLY resolves "missing" approval in the
+        // pending case — it cannot override an explicit reviewer
+        // CHANGES_REQUESTED. To clear native changes-requested, the reviewer
+        // must dismiss their review or post APPROVED; or, with Option B
+        // threads in play, all blocking threads resolved + APPROVED native
+        // review is the canonical happy path.
         var (cmd, runner) = CreateCommand();
         var reviews = """
             [
@@ -499,7 +544,7 @@ public sealed class PrCommandsPollStatusTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
         var result = Parse(output);
-        result.State.ShouldBe("approved");
+        result.State.ShouldBe("changes_requested");
     }
 
     [Fact]
@@ -563,5 +608,127 @@ public sealed class PrCommandsPollStatusTests : CommandTestBase
             () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
         var result = Parse(output);
         result.State.ShouldBe("approved");
+    }
+
+    // ---- Option B — review-thread-driven derivation ----
+
+    [Fact]
+    public async Task PollStatus_UnresolvedThread_OverridesNativeApproved()
+    {
+        // Even when the native review decision is APPROVED, an unresolved
+        // (and not-outdated) review thread is canonical and blocks merge.
+        var (cmd, runner) = CreateCommand();
+        StubGhReviewThreads(runner, ThreadsResponse(
+            hasNextPage: false,
+            ("PRT_1", false, false, "alice", "2026-05-08T19:00:00Z", 1)));
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "APPROVED",
+                authorLogin: "dangreen",
+                commentsJson: "[]"));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("changes_requested");
+        result.Threads.ShouldHaveSingleItem();
+        result.Threads[0].IsResolved.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task PollStatus_AllResolvedThreads_SuppressStaleNativeChangesRequested()
+    {
+        // The loop-bug fix: a stale native CHANGES_REQUESTED that was raised
+        // earlier is suppressed once all blocking threads are resolved. With
+        // resolved threads + no APPROVED native review, state is "pending"
+        // (awaiting a fresh approval), NOT "changes_requested".
+        var (cmd, runner) = CreateCommand();
+        StubGhReviewThreads(runner, ThreadsResponse(
+            hasNextPage: false,
+            ("PRT_1", true, false, "alice", "2026-05-08T19:00:00Z", 1)));
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "CHANGES_REQUESTED",
+                authorLogin: "dangreen",
+                commentsJson: "[]"));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("pending");
+    }
+
+    [Fact]
+    public async Task PollStatus_AllResolvedThreads_PlusApprovedReview_Approved()
+    {
+        // Resolved threads + APPROVED native review = canonical happy path.
+        var (cmd, runner) = CreateCommand();
+        StubGhReviewThreads(runner, ThreadsResponse(
+            hasNextPage: false,
+            ("PRT_1", true, false, "alice", "2026-05-08T19:00:00Z", 1)));
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "APPROVED",
+                authorLogin: "dangreen",
+                commentsJson: "[]"));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+    }
+
+    [Fact]
+    public async Task PollStatus_OutdatedUnresolvedThread_DoesNotBlock()
+    {
+        // Outdated threads (the underlying lines have been rewritten) are
+        // not blocking even if technically "unresolved".
+        var (cmd, runner) = CreateCommand();
+        StubGhReviewThreads(runner, ThreadsResponse(
+            hasNextPage: false,
+            ("PRT_1", false, true, "alice", "2026-05-08T19:00:00Z", 1)));
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "APPROVED",
+                authorLogin: "dangreen",
+                commentsJson: "[]"));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+    }
+
+    [Fact]
+    public async Task PollStatus_PaginationOverflow_AppendsFailClosedWarning()
+    {
+        // When the graphql response indicates more pages exist (>100 threads),
+        // we fail closed with a warning rather than silently render a partial
+        // view. The current page still drives derivation.
+        var (cmd, runner) = CreateCommand();
+        StubGhReviewThreads(runner, ThreadsResponse(
+            hasNextPage: true,
+            ("PRT_1", true, false, "alice", "2026-05-08T19:00:00Z", 1)));
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "APPROVED",
+                authorLogin: "dangreen",
+                commentsJson: "[]"));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.Warnings.ShouldNotBeNull();
+        result.Warnings.ShouldContain(w => w.Contains("page", StringComparison.OrdinalIgnoreCase) || w.Contains("threads", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicApprove_AppendsDeprecationWarning()
+    {
+        // Magic-approve still works as a fallback (single-author convenience)
+        // but emits a deprecation warning so authors know to use native
+        // approve going forward.
+        var (cmd, runner) = CreateCommand();
+        var comments = $"[{Comment("dangreen", "polyphony:approve", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+        result.Warnings.ShouldNotBeNull();
+        result.Warnings.ShouldContain(w => w.Contains("polyphony:approve", StringComparison.OrdinalIgnoreCase));
     }
 }

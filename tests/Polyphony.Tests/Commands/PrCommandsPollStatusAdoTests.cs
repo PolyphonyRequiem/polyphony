@@ -381,12 +381,90 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
         output.ShouldContain("\"blocking_reasons\"");
     }
 
+    // ─── Option B — review-thread-driven derivation (ADO) ────────────────
+
+    private static AdoPullRequestThread MakeAdoThread(int id, bool isResolved, string status = "active")
+        => new()
+        {
+            Id = id,
+            Status = status,
+            IsResolved = isResolved,
+            FilePath = "src/foo.cs",
+            Line = 10,
+            Comments =
+            [
+                new AdoPullRequestComment
+                {
+                    Id = id * 10,
+                    ParentCommentId = 0,
+                    Author = "Alice",
+                    Body = "needs work",
+                    PublishedAt = new DateTime(2026, 5, 8, 19, 0, 0, DateTimeKind.Utc),
+                    LastUpdatedAt = new DateTime(2026, 5, 8, 19, 0, 0, DateTimeKind.Utc),
+                    CommentType = "text",
+                },
+            ],
+        };
+
+    [Fact]
+    public async Task PollStatusAdo_UnresolvedThread_OverridesNativeApproved()
+    {
+        var (cmd, ado) = CreateCommand();
+        ado.PollResult = OpenApprovedData();
+        ado.Threads = [MakeAdoThread(1, isResolved: false, status: "active")];
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatusAdo(Org, Project, Repo, PrId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("changes_requested");
+        result.Threads.ShouldHaveSingleItem();
+        result.Threads[0].IsResolved.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task PollStatusAdo_AllResolvedThreads_PlusApproved_Approved()
+    {
+        var (cmd, ado) = CreateCommand();
+        ado.PollResult = OpenApprovedData();
+        ado.Threads = [MakeAdoThread(1, isResolved: true, status: "fixed")];
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatusAdo(Org, Project, Repo, PrId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+    }
+
+    [Fact]
+    public async Task PollStatusAdo_ListThreadsThrows_AppendsWarning_StillDerives()
+    {
+        // Network/transient ADO failure on the threads call must not make the
+        // verb error out — derivation falls back to native review state and
+        // the failure is surfaced as a warning.
+        var (cmd, ado) = CreateCommand();
+        ado.PollResult = OpenApprovedData();
+        ado.ThrowOnListThreads = new InvalidOperationException("transient ADO 500");
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatusAdo(Org, Project, Repo, PrId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+        result.Warnings.ShouldNotBeNull();
+    }
+
     // ─── Test fake ───────────────────────────────────────────────────────
 
     private sealed class FakeAdoClient : IAdoClient
     {
         public AdoPullRequestPollData? PollResult { get; set; }
         public Exception? ThrowOnPoll { get; set; }
+        public IReadOnlyList<AdoPullRequestThread>? Threads { get; set; } = Array.Empty<AdoPullRequestThread>();
+        public Exception? ThrowOnListThreads { get; set; }
         public int PollCallCount { get; private set; }
         public string? LastOrganization { get; private set; }
         public string? LastProject { get; private set; }
@@ -447,6 +525,12 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
         public Task<IReadOnlyList<AdoPullRequestThread>?> ListPullRequestThreadsAsync(
             string organization, string project, string repository,
             int pullRequestId, CancellationToken ct = default)
-            => throw new NotImplementedException();
-}
+        {
+            if (ThrowOnListThreads is not null)
+            {
+                throw ThrowOnListThreads;
+            }
+            return Task.FromResult(Threads);
+        }
+    }
 }

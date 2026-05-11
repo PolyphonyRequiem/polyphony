@@ -101,9 +101,42 @@ public sealed partial class PrCommands
                 return ExitCodes.Success;
             }
 
-            var state = MapAdoState(data.State, data.ReviewDecision);
-            var mergeable = MapAdoMergeable(data.Mergeable);
+            // Fetch ADO threads alongside the PR detail. Threads drive the
+            // changes_requested gate after option B (issue #207). Failure
+            // to fetch is non-fatal — surface a warning and fall back to
+            // the native review decision.
+            List<PrPollThread> threads = [];
+            List<string>? warnings = null;
+            try
+            {
+                var rawThreads = await ado.ListPullRequestThreadsAsync(
+                    organization, project, repositoryId, prNumber, ct).ConfigureAwait(false);
+                if (rawThreads is null)
+                {
+                    (warnings ??= []).Add(
+                        $"Could not fetch review threads for PR #{prNumber} (ADO returned 404 for /threads). " +
+                        "Status field reflects native review decision only — unresolved review threads were not considered.");
+                }
+                else
+                {
+                    threads = rawThreads.Select(MapAdoThread).ToList();
+                }
+            }
+            catch (Exception threadEx) when (threadEx is not OperationCanceledException)
+            {
+                (warnings ??= []).Add(
+                    $"Could not fetch review threads for PR #{prNumber}: {threadEx.Message}. " +
+                    "Status field reflects native review decision only.");
+            }
+
             var reviewers = data.Reviews.Select(MapAdoReviewer).ToList();
+
+            // ADO PR authors CAN vote on their own PRs, so the magic-comment
+            // approve fallback is GitHub-only — never apply it on the ADO leg.
+            var state = PrPollStateDerivation.DeriveState(
+                data.State, data.ReviewDecision, threads, hasMagicApproveFromAuthor: false);
+
+            var mergeable = MapAdoMergeable(data.Mergeable);
             var policy = ComputePolicy(state, mergeable);
             var metadata = includeMetadata ? PlanPrFrontMatter.Parse(data.Body) : null;
 
@@ -120,7 +153,9 @@ public sealed partial class PrCommands
                 MergeCommitSha = data.MergeCommit,
                 MergedAt = data.MergedAt?.ToString("o", CultureInfo.InvariantCulture),
                 Reviewers = reviewers,
+                Threads = threads,
                 Policy = policy,
+                Warnings = warnings,
                 Metadata = metadata,
             };
             EmitPollStatusAdo(result);
@@ -155,18 +190,26 @@ public sealed partial class PrCommands
     }
 
     /// <summary>
-    /// Map ADO's normalized state (<c>OPEN | MERGED | CLOSED</c>) plus the
-    /// aggregated review decision into the platform-neutral routing vocabulary
-    /// (<c>approved | changes_requested | pending | merged | closed</c>).
-    /// Mirrors <see cref="MapState"/> for the GitHub side.
+    /// Map a single ADO <see cref="AdoPullRequestThread"/> to the
+    /// platform-neutral <see cref="PrPollThread"/> shape. ADO's
+    /// <c>IsResolved</c> bit is already computed (status in {fixed,
+    /// wontFix, closed, byDesign}); the raw status string is preserved
+    /// in the <c>Status</c> field for diagnostics. ADO does not surface
+    /// an outdated bit so <c>IsOutdated</c> is null.
     /// </summary>
-    private static string MapAdoState(string adoState, string reviewDecision)
+    private static PrPollThread MapAdoThread(AdoPullRequestThread t)
     {
-        if (string.Equals(adoState, "MERGED", StringComparison.OrdinalIgnoreCase)) return "merged";
-        if (string.Equals(adoState, "CLOSED", StringComparison.OrdinalIgnoreCase)) return "closed";
-        if (string.Equals(reviewDecision, "APPROVED", StringComparison.OrdinalIgnoreCase)) return "approved";
-        if (string.Equals(reviewDecision, "REJECTED", StringComparison.OrdinalIgnoreCase)) return "changes_requested";
-        return "pending";
+        var firstComment = t.Comments.Count > 0 ? t.Comments[0] : null;
+        return new PrPollThread
+        {
+            Id = t.Id.ToString(CultureInfo.InvariantCulture),
+            IsResolved = t.IsResolved,
+            IsOutdated = null,
+            Status = t.Status,
+            AuthorIdentity = string.IsNullOrEmpty(firstComment?.Author) ? null : firstComment.Author,
+            CreatedAt = firstComment?.PublishedAt?.ToString("o", CultureInfo.InvariantCulture),
+            CommentCount = t.Comments.Count,
+        };
     }
 
     private static bool? MapAdoMergeable(string adoMergeable) => adoMergeable.ToUpperInvariant() switch
@@ -239,6 +282,7 @@ public sealed partial class PrCommands
             BaseRef = string.Empty,
             Mergeable = null,
             Reviewers = [],
+            Threads = [],
             Policy = new PrPollPolicy { MergeAllowed = false, BlockingReasons = [message] },
             Error = message,
             ErrorCode = errorCode,

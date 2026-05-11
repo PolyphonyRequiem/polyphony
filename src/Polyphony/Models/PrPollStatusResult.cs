@@ -36,6 +36,47 @@ public sealed record PrPollReviewer
 }
 
 /// <summary>
+/// Single review-thread entry in <see cref="PrPollStatusResult.Threads"/>.
+/// Threads are the source of truth for the <c>changes_requested</c> gate
+/// after this verb's "option B" rewrite (issue #207): an unresolved,
+/// non-outdated review thread blocks merge regardless of any stale
+/// native CHANGES_REQUESTED review the platform may still surface.
+///
+/// <para>Platform-neutral by design — same shape regardless of whether
+/// the underlying source was GitHub (GraphQL <c>reviewThreads</c>) or
+/// Azure DevOps (REST <c>/threads</c>).</para>
+/// </summary>
+public sealed record PrPollThread
+{
+    /// <summary>Stable thread identifier from the platform (GraphQL node id on GitHub; integer-as-string on ADO).</summary>
+    public required string Id { get; init; }
+
+    /// <summary>True when the thread is marked resolved (GitHub <c>isResolved</c>; ADO status in {fixed, wontFix, closed, byDesign}).</summary>
+    public required bool IsResolved { get; init; }
+
+    /// <summary>
+    /// True when GitHub flags the thread as outdated (the anchored
+    /// hunk has been rewritten beyond recognition). Always null on ADO
+    /// — the platform doesn't expose an outdated bit. Outdated +
+    /// unresolved threads do NOT block merge — see derivation rules
+    /// in <see cref="PrPollStatusResult"/>.
+    /// </summary>
+    public bool? IsOutdated { get; init; }
+
+    /// <summary>Raw platform status (e.g. GitHub: <c>"RESOLVED"|"UNRESOLVED"|"PENDING"</c>; ADO: <c>"active"|"fixed"|"wontFix"|...</c>). Surfaced for diagnostics; not used for routing.</summary>
+    public required string Status { get; init; }
+
+    /// <summary>Login/display-name of the first comment's author (the thread initiator). May be empty when the platform omits it.</summary>
+    public string? AuthorIdentity { get; init; }
+
+    /// <summary>ISO-8601 timestamp of the first comment in the thread; null when the platform omits it.</summary>
+    public string? CreatedAt { get; init; }
+
+    /// <summary>Number of human-authored comments in the thread (after platform-side system-comment filtering).</summary>
+    public required int CommentCount { get; init; }
+}
+
+/// <summary>
 /// Policy block — captures the verb's local opinion on whether the PR
 /// can be merged right now. Composed of source-platform signals
 /// (review decision + mergeability) plus blocking reasons. The verb
@@ -77,7 +118,7 @@ public sealed record PrPollMetadata
 /// Output of <c>polyphony pr poll-status</c>. Platform-neutral
 /// aggregated PR status — the workflow's single source of truth for
 /// "where is this PR right now?" routing decisions. Same schema for
-/// GitHub and (eventually) Azure DevOps.
+/// GitHub and Azure DevOps.
 ///
 /// <para>State vocabulary (non-overlapping):</para>
 /// <list type="bullet">
@@ -87,6 +128,15 @@ public sealed record PrPollMetadata
 ///   <item><c>changes_requested</c> — PR is open and at least one reviewer requested changes (or the platform's aggregated decision says CHANGES_REQUESTED).</item>
 ///   <item><c>pending</c> — PR is open with no decision yet (REVIEW_REQUIRED, no reviews, etc.).</item>
 ///   <item><c>error</c> — only set when <see cref="Error"/> is populated.</item>
+/// </list>
+///
+/// <para><b>State derivation order ("option B", issue #207):</b></para>
+/// <list type="number">
+///   <item>If platform state is <c>MERGED</c> or <c>CLOSED</c>, short-circuit to the matching value.</item>
+///   <item>If <see cref="Threads"/> contains any thread that is <c>!IsResolved &amp;&amp; IsOutdated != true</c>, return <c>changes_requested</c>. <b>Threads dominate</b>: an unresolved thread blocks merge regardless of any APPROVED native review or APPROVED aggregated decision.</item>
+///   <item>If <see cref="Threads"/> is non-empty (all resolved, or the only unresolved threads are outdated), the platform's stale CHANGES_REQUESTED native review is <b>suppressed</b>: positive approval requires either an APPROVED native review or a magic-comment fallback. Otherwise <c>pending</c>.</item>
+///   <item>If <see cref="Threads"/> is empty, fall back to the platform's aggregated review decision (APPROVED → <c>approved</c>; CHANGES_REQUESTED → <c>changes_requested</c>).</item>
+///   <item>If neither threads nor a native decision give an answer, fall back to a deprecated magic-comment scan (<c>polyphony:approve</c> from the PR author only — <c>polyphony:request-changes</c> is no longer recognized; resolve a thread instead). When this path fires, a deprecation warning is appended to <see cref="Warnings"/>.</item>
 /// </list>
 /// </summary>
 public sealed record PrPollStatusResult
@@ -124,8 +174,26 @@ public sealed record PrPollStatusResult
     /// <summary>All reviews on the PR, normalized and ordered as the source returned them.</summary>
     public required IReadOnlyList<PrPollReviewer> Reviewers { get; init; }
 
+    /// <summary>
+    /// All review threads on the PR, normalized to a platform-neutral
+    /// shape. Empty (not null) when the PR has no review threads OR when
+    /// the verb could not fetch them (in which case <see cref="Warnings"/>
+    /// is populated with a "thread fetch failed" message).
+    /// See <see cref="PrPollStatusResult"/> docstring for how threads
+    /// drive state derivation.
+    /// </summary>
+    public required IReadOnlyList<PrPollThread> Threads { get; init; }
+
     /// <summary>Local policy opinion — informational; not authoritative.</summary>
     public required PrPollPolicy Policy { get; init; }
+
+    /// <summary>
+    /// Non-fatal advisories surfaced by the verb (deprecation notices,
+    /// pagination cutoffs, missing-platform-feature fallbacks). Null when
+    /// no warnings were generated. Consumers should log but not branch on
+    /// these — they are diagnostic, not routing signals.
+    /// </summary>
+    public IReadOnlyList<string>? Warnings { get; init; }
 
     /// <summary>Plan-PR front-matter when <c>--include-metadata</c> is set. Null otherwise.</summary>
     public PrPollMetadata? Metadata { get; init; }
