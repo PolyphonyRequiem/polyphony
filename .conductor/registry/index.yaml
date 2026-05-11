@@ -51,3 +51,7 @@ workflows:
     description: "Per-descendant stale-merge remedy — rebases or re-derives one descendant after an upstream PR merge (sub-workflow)"
     path: workflows/remedy-stale-descendant.yaml
     versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+  research-curation:
+    description: "Archivist curation pipeline — enumerate, curate, promote kept artifacts to sibling research repo (sub-workflow)"
+    path: workflows/research-curation.yaml
+    versions: ["2.4.0"]
