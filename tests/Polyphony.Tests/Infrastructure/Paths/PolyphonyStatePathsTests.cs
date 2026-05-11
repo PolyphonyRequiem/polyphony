@@ -116,6 +116,7 @@ public sealed class PolyphonyStatePathsTests
         // Unused by PolyphonyStatePaths; throw to surface accidental coupling.
         public Task<string?> GetTopLevelAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<string?> GetCurrentBranchAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<string?> GetCurrentBranchAsync(string workingDirectory, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<string?> GetRemoteUrlAsync(string remote = "origin", CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> ListRemoteBranchesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> LsRemoteHeadsAsync(string remote, string pattern, CancellationToken ct = default) => throw new NotSupportedException();
@@ -127,6 +128,8 @@ public sealed class PolyphonyStatePathsTests
         public Task<ProcessResult> DeleteRemoteBranchAsync(string remote, string branch, CancellationToken ct = default) => throw new NotSupportedException();
         public Task FetchAsync(string remote, string refspec, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> GetStatusAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<string>> GetStatusAsync(string workingDirectory, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<string?> GetInProgressOperationAsync(string workingDirectory, CancellationToken ct = default) => throw new NotSupportedException();
         public Task StageAsync(string pathspec, CancellationToken ct = default) => throw new NotSupportedException();
         public Task CommitAsync(string message, CancellationToken ct = default) => throw new NotSupportedException();
         public Task ResetHardAsync(string refspec, CancellationToken ct = default) => throw new NotSupportedException();

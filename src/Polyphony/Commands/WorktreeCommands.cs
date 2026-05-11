@@ -14,9 +14,11 @@ namespace Polyphony.Commands;
 /// on shell exit codes.</para>
 ///
 /// <list type="bullet">
-///   <item><see cref="Add"/>  — wraps <c>git worktree add -b B P [R]</c></item>
-///   <item><see cref="Remove"/> — wraps <c>git worktree remove [--force] P</c></item>
-///   <item><see cref="List"/> — wraps <c>git worktree list --porcelain</c></item>
+///   <item><see cref="Add"/>          — wraps <c>git worktree add -b B P [R]</c></item>
+///   <item><see cref="Remove"/>       — wraps <c>git worktree remove [--force] P</c></item>
+///   <item><see cref="List"/>         — wraps <c>git worktree list --porcelain</c></item>
+///   <item><see cref="Status"/>       — reports cleanliness + current branch of a worktree</item>
+///   <item><see cref="AssertClean"/>  — pre-flight gate: clean + (optionally) on expected branch</item>
 /// </list>
 /// </summary>
 [VerbGroup("worktree")]

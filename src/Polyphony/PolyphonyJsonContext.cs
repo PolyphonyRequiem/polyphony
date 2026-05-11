@@ -130,6 +130,8 @@ namespace Polyphony;
 [JsonSerializable(typeof(WorktreeAddResult))]
 [JsonSerializable(typeof(WorktreeRemoveResult))]
 [JsonSerializable(typeof(WorktreeListResult))]
+[JsonSerializable(typeof(WorktreeStatusResult))]
+[JsonSerializable(typeof(WorktreeAssertCleanResult))]
 [JsonSerializable(typeof(WorktreeEntry))]
 [JsonSerializable(typeof(WorklistResult))]
 [JsonSerializable(typeof(WorklistWave))]

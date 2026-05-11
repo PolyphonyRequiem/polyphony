@@ -58,6 +58,23 @@ public sealed class VerbHaltOnMissingTheory(ITestOutputHelper output)
         "Polyphony.Commands.ManifestCommands.TopologyHash",
     };
 
+    /// <summary>
+    /// Verbs that use empty-string defaults as "derive-from-environment"
+    /// sentinels rather than Move #2 "missing required" sentinels. These
+    /// have a legitimate "no flag → default behaviour" path that does not
+    /// halt:
+    /// <list type="bullet">
+    ///   <item><c>worktree status</c> / <c>worktree assert-clean</c> —
+    ///     <c>--path</c> defaults to the current directory; <c>--expected-branch</c>
+    ///     defaults to "skip the branch check". Both are intentional UX.</item>
+    /// </list>
+    /// </summary>
+    private static readonly HashSet<string> OptionalEmptyStringSentinelZone = new(StringComparer.Ordinal)
+    {
+        "Polyphony.Commands.WorktreeCommands.Status",
+        "Polyphony.Commands.WorktreeCommands.AssertClean",
+    };
+
     public static IEnumerable<object[]> SentinelVerbs()
     {
         foreach (var type in PolyphonyAssembly.GetTypes())
@@ -72,6 +89,7 @@ public sealed class VerbHaltOnMissingTheory(ITestOutputHelper output)
                 var fqn = $"{type.FullName}.{method.Name}";
                 if (Move3ConflictZone.Contains(fqn)) continue;
                 if (Stage4OptionalSentinelZone.Contains(fqn)) continue;
+                if (OptionalEmptyStringSentinelZone.Contains(fqn)) continue;
                 yield return new object[] { fqn };
             }
         }
