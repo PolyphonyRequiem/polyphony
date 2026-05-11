@@ -161,6 +161,13 @@ public sealed partial class StateCommands(
                 await CheckGhAuthAsync(ct).ConfigureAwait(false),
                 CheckPolyphonyCli(),
                 await CheckDotnetSdkAsync(ct).ConfigureAwait(false),
+                // bare_repo: ADVISORY for now — flip to required (and add to
+                // PreflightLite) once scripts/Migrate-ToBareRepo.ps1 (PR 2 of
+                // the AB#3085 stack) ships and operators have migrated.
+                // Required-now would create a chicken-and-egg gate: every
+                // SDLC apex run would block on a layout the operator has no
+                // tooling to fix.
+                await CheckBareRepoAsync(ct).ConfigureAwait(false),
             };
 
             var failed = required.Count(c => !c.Passed);
@@ -438,6 +445,95 @@ public sealed partial class StateCommands(
             Detail = "dotnet SDK not found",
             Remediation = "Install .NET SDK: https://dot.net",
         };
+    }
+
+    /// <summary>
+    /// Reports whether the current git common-dir is a bare repository — the
+    /// structural prerequisite of the bare-repo + per-run worktree layout
+    /// (AB#3085) that eliminates the launcher-hijack and worktree-dirty
+    /// production bugs by construction.
+    ///
+    /// <para><b>Probe.</b> Resolve the common-dir via
+    /// <see cref="IGitClient.GetCommonDirAsync"/>, then call
+    /// <see cref="IGitClient.IsBareRepositoryAsync"/> against that common-dir
+    /// — running <c>git rev-parse --is-bare-repository</c> from the cwd of a
+    /// linked worktree returns <c>false</c> even when the shared gitdir IS
+    /// bare, so the explicit common-dir form is mandatory.</para>
+    ///
+    /// <para><b>Surfaced as advisory</b> until the migration script lands;
+    /// see the inline comment in <see cref="Preflight"/> for the
+    /// transition plan.</para>
+    /// </summary>
+    private async Task<PreflightCheck> CheckBareRepoAsync(CancellationToken ct)
+    {
+        const string DocPath = "docs/per-run-worktree-layout.md";
+        const string Remediation =
+            "Migrate to the bare-repo + per-run worktree layout. " +
+            "See " + DocPath + " (tracked by AB#3085).";
+
+        string? commonDir;
+        try
+        {
+            commonDir = await git.GetCommonDirAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new PreflightCheck
+            {
+                Name = "bare_repo",
+                Passed = false,
+                Detail = $"Could not resolve git common-dir: {ex.Message}",
+                Remediation = Remediation,
+            };
+        }
+
+        if (string.IsNullOrEmpty(commonDir))
+        {
+            return new PreflightCheck
+            {
+                Name = "bare_repo",
+                Passed = false,
+                Detail = "Not inside a git repository (no common-dir resolvable).",
+                Remediation = Remediation,
+            };
+        }
+
+        try
+        {
+            var isBare = await git.IsBareRepositoryAsync(commonDir, ct).ConfigureAwait(false);
+            if (isBare)
+            {
+                return new PreflightCheck
+                {
+                    Name = "bare_repo",
+                    Passed = true,
+                    Detail = $"Bare repo at {commonDir} — bare-repo + per-run worktree layout (AB#3085).",
+                };
+            }
+
+            return new PreflightCheck
+            {
+                Name = "bare_repo",
+                Passed = false,
+                Detail =
+                    $"Common-dir at {commonDir} is a non-bare clone (legacy layout). " +
+                    "The SDLC orchestrator's per-run worktree model requires a bare " +
+                    "common-dir to prevent the launcher-hijack and worktree-dirty bug " +
+                    "classes (AB#3085). Currently advisory; will become required once " +
+                    "the migration script ships.",
+                Remediation = Remediation,
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new PreflightCheck
+            {
+                Name = "bare_repo",
+                Passed = false,
+                Detail = $"git --is-bare-repository failed for {commonDir}: {ex.Message}",
+                Remediation = Remediation,
+            };
+        }
     }
 }
 

@@ -112,6 +112,7 @@ public sealed class PolyphonyStatePathsTests
         public StubGitClient(string? commonDir) { _commonDir = commonDir; }
 
         public Task<string?> GetCommonDirAsync(CancellationToken ct = default) => Task.FromResult(_commonDir);
+        public Task<bool> IsBareRepositoryAsync(string commonDir, CancellationToken ct = default) => throw new NotSupportedException();
 
         // Unused by PolyphonyStatePaths; throw to surface accidental coupling.
         public Task<string?> GetTopLevelAsync(CancellationToken ct = default) => throw new NotSupportedException();
