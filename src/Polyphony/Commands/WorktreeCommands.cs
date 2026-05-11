@@ -19,6 +19,7 @@ namespace Polyphony.Commands;
 ///   <item><see cref="List"/>         — wraps <c>git worktree list --porcelain</c></item>
 ///   <item><see cref="Status"/>       — reports cleanliness + current branch of a worktree</item>
 ///   <item><see cref="AssertClean"/>  — pre-flight gate: clean + (optionally) on expected branch</item>
+///   <item><see cref="InitApex"/>     — bootstrap <c>{runs_root}/apex-{N}/feature-{N}/</c> with <c>feature/{N}</c> attached</item>
 /// </list>
 /// </summary>
 [VerbGroup("worktree")]
