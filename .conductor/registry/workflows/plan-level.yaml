@@ -524,10 +524,11 @@ agents:
   # On revision loop entry (changes_requested from plan_reviewer/human):
   # must read PR comments via gh and incorporate feedback.
   #
-  # Outputs the same {plan, children, open_questions, summary} schema as
-  # v1.0 — the difference is what happens next: write_plan persists the
-  # markdown to disk; the seeder still consumes children; the open_questions
-  # gate still runs as before.
+  # Outputs {plan, children, open_questions, research_needs, summary}.
+  # write_plan persists the markdown to disk; the seeder consumes children;
+  # the open_questions gate runs as before; the research_needs loop
+  # dispatches to the research sub-workflow and re-enters the architect
+  # with findings (bypassing plan review).
   - name: architect
     type: agent
     model: claude-opus-4.7
@@ -591,11 +592,109 @@ agents:
             severity:
               type: string
               description: One of critical, major, moderate, low. Policy route filters determine which severities gate — the architect should emit all relevant questions.
+      research_needs:
+        type: array
+        description: >-
+          Research topics the architect needs investigated before finalizing
+          the plan. Each need has a topic, context for what the architect
+          wants to learn, and a suggested scope. Empty array if no research
+          is needed. Only emit new needs — do not re-emit needs already
+          addressed by prior research findings.
+        items:
+          type: object
+          properties:
+            topic:
+              type: string
+              description: Brief topic title for the research need
+            context:
+              type: string
+              description: What the architect needs to know and why — enough detail for a research agent to act on
+            scope:
+              type: string
+              description: "Suggested scope: repo_only (search this repo), ecosystem (search ecosystem docs/repos), or broad (web search, external sources)"
       summary:
         type: string
         description: Brief one-paragraph summary of the plan
     routes:
+      # Research needs take priority — the architect should get research
+      # findings before open questions are evaluated (research may resolve
+      # questions). Route checks length > 0 so an empty array falls through.
+      - to: research_loop_counter
+        when: "{{ architect.output.research_needs | length > 0 }}"
       - to: open_questions_policy
+
+  # ── Research loop counter ──────────────────────────────────────────────
+  #
+  # Tracks the number of research loops taken. Prevents runaway research
+  # by capping at 3 iterations (research is token-expensive; more than 3
+  # iterations suggests the architect is stuck or the research sub-workflow
+  # cannot satisfy the need). On cap, routes to open_questions_policy so
+  # open questions are still honored.
+  #
+  # Mirrors open_questions_counter / revise_counter pattern.
+  - name: research_loop_counter
+    type: script
+    description: Track research loop iteration count (cap 3)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-research-loops-{{ workflow.input.work_item_id }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        $maxLoops = 3
+        $capReached = $count -ge $maxLoops
+        @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
+    routes:
+      - to: open_questions_policy
+        when: "{{ research_loop_counter.output.cap_reached == true }}"
+      - to: research_dispatcher
+        when: "{{ research_loop_counter.output.cap_reached == false }}"
+      # M4 catch-all: cap reached or unexpected — proceed to open questions.
+      - to: open_questions_policy
+
+  # ── Research dispatcher ────────────────────────────────────────────────
+  #
+  # Dispatches research needs to the research sub-workflow and collects
+  # findings. Routes findings back to the architect for integration,
+  # bypassing the plan-review leg entirely (research is context, not
+  # commitment).
+  #
+  # Stub implementation: the research sub-workflow (#3073) has not been
+  # built yet. This dispatcher returns status=unavailable so the architect
+  # knows research did not execute and can proceed with best-effort
+  # planning. When #3073 lands, this node becomes a sub-workflow invocation
+  # that calls research-assistant.yaml with the needs payload.
+  #
+  # Invariants:
+  #   Pre:  architect.output.research_needs is a non-empty array.
+  #   Post: output.status is one of 'completed' | 'unavailable';
+  #         output.findings is an array of research results (empty when
+  #         unavailable); output.needs_requested is the original needs
+  #         for the architect's re-entry context.
+  - name: research_dispatcher
+    type: script
+    description: Dispatch research needs to research sub-workflow and collect findings (stub — #3073)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        # Stub: research sub-workflow not yet implemented (see #3073).
+        # Returns unavailable status so the architect can proceed honestly.
+        @{
+            status = 'unavailable'
+            findings = @()
+            needs_requested = {{ architect.output.research_needs | length }}
+            message = 'Research sub-workflow not yet implemented (see #3073). The architect should proceed with best-effort planning using available context.'
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: architect
 
   # ── Open questions policy resolver ─────────────────────────────────────
   #

@@ -37,7 +37,9 @@ revision before the cap fires.**{% endif %}
 3. **No new open questions.** Emit `open_questions: []`. Re-asking already-
    answered questions or raising new ones at this stage will loop the
    workflow needlessly.
-4. **Acknowledge what changed.** In the `summary` output field, briefly note
+4. **No new research needs.** Emit `research_needs: []`. Requesting research
+   during a revision cycle delays the review loop needlessly.
+5. **Acknowledge what changed.** In the `summary` output field, briefly note
    which reviewer concerns you addressed and where (e.g. "Addressed reviewer
    concern about retry semantics in §Proposed Design").
 
@@ -87,7 +89,8 @@ re-emit the plan.
    against the unchanged parent generation).
 4. **Emit `open_questions: []`.** This re-entry must not loop back to
    the user — the upstream loop has already gated on human approval.
-5. **Acknowledge in `summary`** which child PR drove this iteration and
+5. **Emit `research_needs: []`.** No research during parent-patch integration.
+6. **Acknowledge in `summary`** which child PR drove this iteration and
    what you did with it.
 
 ### Child PR metadata
@@ -171,6 +174,65 @@ it from scratch:
 ### Questions you previously raised (now considered answered)
 {% for q in architect.output.open_questions %}
 - **{{ q.topic }}**: {{ q.detail }}
+{% endfor %}
+{% endif %}
+
+---
+
+{% elif last == "research_dispatcher"
+        and research_dispatcher is defined
+        and research_dispatcher.output is defined %}
+## 🔬 You Are Being Re-Invoked After Research
+
+You previously emitted `research_needs` requesting investigation before
+finalizing your plan. The research dispatcher has returned.
+
+### Research results
+
+{% if research_dispatcher.output.status == 'unavailable' %}
+> ⚠️ **Research unavailable this run.** The research sub-workflow is not yet
+> implemented (tracking: #3073). Proceed with best-effort planning using the
+> context already available to you. Do NOT re-emit the same `research_needs`
+> — they cannot be fulfilled this run.
+{% elif research_dispatcher.output.status == 'completed' and research_dispatcher.output.findings is defined and research_dispatcher.output.findings | length > 0 %}
+The following findings were returned:
+
+{% for finding in research_dispatcher.output.findings %}
+#### {{ loop.index }}. {{ finding.topic if finding.topic is defined else "(untitled)" }}
+
+{{ finding.content if finding.content is defined else "(no content)" }}
+
+{% endfor %}
+{% else %}
+> ℹ️ Research returned no findings. Proceed with best-effort planning.
+{% endif %}
+
+{% if research_loop_counter is defined and research_loop_counter.output is defined %}
+**Research loop:** {{ research_loop_counter.output.iteration }} of {{ research_loop_counter.output.max_loops }}
+{% endif %}
+
+### Re-entry rules
+
+1. **Incorporate findings** into your plan where they are relevant — update
+   scope, decisions, or design based on what research revealed.
+2. **Do NOT re-emit the same `research_needs`** that were just investigated.
+   Only emit new `research_needs` if the findings created genuinely new
+   gaps that require further investigation.
+3. **Strongly prefer `research_needs: []`** so the workflow can proceed to
+   open questions and review. Re-emitting needs that were already dispatched
+   (or that returned unavailable) loops the workflow needlessly.
+
+{% if architect is defined and architect.output is defined and architect.output.plan is defined %}
+### Prior plan (refine, do not discard)
+```markdown
+{{ architect.output.plan }}
+```
+{% endif %}
+
+{% if architect is defined and architect.output is defined and architect.output.research_needs is defined %}
+### Research needs you previously raised
+{% for need in architect.output.research_needs %}
+- **{{ need.topic }}** ({{ need.scope }}): {{ need.context }}
 {% endfor %}
 {% endif %}
 
@@ -318,6 +380,22 @@ Read the user plan from the filesystem and use it as your starting point.
    - External dependencies that block the work item (critical)
    - Refinement choices where a default exists but user input would improve quality (low)
 
+5. **Identify research needs** — If your plan would benefit from information
+   not available in your current context, emit it as a `research_needs` entry.
+   Research is dispatched to a sub-workflow and findings are fed back to you
+   in a subsequent iteration — WITHOUT going through plan review first.
+
+   | Scope | When to use |
+   |---|---|
+   | `repo_only` | Patterns, conventions, or prior art that may exist in this repository |
+   | `ecosystem` | Framework docs, library APIs, or related open-source repos |
+   | `broad` | External references, standards, academic papers, or web resources |
+
+   **Emit sparingly** — research loops are capped (3 max) and token-expensive.
+   Only request research that would materially change your plan. If you can
+   make a reasonable assumption, do so and note it; do not research to confirm
+   what you already believe.
+
 ## Output
 
 Return a JSON object with this structure:
@@ -343,6 +421,13 @@ Return a JSON object with this structure:
       "topic": "Brief topic title",
       "detail": "Full description of the question and why it matters",
       "severity": "moderate"
+    }
+  ],
+  "research_needs": [
+    {
+      "topic": "Brief topic title for the research need",
+      "context": "What you need to know and why — enough detail for a research agent to act on",
+      "scope": "repo_only"
     }
   ],
   "summary": "Brief one-paragraph summary of the plan"
@@ -403,6 +488,25 @@ questions at any severity level — the workflow's policy-driven route filters
 determine which questions actually gate for user input.
 
 If there are no open questions, return an empty array: `"open_questions": []`
+
+### `research_needs` field
+
+Use `research_needs` when you need information you cannot obtain from your
+current context — prior art in the repo, ecosystem documentation, external
+references, or cross-cutting patterns across sibling work items.
+
+`scope` must be one of: `repo_only` (search this repo only), `ecosystem`
+(search ecosystem docs and related repos), or `broad` (web search, external
+sources).
+
+- **Emit sparingly.** Research loops are capped (3 max) and token-expensive.
+  Only emit needs that would materially change your plan.
+- **Be specific.** Vague needs ("research best practices") produce vague
+  findings. State exactly what you want to learn and why.
+- **Do NOT re-emit** needs that were already dispatched (check the re-entry
+  context for prior research results). Only emit genuinely new gaps.
+
+If there are no research needs, return an empty array: `"research_needs": []`
 
 
 ## Constraints
