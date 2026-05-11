@@ -1,0 +1,178 @@
+# research-loop — Test fixture exercising the architect research_needs
+# loop-back pattern from plan-level.yaml.
+#
+# Isolates the research cycle: architect emits research_needs →
+# research_loop_counter → research_dispatcher → architect re-entry.
+# Uses the same node shapes, routing, and Jinja patterns as the
+# production plan-level.yaml — the fixture just trims the nodes
+# before and after the research loop to keep the scenario scriptable.
+#
+# Lifecycle:
+#   1. guidance_loader (stub — provides type for open_questions_policy)
+#   2. architect (LLM — first call emits research_needs)
+#   3. research_loop_counter (inline pwsh — cap check)
+#   4. research_dispatcher (inline pwsh — stub returns unavailable)
+#   5. architect (LLM — second call, no research_needs)
+#   6. open_questions_policy (stub — returns auto mode)
+#   7. terminal
+
+workflow:
+  name: research-loop-test
+  description: >-
+    Test fixture for architect research_needs loop-back. Exercises the
+    research_loop_counter → research_dispatcher → architect re-entry
+    cycle and verifies routing to open_questions_policy on completion.
+  version: "1.0.0"
+  entry_point: guidance_loader
+
+  limits:
+    max_iterations: 20
+
+  input:
+    work_item_id:
+      type: number
+      required: true
+      description: Work item id (used to key the loop counter temp file)
+
+agents:
+  # Minimal guidance loader stub — just routes to architect.
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance (stub for test fixture)
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: architect
+
+  # Architect agent — same output schema as plan-level.yaml including
+  # the research_needs field. Scripted via FakeProvider in the scenario.
+  - name: architect
+    type: agent
+    model: claude-opus-4.7
+    description: Architect agent with research_needs output (test fixture)
+    prompt: |
+      You are the architect. Emit a plan with research_needs if needed.
+
+      {% set last = context.history[-1] if context.history|length > 0 else "" %}
+
+      {% if last == "research_dispatcher"
+            and research_dispatcher is defined
+            and research_dispatcher.output is defined %}
+      ## Research Results
+
+      Status: {{ research_dispatcher.output.status }}
+      {% if research_dispatcher.output.findings is defined %}
+      Findings: {{ research_dispatcher.output.findings | length }}
+      {% endif %}
+      {% endif %}
+    output:
+      plan:
+        type: string
+        description: The full plan document in Markdown format
+      children:
+        type: array
+        description: Child work items to seed
+        items:
+          type: object
+          properties:
+            child_id:
+              type: string
+            title:
+              type: string
+            type:
+              type: string
+      open_questions:
+        type: array
+        description: Questions requiring user input
+        items:
+          type: object
+          properties:
+            topic:
+              type: string
+            detail:
+              type: string
+            severity:
+              type: string
+      research_needs:
+        type: array
+        description: Research topics to investigate before finalizing
+        items:
+          type: object
+          properties:
+            topic:
+              type: string
+              description: Brief topic title
+            context:
+              type: string
+              description: What the architect needs to know
+            scope:
+              type: string
+              description: "repo_only | ecosystem | broad"
+      summary:
+        type: string
+        description: Brief summary
+    routes:
+      - to: research_loop_counter
+        when: "{{ architect.output.research_needs | length > 0 }}"
+      - to: open_questions_policy
+
+  # ── Research loop counter ──────────────────────────────────────────────
+  - name: research_loop_counter
+    type: script
+    description: Track research loop iteration count (cap 3)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-research-loops-{{ workflow.input.work_item_id }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        $maxLoops = 3
+        $capReached = $count -ge $maxLoops
+        @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
+    routes:
+      - to: open_questions_policy
+        when: "{{ research_loop_counter.output.cap_reached == true }}"
+      - to: research_dispatcher
+        when: "{{ research_loop_counter.output.cap_reached == false }}"
+      - to: open_questions_policy
+
+  # ── Research dispatcher (stub) ─────────────────────────────────────────
+  - name: research_dispatcher
+    type: script
+    description: Dispatch research needs (stub — returns unavailable)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        @{
+            status = 'unavailable'
+            findings = @()
+            needs_requested = {{ architect.output.research_needs | length }}
+            message = 'Research sub-workflow not yet implemented (see #3073).'
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: architect
+
+  # ── Open questions policy (terminal for this fixture) ──────────────────
+  - name: open_questions_policy
+    type: script
+    description: Resolve open_questions policy (stub — returns auto)
+    command: polyphony
+    args:
+      - "policy"
+      - "resolve"
+      - "--domain"
+      - "open_questions"
+    routes:
+      - to: $end

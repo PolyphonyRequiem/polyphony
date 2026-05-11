@@ -1,0 +1,65 @@
+# plan_level_research_loop — architect research_needs → dispatch → re-entry.
+#
+# Exercises the full research loop-back cycle:
+#   1. guidance_loader (CLI stub)
+#   2. architect call 1 — emits research_needs (one topic)
+#   3. research_loop_counter — inline pwsh, iteration 1, cap not reached
+#   4. research_dispatcher — inline pwsh, returns status=unavailable
+#   5. architect call 2 — re-entered with research context, emits no research_needs
+#   6. open_questions_policy (CLI stub) → $end
+#
+# Uses the research-loop test fixture (tests/harness/fixtures/research-loop.yaml)
+# which isolates the research loop pattern from plan-level.yaml's full node graph.
+# The fixture preserves the same output schema, routing conditions, and Jinja
+# patterns as the production workflow.
+
+workflow: tests/harness/fixtures/research-loop.yaml
+
+inputs:
+  work_item_id: 99999
+
+cli_scripts:
+  # guidance_loader: polyphony plan load-agent-guidance --work-item 99999
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {"type":"Issue","architect":{"role":"","type_refinement":""},"coder":{"role":"","type_refinement":""},"reviewer":{"role":"","type_refinement":""},"agents":{}}
+    exit_code: 0
+
+  # open_questions_policy: polyphony policy resolve --domain open_questions
+  - command: polyphony
+    args: [policy, resolve]
+    stdout: |
+      {"mode":"auto","min_severity":"critical","max_question_loops":3,"severities_at_or_above":["critical"]}
+    exit_code: 0
+
+agent_scripts:
+  architect:
+    # Call 1: architect emits research_needs with one topic
+    - content:
+        plan: "# Draft Plan\n\nNeed to research existing patterns first."
+        children: []
+        open_questions: []
+        research_needs:
+          - topic: "Existing routing patterns"
+            context: "Need to understand current route-back-to-prior-node patterns in the codebase"
+            scope: "repo_only"
+        summary: "Draft plan — pending research on existing routing patterns."
+
+    # Call 2: re-entered after research, no more research needs
+    - content:
+        plan: "# Final Plan\n\nBased on research (unavailable this run), proceeding with best-effort design."
+        children: []
+        open_questions: []
+        research_needs: []
+        summary: "Final plan — research unavailable, proceeded with best-effort approach."
+
+expected_trace:
+  agents_executed:
+    - guidance_loader
+    - architect
+    - research_loop_counter
+    - research_dispatcher
+    - architect
+    - open_questions_policy
+  reached_terminal: true
