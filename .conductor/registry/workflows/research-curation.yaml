@@ -1,0 +1,167 @@
+# research-curation — Archivist → promotion writer pipeline.
+#
+# Drives the full curation path for an apex's scratch artifacts:
+#
+#   enumerate_artifacts (script) → archivist_agent (LLM) →
+#   validate_decisions (script) → promote (script) → $end
+#
+# 1. Enumerate: `polyphony agent archivist` enumerates the scratch directory,
+#    producing an ArchivistResult envelope with per-artifact placeholders.
+# 2. Archivist agent: LLM fills in keep / discard / expand decisions.
+# 3. Validate: `polyphony research curate` validates the decisions against
+#    the scratch directory (every file must have a decision, every decision
+#    must be a valid verdict).
+# 4. Promote: `polyphony research promote` writes kept artifacts to the
+#    sibling research repo through the #3072 storage abstraction's
+#    platform-routed IResearchStore.
+#
+# Cross-platform proof (AB#3082): the destination_json input carries the
+# target platform. The promote step records the exercised platform combo
+# in its output.platform_combo field for end-to-end traceability.
+#
+# Routing-style verbs: all script steps always exit 0. Errors surface in
+# each envelope's error / error_code fields and the workflow routes on them.
+#
+# Invariants:
+#   Pre:  scratch directory exists at {scratch_dir} with at least one file.
+#   Post: kept artifacts written to the sibling repo; platform_combo
+#         recorded in workflow output.
+
+workflow:
+  name: research-curation
+  description: >-
+    Archivist curation pipeline — enumerates scratch artifacts, curates via
+    an LLM agent, validates decisions, and promotes kept artifacts to the
+    sibling research repo through the platform-routed storage abstraction.
+  version: "2.4.0"
+  entry_point: enumerate_artifacts
+  metadata:
+    min_polyphony_version: "2.4.0"
+
+  limits:
+    max_iterations: 50
+
+  input:
+    apex_id:
+      type: number
+      required: true
+      description: Apex work-item ID whose scratch directory to curate.
+    scratch_dir:
+      type: string
+      required: true
+      description: Path to the scratch directory containing artifacts.
+    destination_json:
+      type: string
+      required: true
+      description: >-
+        JSON-encoded ResearchDestination (platform, repo locator, branch,
+        root path). Passed verbatim to the promote verb.
+
+output:
+  platform_combo: "{{ promote.output.platform_combo | default('') }}"
+  promoted: "{{ promote.output.promoted | default('[]') }}"
+  expand_requested: "{{ promote.output.expand_requested | default('[]') }}"
+  discarded_count: "{{ promote.output.discarded_count | default(0) }}"
+  curate_artifact_count: "{{ validate_decisions.output.artifact_count | default(0) }}"
+
+agents:
+  # ── 1. Enumerate scratch artifacts ──────────────────────────────────────
+  - name: enumerate_artifacts
+    type: script
+    description: Enumerate scratch artifacts for the apex.
+    command: polyphony
+    args:
+      - "agent"
+      - "archivist"
+      - "{{ workflow.input.apex_id }}"
+      - "--scratch-root"
+      - "{{ workflow.input.scratch_dir }}"
+    routes:
+      - to: $end
+        when: "{{ enumerate_artifacts.output.error_code is defined and enumerate_artifacts.output.error_code != None and enumerate_artifacts.output.error_code != '' }}"
+      - to: archivist_agent
+
+  # ── 2. Archivist agent (LLM) ───────────────────────────────────────────
+  #
+  # The agent receives the enumerated artifacts and produces per-artifact
+  # keep / discard / expand decisions. Output is a JSON string consumed
+  # by the validate and promote script steps.
+  - name: archivist_agent
+    type: agent
+    model: claude-sonnet-4.5
+    description: Produce keep/discard/expand decisions for enumerated artifacts.
+    output:
+      decisions_json:
+        type: string
+        description: JSON array of ArchivistDecision objects.
+    prompt: |
+      You are the archivist for apex {{ workflow.input.apex_id }}.
+
+      ## Enumerated Artifacts
+
+      {{ enumerate_artifacts.output.decisions | json }}
+
+      ## Instructions
+
+      For each artifact, decide:
+      - **keep** — promote to the sibling research repo.
+      - **discard** — not relevant; will be pruned at apex close.
+      - **expand** — promising but needs deeper research.
+
+      Return a JSON array of decisions. Each element:
+      ```json
+      {
+        "artifact_path": "<relative path>",
+        "decision": "keep | discard | expand",
+        "rationale": "<why>",
+        "relevance_signals": {
+          "domain": "high | medium | low | none",
+          "codebase": "high | medium | low | none",
+          "technology_stacks": "high | medium | low | none",
+          "ecosystem": "high | medium | low | none",
+          "linkability": "high | medium | low | none"
+        }
+      }
+      ```
+
+      Return ONLY the `decisions_json` field containing this JSON array as a string.
+    routes:
+      - to: validate_decisions
+
+  # ── 3. Validate decisions ───────────────────────────────────────────────
+  - name: validate_decisions
+    type: script
+    description: Validate archivist decisions against the scratch directory.
+    command: polyphony
+    args:
+      - "research"
+      - "curate"
+      - "--apex-id"
+      - "{{ workflow.input.apex_id }}"
+      - "--scratch-dir"
+      - "{{ workflow.input.scratch_dir }}"
+      - "--decisions-json"
+      - "{{ archivist_agent.output.decisions_json }}"
+    routes:
+      - to: $end
+        when: "{{ validate_decisions.output.error_code is defined and validate_decisions.output.error_code != None and validate_decisions.output.error_code != '' }}"
+      - to: promote
+
+  # ── 4. Promote kept artifacts ───────────────────────────────────────────
+  - name: promote
+    type: script
+    description: Write kept artifacts to the sibling research repo.
+    command: polyphony
+    args:
+      - "research"
+      - "promote"
+      - "--apex-id"
+      - "{{ workflow.input.apex_id }}"
+      - "--scratch-dir"
+      - "{{ workflow.input.scratch_dir }}"
+      - "--decisions-json"
+      - "{{ archivist_agent.output.decisions_json }}"
+      - "--destination-json"
+      - "{{ workflow.input.destination_json }}"
+    routes:
+      - to: $end
