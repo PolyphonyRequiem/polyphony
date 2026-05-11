@@ -205,6 +205,8 @@ public sealed partial class PlanCommands(
     ///   architect/&lt;typeslug&gt;.md   # optional refinement for architect on this type
     ///   coder/&lt;typeslug&gt;.md       # optional
     ///   reviewer/&lt;typeslug&gt;.md    # optional
+    ///   agents/&lt;agent_name&gt;.md    # optional per-named-agent override
+    ///                              # (REPLACES role-wide block; type refinement still stacks)
     /// </code>
     /// Returns empty strings for missing files (graceful degradation). Returns a
     /// non-zero exit code only when the work item is missing or has no type;
@@ -247,6 +249,7 @@ public sealed partial class PlanCommands(
             Architect = await LoadRoleGuidance(guidanceDir, "architect", typeSlug, ct),
             Coder = await LoadRoleGuidance(guidanceDir, "coder", typeSlug, ct),
             Reviewer = await LoadRoleGuidance(guidanceDir, "reviewer", typeSlug, ct),
+            Agents = await LoadAgentOverrides(guidanceDir, ct),
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult));
@@ -273,6 +276,24 @@ public sealed partial class PlanCommands(
         };
     }
 
+    private static async Task<IReadOnlyDictionary<string, string>> LoadAgentOverrides(
+        string guidanceDir, CancellationToken ct)
+    {
+        var agentsDir = Path.Combine(guidanceDir, "agents");
+        if (!Directory.Exists(agentsDir))
+            return new Dictionary<string, string>();
+
+        var overrides = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var path in Directory.EnumerateFiles(agentsDir, "*.md", SearchOption.TopDirectoryOnly))
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            if (string.IsNullOrEmpty(name))
+                continue;
+            overrides[name] = await File.ReadAllTextAsync(path, ct);
+        }
+        return overrides;
+    }
+
     private static void EmitGuidanceError(string type, string message)
     {
         var empty = new AgentGuidanceForRole { Role = string.Empty, TypeRefinement = string.Empty };
@@ -282,6 +303,7 @@ public sealed partial class PlanCommands(
             Architect = empty,
             Coder = empty,
             Reviewer = empty,
+            Agents = new Dictionary<string, string>(),
             Error = message,
         };
         Console.WriteLine(JsonSerializer.Serialize(errorResult, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult));

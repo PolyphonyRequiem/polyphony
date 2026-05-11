@@ -172,7 +172,8 @@ Describe 'actionable.yaml e2e — Polyphony executor leg' {
         # branches) and assert the chain matches the design sketch.
         $expected = @(
             @{ From = 'ensure_evidence_branch';  To = 'compose_addendum';     Via = 'default-route' },
-            @{ From = 'compose_addendum';        To = 'actionable_agent';     Via = 'default-route' },
+            @{ From = 'compose_addendum';        To = 'guidance_loader';      Via = 'default-route' },
+            @{ From = 'guidance_loader';         To = 'actionable_agent';     Via = 'default-route' },
             @{ From = 'actionable_agent';        To = 'open_evidence_pr';     Via = 'default-route' },
             @{ From = 'open_evidence_pr';        To = 'evidence_floor_check'; Via = 'default-route' },
             @{ From = 'evidence_floor_check';    To = 'evidence_reviewer';    Via = 'floor-pass' },
@@ -245,9 +246,9 @@ Describe 'actionable.yaml e2e — Polyphony executor leg' {
         $errRoute | Should -Not -BeNullOrEmpty
         $errRoute.Target | Should -Be 'workflow_error_gate' -Because (
             "PR #5: a malformed addendum must fail safely; the agent never sees a partial envelope")
-        # And the default route is the agent.
+        # And the default route is the guidance loader (which then routes to the agent).
         $defaultRoute = $routes | Where-Object { -not $_.When }
-        $defaultRoute.Target | Should -Be 'actionable_agent'
+        $defaultRoute.Target | Should -Be 'guidance_loader'
     }
 
     It 'merge_evidence_pr only declares a satisfied terminal when merged == true' {

@@ -15,6 +15,16 @@ inputs:
   work_item_id: 12345
   feature_branch: feature/12345-test
 
+cli_scripts:
+  # The guidance_loader script step (entry point) calls
+  # `polyphony plan load-agent-guidance --work-item 12345`. The harness shim
+  # has no real work item store, so we script a minimal happy-path response.
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {"type":"Issue","architect":{"role":"","type_refinement":""},"coder":{"role":"","type_refinement":""},"reviewer":{"role":"","type_refinement":""},"agents":{}}
+    exit_code: 0
+
 agent_scripts:
   close_out:
     - content:

@@ -603,7 +603,11 @@ agents:
       }
       ```
 
-      {% if remediation_guidance_loader is defined and remediation_guidance_loader.output.architect is defined and remediation_guidance_loader.output.architect.role %}
+      {% if remediation_guidance_loader is defined and remediation_guidance_loader.output.agents.remediation_planner is defined and remediation_guidance_loader.output.agents.remediation_planner %}
+      ## Repo-Specific Guidance — remediation_planner (override)
+
+      {{ remediation_guidance_loader.output.agents.remediation_planner }}
+      {% elif remediation_guidance_loader is defined and remediation_guidance_loader.output.architect is defined and remediation_guidance_loader.output.architect.role %}
       ## Repo-Specific Guidance
 
       {{ remediation_guidance_loader.output.architect.role }}
