@@ -450,39 +450,74 @@ public sealed class ConfigValidatorTests
     #region V-11 through V-14: agent guidance and profile files
 
     [Fact]
-    public void V11_AgentGuidanceMissing_ProducesWarning()
+    public void V11_RoleGuidanceMissing_ProducesWarningPerRole()
     {
         var config = ValidConfig();
         var repoRoot = CreateTempRepoRoot();
-        // Remove all agent-guidance files
-        foreach (var type in config.Types.Keys)
-        {
-            var slug = ConfigValidator.ToSlug(type);
-            var path = Path.Combine(repoRoot, ".polyphony-config", "agent-guidance", $"{slug}.md");
-            if (File.Exists(path)) File.Delete(path);
-        }
+        // Don't create any agent-guidance/<role>.md files.
+
         var result = ConfigValidator.Validate(config, repoRoot);
-        foreach (var type in config.Types.Keys)
+
+        foreach (var role in new[] { "architect", "coder", "reviewer" })
         {
-            result.Warnings.ShouldContain(d => d.RuleId == "V-11" && d.Message.Contains(ConfigValidator.ToSlug(type)));
+            result.Warnings.ShouldContain(d =>
+                d.RuleId == "V-11" && d.Message.Contains($"agent-guidance/{role}.md"));
         }
     }
 
     [Fact]
-    public void V11_AgentGuidanceExists_NoWarning()
+    public void V11_AllRoleGuidanceFilesPresent_NoWarning()
     {
         var config = ValidConfig();
         var repoRoot = CreateTempRepoRoot();
-        foreach (var type in config.Types.Keys)
+        foreach (var role in new[] { "architect", "coder", "reviewer" })
         {
-            var slug = ConfigValidator.ToSlug(type);
-            CreateFile(repoRoot, ".polyphony-config", "agent-guidance", $"{slug}.md");
+            CreateFile(repoRoot, ".polyphony-config", "agent-guidance", $"{role}.md");
         }
+
         var result = ConfigValidator.Validate(config, repoRoot);
-        foreach (var type in config.Types.Keys)
+
+        result.Warnings.ShouldNotContain(d => d.RuleId == "V-11");
+    }
+
+    [Fact]
+    public void V11_TypeRefinementSubdirectory_NotWarnedAsMissing()
+    {
+        // Per-type refinements at agent-guidance/<role>/<typeslug>.md are optional;
+        // their absence must not produce V-11 warnings.
+        var config = ValidConfig();
+        var repoRoot = CreateTempRepoRoot();
+        foreach (var role in new[] { "architect", "coder", "reviewer" })
         {
-            result.Warnings.ShouldNotContain(d => d.RuleId == "V-11" && d.Message.Contains(ConfigValidator.ToSlug(type)));
+            CreateFile(repoRoot, ".polyphony-config", "agent-guidance", $"{role}.md");
         }
+
+        var result = ConfigValidator.Validate(config, repoRoot);
+
+        // No warning mentions any type slug — only the three role files matter.
+        foreach (var typeName in config.Types.Keys)
+        {
+            var slug = ConfigValidator.ToSlug(typeName);
+            result.Warnings.ShouldNotContain(d =>
+                d.RuleId == "V-11" && d.Message.Contains($"/{slug}.md"));
+        }
+    }
+
+    [Fact]
+    public void V11_OnlyOneRoleFilePresent_OtherTwoStillWarn()
+    {
+        var config = ValidConfig();
+        var repoRoot = CreateTempRepoRoot();
+        CreateFile(repoRoot, ".polyphony-config", "agent-guidance", "architect.md");
+
+        var result = ConfigValidator.Validate(config, repoRoot);
+
+        result.Warnings.ShouldNotContain(d =>
+            d.RuleId == "V-11" && d.Message.Contains("agent-guidance/architect.md"));
+        result.Warnings.ShouldContain(d =>
+            d.RuleId == "V-11" && d.Message.Contains("agent-guidance/coder.md"));
+        result.Warnings.ShouldContain(d =>
+            d.RuleId == "V-11" && d.Message.Contains("agent-guidance/reviewer.md"));
     }
 
     [Fact]
@@ -531,20 +566,16 @@ public sealed class ConfigValidatorTests
 
         CreateFile(repoRoot, ".polyphony-config", "work-item-types", "bug.md");
         CreateFile(repoRoot, ".polyphony-config", "work-item-types", "templates", "bug-template.md");
-        CreateFile(repoRoot, ".polyphony-config", "agent-guidance", "bug.md");
+        CreateFile(repoRoot, ".polyphony-config", "agent-guidance", "architect.md");
+        CreateFile(repoRoot, ".polyphony-config", "agent-guidance", "coder.md");
+        CreateFile(repoRoot, ".polyphony-config", "agent-guidance", "reviewer.md");
         CreateFile(repoRoot, ".polyphony-config", "profile.yaml");
 
         var result = ConfigValidator.Validate(config, repoRoot);
 
         result.IsValid.ShouldBeTrue();
         result.Errors.ShouldBeEmpty();
-        // Accept warnings for missing agent-guidance files if not all types are covered
-        var expectedGuidanceFiles = config.Types.Keys.Select(ConfigValidator.ToSlug).ToHashSet();
-        var missingGuidance = result.Warnings.Where(w => w.RuleId == "V-11").Select(w => w.Message).ToList();
-        foreach (var slug in expectedGuidanceFiles)
-        {
-            missingGuidance.ShouldNotContain($"Agent guidance file missing: .polyphony-config/agent-guidance/{slug}.md");
-        }
+        result.Warnings.ShouldNotContain(w => w.RuleId == "V-11");
     }
 
     [Fact]

@@ -1,4 +1,4 @@
-# Epic Guidance — polyphony
+# Architect Guidance — polyphony
 
 You are planning work for **polyphony**: a .NET 11 CLI (preview LangVersion)
 that routes work items through SDLC phases for any per-repo process

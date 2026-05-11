@@ -1005,36 +1005,45 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     // =========================================================================
-    // Plan load-guidance — JSON contract
+    // Plan load-agent-guidance — JSON contract
     // =========================================================================
 
     [Fact]
-    public void LoadGuidance_EmptyDir_EmitsEmptyObject()
+    public async Task LoadAgentGuidance_NoGuidanceDir_EmitsAllRolesEmpty()
     {
         using var fx = new ConductorDirFixture(createGuidanceDir: false);
+        var item = new WorkItemBuilder().WithId(800).WithType("Issue").WithTitle("X").WithState("New").Build();
+        await SeedAsync(item);
 
         var cmd = CreatePlanCommands();
-        var (exitCode, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(800, fx.ConfigDir));
 
         exitCode.ShouldBe(ExitCodes.Success);
-        output.Trim().ShouldBe("{}");
+        var doc = JsonDocument.Parse(output);
+        doc.RootElement.GetProperty("type").GetString().ShouldBe("Issue");
+        doc.RootElement.GetProperty("architect").GetProperty("role").GetString().ShouldBe(string.Empty);
+        doc.RootElement.GetProperty("coder").GetProperty("role").GetString().ShouldBe(string.Empty);
+        doc.RootElement.GetProperty("reviewer").GetProperty("role").GetString().ShouldBe(string.Empty);
     }
 
     [Fact]
-    public void LoadGuidance_DeserializationRoundTrip_KeysAreFileBasenames()
+    public async Task LoadAgentGuidance_DeserializationRoundTrip_RoleAndTypeRefinement()
     {
         using var fx = new ConductorDirFixture();
-        fx.WriteAgentGuidance("epic", "Epic guidance.");
-        fx.WriteAgentGuidance("planning-gate", "Gate guidance.");
+        fx.WriteAgentGuidance("architect", "Architect role-wide.");
+        fx.WriteAgentRefinement("architect", "issue", "Architect for Issue.");
+        var item = new WorkItemBuilder().WithId(801).WithType("Issue").WithTitle("X").WithState("New").Build();
+        await SeedAsync(item);
 
         var cmd = CreatePlanCommands();
-        var (_, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+        var (_, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(801, fx.ConfigDir));
 
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult);
         result.ShouldNotBeNull();
-        result.Keys.ShouldContain("epic");
-        result.Keys.ShouldContain("planning-gate");
-        result["epic"].ShouldBe("Epic guidance.");
+        result.Architect.Role.ShouldBe("Architect role-wide.");
+        result.Architect.TypeRefinement.ShouldBe("Architect for Issue.");
+        result.Coder.Role.ShouldBe(string.Empty);
+        result.Reviewer.Role.ShouldBe(string.Empty);
     }
 
     // =========================================================================

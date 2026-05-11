@@ -317,21 +317,32 @@ function New-TypeTemplate {
 # ── Generator: agent guidance markdown ───────────────────────────────────────
 function New-AgentGuidance {
     param(
+        [ValidateSet('architect', 'coder', 'reviewer')]
         [string]$RoleName
     )
 
+    $title = (Get-Culture).TextInfo.ToTitleCase($RoleName)
+    $description = switch ($RoleName) {
+        'architect' { 'plans work — decomposes a work item into actionable children, drafts a structured implementation plan' }
+        'coder'     { 'implements a single task — writes code, writes tests, commits to the per-item impl branch' }
+        'reviewer'  { 'reviews plans and implementations — flags substantive bugs, calibrates severity, never blocks for nits' }
+    }
+
     $lines = @()
-    $lines += "# $RoleName Guidance"
+    $lines += "# $title Guidance"
     $lines += ''
-    $lines += "<!-- TODO: Define guidance for the $($RoleName.ToLower()) agent role -->"
+    $lines += "<!-- This file is loaded into every $RoleName prompt across all work-item types. -->"
+    $lines += "<!-- Per-type refinements (optional) live at agent-guidance/$RoleName/<typeslug>.md. -->"
+    $lines += ''
+    $lines += "The $RoleName agent $description."
     $lines += ''
     $lines += '## Responsibilities'
     $lines += ''
-    $lines += "<!-- TODO: List the $($RoleName.ToLower()) agent's key responsibilities -->"
+    $lines += "<!-- TODO: List the $RoleName agent's key responsibilities for this repo. -->"
     $lines += ''
     $lines += '## Conventions'
     $lines += ''
-    $lines += "<!-- TODO: Project-specific conventions the $($RoleName.ToLower()) should follow -->"
+    $lines += "<!-- TODO: Project-specific conventions the $RoleName should follow. -->"
     $lines += ''
 
     return ($lines -join "`n")
@@ -430,11 +441,12 @@ foreach ($type in $types) {
     }
 }
 
-# 3. Agent guidance files (type-neutral)
-foreach ($type in $types) {
-    $slug = Get-TypeSlug $type
-    $guidancePath = Join-Path $configPath "agent-guidance/$slug.md"
-    $guidanceContent = New-AgentGuidance -RoleName $type
+# 3. Agent guidance role files (architect, coder, reviewer)
+#    Per-type refinements at agent-guidance/<role>/<typeslug>.md are
+#    optional — bootstrap does not scaffold them.
+foreach ($role in @('architect', 'coder', 'reviewer')) {
+    $guidancePath = Join-Path $configPath "agent-guidance/$role.md"
+    $guidanceContent = New-AgentGuidance -RoleName $role
     if (Write-StubFile -FilePath $guidancePath -Content $guidanceContent -ForceOverwrite $forceFlag) {
         $filesWritten += $guidancePath
     } else {

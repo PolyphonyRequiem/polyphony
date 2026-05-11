@@ -17,7 +17,7 @@ namespace Polyphony.Commands;
 ///   <item><c>scripts/depth-guard.ps1</c> → <see cref="DepthGuard"/></item>
 ///   <item><c>scripts/child-router.ps1</c> → <see cref="NextChild"/></item>
 ///   <item><c>scripts/load-type-context.ps1</c> → <see cref="LoadType"/></item>
-///   <item><c>scripts/load-agent-guidance.ps1</c> → <see cref="LoadGuidance"/></item>
+///   <item><c>scripts/load-agent-guidance.ps1</c> → <see cref="LoadAgentGuidance"/></item>
 ///   <item><c>.conductor/registry/scripts/review-router.ps1</c> → <see cref="Review"/></item>
 /// </list>
 /// </summary>
@@ -25,7 +25,7 @@ namespace Polyphony.Commands;
 /// Routing-script verbs (<see cref="DepthGuard"/>, <see cref="NextChild"/>,
 /// <see cref="Review"/>) always return <see cref="ExitCodes.Success"/>; the workflow
 /// routes on the JSON payload. File-IO verbs (<see cref="LoadType"/>,
-/// <see cref="LoadGuidance"/>) follow the standard exit-code convention: success
+/// <see cref="LoadAgentGuidance"/>) follow the standard exit-code convention: success
 /// on happy path, non-zero on failure with an <c>error</c> field for the gate
 /// prompt to surface.
 /// </remarks>
@@ -185,36 +185,106 @@ public sealed partial class PlanCommands(
     }
 
     /// <summary>
-    /// Loads agent guidance markdown files into a JSON role map keyed by file
-    /// basename (extension stripped). Consumed by <c>plan-level.yaml</c>'s
-    /// <c>guidance_loader</c> step and <c>implement-merge-group.yaml</c>'s equivalent.
-    /// Returns an empty object when the guidance directory does not exist —
-    /// graceful degradation for repos without agent guidance configured.
+    /// Loads agent guidance markdown for the three canonical roles
+    /// (architect, coder, reviewer) for a specific work item. Each role
+    /// returns a role-wide block plus an optional per-type refinement keyed
+    /// by the work item's type slug. Consumed by the <c>guidance_loader</c>
+    /// step in <c>plan-level.yaml</c> and <c>implement-merge-group.yaml</c>;
+    /// agents read their respective <c>role</c> + <c>type_refinement</c>
+    /// fields via Jinja2 conditionals so prompts degrade gracefully when
+    /// no guidance files exist.
     /// </summary>
-    /// <param name="configDir">Conductor config directory containing
-    /// <c>agent-guidance/*.md</c>.</param>
-    [Command("load-guidance")]
-    [VerbResult(typeof(Dictionary<string, string>))]
-    public int LoadGuidance(string configDir = ".polyphony-config")
+    /// <remarks>
+    /// Replaces the prior <c>load-guidance</c> verb (a flat type-keyed map).
+    /// Layout:
+    /// <code>
+    /// .polyphony-config/agent-guidance/
+    ///   architect.md          # role-wide, always loaded
+    ///   coder.md              # role-wide
+    ///   reviewer.md           # role-wide
+    ///   architect/&lt;typeslug&gt;.md   # optional refinement for architect on this type
+    ///   coder/&lt;typeslug&gt;.md       # optional
+    ///   reviewer/&lt;typeslug&gt;.md    # optional
+    /// </code>
+    /// Returns empty strings for missing files (graceful degradation). Returns a
+    /// non-zero exit code only when the work item is missing or has no type;
+    /// missing guidance directories or files are not errors.
+    /// </remarks>
+    /// <param name="workItem">ADO work item ID whose type drives refinement lookup.</param>
+    /// <param name="configDir">Polyphony config directory containing
+    /// <c>agent-guidance/</c>.</param>
+    [Command("load-agent-guidance")]
+    [VerbResult(typeof(PlanLoadAgentGuidanceResult))]
+    public async Task<int> LoadAgentGuidance(
+        int workItem = RequiredInput.MissingInt,
+        string configDir = ".polyphony-config",
+        CancellationToken ct = default)
     {
-        var guidancePath = Path.Combine(configDir, "agent-guidance");
-        var roleMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (RequiredInput.HaltIfMissing("plan load-agent-guidance",
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
+            return halt;
 
-        if (Directory.Exists(guidancePath))
+        var item = await repository.GetByIdAsync(workItem, ct);
+        if (item is null)
         {
-            // Sort by name so the output is deterministic across platforms.
-            var mdFiles = Directory.GetFiles(guidancePath, "*.md", SearchOption.TopDirectoryOnly);
-            Array.Sort(mdFiles, StringComparer.Ordinal);
-
-            foreach (var file in mdFiles)
-            {
-                var roleName = Path.GetFileNameWithoutExtension(file);
-                roleMap[roleName] = File.ReadAllText(file);
-            }
+            EmitGuidanceError(string.Empty, $"Work item {workItem} not found");
+            return ExitCodes.CacheError;
         }
 
-        Console.WriteLine(JsonSerializer.Serialize(roleMap, PolyphonyJsonContext.Default.DictionaryStringString));
+        var typeName = item.Type.Value;
+        if (string.IsNullOrWhiteSpace(typeName))
+        {
+            EmitGuidanceError(string.Empty, $"Work item {workItem} has no type field");
+            return ExitCodes.CacheError;
+        }
+
+        var typeSlug = SlugifyType(typeName);
+        var guidanceDir = Path.Combine(configDir, "agent-guidance");
+
+        var result = new PlanLoadAgentGuidanceResult
+        {
+            Type = typeName,
+            Architect = await LoadRoleGuidance(guidanceDir, "architect", typeSlug, ct),
+            Coder = await LoadRoleGuidance(guidanceDir, "coder", typeSlug, ct),
+            Reviewer = await LoadRoleGuidance(guidanceDir, "reviewer", typeSlug, ct),
+        };
+
+        Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult));
         return ExitCodes.Success;
+    }
+
+    private static async Task<AgentGuidanceForRole> LoadRoleGuidance(
+        string guidanceDir, string role, string typeSlug, CancellationToken ct)
+    {
+        var rolePath = Path.Combine(guidanceDir, $"{role}.md");
+        var roleText = File.Exists(rolePath)
+            ? await File.ReadAllTextAsync(rolePath, ct)
+            : string.Empty;
+
+        var refinementPath = Path.Combine(guidanceDir, role, $"{typeSlug}.md");
+        var refinementText = File.Exists(refinementPath)
+            ? await File.ReadAllTextAsync(refinementPath, ct)
+            : string.Empty;
+
+        return new AgentGuidanceForRole
+        {
+            Role = roleText,
+            TypeRefinement = refinementText,
+        };
+    }
+
+    private static void EmitGuidanceError(string type, string message)
+    {
+        var empty = new AgentGuidanceForRole { Role = string.Empty, TypeRefinement = string.Empty };
+        var errorResult = new PlanLoadAgentGuidanceResult
+        {
+            Type = type,
+            Architect = empty,
+            Coder = empty,
+            Reviewer = empty,
+            Error = message,
+        };
+        Console.WriteLine(JsonSerializer.Serialize(errorResult, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult));
     }
 
     private static void EmitTypeError(string type, string message)

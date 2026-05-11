@@ -14,7 +14,7 @@ namespace Polyphony.Tests.Commands;
 /// End-to-end tests for the <c>polyphony plan</c> verb group. Verifies output shape,
 /// routing-script exit-code convention (always 0), facet filtering for
 /// <c>plan depth-guard</c> and <c>plan next-child</c>, and the file-IO loaders
-/// <c>plan load-type</c> and <c>plan load-guidance</c>.
+/// <c>plan load-type</c> and <c>plan load-agent-guidance</c>.
 /// </summary>
 public sealed class PlanCommandsTests : CommandTestBase
 {
@@ -344,91 +344,156 @@ public sealed class PlanCommandsTests : CommandTestBase
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // load-guidance
+    // load-agent-guidance
     // ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void LoadGuidance_HappyPath_ReturnsRoleMap()
+    public async Task LoadAgentGuidance_HappyPath_ReturnsAllRoles()
     {
         using var fx = new ConductorDirFixture();
-        fx.WriteAgentGuidance("epic", "Epic guidance.");
-        fx.WriteAgentGuidance("issue", "Issue guidance.");
-        fx.WriteAgentGuidance("task", "Task guidance.");
+        fx.WriteAgentGuidance("architect", "Architect role-wide.");
+        fx.WriteAgentGuidance("coder", "Coder role-wide.");
+        fx.WriteAgentGuidance("reviewer", "Reviewer role-wide.");
+
+        var item = new WorkItemBuilder().WithId(700).WithType("Issue").WithTitle("X").WithState("New").Build();
+        await SeedAsync(item);
 
         var cmd = CreateCommand();
-        var (exitCode, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(700, fx.ConfigDir));
 
         exitCode.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult);
         result.ShouldNotBeNull();
-        result.ShouldContainKey("epic");
-        result.ShouldContainKey("issue");
-        result.ShouldContainKey("task");
-        result["epic"].ShouldBe("Epic guidance.");
-        result["issue"].ShouldBe("Issue guidance.");
-        result["task"].ShouldBe("Task guidance.");
+        result.Type.ShouldBe("Issue");
+        result.Architect.Role.ShouldBe("Architect role-wide.");
+        result.Coder.Role.ShouldBe("Coder role-wide.");
+        result.Reviewer.Role.ShouldBe("Reviewer role-wide.");
+        result.Architect.TypeRefinement.ShouldBe(string.Empty);
+        result.Coder.TypeRefinement.ShouldBe(string.Empty);
+        result.Reviewer.TypeRefinement.ShouldBe(string.Empty);
+        result.Error.ShouldBeNull();
     }
 
     [Fact]
-    public void LoadGuidance_NoGuidanceDir_ReturnsEmptyObject()
+    public async Task LoadAgentGuidance_TypeRefinement_LoadedFromRoleSubdirectory()
     {
-        // Guidance directory never created — must degrade gracefully.
+        using var fx = new ConductorDirFixture();
+        fx.WriteAgentGuidance("architect", "Architect role-wide.");
+        fx.WriteAgentRefinement("architect", "issue", "Architect refinement for Issue.");
+        fx.WriteAgentRefinement("coder", "issue", "Coder refinement for Issue.");
+
+        var item = new WorkItemBuilder().WithId(701).WithType("Issue").WithTitle("X").WithState("New").Build();
+        await SeedAsync(item);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(701, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult);
+        result.ShouldNotBeNull();
+        result.Architect.Role.ShouldBe("Architect role-wide.");
+        result.Architect.TypeRefinement.ShouldBe("Architect refinement for Issue.");
+        result.Coder.Role.ShouldBe(string.Empty);
+        result.Coder.TypeRefinement.ShouldBe("Coder refinement for Issue.");
+        result.Reviewer.Role.ShouldBe(string.Empty);
+        result.Reviewer.TypeRefinement.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public async Task LoadAgentGuidance_NoGuidanceDir_ReturnsAllEmpty()
+    {
         using var fx = new ConductorDirFixture(createGuidanceDir: false);
 
+        var item = new WorkItemBuilder().WithId(702).WithType("Issue").WithTitle("X").WithState("New").Build();
+        await SeedAsync(item);
+
         var cmd = CreateCommand();
-        var (exitCode, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(702, fx.ConfigDir));
 
         exitCode.ShouldBe(ExitCodes.Success);
-        output.Trim().ShouldBe("{}");
-    }
-
-    [Fact]
-    public void LoadGuidance_EmptyGuidanceDir_ReturnsEmptyObject()
-    {
-        using var fx = new ConductorDirFixture();
-        // Directory exists but no .md files.
-
-        var cmd = CreateCommand();
-        var (exitCode, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
-
-        exitCode.ShouldBe(ExitCodes.Success);
-        output.Trim().ShouldBe("{}");
-    }
-
-    [Fact]
-    public void LoadGuidance_IgnoresNonMarkdownFiles()
-    {
-        using var fx = new ConductorDirFixture();
-        fx.WriteAgentGuidance("epic", "MD content");
-        fx.WriteRawGuidanceFile("README.txt", "Should be ignored");
-        fx.WriteRawGuidanceFile("notes.json", "Should be ignored");
-
-        var cmd = CreateCommand();
-        var (_, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
-
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DictionaryStringString);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult);
         result.ShouldNotBeNull();
-        result.Keys.ShouldBe(["epic"]);
+        result.Type.ShouldBe("Issue");
+        result.Architect.Role.ShouldBe(string.Empty);
+        result.Architect.TypeRefinement.ShouldBe(string.Empty);
+        result.Coder.Role.ShouldBe(string.Empty);
+        result.Reviewer.Role.ShouldBe(string.Empty);
+        result.Error.ShouldBeNull();
     }
 
     [Fact]
-    public void LoadGuidance_DeterministicOrder_AlphabeticalByFilename()
+    public async Task LoadAgentGuidance_WorkItemNotFound_ReturnsCacheError()
     {
         using var fx = new ConductorDirFixture();
-        fx.WriteAgentGuidance("zeta", "z");
-        fx.WriteAgentGuidance("alpha", "a");
-        fx.WriteAgentGuidance("mu", "m");
+        var cmd = CreateCommand();
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(99_999, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.CacheError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult);
+        result.ShouldNotBeNull();
+        result.Error.ShouldNotBeNullOrEmpty();
+        result.Error.ShouldContain("99999");
+        result.Type.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public async Task LoadAgentGuidance_MultiwordType_SlugifiesRefinementPath()
+    {
+        // "User Story" → architect/user-story.md
+        using var fx = new ConductorDirFixture();
+        fx.WriteAgentGuidance("architect", "Architect role-wide.");
+        fx.WriteAgentRefinement("architect", "user-story", "User Story refinement.");
+
+        var configWithUserStory = new ProcessConfigBuilder()
+            .WithType("User Story", ["plannable"], new Dictionary<string, string>
+            {
+                ["begin_planning"] = "Doing",
+                ["implementation_complete"] = "Done",
+            })
+            .WithBranchStrategy()
+            .Build();
+
+        var item = new WorkItemBuilder().WithId(703).WithType("User Story").WithTitle("US").WithState("New").Build();
+        await SeedAsync(item);
+
+        var cmd = CreateCommand(configWithUserStory);
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(703, fx.ConfigDir));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanLoadAgentGuidanceResult);
+        result.ShouldNotBeNull();
+        result.Type.ShouldBe("User Story");
+        result.Architect.TypeRefinement.ShouldBe("User Story refinement.");
+    }
+
+    [Fact]
+    public async Task LoadAgentGuidance_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        using var fx = new ConductorDirFixture();
+        fx.WriteAgentGuidance("architect", "x");
+
+        var item = new WorkItemBuilder().WithId(704).WithType("Issue").WithTitle("X").WithState("New").Build();
+        await SeedAsync(item);
 
         var cmd = CreateCommand();
-        var (_, output) = CaptureConsole(() => cmd.LoadGuidance(fx.ConfigDir));
+        var (_, output) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(704, fx.ConfigDir));
 
-        // Raw JSON should list keys in alphabetical order — JSON dicts preserve insertion order.
-        var alphaIdx = output.IndexOf("\"alpha\"", StringComparison.Ordinal);
-        var muIdx = output.IndexOf("\"mu\"", StringComparison.Ordinal);
-        var zetaIdx = output.IndexOf("\"zeta\"", StringComparison.Ordinal);
-        alphaIdx.ShouldBeGreaterThanOrEqualTo(0);
-        muIdx.ShouldBeGreaterThan(alphaIdx);
-        zetaIdx.ShouldBeGreaterThan(muIdx);
+        output.ShouldContain("\"type\"");
+        output.ShouldContain("\"architect\"");
+        output.ShouldContain("\"coder\"");
+        output.ShouldContain("\"reviewer\"");
+        output.ShouldContain("\"role\"");
+        output.ShouldContain("\"type_refinement\"");
+        output.ShouldNotContain("\"TypeRefinement\"");
+    }
+
+    [Fact]
+    public async Task LoadAgentGuidance_MissingRequiredWorkItem_HaltsWithError()
+    {
+        var cmd = CreateCommand();
+        var (exitCode, _) = await CaptureConsoleAsync(() => cmd.LoadAgentGuidance(workItem: RequiredInput.MissingInt));
+
+        exitCode.ShouldNotBe(ExitCodes.Success);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -593,7 +658,7 @@ public sealed class PlanCommandsTests : CommandTestBase
 
 /// <summary>
 /// Disposable fixture for a temporary <c>.polyphony-config</c> directory used by
-/// <c>load-type</c> and <c>load-guidance</c> tests.
+/// <c>load-type</c> and <c>load-agent-guidance</c> tests.
 /// </summary>
 internal sealed class ConductorDirFixture : IDisposable
 {
@@ -615,6 +680,13 @@ internal sealed class ConductorDirFixture : IDisposable
 
     public void WriteAgentGuidance(string role, string content) =>
         File.WriteAllText(Path.Combine(ConfigDir, "agent-guidance", $"{role}.md"), content);
+
+    public void WriteAgentRefinement(string role, string typeSlug, string content)
+    {
+        var dir = Path.Combine(ConfigDir, "agent-guidance", role);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, $"{typeSlug}.md"), content);
+    }
 
     public void WriteRawGuidanceFile(string fileName, string content) =>
         File.WriteAllText(Path.Combine(ConfigDir, "agent-guidance", fileName), content);

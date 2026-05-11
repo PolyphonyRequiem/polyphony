@@ -233,16 +233,22 @@ agents:
 
   # ── Guidance loader ────────────────────────────────────────────────────
   #
-  # Loads repo-specific agent guidance markdown. Architect and plan_reviewer
-  # consume their per-role keys via Jinja2 conditionals so prompts degrade
-  # gracefully when no guidance files exist.
+  # Loads repo-specific agent guidance markdown for the three canonical
+  # roles (architect, coder, reviewer) for the work item being planned.
+  # Each role exposes a role-wide block (`<role>.role`) plus an optional
+  # per-type refinement (`<role>.type_refinement`) keyed by the work
+  # item's type slug. Architect and plan_reviewer prompts compose their
+  # respective blocks via Jinja2 conditionals so prompts degrade gracefully
+  # when no guidance files exist.
   - name: guidance_loader
     type: script
     description: Load agent guidance markdown files for planning agent prompts
     command: polyphony
     args:
       - "plan"
-      - "load-guidance"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
     routes:
       - to: root_resolver
 
@@ -1075,10 +1081,16 @@ agents:
       It does not vote — human review is the merge gate._
       ```
 
-      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer %}
+      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
       ## Repo-Specific Guidance
 
-      {{ guidance_loader.output.reviewer }}
+      {{ guidance_loader.output.reviewer.role }}
+      {% endif %}
+
+      {% if guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.reviewer.type_refinement }}
       {% endif %}
 
       ## Output
