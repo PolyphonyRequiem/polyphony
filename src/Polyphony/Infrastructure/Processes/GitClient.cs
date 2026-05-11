@@ -273,6 +273,17 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
         return runner.RunAsync(Exe, args, ct);
     }
 
+    public Task<ProcessResult> WorktreeAddAttachAsync(string branch, string path, CancellationToken ct = default)
+    {
+        // git worktree add {path} {branch} — no `-b`. Git infers attach
+        // mode from "branch already exists locally" and surfaces a
+        // recognizable error when the branch is missing or already
+        // checked out elsewhere.
+        ArgumentException.ThrowIfNullOrEmpty(branch);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        return runner.RunAsync(Exe, ["worktree", "add", path, branch], ct);
+    }
+
     public Task<ProcessResult> WorktreeRemoveAsync(string path, bool force, CancellationToken ct = default)
     {
         string[] args = force
