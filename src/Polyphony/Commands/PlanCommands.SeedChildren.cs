@@ -34,6 +34,72 @@ public sealed partial class PlanCommands
     private static readonly Regex MarkerRegex =
         new(@"<!--\s*polyphony:plan-child-id=(task-\d+)\s*-->", RegexOptions.Compiled);
 
+    // Matches the trailing work-item id in a twig-emitted ADO edit URL like
+    // https://dev.azure.com/<org>/<project>/_workitems/edit/3072. Used as a
+    // fallback when twig new emits id:0 in its JSON payload (observed under
+    // an ADO replication race in twig's post-create FetchAsync).
+    private static readonly Regex EditUrlIdRegex =
+        new(@"/edit/(\d+)(?:[/?#]|$)", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Extract the new work-item id from a <c>twig new -o json</c> response.
+    /// Tries the structured <c>id</c> field first; falls back to parsing the
+    /// id out of the <c>url</c> field when <c>id</c> is missing or zero.
+    /// Returns 0 only when both paths fail. <paramref name="source"/> is set
+    /// to <c>"id"</c>, <c>"url"</c>, or <c>"none"</c> so the caller can
+    /// surface a warning when the fallback path fired.
+    /// </summary>
+    internal static int ExtractCreatedId(JsonNode created, out string source)
+    {
+        // Direct id field — happy path.
+        var direct = created["id"];
+        if (direct is not null)
+        {
+            try
+            {
+                var id = direct.GetValue<int>();
+                if (id > 0)
+                {
+                    source = "id";
+                    return id;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Twig emitted id as something other than an int (e.g. string).
+                // Don't propagate — fall through to the url-fallback path below
+                // so a misbehaving upstream doesn't take the workflow down.
+            }
+            catch (FormatException)
+            {
+                // Same reasoning — defensive against future format drift.
+            }
+        }
+
+        // Fallback: parse the work-item id out of the url field.
+        var url = created["url"]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(url))
+        {
+            var match = EditUrlIdRegex.Match(url);
+            if (match.Success && int.TryParse(match.Groups[1].Value, out var urlId) && urlId > 0)
+            {
+                source = "url";
+                return urlId;
+            }
+        }
+
+        source = "none";
+        return 0;
+    }
+
+    /// <summary>
+    /// Truncate <paramref name="raw"/> to at most <paramref name="max"/>
+    /// characters, appending an ellipsis when truncation occurred. Used to
+    /// keep self-diagnosing error messages bounded.
+    /// </summary>
+    internal static string TruncateForError(string raw, int max = 500)
+        => raw.Length <= max ? raw : raw[..max] + "…";
+
     /// <summary>
     /// Idempotently seed the architect's decomposition entries as children of
     /// <paramref name="workItem"/>.
@@ -186,11 +252,30 @@ public sealed partial class PlanCommands
 
                 var description = BuildDescription(child, childId);
                 var created = await twig.CreateChildAsync(workItem, type, title, description, ct).ConfigureAwait(false);
-                var newId = created["id"]?.GetValue<int>() ?? 0;
+                var newId = ExtractCreatedId(created, out var idSource);
                 if (newId == 0)
                 {
-                    errors.Add(new SeedError { ChildId = childId, Title = title, Error = "twig new returned no id" });
+                    // Self-diagnosing error: include the raw twig payload (truncated)
+                    // so the next occurrence doesn't require event-log archaeology to
+                    // figure out what shape twig actually returned. The dogfood that
+                    // motivated this hardening (AB#3071, 2026-05-10) had six children
+                    // fail with "twig new returned no id" yet the items WERE created
+                    // in ADO — without the raw payload there was no way to tell whether
+                    // we got id:0, missing-id, a string id, or some envelope wrapper.
+                    var snippet = TruncateForError(created.ToJsonString());
+                    errors.Add(new SeedError
+                    {
+                        ChildId = childId,
+                        Title = title,
+                        Error = $"twig new returned no usable id (id field and url fallback both failed); raw payload: {snippet}",
+                    });
                     continue;
+                }
+                if (idSource == "url")
+                {
+                    // Recovered via url fallback — flag it so we know the upstream
+                    // twig race is still happening and we shouldn't quietly forget.
+                    warnings.Add($"child {childId} → #{newId}: twig new returned id=0 in JSON; recovered id from url field (likely twig fetch-back race in NewCommand.cs)");
                 }
                 seeded.Add(new SeedReconciliation { ChildId = childId, WorkItemId = newId, MatchedBy = "created" });
             }

@@ -460,4 +460,138 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         File.WriteAllText(path, body);
         return path;
     }
+
+    // ---- ExtractCreatedId hardening (AB#3071 dogfood, 2026-05-10) ----
+    //
+    // Six children seeded successfully into ADO but the seeder emitted
+    // "twig new returned no id" for all six because twig's JSON payload
+    // came back with an unusable id. The two paths verified by these tests:
+    //
+    //   1. Url fallback recovers the id and the seeder records a warning
+    //      so we know the upstream race is still happening.
+    //   2. When both id AND url fail, the error message includes the raw
+    //      payload so the next occurrence is self-diagnosing.
+
+    [Fact]
+    public async Task SeedChildren_TwigReturnsZeroId_RecoversFromUrlFallback()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 100);
+        // Twig emits id:0 (the AB#3071 dogfood symptom — likely from a
+        // post-create FetchAsync race in twig itself) but the url is
+        // correct because it's built from the actual create-response id.
+        runner.WhenStartsWith("twig", new[] { "new" },
+            new ProcessResult(0,
+                """{"id":0,"type":"Task","title":"x","parent":100,"url":"https://dev.azure.com/org/proj/_workitems/edit/777"}""",
+                ""));
+        StubShowParent(runner, 100, tagsField: "");
+        StubPatchOk(runner);
+
+        var children = """[{"child_id":"task-1","title":"x","type":"Task","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(0);
+        result.SeededCount.ShouldBe(1);
+        result.SeededItems[0].WorkItemId.ShouldBe(777);
+        result.SeededItems[0].MatchedBy.ShouldBe("created");
+        result.Warnings.Count.ShouldBe(1);
+        result.Warnings[0].ShouldContain("recovered id from url");
+    }
+
+    [Fact]
+    public async Task SeedChildren_TwigReturnsNoIdAndNoUrl_RecordsRawPayloadInError()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 100);
+        // Both paths fail — neither id nor a usable url. The error message
+        // must include the raw payload so we don't have to scrape event
+        // logs to figure out what twig actually returned.
+        runner.WhenStartsWith("twig", new[] { "new" },
+            new ProcessResult(0, """{"unexpected":"shape","totally":"different"}""", ""));
+
+        var children = """[{"child_id":"task-1","title":"x","type":"Task","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(1);
+        result.Errors[0].Error.ShouldContain("twig new returned no usable id");
+        result.Errors[0].Error.ShouldContain("raw payload");
+        result.Errors[0].Error.ShouldContain("\"unexpected\":\"shape\"");
+    }
+
+    [Fact]
+    public async Task SeedChildren_TwigReturnsStringId_FallsBackToUrlNotThrow()
+    {
+        // Defensive: if twig ever drifts to emitting id as a string, we don't
+        // want a raw InvalidOperationException to crash the whole seed —
+        // we want the url fallback to kick in transparently.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 100);
+        runner.WhenStartsWith("twig", new[] { "new" },
+            new ProcessResult(0,
+                """{"id":"888","url":"https://dev.azure.com/org/proj/_workitems/edit/888"}""",
+                ""));
+        StubShowParent(runner, 100, tagsField: "");
+        StubPatchOk(runner);
+
+        var children = """[{"child_id":"task-1","title":"x","type":"Task","description":"Body."}]""";
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.SeededCount.ShouldBe(1);
+        result.SeededItems[0].WorkItemId.ShouldBe(888);
+    }
+
+    [Fact]
+    public void ExtractCreatedId_HappyPath_ReturnsIdFromIdField()
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(
+            """{"id":3072,"url":"https://dev.azure.com/org/proj/_workitems/edit/3072"}""")!;
+        var id = PlanCommands.ExtractCreatedId(node, out var source);
+        id.ShouldBe(3072);
+        source.ShouldBe("id");
+    }
+
+    [Theory]
+    [InlineData("https://dev.azure.com/org/proj/_workitems/edit/3072", 3072)]
+    [InlineData("https://dev.azure.com/org/proj/_workitems/edit/3072/", 3072)]
+    [InlineData("https://dev.azure.com/org/proj/_workitems/edit/3072?foo=bar", 3072)]
+    [InlineData("https://github.com/o/r/issues/42", 0)]
+    [InlineData("not a url", 0)]
+    [InlineData("", 0)]
+    public void ExtractCreatedId_ZeroIdWithUrl_ParsesIdFromUrl(string url, int expected)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse($$"""{"id":0,"url":"{{url}}"}""")!;
+        var id = PlanCommands.ExtractCreatedId(node, out var source);
+        id.ShouldBe(expected);
+        source.ShouldBe(expected == 0 ? "none" : "url");
+    }
+
+    [Fact]
+    public void ExtractCreatedId_BothMissing_ReturnsZero()
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse("""{"unrelated":"shape"}""")!;
+        var id = PlanCommands.ExtractCreatedId(node, out var source);
+        id.ShouldBe(0);
+        source.ShouldBe("none");
+    }
+
+    [Fact]
+    public void TruncateForError_ShortString_ReturnedAsIs()
+    {
+        PlanCommands.TruncateForError("hello").ShouldBe("hello");
+    }
+
+    [Fact]
+    public void TruncateForError_LongString_TruncatedWithEllipsis()
+    {
+        var raw = new string('x', 600);
+        var truncated = PlanCommands.TruncateForError(raw, max: 500);
+        truncated.Length.ShouldBe(501); // 500 chars + 1-char ellipsis
+        truncated.ShouldEndWith("…");
+    }
 }
