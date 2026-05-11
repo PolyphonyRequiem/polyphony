@@ -5,6 +5,7 @@ using Polyphony.Manifest;
 using Polyphony.Locking;
 using Polyphony.Models;
 using Polyphony.Policy;
+using Polyphony.Research;
 using Polyphony.Sdlc;
 
 namespace Polyphony;
@@ -170,6 +171,14 @@ namespace Polyphony;
 [JsonSerializable(typeof(AdoReferenceLinks))]
 [JsonSerializable(typeof(AdoReviewerListResponse))]
 [JsonSerializable(typeof(AdoReviewerRaw))]
+[JsonSerializable(typeof(ResearchCurateResult))]
+[JsonSerializable(typeof(ResearchPromoteResult))]
+[JsonSerializable(typeof(ArchivistDecision))]
+[JsonSerializable(typeof(List<ArchivistDecision>))]
+[JsonSerializable(typeof(RelevanceSignals))]
+[JsonSerializable(typeof(CitationMetadata))]
+[JsonSerializable(typeof(ResearchDestination))]
+[JsonSerializable(typeof(ResearchWriteResult))]
 [JsonSerializable(typeof(RequiredInputErrorResult))]
 [JsonSerializable(typeof(StateValidateInputsResult))]
 [JsonSerializable(typeof(StateValidateInputsDiagnostic))]
