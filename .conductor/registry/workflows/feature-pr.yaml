@@ -327,6 +327,7 @@ agents:
       branch_name: "{{ workflow.input.feature_branch }}"
       target_branch: "{{ workflow.input.target_branch }}"
       review_policy: "auto"
+      work_item_id: "{{ workflow.input.work_item_id }}"
     routes:
       - to: $end
         when: "{{ pr_lifecycle_github.output.merged == true }}"
@@ -405,7 +406,7 @@ agents:
         Set-Content $counterFile $count
         @{ iteration = $count; under_limit = ($count -lt 3) } | ConvertTo-Json
     routes:
-      - to: remediation_planner
+      - to: remediation_guidance_loader
         when: "{{ remediation_counter.output.under_limit == true }}"
       - to: remediation_cap_gate
         when: "{{ remediation_counter.output.under_limit == false }}"
@@ -457,7 +458,7 @@ agents:
     options:
       - label: "🔄 Continue Anyway"
         value: continue
-        route: remediation_planner
+        route: remediation_guidance_loader
       - label: "🛑 Abort"
         value: abort
         route: remediation_abort
@@ -512,6 +513,18 @@ agents:
   #         'continue' at remediation_cap_gate.
   #   Post: output.addendum_plan_path is set; output.work_items describes
   #         the work needed.
+  - name: remediation_guidance_loader
+    type: script
+    description: Load agent guidance for the apex (drives remediation_planner's architect refinement)
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: remediation_planner
+
   - name: remediation_planner
     type: agent
     model: claude-opus-4.7
@@ -589,6 +602,18 @@ agents:
         "estimated_tasks": 0
       }
       ```
+
+      {% if remediation_guidance_loader is defined and remediation_guidance_loader.output.architect is defined and remediation_guidance_loader.output.architect.role %}
+      ## Repo-Specific Guidance
+
+      {{ remediation_guidance_loader.output.architect.role }}
+      {% endif %}
+
+      {% if remediation_guidance_loader is defined and remediation_guidance_loader.output.architect is defined and remediation_guidance_loader.output.architect.type_refinement %}
+      ## Repo-Specific Guidance — {{ remediation_guidance_loader.output.type }} refinement
+
+      {{ remediation_guidance_loader.output.architect.type_refinement }}
+      {% endif %}
     output:
       addendum_plan_path:
         type: string
