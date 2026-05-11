@@ -193,9 +193,17 @@ if (-not $PSBoundParameters.ContainsKey('Repository')) {
 
 # ─── Build the command ───────────────────────────────────────────────────────
 
+# Build the command. Web-dashboard flag depends on detach mode:
+#   --web    runs the dashboard in the foreground console (NoDetach).
+#   --web-bg daemonizes conductor + dashboard, prints the URL to stdout,
+#            and exits the parent immediately. Required for Start-Process
+#            -WindowStyle Hidden launches — `--web` would hang on first
+#            console output flush since there is no attached TTY.
+$webFlag = if ($NoDetach) { '--web' } else { '--web-bg' }
+
 $conductorArgs = @(
     'run', 'apex-driver@polyphony'
-    '--web'
+    $webFlag
     '--input', "apex_id=$ApexId"
     '--input', "intent=$Intent"
     '--input', "platform=$Platform"
@@ -297,12 +305,28 @@ if ($NoDetach) {
     return
 }
 
+$logDir = Join-Path ([System.IO.Path]::GetTempPath()) 'polyphony-sdlc-runs'
+[void](New-Item -ItemType Directory -Path $logDir -Force)
+$logTimestamp = (Get-Date -Format 'yyyyMMdd-HHmmss')
+$stdoutLog = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-stdout.log"
+$stderrLog = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-stderr.log"
+
+# Start-Process -WindowStyle Hidden inherits no console handles, which
+# causes conductor (Rich/Textual rendering) to hang on first output flush
+# without ever opening its dashboard port. Redirecting stdout/stderr to
+# files gives the child valid file handles AND captures output for the
+# operator to tail. Without this redirection the process sits at 0%
+# CPU forever, never serves the dashboard, and silently leaks.
 $proc = Start-Process -FilePath 'conductor' `
     -ArgumentList $conductorArgs `
     -WorkingDirectory $WorktreeRoot `
     -WindowStyle Hidden `
+    -RedirectStandardOutput $stdoutLog `
+    -RedirectStandardError $stderrLog `
     -PassThru
 
 $resolved | Add-Member -NotePropertyName pid -NotePropertyValue $proc.Id
-$resolved | Add-Member -NotePropertyName note -NotePropertyValue 'Conductor launched detached. Watch the dashboard at http://localhost:* (URL emitted by conductor on startup).'
+$resolved | Add-Member -NotePropertyName stdout_log -NotePropertyValue $stdoutLog
+$resolved | Add-Member -NotePropertyName stderr_log -NotePropertyValue $stderrLog
+$resolved | Add-Member -NotePropertyName note -NotePropertyValue "Conductor launched detached. Tail stdout: Get-Content -Wait '$stdoutLog'  Dashboard URL: appears in stdout once the server starts."
 $resolved | ConvertTo-Json -Depth 5
