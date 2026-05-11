@@ -88,6 +88,11 @@ public static class PolyphonyServiceRegistration
         // PolyphonyServiceRegistrationTests.Command_ResolvesCleanlyFromDI.
         services.AddSingleton<Commands.ScopeCommands>();
 
+        // Research storage abstraction — default is InMemoryResearchStore.
+        // Live platform implementations (GitHub, ADO) will be wired when
+        // the research: config block (#3072) lands. Tests inject their own.
+        services.AddSingleton<Research.IResearchStore, Research.InMemoryResearchStore>();
+
         return services;
     }
 }
