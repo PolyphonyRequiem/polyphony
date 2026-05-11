@@ -1721,6 +1721,13 @@ agents:
       - to: merge_plan_pr
 
   # ── Merge error gate ──────────────────────────────────────────────────
+  #
+  # Cause-aware: surfaces the verb's full diagnostic message (which is
+  # already specific — e.g. worktree_dirty includes the porcelain entry
+  # count and remediation hint) and then a per-error-code "Next step"
+  # block tailored to what the operator actually needs to do before
+  # retrying. Falls back to a generic message for codes not yet enumerated
+  # so a new error_code never silently regresses to "no guidance shown".
   - name: merge_error_gate
     type: human_gate
     prompt: |
@@ -1731,9 +1738,67 @@ agents:
 
       **Error code:** `{{ merge_plan_pr.output.error_code }}`
 
-      Common causes: lock acquisition failed (another run holds the
-      same-root lock); push conflict on manifest branch; gh CLI
-      authentication.
+      {% if merge_plan_pr.output.error is defined and merge_plan_pr.output.error %}
+      **Details:** {{ merge_plan_pr.output.error }}
+      {% endif %}
+
+      ---
+
+      **Next step:**
+      {% if merge_plan_pr.output.error_code == 'worktree_dirty' %}
+      The worktree has uncommitted changes. From the run's worktree
+      directory, run `git status` to see what's there, then commit,
+      stash, or discard the changes before retrying. Common culprit:
+      stray scratch files left behind by an agent tool call (look for
+      orphan `.txt` / `.json` files at the repo root).
+      {% elif merge_plan_pr.output.error_code == 'lock_held' %}
+      Another polyphony run holds the same-root run lock. Check for an
+      in-flight workflow on the same apex; wait for it to finish, or
+      use `polyphony lock force-release` if it's a stale lock.
+      {% elif merge_plan_pr.output.error_code == 'lock_stale' %}
+      The run lock is older than the staleness threshold. Run
+      `polyphony lock force-release --root-id <id>` to clear it, then
+      retry.
+      {% elif merge_plan_pr.output.error_code == 'manifest_push_rejected' %}
+      A concurrent run pushed to the manifest branch first. Retry —
+      the verb will refetch and re-attempt; usually succeeds on the
+      next try.
+      {% elif merge_plan_pr.output.error_code in ['repo_not_resolved', 'config_error'] %}
+      Configuration / environment issue. Check that gh is authenticated
+      to the right user (`gh auth status`), the repo slug resolves, and
+      the run's `.conductor` config is valid. Retry once fixed.
+      {% elif merge_plan_pr.output.error_code == 'pr_not_found' %}
+      The PR number on record no longer exists on the platform.
+      Someone may have closed or deleted it manually. Aborting and
+      restarting plan-level for this work item is usually safer than
+      retrying.
+      {% elif merge_plan_pr.output.error_code in ['head_ref_mismatch', 'base_ref_mismatch'] %}
+      The PR's head or base branch doesn't match what the manifest
+      expects. Inspect the PR on the platform — it may have been
+      retargeted manually. Aborting and re-opening the PR via
+      plan-level is safer than retrying.
+      {% elif merge_plan_pr.output.error_code == 'pr_state_unmergeable' %}
+      The platform reports the PR is not in a mergeable state
+      (conflicts, failing required checks, blocked by branch protection).
+      Resolve the underlying block on the PR page, then retry.
+      {% elif merge_plan_pr.output.error_code == 'merge_failed' %}
+      The platform's merge call returned an error. Check the PR page
+      for the platform-specific reason, address it, then retry.
+      {% elif merge_plan_pr.output.error_code in ['missing_merge_commit', 'ledger_conflict'] %}
+      Post-merge bookkeeping failed. Manifest may be partially
+      updated. Inspect the manifest branch before retrying.
+      {% elif merge_plan_pr.output.error_code == 'validation_blocked' %}
+      A pre-merge validation check rejected the merge. See **Details**
+      above for the specific rule that blocked it; remediate, then
+      retry.
+      {% elif merge_plan_pr.output.error_code == 'internal_error' %}
+      Unexpected verb-internal failure. Capture the run's event log
+      and file a polyphony issue. Retry is safe but may reproduce.
+      {% else %}
+      No targeted guidance for this error code. See **Details** above
+      and inspect the run's event log for context. Retry is safe but
+      may reproduce.
+      {% endif %}
 
       ---
 
