@@ -39,6 +39,33 @@ public interface IGitClient
     Task<string?> GetCommonDirAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// <c>git --git-dir={commonDir} rev-parse --is-bare-repository</c>.
+    /// Returns true when the git directory at <paramref name="commonDir"/>
+    /// is a bare repository, false otherwise. Throws
+    /// <see cref="ExternalToolException"/> on git failure.
+    ///
+    /// <para><b>The probe MUST address the gitdir explicitly via
+    /// <c>--git-dir</c>, not via cwd discovery.</b> Default discovery from
+    /// a linked worktree of a bare repo resolves to the <i>worktree-specific</i>
+    /// gitdir under <c>{commonDir}/worktrees/{name}</c>, which is itself
+    /// non-bare — so <c>git rev-parse --is-bare-repository</c> from that
+    /// cwd returns <c>false</c> even though the shared common-dir IS bare.
+    /// Empirically verified 2026-05-11.</para>
+    ///
+    /// <para>The explicit <c>--git-dir</c> form also bypasses the
+    /// <c>safe.bareRepository=explicit</c> guard that some operators (and
+    /// many secured workstations) set globally — without it, plain
+    /// <c>git -C {bare} rev-parse</c> fails with "fatal: cannot use bare
+    /// repository ... (safe.bareRepository is 'explicit')".</para>
+    ///
+    /// <para>Used by the <c>bare_repo</c> preflight advisory check (AB#3093,
+    /// epic AB#3085).</para>
+    /// </summary>
+    /// <param name="commonDir">Absolute path to the shared git directory. Get this from <see cref="GetCommonDirAsync"/>.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<bool> IsBareRepositoryAsync(string commonDir, CancellationToken ct = default);
+
+    /// <summary>
     /// <c>git branch --show-current</c>. Returns the current branch name,
     /// or null when detached / not in a repo.
     /// </summary>

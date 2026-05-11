@@ -312,6 +312,7 @@ public sealed class LockCommandsTests : IDisposable
         public FakeGitClient(string topLevel) { _topLevel = topLevel; }
         public Task<string?> GetTopLevelAsync(CancellationToken ct = default) => Task.FromResult<string?>(_topLevel);
         public Task<string?> GetCommonDirAsync(CancellationToken ct = default) => Task.FromResult<string?>(Path.Combine(_topLevel, ".git"));
+        public Task<bool> IsBareRepositoryAsync(string commonDir, CancellationToken ct = default) => Task.FromResult(false);
         public Task<string?> GetCurrentBranchAsync(CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<string?> GetCurrentBranchAsync(string workingDirectory, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<string?> GetRemoteUrlAsync(string remote = "origin", CancellationToken ct = default) => Task.FromResult<string?>(null);

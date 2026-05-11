@@ -29,6 +29,23 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
         return result.Succeeded ? TrimOrNull(result.Stdout) : null;
     }
 
+    public async Task<bool> IsBareRepositoryAsync(string commonDir, CancellationToken ct = default)
+    {
+        // Address the gitdir explicitly via --git-dir, not via cwd
+        // discovery — see the IGitClient doc-comment for why both
+        // worktree resolution and safe.bareRepository=explicit demand
+        // this form.
+        string[] args = ["--git-dir", commonDir, "rev-parse", "--is-bare-repository"];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
+        }
+
+        var trimmed = result.Stdout.Trim();
+        return trimmed.Equals("true", StringComparison.OrdinalIgnoreCase);
+    }
+
     public async Task<string?> GetCurrentBranchAsync(CancellationToken ct = default)
     {
         var result = await runner.RunAsync(Exe, ["branch", "--show-current"], ct).ConfigureAwait(false);
