@@ -313,6 +313,7 @@ public sealed class LockCommandsTests : IDisposable
         public Task<string?> GetTopLevelAsync(CancellationToken ct = default) => Task.FromResult<string?>(_topLevel);
         public Task<string?> GetCommonDirAsync(CancellationToken ct = default) => Task.FromResult<string?>(Path.Combine(_topLevel, ".git"));
         public Task<string?> GetCurrentBranchAsync(CancellationToken ct = default) => Task.FromResult<string?>(null);
+        public Task<string?> GetCurrentBranchAsync(string workingDirectory, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<string?> GetRemoteUrlAsync(string remote = "origin", CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<IReadOnlyList<string>> ListRemoteBranchesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
         public Task<IReadOnlyList<string>> LsRemoteHeadsAsync(string remote, string pattern, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
@@ -324,6 +325,8 @@ public sealed class LockCommandsTests : IDisposable
         public Task<ProcessResult> DeleteRemoteBranchAsync(string remote, string branch, CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
         public Task FetchAsync(string remote, string refspec, CancellationToken ct = default) => Task.CompletedTask;
         public Task<IReadOnlyList<string>> GetStatusAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
+        public Task<IReadOnlyList<string>> GetStatusAsync(string workingDirectory, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
+        public Task<string?> GetInProgressOperationAsync(string workingDirectory, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task StageAsync(string pathspec, CancellationToken ct = default) => Task.CompletedTask;
         public Task CommitAsync(string message, CancellationToken ct = default) => Task.CompletedTask;
         public Task ResetHardAsync(string refspec, CancellationToken ct = default) => Task.CompletedTask;

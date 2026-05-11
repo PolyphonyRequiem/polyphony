@@ -45,6 +45,14 @@ public interface IGitClient
     Task<string?> GetCurrentBranchAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// <c>git -C {workingDirectory} branch --show-current</c>. As
+    /// <see cref="GetCurrentBranchAsync(CancellationToken)"/>, but scoped to
+    /// the worktree at <paramref name="workingDirectory"/>. Used by the
+    /// worktree inspection verbs.
+    /// </summary>
+    Task<string?> GetCurrentBranchAsync(string workingDirectory, CancellationToken ct = default);
+
+    /// <summary>
     /// <c>git remote get-url {remote}</c>. Returns the configured URL for
     /// the named remote, or null when the remote is missing.
     /// </summary>
@@ -124,6 +132,39 @@ public interface IGitClient
     /// <see cref="ExternalToolException"/> on unexpected non-zero exit.
     /// </summary>
     Task<IReadOnlyList<string>> GetStatusAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git -C {workingDirectory} status --porcelain</c>. As
+    /// <see cref="GetStatusAsync(CancellationToken)"/>, but scoped to the
+    /// worktree at <paramref name="workingDirectory"/>. Used by the worktree
+    /// inspection verbs which report on a path the caller passed via
+    /// <c>--path</c> rather than the process cwd.
+    ///
+    /// <para>Invoked with <c>--no-optional-locks</c> so concurrent gate
+    /// callers do not contend on the index lock — these are pure read
+    /// probes; the caller has explicitly opted out of any side effect
+    /// (index refresh) git would otherwise apply.</para>
+    /// </summary>
+    Task<IReadOnlyList<string>> GetStatusAsync(string workingDirectory, CancellationToken ct = default);
+
+    /// <summary>
+    /// Detect any in-progress git operation in the worktree at
+    /// <paramref name="workingDirectory"/>. Returns one of
+    /// <c>"merge"</c>, <c>"cherry-pick"</c>, <c>"revert"</c>,
+    /// <c>"bisect"</c>, <c>"rebase-merge"</c>, <c>"rebase-apply"</c>;
+    /// or <c>null</c> when the worktree is in a normal HEAD state.
+    ///
+    /// <para>This catches the class of "porcelain reports clean but the
+    /// worktree is mid-operation" hazard — a paused rebase or unfinished
+    /// merge has no porcelain output but is wholly unsafe to dispatch an
+    /// agent into. Implemented by resolving the per-worktree gitdir via
+    /// <c>git rev-parse --git-dir</c> and probing the canonical sentinel
+    /// paths (<c>MERGE_HEAD</c>, <c>rebase-merge/</c>, etc.).</para>
+    ///
+    /// <para>Returns null on git invocation failure as well — callers
+    /// should detect that case via <see cref="GetStatusAsync(string, CancellationToken)"/>.</para>
+    /// </summary>
+    Task<string?> GetInProgressOperationAsync(string workingDirectory, CancellationToken ct = default);
 
     /// <summary>
     /// <c>git add {pathspec}</c>. Stages the supplied path (file or

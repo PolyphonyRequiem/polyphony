@@ -35,6 +35,16 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
         return result.Succeeded ? TrimOrNull(result.Stdout) : null;
     }
 
+    public async Task<string?> GetCurrentBranchAsync(string workingDirectory, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(workingDirectory);
+        var result = await runner.RunAsync(
+            Exe,
+            ["-C", workingDirectory, "branch", "--show-current"],
+            ct).ConfigureAwait(false);
+        return result.Succeeded ? TrimOrNull(result.Stdout) : null;
+    }
+
     public async Task<string?> GetRemoteUrlAsync(string remote = "origin", CancellationToken ct = default)
     {
         var result = await runner.RunAsync(Exe, ["remote", "get-url", remote], ct).ConfigureAwait(false);
@@ -147,6 +157,51 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
             // Returning the raw lines is more useful for diagnostics than stripping.
             .Select(line => line.TrimEnd('\r'))
             .ToList();
+    }
+
+    public async Task<IReadOnlyList<string>> GetStatusAsync(string workingDirectory, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(workingDirectory);
+        // --no-optional-locks: we never want this read probe to touch the
+        // index lock. Two concurrent gate callers (e.g. launcher + driver
+        // racing) must coexist without serialising on the lock or rewriting
+        // the index timestamp behind the operator's back.
+        string[] args = ["-C", workingDirectory, "--no-optional-locks", "status", "--porcelain"];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+            throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
+
+        return result.Stdout
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r'))
+            .ToList();
+    }
+
+    public async Task<string?> GetInProgressOperationAsync(string workingDirectory, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(workingDirectory);
+        // Resolve the per-worktree gitdir (NOT --git-common-dir, which
+        // points at the bare/main .git for linked worktrees — the
+        // operation sentinels live in the per-worktree dir).
+        var revParse = await runner.RunAsync(
+            Exe,
+            ["-C", workingDirectory, "rev-parse", "--path-format=absolute", "--git-dir"],
+            ct).ConfigureAwait(false);
+        if (!revParse.Succeeded) return null;
+
+        var gitDir = TrimOrNull(revParse.Stdout);
+        if (string.IsNullOrEmpty(gitDir)) return null;
+
+        // Order of checks: rebase variants first because rebase-merge
+        // can also leave a CHERRY_PICK_HEAD-shaped sentinel (am-style)
+        // and we want the more-specific operation name.
+        if (Directory.Exists(Path.Combine(gitDir, "rebase-merge"))) return "rebase-merge";
+        if (Directory.Exists(Path.Combine(gitDir, "rebase-apply"))) return "rebase-apply";
+        if (File.Exists(Path.Combine(gitDir, "MERGE_HEAD"))) return "merge";
+        if (File.Exists(Path.Combine(gitDir, "CHERRY_PICK_HEAD"))) return "cherry-pick";
+        if (File.Exists(Path.Combine(gitDir, "REVERT_HEAD"))) return "revert";
+        if (File.Exists(Path.Combine(gitDir, "BISECT_LOG"))) return "bisect";
+        return null;
     }
 
     public async Task StageAsync(string pathspec, CancellationToken ct = default)
