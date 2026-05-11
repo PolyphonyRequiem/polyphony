@@ -21,7 +21,7 @@ workflow:
     GitHub PR lifecycle. Reviews the PR with Opus 1M, fixes issues via
     Sonnet in a loop (max 10 iterations), and merges when approved.
   version: "2.4.0"
-  entry_point: pr_reviewer
+  entry_point: guidance_loader
   metadata:
     min_polyphony_version: "2.4.0"
 
@@ -46,6 +46,14 @@ workflow:
       required: false
       default: "auto"
       description: "Review policy: auto (agent-reviewed) or manual (human gate)"
+    work_item_id:
+      type: number
+      required: true
+      description: >-
+        Work item id for the PR's owning scope. Drives agent-guidance
+        type-refinement lookup so pr_reviewer and pr_fixer get repo +
+        per-type guidance. Threaded by the parent workflow
+        (feature-pr.yaml uses workflow.input.work_item_id).
 
 tools:
   - gh
@@ -69,6 +77,24 @@ output:
     {%- else -%}{%- endif -%}
 
 agents:
+  # ── Guidance loader ────────────────────────────────────────────────────
+  #
+  # Loads repo-specific agent guidance for the PR's owning work item.
+  # Returns role-wide + per-type refinement; pr_reviewer reads
+  # `reviewer.*` and pr_fixer reads `coder.*` via Jinja2 conditionals so
+  # prompts degrade gracefully when no guidance files exist.
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for pr_reviewer and pr_fixer prompts
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: pr_reviewer
+
   # ── PR reviewer ────────────────────────────────────────────────────────
   #
   # Reviews the PR using Opus 1M for thorough, large-context code review.
@@ -140,6 +166,18 @@ agents:
       - **Request changes** for bugs, missing tests, security issues, or
         broken requirements
       - Do NOT request changes for style preferences or minor formatting
+
+      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.reviewer.role }}
+      {% endif %}
+
+      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.reviewer.type_refinement }}
+      {% endif %}
     output:
       verdict:
         type: string
@@ -280,6 +318,18 @@ agents:
       - Do NOT refactor code beyond what's needed for the fix
       - Do NOT change unrelated files
       - Every fix must be tested
+
+      {% if guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.coder.role }}
+      {% endif %}
+
+      {% if guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.coder.type_refinement }}
+      {% endif %}
     routes:
       - to: pr_reviewer
 

@@ -279,6 +279,30 @@ agents:
     routes:
       - to: workflow_error_gate
         when: "{{ compose_addendum.output.error is defined and compose_addendum.output.error != '' }}"
+      - to: guidance_loader
+
+  # ── Guidance loader ────────────────────────────────────────────────────
+  #
+  # Loads repo-specific agent guidance for the actionable item being
+  # executed. Returns role-wide guidance + per-type refinement for each
+  # of the three canonical roles; actionable_agent reads `coder.*` and
+  # evidence_reviewer reads `reviewer.*` via Jinja2 conditionals so
+  # prompts degrade gracefully when no guidance files exist.
+  #
+  # Invariants:
+  #   Pre:  compose_addendum succeeded.
+  #   Post: output exposes architect/coder/reviewer keys, each with
+  #         role + type_refinement strings (empty when files absent).
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for actionable_agent and evidence_reviewer prompts
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
       - to: actionable_agent
 
   # ── Actionable agent (polyphony leg) ────────────────────────────────────
@@ -414,6 +438,18 @@ agents:
       already accepted; focus on the requested changes.
 
       {% if evidence_reviewer is defined %}{{ evidence_reviewer.output.comment }}{% endif %}
+      {% endif %}
+
+      {% if guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.coder.role }}
+      {% endif %}
+
+      {% if guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.coder.type_refinement }}
       {% endif %}
     routes:
       - to: open_evidence_pr
@@ -642,6 +678,18 @@ agents:
       ```json
       { "decision": "approve | request_changes | block", "comment": "..." }
       ```
+
+      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.reviewer.role }}
+      {% endif %}
+
+      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.reviewer.type_refinement }}
+      {% endif %}
     routes:
       - to: merge_evidence_pr
         when: "{{ evidence_reviewer.output.decision == 'approve' }}"

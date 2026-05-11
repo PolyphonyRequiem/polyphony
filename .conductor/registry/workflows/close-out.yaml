@@ -17,7 +17,7 @@ workflow:
     Post-implementation close-out. Generates structured observations from the
     completed work item hierarchy and returns them as workflow output.
   version: "2.4.0"
-  entry_point: close_out
+  entry_point: guidance_loader
   metadata:
     min_polyphony_version: "2.4.0"
 
@@ -46,6 +46,25 @@ output:
   observation_count: "{{ close_out.output.observations | length }}"
 
 agents:
+  # ── Guidance loader ────────────────────────────────────────────────────
+  #
+  # Loads repo-specific agent guidance for the close-out work item.
+  # Returns role-wide guidance + per-type refinement for each of the
+  # three canonical roles; close_out reads `reviewer.*` via Jinja2
+  # conditionals so the prompt degrades gracefully when no guidance
+  # files exist.
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for the close_out prompt
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: close_out
+
   # ── Post-mortem analysis ───────────────────────────────────────────────
   #
   # Performs post-mortem analysis scoped to the focus work item hierarchy.
@@ -144,5 +163,17 @@ agents:
       - Do NOT create or modify any ADO work items — your job is analysis only
       - Focus on the hierarchy under work item {{ workflow.input.work_item_id }} only
       - If no observations are warranted, return an empty observations array
+
+      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.reviewer.role }}
+      {% endif %}
+
+      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.reviewer.type_refinement }}
+      {% endif %}
     routes:
       - to: $end

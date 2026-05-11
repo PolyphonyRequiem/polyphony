@@ -623,7 +623,7 @@ agents:
     routes:
       - to: dependency_gate
         when: "{{ dependency_check.output.status == 'blocked' }}"
-      - to: scope_reviewer
+      - to: scope_guidance_loader
         when: "{{ dependency_check.output.status == 'not_blocked' }}"
       # Catch-all per M4: an unknown status value routes to the gate so
       # a human resolves it rather than raising `No matching route found`.
@@ -675,7 +675,7 @@ agents:
         route: dependency_check
       - label: "⏩ Override"
         value: override
-        route: scope_reviewer
+        route: scope_guidance_loader
       - label: "🔀 Reassign"
         value: reassign
         route: $end
@@ -689,6 +689,18 @@ agents:
   # Invariants:
   #   Pre:  All tasks complete; dependencies resolved (or overridden).
   #   Post: output.verdict is 'approved' or 'changes_requested'.
+  - name: scope_guidance_loader
+    type: script
+    description: Load agent guidance for the MG's parent work item (drives scope_reviewer's type refinement)
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: scope_reviewer
+
   - name: scope_reviewer
     type: agent
     model: claude-opus-4.7
@@ -793,6 +805,18 @@ agents:
         "issues": ["List of specific issues if changes_requested"]
       }
       ```
+
+      {% if scope_guidance_loader is defined and scope_guidance_loader.output.reviewer is defined and scope_guidance_loader.output.reviewer.role %}
+      ## Repo-Specific Guidance
+
+      {{ scope_guidance_loader.output.reviewer.role }}
+      {% endif %}
+
+      {% if scope_guidance_loader is defined and scope_guidance_loader.output.reviewer is defined and scope_guidance_loader.output.reviewer.type_refinement %}
+      ## Repo-Specific Guidance — {{ scope_guidance_loader.output.type }} refinement
+
+      {{ scope_guidance_loader.output.reviewer.type_refinement }}
+      {% endif %}
     routes:
       - to: user_acceptance
         when: "{{ scope_reviewer.output.verdict == 'approved' }}"
