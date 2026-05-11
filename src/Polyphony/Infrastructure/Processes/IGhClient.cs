@@ -130,6 +130,32 @@ public interface IGhClient
         CancellationToken ct = default);
 
     /// <summary>
+    /// <c>gh api graphql -f query=... -F owner=... -F repo=... -F pr=N</c>
+    /// — fetch the PR's review threads via GraphQL. The
+    /// <c>gh pr view --json reviewThreads</c> field does NOT exist on the
+    /// REST surface, so the GraphQL <c>pullRequest.reviewThreads</c>
+    /// connection is the only programmatic source. Used by
+    /// <c>polyphony pr poll-status</c> to drive the
+    /// <c>changes_requested</c> gate (see <see cref="PrPollStatusResult"/>
+    /// state-derivation rules).
+    ///
+    /// <para>Pagination: fetches up to <c>first:100</c> threads on a single
+    /// page. When the PR has more threads, the result's
+    /// <see cref="GhReviewThreadsRead.HasMorePages"/> flag is set and the
+    /// verb appends a "fail-closed" warning so a blocking thread on a later
+    /// page is not silently missed.</para>
+    ///
+    /// <para>Returns null when gh exits non-zero (PR not found, repo not
+    /// found, GraphQL error). Throws
+    /// <see cref="ExternalToolTimeoutException"/> when every retry attempt
+    /// timed out — same contract as <see cref="GetPullRequestPollDataAsync"/>.</para>
+    /// </summary>
+    Task<GhReviewThreadsRead?> GetPullRequestReviewThreadsAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// <c>gh pr view {prNumber} --repo {repoSlug} --json commits,body</c>
     /// — read just the fields the Phase 6 evidence floor needs (commit
     /// count + raw body for trim-and-measure). Returns a discriminated

@@ -321,6 +321,52 @@ public sealed class GhClient : IGhClient
         return result.Succeeded ? ParsePrPollData(result.Stdout) : null;
     }
 
+    private const string ReviewThreadsGraphqlQuery =
+        "query($owner:String!,$repo:String!,$pr:Int!){" +
+            "repository(owner:$owner,name:$repo){" +
+                "pullRequest(number:$pr){" +
+                    "reviewThreads(first:100){" +
+                        "pageInfo{hasNextPage}" +
+                        "nodes{id isResolved isOutdated " +
+                            "comments(first:1){" +
+                                "totalCount " +
+                                "nodes{author{login} createdAt}" +
+                            "}" +
+                        "}" +
+                    "}" +
+                "}" +
+            "}" +
+        "}";
+
+    public async Task<GhReviewThreadsRead?> GetPullRequestReviewThreadsAsync(
+        string repoSlug,
+        int prNumber,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoSlug);
+        if (prNumber <= 0) throw new ArgumentOutOfRangeException(nameof(prNumber), "PR number must be positive.");
+
+        // gh api graphql wants the slug split into owner/repo. Slug
+        // validation lives upstream in the verb's URL parser; here we
+        // bail to "PR not found" if it doesn't split cleanly so the
+        // caller routes to the same error path as a missing PR.
+        var slashIndex = repoSlug.IndexOf('/');
+        if (slashIndex <= 0 || slashIndex >= repoSlug.Length - 1) return null;
+        var owner = repoSlug[..slashIndex];
+        var repo = repoSlug[(slashIndex + 1)..];
+
+        string[] args =
+        [
+            "api", "graphql",
+            "-f", $"query={ReviewThreadsGraphqlQuery}",
+            "-F", $"owner={owner}",
+            "-F", $"repo={repo}",
+            "-F", $"pr={prNumber}",
+        ];
+        var result = await RunWithRetryAsync(args, ct).ConfigureAwait(false);
+        return result.Succeeded ? ParseReviewThreads(result.Stdout) : null;
+    }
+
     public async Task<IReadOnlyList<GhPullRequestChangedFile>?> GetPullRequestFilesAsync(
         string repoSlug,
         int prNumber,
@@ -899,6 +945,61 @@ public sealed class GhClient : IGhClient
             reviews,
             prAuthorLogin,
             comments);
+    }
+
+    /// <summary>
+    /// Parse <c>gh api graphql</c> output for the
+    /// <c>pullRequest.reviewThreads</c> connection. Returns null when the
+    /// envelope is unparseable OR when the GraphQL response signals an
+    /// error (e.g. PR not found surfaces as a top-level <c>errors</c> array).
+    /// Returns an empty <see cref="GhReviewThreadsRead"/> when the PR exists
+    /// but has no review threads.
+    /// </summary>
+    private static GhReviewThreadsRead? ParseReviewThreads(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        JsonNode? node;
+        try { node = JsonNode.Parse(raw); }
+        catch (JsonException) { return null; }
+        if (node is not JsonObject obj) return null;
+
+        // GraphQL errors land in a top-level "errors" array; treat as
+        // "PR not found" so the caller routes to the same envelope.
+        if (obj["errors"] is JsonArray { Count: > 0 }) return null;
+
+        var threadsConnection = obj["data"]?["repository"]?["pullRequest"]?["reviewThreads"];
+        if (threadsConnection is not JsonObject connObj) return null;
+
+        var hasMore = connObj["pageInfo"]?["hasNextPage"]?.GetValue<bool>() ?? false;
+        var nodes = connObj["nodes"] as JsonArray;
+        if (nodes is null) return new GhReviewThreadsRead(Array.Empty<GhReviewThread>(), hasMore);
+
+        var threads = new List<GhReviewThread>(nodes.Count);
+        foreach (var item in nodes)
+        {
+            if (item is not JsonObject threadObj) continue;
+            var id = threadObj["id"]?.GetValue<string>() ?? string.Empty;
+            var isResolved = threadObj["isResolved"]?.GetValue<bool>() ?? false;
+            var isOutdated = threadObj["isOutdated"]?.GetValue<bool>() ?? false;
+
+            var commentsObj = threadObj["comments"] as JsonObject;
+            var commentCount = commentsObj?["totalCount"]?.GetValue<int>() ?? 0;
+            string authorLogin = string.Empty;
+            DateTimeOffset? createdAt = null;
+            if (commentsObj?["nodes"] is JsonArray commentNodes && commentNodes.Count > 0
+                && commentNodes[0] is JsonObject firstComment)
+            {
+                authorLogin = firstComment["author"]?["login"]?.GetValue<string>() ?? string.Empty;
+                var createdAtRaw = firstComment["createdAt"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(createdAtRaw)
+                    && DateTimeOffset.TryParse(createdAtRaw, out var parsedCreatedAt))
+                {
+                    createdAt = parsedCreatedAt;
+                }
+            }
+            threads.Add(new GhReviewThread(id, isResolved, isOutdated, authorLogin, createdAt, commentCount));
+        }
+        return new GhReviewThreadsRead(threads, hasMore);
     }
 
     /// <summary>
