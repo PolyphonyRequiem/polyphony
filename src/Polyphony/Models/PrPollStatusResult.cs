@@ -6,8 +6,8 @@ namespace Polyphony;
 /// underlying source was GitHub or Azure DevOps. The vote vocabulary
 /// is normalized:
 /// <list type="bullet">
-///   <item><c>approved</c> — the reviewer signed off (GitHub APPROVED, ADO 10/5, magic comment <c>polyphony:approve</c>).</item>
-///   <item><c>changes_requested</c> — explicit block (GitHub CHANGES_REQUESTED, ADO -10/-5). The historical magic-comment <c>polyphony:request-changes</c> form has been retired — reviewers should leave a review thread instead.</item>
+///   <item><c>approved</c> — the reviewer signed off (GitHub APPROVED, ADO 10/5, magic comment <c>polyphony:approve [sha]</c>).</item>
+///   <item><c>changes_requested</c> — explicit block (GitHub CHANGES_REQUESTED, ADO -10/-5, author SHA-bound magic comment <c>polyphony:request-changes &lt;sha&gt;</c>). Non-author reviewers should still prefer review threads; the magic-comment form exists specifically for the GitHub PR-author self-block case (authors cannot REQUEST_CHANGES on their own PR).</item>
 ///   <item><c>commented</c> — comment-only review (GitHub COMMENTED).</item>
 ///   <item><c>dismissed</c> — review was dismissed/superseded (GitHub DISMISSED).</item>
 ///   <item><c>pending</c> — review requested but not yet submitted.</item>
@@ -29,7 +29,8 @@ public sealed record PrPollReviewer
     /// <list type="bullet">
     ///   <item><c>review</c> (default) — a native platform review (GitHub Reviews tab, ADO vote).</item>
     ///   <item><c>magic_comment_sha_bound</c> — a PR-author-posted top-level comment matching <c>polyphony:approve &lt;head-sha&gt;</c> where the SHA matches the PR's current head. Canonical fallback for GitHub's PR-author-cannot-self-approve restriction; the SHA pins the approval to a specific commit so any new push silently invalidates it.</item>
-    ///   <item><c>magic_comment</c> — a PR-author-posted top-level comment matching the bare <c>polyphony:approve</c> form (no SHA). Recognized as a deprecation fallback; emits a warning recommending the SHA-bound form. <c>polyphony:request-changes</c> is no longer recognized at all — use a review thread.</item>
+    ///   <item><c>magic_comment</c> — a PR-author-posted top-level comment matching the bare <c>polyphony:approve</c> form (no SHA). Recognized as a deprecation fallback; emits a warning recommending the SHA-bound form.</item>
+    ///   <item><c>magic_comment_request_changes</c> — a PR-author-posted top-level comment matching <c>polyphony:request-changes &lt;head-sha&gt;</c> where the SHA matches the PR's current head. The author self-block path. SHA is mandatory — there is no bare-form fallback; the bare form was retired in option B because it was a permanent loop trigger and the SHA binding restores the structural self-invalidation property.</item>
     /// </list>
     /// See issue #207 for the design rationale.
     /// </summary>

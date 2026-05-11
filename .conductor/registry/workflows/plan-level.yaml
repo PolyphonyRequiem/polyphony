@@ -618,8 +618,12 @@ agents:
 
   # ── Open questions loop counter ────────────────────────────────────────
   #
-  # Tracks the number of answer loops taken. Mirrors review_counter in
-  # github-pr.yaml.
+  # Counts the number of times open_questions_gate has appeared in this
+  # run's history. Run-scoped automatically — context.history resets
+  # each time the workflow re-enters from scratch, so we don't need a
+  # temp-file side channel (which would survive across runs of the same
+  # work item and stale-cap the loop). Counter rises 0 → 1 → 2 → … as
+  # the gate fires; cap_reached short-circuits when count >= max.
   - name: open_questions_counter
     type: script
     description: Track open questions answer loop iteration count
@@ -628,12 +632,7 @@ agents:
       - "-NoProfile"
       - "-Command"
       - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-oq-loops-{{ workflow.input.work_item_id }}"
-        if (Test-Path $counterFile) {
-            $count = [int](Get-Content $counterFile -Raw)
-        } else {
-            $count = 0
-        }
+        $count = {{ context.history | select('eq', 'open_questions_gate') | list | length }}
         $maxLoops = {{ open_questions_policy.output.max_question_loops }}
         $capReached = $count -ge $maxLoops
         @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
@@ -684,31 +683,13 @@ agents:
     options:
       - label: "💬 Answer"
         value: answer
-        route: open_questions_answer_counter
+        # Routes directly to architect — the loop counter is derived from
+        # context.history above (no separate increment step needed).
+        route: architect
         prompt_for: answers
       - label: "⏩ Proceed"
         value: proceed
         route: ensure_plan_branch
-
-  # ── Open questions answer counter increment ────────────────────────────
-  - name: open_questions_answer_counter
-    type: script
-    description: Increment open questions loop counter on answer route
-    command: pwsh
-    args:
-      - "-NoProfile"
-      - "-Command"
-      - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-oq-loops-{{ workflow.input.work_item_id }}"
-        if (Test-Path $counterFile) {
-            $count = [int](Get-Content $counterFile -Raw) + 1
-        } else {
-            $count = 1
-        }
-        Set-Content $counterFile $count
-        @{ iteration = $count } | ConvertTo-Json
-    routes:
-      - to: architect
 
   # ── Write plan to disk ─────────────────────────────────────────────────
   #
@@ -1303,16 +1284,22 @@ agents:
       return here and click **Continue**.
 
       **GitHub note:** if you opened the PR yourself, GitHub blocks
-      self-approval. Post a top-level comment containing exactly:
+      self-approval AND blocks self-`REQUEST_CHANGES` (and a thread you
+      open as the author cannot block your own merge). Use a top-level
+      comment instead:
 
           polyphony:approve {{ poll_status.output.head_sha if (poll_status is defined and poll_status.output.head_sha is defined) else "<head-sha>" }}
 
-      The SHA pins the approval to this specific commit, so any new push
-      automatically invalidates it (no review-loop bug). A bare
-      `polyphony:approve` (no SHA) still works as a deprecation fallback
-      but emits a warning. `polyphony:request-changes` is no longer
-      recognized — leave a review thread to block merge instead. See
-      issue #207 for context.
+      …to approve, OR:
+
+          polyphony:request-changes {{ poll_status.output.head_sha if (poll_status is defined and poll_status.output.head_sha is defined) else "<head-sha>" }}
+
+      …to block your own merge while you push fixes. The SHA pins the
+      vote to this specific commit — any new push silently invalidates
+      it (no review-loop bug; remediation pushes auto-clear a block).
+      A bare `polyphony:approve` (no SHA) still works as a deprecation
+      fallback but emits a warning; `polyphony:request-changes` REQUIRES
+      a SHA — there is no bare form. See issue #207 for context.
 
       ---
 

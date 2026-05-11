@@ -137,21 +137,12 @@ explains why the child's parent-change request was not integrated.
 
 ---
 
-{# NOTE: do NOT guard on `last == "open_questions_gate"`. The gate routes
-   through `open_questions_answer_counter` (which writes the loop counter)
-   before re-entering the architect, so on re-entry `context.history[-1]`
-   is the counter step, not the gate. Guard on the gate's output directly
-   instead — `open_questions_gate.output.answers` is the truth signal that
-   the user just provided answers, regardless of how many bookkeeping steps
-   sit between the gate and us. The revise_counter and extract_parent_patch
-   branches above do not have this hazard because they route directly to
-   architect with no interposed step. #}
-{% elif open_questions_gate is defined
+{% elif last == "open_questions_gate"
+        and open_questions_gate is defined
         and open_questions_gate.output is defined
         and open_questions_gate.output.selected == "answer"
         and open_questions_gate.output.answers is defined
-        and open_questions_gate.output.answers
-        and last in ("open_questions_gate", "open_questions_answer_counter") %}
+        and open_questions_gate.output.answers %}
 ## ⚠️ You Are Being Re-Invoked With User Answers
 
 You previously produced a plan with open questions. The user has now provided

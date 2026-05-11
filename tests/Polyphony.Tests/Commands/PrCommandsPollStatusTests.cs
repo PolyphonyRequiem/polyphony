@@ -940,4 +940,177 @@ public sealed class PrCommandsPollStatusTests : CommandTestBase
         result.Reviewers.ShouldNotContain(r =>
             r.Source == "magic_comment" || r.Source == "magic_comment_sha_bound");
     }
+
+    // ----------------------------------------------------------------------
+    // SHA-bound magic request-changes (author self-block on GitHub)
+    //
+    // GitHub blocks a PR author from leaving a native REQUEST_CHANGES
+    // review on their own PR, AND review threads opened by the author
+    // do not block their own merge. To let an author pause their own
+    // PR while pushing fixes, we recognize:
+    //
+    //     polyphony:request-changes <head-sha>
+    //
+    // posted as a top-level PR comment by the PR author. Like the
+    // SHA-bound approve form, the SHA pins the vote to a specific
+    // commit; any new push silently invalidates it (no review-loop bug,
+    // and remediation pushes auto-clear the block — issue #207's
+    // pathology with the original bare form).
+    //
+    // There is intentionally NO bare form for request-changes — the
+    // bare form is exactly the permanent-loop pathology we retired. The
+    // SHA is mandatory.
+    //
+    // Tie-break with approve from the same author: most-recent wins.
+    // ----------------------------------------------------------------------
+
+    [Fact]
+    public async Task PollStatus_MagicRequestChanges_ShaBound_FromAuthor_StateIsChangesRequested()
+    {
+        var (cmd, runner) = CreateCommand();
+        var comments = $"[{Comment("dangreen", $"polyphony:request-changes {CanonicalHeadSha}", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("changes_requested");
+        result.Reviewers.ShouldContain(r =>
+            r.Identity == "dangreen" && r.Vote == "changes_requested" && r.Source == "magic_comment_request_changes");
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicRequestChanges_ShaBoundStale_Ignored()
+    {
+        // Author requested changes on an old commit; new push landed.
+        // Stale SHA → silently invalidated (the structural property
+        // that lets remediation pushes auto-clear the block).
+        var (cmd, runner) = CreateCommand();
+        var staleSha = "2222222222222222222222222222222222222222";
+        var comments = $"[{Comment("dangreen", $"polyphony:request-changes {staleSha}", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("pending");
+        result.Reviewers.ShouldNotContain(r => r.Source == "magic_comment_request_changes");
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicRequestChanges_FromNonAuthor_Ignored()
+    {
+        // Non-authors must use review threads (which DO block merge from
+        // third parties, per existing DeriveState rules). The magic
+        // comment form is author-only.
+        var (cmd, runner) = CreateCommand();
+        var comments = $"[{Comment("alice", $"polyphony:request-changes {CanonicalHeadSha}", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("pending");
+        result.Reviewers.ShouldNotContain(r => r.Source == "magic_comment_request_changes");
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicRequestChanges_BareForm_NotRecognized()
+    {
+        // The bare form (no SHA) is intentionally NOT recognized. It
+        // was the exact loop pathology that retired the original
+        // request-changes magic comment (issue #207). The SHA is
+        // structurally required.
+        var (cmd, runner) = CreateCommand();
+        var comments = $"[{Comment("dangreen", "polyphony:request-changes", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("pending");
+        result.Reviewers.ShouldNotContain(r => r.Source == "magic_comment_request_changes");
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicRequestChanges_AfterApprove_RequestChangesWins()
+    {
+        // Author approved an earlier commit, then changed their mind
+        // and posted a SHA-bound request-changes for the current head.
+        // Most-recent wins → changes_requested.
+        var (cmd, runner) = CreateCommand();
+        var comments = $$"""
+            [
+              {{Comment("dangreen", $"polyphony:approve {CanonicalHeadSha}",          "2026-05-08T19:00:00Z")}},
+              {{Comment("dangreen", $"polyphony:request-changes {CanonicalHeadSha}",  "2026-05-08T20:00:00Z")}}
+            ]
+            """;
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("changes_requested");
+        result.Reviewers.ShouldContain(r => r.Source == "magic_comment_request_changes");
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicRequestChanges_BeforeApprove_ApproveWins()
+    {
+        // Author posted request-changes first, then later approved the
+        // same commit (retraction of the block). Most-recent wins → approved.
+        var (cmd, runner) = CreateCommand();
+        var comments = $$"""
+            [
+              {{Comment("dangreen", $"polyphony:request-changes {CanonicalHeadSha}",  "2026-05-08T19:00:00Z")}},
+              {{Comment("dangreen", $"polyphony:approve {CanonicalHeadSha}",          "2026-05-08T20:00:00Z")}}
+            ]
+            """;
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "REVIEW_REQUIRED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("approved");
+        result.Reviewers.ShouldContain(r => r.Source == "magic_comment_sha_bound");
+    }
+
+    [Fact]
+    public async Task PollStatus_MagicRequestChanges_OverridesNativeApprovedFromThirdParty()
+    {
+        // A third-party reviewer approved natively, but the author
+        // posted polyphony:request-changes to pause their own PR while
+        // they push fixes. Author self-block dominates.
+        var (cmd, runner) = CreateCommand();
+        var reviews = """[{"author":{"login":"alice"},"state":"APPROVED","submittedAt":"2026-05-08T18:00:00Z","body":""}]""";
+        var comments = $"[{Comment("dangreen", $"polyphony:request-changes {CanonicalHeadSha}", "2026-05-08T19:00:00Z")}]";
+        StubGhPrView(runner, "owner/repo", 42,
+            PrJson(42, "OPEN", "APPROVED",
+                headRefOid: CanonicalHeadSha,
+                authorLogin: "dangreen",
+                reviewsJson: reviews,
+                commentsJson: comments));
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.PollStatus(prUrl: "https://github.com/owner/repo/pull/42"));
+        var result = Parse(output);
+        result.State.ShouldBe("changes_requested");
+    }
 }
