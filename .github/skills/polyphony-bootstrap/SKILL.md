@@ -60,8 +60,9 @@ Pick **one real work item ID** to smoke-test against — list with
 
 ## 2 · Run the long-form bootstrap
 
-Follow `docs/onboarding-guide.md` sections 2–8 to:
+Follow `docs/onboarding-guide.md` sections 3–9 to:
 
+- Verify (or migrate to) the bare-repo + per-run worktree layout (§ 2)
 - Select your process template (Basic / Agile / Scrum / CMMI / custom)
 - Run `bootstrap-conductor.ps1 -ProcessTemplate <template>` to scaffold
   `.polyphony-config/`
@@ -257,7 +258,9 @@ config emits 10 of those warnings before V-11..V-14. Recommended order:
 [ ] 1.   polyphony --help shows exactly: route validate validate-config hierarchy
 [ ] 1.   twig workspace returns a workspace (not "no workspace found")
 [ ] 1.   Pick a real $WI to smoke-test against
-[ ] 2.   Walk docs/onboarding-guide.md sections 2-8
+[ ] 2.   Walk docs/onboarding-guide.md sections 2-9
+[ ] 2.a  Bare-repo layout in place: ~/projects/<repo>.git + ~/projects/<repo> + ~/projects/<repo>-runs (§ 2 of onboarding guide; AB#3085)
+[ ] 2.b  polyphony state preflight --work-item $WI → bare_repo check PASSED
 [ ] 2.   polyphony validate-config --config .polyphony-config → exit 0 (warnings ok)
 [ ] 3.1  validate-config exit code is 0
 [ ] 3.2  hierarchy --work-item $WI --depth 1 returns valid JSON with non-empty type
@@ -265,8 +268,29 @@ config emits 10 of those warnings before V-11..V-14. Recommended order:
 [ ] 3.4  validate --work-item $WI --event <evt> returns is_valid + target_state
 [ ] 3.5  twig process $type lists $target_state in its state set
 [ ] 4    Walk every (type, event) pair in transitions: through 3.5 (catches 5a)
-[ ] 6    docs/onboarding-guide.md § 9: conductor run apex-driver@polyphony works
+[ ] 6    docs/onboarding-guide.md § 10: conductor run apex-driver@polyphony works
 ```
 
 If every line passes, the repo is bootstrapped.
+
+---
+
+## 7 · Repository hygiene (post-bootstrap)
+
+The bare-repo layout means stale per-run worktrees accumulate under `~/projects/<repo>-runs/` over time (each apex run leaves an `apex-{N}/` subtree). Two verbs keep things tidy:
+
+```powershell
+# List candidates without touching anything (safe default):
+polyphony worktree gc
+
+# Scope to a single apex subtree:
+polyphony worktree gc --apex <ID>
+
+# Actually remove (after dry-run looks right):
+polyphony worktree gc --commit
+```
+
+`worktree gc` only ever considers worktrees under `~/projects/<repo>-runs/`. The operator's main worktree and any sibling-of-main worktrees are never touched.
+
+Run it monthly (or whenever your runs root looks crowded). The verb is idempotent — re-running on a clean tree is a no-op.
 
