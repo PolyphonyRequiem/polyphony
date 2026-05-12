@@ -186,6 +186,13 @@ public static class PolicyLoader
         config.Renegotiation.AutoDecide ??= RenegotiationAutoDecide.Prompt;
 
         ValidateRenegotiation(config.Renegotiation);
+
+        config.Unattended ??= new UnattendedPolicy();
+        config.Unattended.AcceptanceMode ??= UnattendedAcceptanceMode.Manual;
+        config.Unattended.ReviewWaitMode ??= UnattendedReviewWaitMode.Wait;
+        config.Unattended.CapMode ??= UnattendedCapMode.Manual;
+
+        ValidateUnattended(config.Unattended);
     }
 
     private static void ValidateGuidance(GuidancePolicy guidance)
@@ -240,5 +247,24 @@ public static class PolicyLoader
                 $"renegotiation.auto_decide '{value}' is not a known auto-decide policy. " +
                 $"Expected '{RenegotiationAutoDecide.Prompt}', '{RenegotiationAutoDecide.AutoRestart}', " +
                 $"or '{RenegotiationAutoDecide.Ignore}'.");
+    }
+
+    private static void ValidateUnattended(UnattendedPolicy unattended)
+    {
+        if (unattended.AcceptanceMode is { } accept && !UnattendedAcceptanceMode.IsValid(accept))
+            throw new InvalidOperationException(
+                $"unattended.acceptance_mode '{accept}' is not a known mode. " +
+                $"Expected '{UnattendedAcceptanceMode.Manual}' or '{UnattendedAcceptanceMode.Auto}'.");
+
+        if (unattended.ReviewWaitMode is { } wait && !UnattendedReviewWaitMode.IsValid(wait))
+            throw new InvalidOperationException(
+                $"unattended.review_wait_mode '{wait}' is not a known mode. " +
+                $"Expected '{UnattendedReviewWaitMode.Wait}' or '{UnattendedReviewWaitMode.Skip}'.");
+
+        if (unattended.CapMode is { } cap && !UnattendedCapMode.IsValid(cap))
+            throw new InvalidOperationException(
+                $"unattended.cap_mode '{cap}' is not a known mode. " +
+                $"Expected '{UnattendedCapMode.Manual}', '{UnattendedCapMode.AutoProceed}', " +
+                $"or '{UnattendedCapMode.AutoFail}'.");
     }
 }

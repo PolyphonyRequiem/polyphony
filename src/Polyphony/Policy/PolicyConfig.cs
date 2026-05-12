@@ -53,6 +53,17 @@ public sealed class PolicyConfig
     /// (treat the child plan as accepted and continue).
     /// </summary>
     public RenegotiationPolicy? Renegotiation { get; set; }
+
+    /// <summary>
+    /// Unattended-run policy (AB#3104). Controls the deterministic, non-policy
+    /// human_gate nodes catalogued in the AB#3103 audit so an operator can
+    /// fully bypass them in a fast-track / dogfood / CI run. Three orthogonal
+    /// modes — see <see cref="UnattendedPolicy"/> — cover happy-path
+    /// acceptance checkpoints, PR-review-wait gates, and cap/recovery gates.
+    /// All default to safe (manual / wait / manual) so existing workspaces
+    /// keep their current gating behaviour.
+    /// </summary>
+    public UnattendedPolicy? Unattended { get; set; }
 }
 
 /// <summary>
@@ -130,6 +141,99 @@ public static class RenegotiationAutoDecide
     /// <summary>True when <paramref name="value"/> is one of the canonical tokens.</summary>
     public static bool IsValid(string value) =>
         value is Prompt or AutoRestart or Ignore;
+}
+
+/// <summary>
+/// Unattended-run policy (AB#3104). Three orthogonal modes for collapsing the
+/// deterministic, non-policy <c>human_gate</c> nodes catalogued during the
+/// AB#3103 audit. All default to safe (manual / wait / manual) — opting any
+/// mode into its bypass token is the operator's explicit consent to skip
+/// gates that were previously human-only.
+///
+/// <list type="bullet">
+///   <item><see cref="AcceptanceMode"/> — happy-path checkpoints
+///         (<c>user_acceptance</c>, <c>apex_completion_gate</c>,
+///         <c>pending_review_gate</c>, <c>human_satisfaction_gate</c>).
+///         Bypass picks the route the human would have selected on the
+///         happy path.</item>
+///   <item><see cref="ReviewWaitMode"/> — PR-review-wait gates
+///         (<c>stuck_review_gate</c>, <c>ado_stuck_review_gate</c>,
+///         <c>ado_pr_pending_gate</c>, <c>ado_pr_changes_requested_gate</c>).
+///         Bypass keeps polling instead of escalating to a human.</item>
+///   <item><see cref="CapMode"/> — cap-hit / recovery gates
+///         (<c>revise_cap_gate</c>, <c>remediation_cap_gate</c>,
+///         <c>pr_fix_exhausted_gate</c>, <c>depth_exceeded_gate</c>, etc.).
+///         Bypass either auto-proceeds (accept current state) or
+///         auto-fails (terminate the run with a clear error).</item>
+/// </list>
+/// </summary>
+public sealed class UnattendedPolicy
+{
+    /// <summary>Mode for happy-path acceptance gates. One of the
+    /// <see cref="UnattendedAcceptanceMode"/> constants. Null falls back to
+    /// <see cref="UnattendedAcceptanceMode.Manual"/> via
+    /// <see cref="PolicyLoader.ApplyBuiltInDefaults"/>.</summary>
+    public string? AcceptanceMode { get; set; }
+
+    /// <summary>Mode for PR-review-wait gates. One of the
+    /// <see cref="UnattendedReviewWaitMode"/> constants. Null falls back to
+    /// <see cref="UnattendedReviewWaitMode.Wait"/>.</summary>
+    public string? ReviewWaitMode { get; set; }
+
+    /// <summary>Mode for cap-hit / recovery gates. One of the
+    /// <see cref="UnattendedCapMode"/> constants. Null falls back to
+    /// <see cref="UnattendedCapMode.Manual"/>.</summary>
+    public string? CapMode { get; set; }
+}
+
+/// <summary>Canonical string constants for <see cref="UnattendedPolicy.AcceptanceMode"/>.</summary>
+public static class UnattendedAcceptanceMode
+{
+    /// <summary>Surface the acceptance human gate (default).</summary>
+    public const string Manual = "manual";
+
+    /// <summary>Auto-confirm: bypass the gate by selecting the happy-path route
+    /// (the route the human would have selected on success).</summary>
+    public const string Auto = "auto";
+
+    /// <summary>True when <paramref name="value"/> is one of the canonical tokens.</summary>
+    public static bool IsValid(string value) => value is Manual or Auto;
+}
+
+/// <summary>Canonical string constants for <see cref="UnattendedPolicy.ReviewWaitMode"/>.</summary>
+public static class UnattendedReviewWaitMode
+{
+    /// <summary>Surface the review-wait human gate when triggered (default).</summary>
+    public const string Wait = "wait";
+
+    /// <summary>Auto-skip: keep polling / re-entering the wait loop instead of
+    /// escalating to a human. Use when the operator is willing to wait
+    /// indefinitely for review rather than abandoning the run.</summary>
+    public const string Skip = "skip";
+
+    /// <summary>True when <paramref name="value"/> is one of the canonical tokens.</summary>
+    public static bool IsValid(string value) => value is Wait or Skip;
+}
+
+/// <summary>Canonical string constants for <see cref="UnattendedPolicy.CapMode"/>.</summary>
+public static class UnattendedCapMode
+{
+    /// <summary>Surface the cap-hit human gate (default).</summary>
+    public const string Manual = "manual";
+
+    /// <summary>Auto-proceed: accept current state and continue (e.g. accept
+    /// the latest revision, treat the cap as acceptable). Best for cap gates
+    /// where the cap itself is the only failure signal and the partial work
+    /// is usable.</summary>
+    public const string AutoProceed = "auto_proceed";
+
+    /// <summary>Auto-fail: terminate the run with a clear error. Best for cap
+    /// gates whose firing indicates a real bug (depth exceeded, scope
+    /// violation, conflict requiring human reasoning).</summary>
+    public const string AutoFail = "auto_fail";
+
+    /// <summary>True when <paramref name="value"/> is one of the canonical tokens.</summary>
+    public static bool IsValid(string value) => value is Manual or AutoProceed or AutoFail;
 }
 
 /// <summary>

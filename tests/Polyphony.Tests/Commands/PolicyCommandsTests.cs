@@ -884,6 +884,114 @@ public sealed class PolicyCommandsTests : CommandTestBase
         output.ShouldContain("\"renegotiation\"");
         output.ShouldContain("\"auto_decide\"");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // unattended (AB#3104 — Bucket-C policy controllability)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Load_NoFile_AppliesUnattendedDefaults()
+    {
+        using var fx = new PolicyFileFixture();
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.Unattended.ShouldNotBeNull();
+        result.Unattended.AcceptanceMode.ShouldBe("manual");
+        result.Unattended.ReviewWaitMode.ShouldBe("wait");
+        result.Unattended.CapMode.ShouldBe("manual");
+    }
+
+    [Theory]
+    [InlineData("manual", "wait", "manual")]
+    [InlineData("auto", "skip", "auto_proceed")]
+    [InlineData("auto", "wait", "auto_fail")]
+    [InlineData("manual", "skip", "auto_proceed")]
+    public void Load_FileWithUnattended_PreservesAllModes(
+        string acceptance, string reviewWait, string cap)
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy($$"""
+            schema_version: 1
+            unattended:
+              acceptance_mode: {{acceptance}}
+              review_wait_mode: {{reviewWait}}
+              cap_mode: {{cap}}
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.Unattended.AcceptanceMode.ShouldBe(acceptance);
+        result.Unattended.ReviewWaitMode.ShouldBe(reviewWait);
+        result.Unattended.CapMode.ShouldBe(cap);
+    }
+
+    [Fact]
+    public void Load_PartialUnattended_FillsMissingFromDefaults()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            unattended:
+              acceptance_mode: auto
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.Unattended.AcceptanceMode.ShouldBe("auto");
+        result.Unattended.ReviewWaitMode.ShouldBe("wait");
+        result.Unattended.CapMode.ShouldBe("manual");
+    }
+
+    [Theory]
+    [InlineData("acceptance_mode: vibes", "vibes", "acceptance_mode")]
+    [InlineData("review_wait_mode: maybe", "maybe", "review_wait_mode")]
+    [InlineData("cap_mode: explode", "explode", "cap_mode")]
+    public void Load_BadUnattendedMode_ReturnsConfigError(
+        string badLine, string badToken, string fieldName)
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy($$"""
+            schema_version: 1
+            unattended:
+              {{badLine}}
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var doc = JsonDocument.Parse(output);
+        var err = doc.RootElement.GetProperty("error").GetString();
+        err.ShouldNotBeNull();
+        err.ShouldContain(badToken);
+        err.ShouldContain(fieldName);
+    }
+
+    [Fact]
+    public void Load_Unattended_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        using var fx = new PolicyFileFixture();
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        output.ShouldContain("\"unattended\"");
+        output.ShouldContain("\"acceptance_mode\"");
+        output.ShouldContain("\"review_wait_mode\"");
+        output.ShouldContain("\"cap_mode\"");
+    }
 }
 
 /// <summary>

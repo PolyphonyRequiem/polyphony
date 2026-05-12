@@ -61,6 +61,7 @@ public sealed class PolicyCommands
             Guidance = SnapshotGuidance(config.Guidance!),
             RootFallback = SnapshotRootFallback(config.RootFallback!),
             Renegotiation = SnapshotRenegotiation(config.Renegotiation!),
+            Unattended = SnapshotUnattended(config.Unattended!),
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PolicyLoadResult));
@@ -225,6 +226,14 @@ public sealed class PolicyCommands
         new()
         {
             AutoDecide = renegotiation.AutoDecide ?? RenegotiationAutoDecide.Prompt,
+        };
+
+    private static PolicyUnattendedSnapshot SnapshotUnattended(UnattendedPolicy unattended) =>
+        new()
+        {
+            AcceptanceMode = unattended.AcceptanceMode ?? UnattendedAcceptanceMode.Manual,
+            ReviewWaitMode = unattended.ReviewWaitMode ?? UnattendedReviewWaitMode.Wait,
+            CapMode = unattended.CapMode ?? UnattendedCapMode.Manual,
         };
 
     private static (List<string> Errors, List<string> Warnings) ValidateRules(PolicyConfig config)
