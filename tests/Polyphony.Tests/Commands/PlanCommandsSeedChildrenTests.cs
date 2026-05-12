@@ -718,6 +718,278 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         }
     }
 
+    // ---- From-ref recovery (AB#3106 rubber-duck #1, 2026-05-12) ----
+    //
+    // After merge_plan_pr the sidecar lives in the merged ref (origin/main)
+    // but NOT in the local worktree (MergePlanPr deliberately does not
+    // pull/checkout post-merge per Rev 4.2). On re-entry, the seeder must
+    // be able to recover the children list straight from the ref. Tests
+    // pin the resolution-order precedence (CLI > sidecar > from-ref >
+    // apex_facets) and the hard-vs-soft failure semantics:
+    //   - file-not-at-ref → soft (fall through to apex_facets / refusal)
+    //   - bad-ref / git-error → hard (ConfigError envelope)
+    //   - present-but-malformed → hard (ConfigError envelope)
+    //   - present-but-not-array → hard (ConfigError envelope)
+
+    private static void StubGitShow(FakeProcessRunner runner, string refspec, string path, ProcessResult response)
+        => runner.WhenExact("git", new[] { "show", $"{refspec}:{path}" }, response);
+
+    private static void StubGitFetchOk(FakeProcessRunner runner, string remote, string branch)
+        => runner.WhenExact("git", new[] { "fetch", remote, $"{branch}:refs/remotes/{remote}/{branch}" }, new ProcessResult(0, "", ""));
+
+    [Fact]
+    public async Task SeedChildren_FromRef_HappyPath_ConsumesRefChildren()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 300);
+        StubShowParent(runner, 300, tagsField: "");
+        StubPatchOk(runner);
+        StubCreateChild(runner, 9100);
+        StubGitFetchOk(runner, "origin", "main");
+        StubGitShow(runner, "origin/main", "plans/plan-300.children.json",
+            new ProcessResult(0,
+                """[{"child_id":"task-1","title":"From ref","type":"Task","description":"x"}]""",
+                ""));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(300, "", "polyphony:planned", "", ".polyphony-config", "", "origin/main"));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.WorkItemId.ShouldBe(300);
+        result.ChildCount.ShouldBe(1);
+        result.SeededCount.ShouldBe(1);
+        result.PlannedTagSet.ShouldBeTrue();
+
+        // Verify the seeded child came from the ref payload.
+        var newCall = runner.Invocations.First(i =>
+            i.Executable == "twig" && i.Arguments.Contains("new"));
+        string.Join(" ", newCall.Arguments).ShouldContain("From ref");
+    }
+
+    [Fact]
+    public async Task SeedChildren_FromRef_FetchFailureSwallowed_ShowStillRuns()
+    {
+        // Best-effort fetch — if it fails (network down, ref already
+        // local-only, etc.) the verb proceeds straight to `git show`. If
+        // show then succeeds, the recovery completes normally.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 301);
+        StubShowParent(runner, 301, tagsField: "");
+        StubPatchOk(runner);
+        StubCreateChild(runner, 9101);
+        // git fetch returns nonzero -> GitClient throws -> seeder captures
+        // the message and proceeds to git show. The captured fetch error is
+        // included in the show-time diagnostic IF show then fails — in this
+        // test, show succeeds so the swallow remains silent.
+        runner.WhenExact("git", new[] { "fetch", "origin", "main:refs/remotes/origin/main" },
+            new ProcessResult(1, "", "fatal: unable to access 'origin'"));
+        StubGitShow(runner, "origin/main", "plans/plan-301.children.json",
+            new ProcessResult(0,
+                """[{"child_id":"task-1","title":"After fetch fail","type":"Task"}]""",
+                ""));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(301, "", "polyphony:planned", "", ".polyphony-config", "", "origin/main"));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.SeededCount.ShouldBe(1);
+        result.PlannedTagSet.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task SeedChildren_FromRef_FileNotAtRef_FallsThroughToApexFacets()
+    {
+        // GitClient.ShowFileAtRefAsync returns null when the file does not
+        // exist at the ref (the canonical "no sidecar yet" case). The verb
+        // must fall through to apex_facets — soft, not a hard error.
+        var (cmd, runner) = CreateCommand();
+        StubGitFetchOk(runner, "origin", "main");
+        runner.WhenExact("git", new[] { "show", "origin/main:plans/plan-302.children.json" },
+            new ProcessResult(128, "",
+                "fatal: path 'plans/plan-302.children.json' does not exist in 'origin/main'"));
+
+        var planFile = WriteTempPlanFile(302, "---\napex_facets: [implementable]\n---\n");
+        try
+        {
+            // Twig stubs for the indivisible-apex path: parent tree fetch
+            // happens after facets resolution succeeds.
+            StubShowTreeNoChildren(runner, 302);
+            StubShowParent(runner, 302, tagsField: "");
+            StubPatchOk(runner);
+
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(302, "", "polyphony:planned", planFile, ".polyphony-config", "", "origin/main"));
+
+            exit.ShouldBe(ExitCodes.Success);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ApexFacets.ShouldContain("implementable");
+            result.FacetsTagSet.ShouldBeTrue();
+        }
+        finally
+        {
+            File.Delete(planFile);
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_FromRef_MalformedJson_RoutesError()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitFetchOk(runner, "origin", "main");
+        StubGitShow(runner, "origin/main", "plans/plan-303.children.json",
+            new ProcessResult(0, "[not valid json", ""));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(303, "", "polyphony:planned", "", ".polyphony-config", "", "origin/main"));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(1);
+        result.Errors[0].Error.ShouldContain("git ref 'origin/main");
+        result.Errors[0].Error.ShouldContain("not valid JSON");
+    }
+
+    [Fact]
+    public async Task SeedChildren_FromRef_NotArray_RoutesError()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitFetchOk(runner, "origin", "main");
+        StubGitShow(runner, "origin/main", "plans/plan-304.children.json",
+            new ProcessResult(0, """{"not":"array"}""", ""));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(304, "", "polyphony:planned", "", ".polyphony-config", "", "origin/main"));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(1);
+        result.Errors[0].Error.ShouldContain("git ref 'origin/main");
+        result.Errors[0].Error.ShouldContain("must contain a JSON array");
+    }
+
+    [Fact]
+    public async Task SeedChildren_FromRef_ExplicitNull_RoutesError()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubGitFetchOk(runner, "origin", "main");
+        StubGitShow(runner, "origin/main", "plans/plan-305.children.json",
+            new ProcessResult(0, "null", ""));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(305, "", "polyphony:planned", "", ".polyphony-config", "", "origin/main"));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(1);
+        result.Errors[0].Error.ShouldContain("got null");
+    }
+
+    [Fact]
+    public async Task SeedChildren_LocalSidecarWinsOverFromRef()
+    {
+        // Resolution order #2 beats #3. If a local sidecar exists, the
+        // verb consumes it and never goes to git for the from-ref
+        // recovery path (no git stubs registered).
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 306);
+        StubShowParent(runner, 306, tagsField: "");
+        StubPatchOk(runner);
+        StubCreateChild(runner, 9106);
+
+        var sidecar = WriteTempChildrenSidecar(
+            """[{"child_id":"local","title":"Local sidecar wins","type":"Task"}]""");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(306, "", "polyphony:planned", "", ".polyphony-config", sidecar, "origin/main"));
+
+            exit.ShouldBe(ExitCodes.Success);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.SeededCount.ShouldBe(1);
+            // No git invocations should have happened.
+            runner.Invocations.ShouldNotContain(i => i.Executable == "git");
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(sidecar)!, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_CliWinsOverFromRef()
+    {
+        // Resolution order #1 beats everything below.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 307);
+        StubShowParent(runner, 307, tagsField: "");
+        StubPatchOk(runner);
+        StubCreateChild(runner, 9107);
+
+        var cli = """[{"child_id":"cli","title":"CLI wins","type":"Task"}]""";
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(307, cli, "polyphony:planned", "", ".polyphony-config", "", "origin/main"));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.SeededCount.ShouldBe(1);
+        runner.Invocations.ShouldNotContain(i => i.Executable == "git");
+    }
+
+    [Fact]
+    public async Task SeedChildren_FromRef_FetchAndShowBothFail_ErrorIncludesFetchContext()
+    {
+        // When fetch fails AND show subsequently fails, the operator must
+        // see the fetch failure in the diagnostic — otherwise a stale or
+        // missing remote-tracking ref looks like a bad-ref error
+        // (rubber-duck #2 follow-up, 2026-05-12).
+        var (cmd, runner) = CreateCommand();
+        runner.WhenExact("git", new[] { "fetch", "origin", "main:refs/remotes/origin/main" },
+            new ProcessResult(1, "", "fatal: unable to access 'origin': Could not resolve host"));
+        // Show fails with a real bad-ref error (not the file-missing
+        // whitelist) — GitClient throws ExternalToolException.
+        runner.WhenExact("git", new[] { "show", "origin/main:plans/plan-309.children.json" },
+            new ProcessResult(128, "", "fatal: bad revision 'origin/main:plans/plan-309.children.json'"));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(309, "", "polyphony:planned", "", ".polyphony-config", "", "origin/main"));
+
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(1);
+        result.Errors[0].Error.ShouldContain("bad revision");
+        result.Errors[0].Error.ShouldContain("best-effort `git fetch` also failed");
+        result.Errors[0].Error.ShouldContain("Could not resolve host");
+    }
+
+    [Fact]
+    public async Task SeedChildren_FromRef_LocalRefNoSlash_SkipsFetch()
+    {
+        // A bare ref (no '<remote>/<branch>' shape — e.g. a SHA, tag name,
+        // or branch already in local) MUST NOT attempt a fetch. We don't
+        // stub `git fetch`; if the verb invokes it, the FakeProcessRunner
+        // throws and the test fails.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 308);
+        StubShowParent(runner, 308, tagsField: "");
+        StubPatchOk(runner);
+        StubCreateChild(runner, 9108);
+        StubGitShow(runner, "HEAD", "plans/plan-308.children.json",
+            new ProcessResult(0,
+                """[{"child_id":"local-ref","title":"From HEAD","type":"Task"}]""",
+                ""));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(308, "", "polyphony:planned", "", ".polyphony-config", "", "HEAD"));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.SeededCount.ShouldBe(1);
+        runner.Invocations.ShouldNotContain(i =>
+            i.Executable == "git" && i.Arguments.FirstOrDefault() == "fetch");
+    }
+
     // ---- ExtractCreatedId hardening (AB#3071 dogfood, 2026-05-10) ----
     //
     // Six children seeded successfully into ADO but the seeder emitted

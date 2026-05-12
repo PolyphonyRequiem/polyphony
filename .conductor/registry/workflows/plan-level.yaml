@@ -1996,6 +1996,20 @@ agents:
       # that routes to the apex_facets check.)
       - "--children-json"
       - "{{ architect.output.children | tojson if (architect is defined and architect.output.children is defined) else '' }}"
+      # AB#3106 rubber-duck #1 (2026-05-12): re-entry recovery seam. When
+      # state_detector classifies the work item as merged_unseeded or
+      # awaiting_review, MergePlanPr has already merged the plan PR but
+      # did NOT pull/checkout the merged commit into the local worktree
+      # (per Rev 4.2 — manifest is local + canonical). The sidecar
+      # plans/plan-{id}.children.json is therefore on origin/main but
+      # NOT on local disk. The verb falls back to
+      # `git show <ref>:plans/plan-{id}.children.json` (with a best-
+      # effort `git fetch` first) when CLI input AND local sidecar are
+      # both empty. If the ref doesn't carry the file, it falls through
+      # to apex_facets / refusal — so this is safe to set
+      # unconditionally.
+      - "--children-from-ref"
+      - "origin/main"
     routes:
       - to: seeder_error_gate
         when: "{{ seeder.output.error_count is defined and seeder.output.error_count > 0 }}"
