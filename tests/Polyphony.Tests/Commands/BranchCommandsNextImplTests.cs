@@ -261,6 +261,50 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         output.ShouldNotContain("\"BranchName\"");
     }
 
+    [Fact]
+    public async Task NextImpl_HappyPath_FlushesStagedTransitionAfterSetState()
+    {
+        // AB#3126 regression: `next-impl` must call `twig sync` immediately
+        // after `twig state` so the staged begin_implementation transition
+        // is durable in ADO before the verb returns. Otherwise the staged
+        // change is invisible to the next reader (e.g. `polyphony validate`
+        // in `primary_completer`), which reads cache directly without
+        // syncing first.
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+        StubBranch(runner, "");
+        ExpectStateTransition(runner, 300, "Doing");
+
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing");
+        var task = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("T")
+            .WithState("To Do").WithTags("PG-1").WithParentId(100);
+        await SeedAsync(epic.Build(), task.Build());
+
+        await CaptureConsoleAsync(() => cmd.NextImpl(workItem: 100, pgName: "PG-1"));
+
+        // Find the index of the post-state `twig sync` invocation: it must
+        // come AFTER the `twig state Doing` call. The verb also calls
+        // `twig sync` at the start, so we need to find a sync call whose
+        // index is greater than the state call's index.
+        var stateIdx = runner.Invocations.ToList().FindIndex(
+            i => i.Executable == "twig"
+                && i.Arguments.Count >= 2
+                && i.Arguments[0] == "state"
+                && i.Arguments[1] == "Doing");
+        stateIdx.ShouldBeGreaterThan(-1, "twig state Doing must have been invoked");
+
+        var postStateSync = runner.Invocations
+            .Select((inv, idx) => (inv, idx))
+            .FirstOrDefault(x => x.idx > stateIdx
+                && x.inv.Executable == "twig"
+                && x.inv.Arguments.Count >= 1
+                && x.inv.Arguments[0] == "sync");
+
+        postStateSync.inv.ShouldNotBeNull(
+            "next-impl must invoke `twig sync` after `twig state` to flush the staged transition (AB#3126)");
+    }
+
     private static BranchNextImplResult Deserialize(string output)
         => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchNextImplResult)
             ?? throw new InvalidOperationException("Failed to deserialize next-impl output");

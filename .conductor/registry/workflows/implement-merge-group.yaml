@@ -241,6 +241,14 @@ agents:
         when: "{{ primary_router.output.action == 'implement_item' }}"
       - to: dependency_check
         when: "{{ primary_router.output.action == 'all_items_done' }}"
+      # AB#3126: explicit error route. `branch next-impl` returns
+      # action='error' with a populated `error` field when its internal
+      # try/catch trips (e.g. ADO unreachable during the post-state
+      # twig sync). Without this route the catch-all below silently
+      # treats errors as "done with tasks" and proceeds toward MG
+      # closure — masking real failures and leaving items unstarted.
+      - to: primary_router_error_gate
+        when: "{{ primary_router.output.action == 'error' or (primary_router.output.error is defined and primary_router.output.error != '') }}"
       # Catch-all per M4: unknown action from next-impl should fail
       # safely to dependency_check (the natural "we're done with tasks"
       # path) rather than raise `No matching route found`.
@@ -596,15 +604,73 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
+        $ErrorActionPreference = 'Stop';
+        $PSNativeCommandUseErrorActionPreference = $true;
         $taskId = {{ primary_router.output.primary_id }};
         twig set $taskId;
         twig note --text 'Item implementation merged into MG branch via impl PR';
+        twig sync;
         $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
         if (-not $validate.is_valid) { throw "Cannot transition task $($taskId): $($validate.message)" };
         twig state $validate.target_state;
+        twig sync;
         @{ child_id = $taskId; completed = $true; target_state = $validate.target_state } | ConvertTo-Json
     routes:
       - to: primary_router
+
+  # ── Primary router error gate ─────────────────────────────────────────
+  #
+  # Fires when `branch next-impl` (primary_router) emits action='error' or
+  # a non-empty `error` field. Without an explicit route, the catch-all
+  # below would silently treat the error as "all items done" and proceed
+  # toward MG closure — masking the failure and skipping every remaining
+  # task.
+  #
+  # AB#3126 root cause coupling: next-impl now flushes its
+  # begin_implementation transition via a post-state `twig sync` before
+  # returning. Network/auth blips during that sync surface here as
+  # action='error'.
+  #
+  # Operator options:
+  #   - Retry: re-enter primary_router. `next-impl` is idempotent —
+  #     transitions a Doing item to Doing is a no-op for the validator
+  #     (begin_implementation accepts both Proposed and InProgress), and
+  #     the second `twig sync` will retry the push.
+  #   - Abort: $end. The MG remains in its current state; no items are
+  #     advanced to Done. Re-running the workflow later resumes from the
+  #     same point.
+  #
+  # Invariants:
+  #   Pre:  primary_router emitted action='error' or a populated `error`.
+  #   Post: Operator has retried (route to primary_router) or aborted ($end).
+  - name: primary_router_error_gate
+    type: human_gate
+    description: next-impl signaled error — operator decides retry or abort
+    prompt: |
+      ## ❌ next-impl error — MG `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+
+      `polyphony branch next-impl` returned an error envelope. The most
+      common cause is a transient ADO failure during the post-state
+      `twig sync` that flushes the `begin_implementation` transition
+      (AB#3126).
+
+      **Detail:** {{ primary_router.output.error | default('(no error message)') }}
+
+      Choose an action:
+
+      - **Retry** — re-enter `primary_router`. `next-impl` is idempotent
+        (selecting the same task again, validating `begin_implementation`
+        on a Doing item, and re-flushing all are no-ops or safe retries).
+      - **Abort** — exit without advancing any further items. The MG
+        remains in its current state; a later workflow re-entry resumes
+        from the same point.
+    options:
+      - label: "🔄 Retry (re-run next-impl)"
+        value: retry
+        route: primary_router
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
 
   # ── Dependency check ──────────────────────────────────────────────────
   #

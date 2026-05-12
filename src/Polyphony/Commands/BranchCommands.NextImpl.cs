@@ -148,6 +148,16 @@ public sealed partial class BranchCommands
             await twig.SetActiveAsync(next.Node.WorkItemId, ct).ConfigureAwait(false);
             await twig.SetStateAsync(targetState, ct).ConfigureAwait(false);
 
+            // Flush the staged begin_implementation transition to ADO before
+            // returning. `twig state` only mutates the local cache + pending
+            // queue; without this push the change is invisible to any
+            // subsequent process (e.g. `polyphony validate` in
+            // `primary_completer`) that reads cache directly without first
+            // calling sync. AB#3126: validate sees Proposed and refuses
+            // implementation_complete because the Doing transition was
+            // staged-but-never-pushed by an earlier next-impl invocation.
+            await twig.SyncAsync(ct).ConfigureAwait(false);
+
             // Walk up to find the nearest plannable ancestor (the container).
             var (containerId, containerTitle, containerType) = FindNearestPlannableAncestorWithType(next);
 
