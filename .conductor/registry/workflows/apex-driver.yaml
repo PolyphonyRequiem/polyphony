@@ -1143,7 +1143,12 @@ agents:
   #
   # Sync ADO once more (so the validate event sees a fresh cache),
   # validate the satisfaction event against the apex's type config,
-  # then transition state via twig.
+  # then transition state via twig — and flush that transition with a
+  # post-state `twig sync` so the change is durable in ADO before the
+  # workflow terminates (AB#3129, sister-bug to AB#3126). Without the
+  # second sync, the apex's terminal-state transition sits in twig's
+  # local pending queue and is never pushed; subsequent processes
+  # reading ADO see the apex still in its non-terminal state.
   # AUDIT (AB#3066): No try/catch wrapper here — intentional. Unlike
   # `terminal_satisfied` in apex-item-dispatch.yaml (the per-item wave
   # corridor, where a swallow lets the wave complete and the outer loop
@@ -1152,6 +1157,10 @@ agents:
   # apex didn't transition. If a try/catch is later added here, mirror
   # the apex-item-dispatch.yaml > terminal_satisfied shape — log to
   # stderr AND surface in structured output.
+  # `$ErrorActionPreference = 'Stop'` and
+  # `$PSNativeCommandUseErrorActionPreference = $true` reinforce the
+  # fail-loud semantic: a failed `twig sync` (network blip, ADO 5xx,
+  # auth) halts the script rather than silently propagating stale state.
   - name: close_mark_satisfied
     type: script
     description: Sync, validate, and transition apex to its satisfied state
@@ -1160,10 +1169,13 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
+        $ErrorActionPreference = 'Stop';
+        $PSNativeCommandUseErrorActionPreference = $true;
         twig sync;
         $validate = polyphony validate --work-item {{ workflow.input.apex_id }} --event item_satisfied | ConvertFrom-Json;
         if ($validate.target_state) {
           twig state $validate.target_state --id {{ workflow.input.apex_id }};
+          twig sync;
         }
         [ordered]@{
           apex_id      = {{ workflow.input.apex_id }};
