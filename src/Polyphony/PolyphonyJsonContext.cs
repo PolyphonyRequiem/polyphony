@@ -135,6 +135,8 @@ namespace Polyphony;
 [JsonSerializable(typeof(WorktreeInitApexResult))]
 [JsonSerializable(typeof(WorktreeCreateResult))]
 [JsonSerializable(typeof(WorktreeEntry))]
+[JsonSerializable(typeof(WorktreeGcResult))]
+[JsonSerializable(typeof(WorktreeGcCandidate))]
 [JsonSerializable(typeof(WorklistResult))]
 [JsonSerializable(typeof(WorklistWave))]
 [JsonSerializable(typeof(WorklistItem))]

@@ -21,6 +21,7 @@ namespace Polyphony.Commands;
 ///   <item><see cref="AssertClean"/>  — pre-flight gate: clean + (optionally) on expected branch</item>
 ///   <item><see cref="InitApex"/>     — bootstrap <c>{runs_root}/apex-{N}/feature-{N}/</c> with <c>feature/{N}</c> attached</item>
 ///   <item><see cref="Create"/>       — create (or attach to) a per-item worktree at <c>{runs_root}/apex-{N}/{slug}/</c></item>
+///   <item><see cref="Gc"/>           — prune stale per-run worktrees under <c>polyphony-runs/</c></item>
 /// </list>
 /// </summary>
 [VerbGroup("worktree")]
