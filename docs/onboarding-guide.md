@@ -12,15 +12,16 @@ example throughout. After following this guide, you will have a working
 ## Table of Contents
 
 1. [Prerequisites](#1-prerequisites)
-2. [Process Template Selection](#2-process-template-selection)
-3. [Bootstrap](#3-bootstrap)
-4. [Type Definitions](#4-type-definitions)
-5. [Templates](#5-templates)
-6. [Agent Guidance](#6-agent-guidance)
-7. [Profile](#7-profile)
-8. [Config Validation](#8-config-validation)
-9. [First Run](#9-first-run)
-10. [Kyber Worked Example](#10-kyber-worked-example)
+2. [Repository Layout (Bare Repo + Per-Run Worktrees)](#2-repository-layout-bare-repo--per-run-worktrees)
+3. [Process Template Selection](#3-process-template-selection)
+4. [Bootstrap](#4-bootstrap)
+5. [Type Definitions](#5-type-definitions)
+6. [Templates](#6-templates)
+7. [Agent Guidance](#7-agent-guidance)
+8. [Profile](#8-profile)
+9. [Config Validation](#9-config-validation)
+10. [First Run](#10-first-run)
+11. [Kyber Worked Example](#11-kyber-worked-example)
 
 ---
 
@@ -87,7 +88,96 @@ After installing Polyphony, run `polyphony health` to verify your environment an
 
 ---
 
-## 2. Process Template Selection
+## 2. Repository Layout (Bare Repo + Per-Run Worktrees)
+
+> **Status:** the bare-repo + per-run-worktree layout is required by the SDLC orchestrator (epic AB#3085). The legacy "single non-bare clone" layout is unsupported as of the launcher rework — see [`docs/per-run-worktree-layout.md`](per-run-worktree-layout.md) for the full rationale.
+
+### Why this layout
+
+The SDLC orchestrator dispatches agents into worktrees. If the only worktree available is the operator's main clone, two production bugs become structural:
+
+1. **Launcher hijack** — the operator's main worktree gets yanked off `main` onto a feature branch mid-conversation.
+2. **`worktree_dirty` cross-contamination** — sibling apex runs (or ad-hoc operator state) race each other on the shared HEAD.
+
+The bare-repo layout eliminates both classes by giving every apex run its own worktree subtree, sibling to the operator's main worktree.
+
+### Target on-disk layout
+
+```
+~/projects/<repo>.git/                bare repo (objects + refs only)
+~/projects/<repo>/                    operator's main worktree, ALWAYS on `main`
+~/projects/<repo>-runs/
+  apex-{N}/                           container directory, NOT a worktree
+    feature-{N}/                        worktree on feature/{N}
+    plan-{N}/                           worktree on plan/{N}
+    plan-{N}-{item}/                    worktree on plan/{N}-{item}
+    impl-{N}-{item}/                    worktree on impl/{N}-{item}
+    mg-{N}_pg-{group}/                  worktree on mg/{N}_pg-{group}
+    evidence-{N}-{item}/                worktree on evidence/{N}-{item}
+```
+
+For polyphony itself, `<repo>` is `polyphony`. For your repo, substitute the repo basename.
+
+Properties:
+
+- All worktrees share the bare's `objects` and `refs` directories — the on-disk cost of an extra worktree is just the working tree itself.
+- Branch invariants from the **polyphony-branch-model** skill are unchanged. The model changes *where* worktrees live, not how branches relate.
+- The SDLC launcher (`scripts/Invoke-PolyphonySdlc.ps1`) refuses to dispatch into the operator's main worktree; the bare-repo guard plus per-apex-run path derivation makes the hijack bug structurally impossible.
+
+### One-time migration
+
+If you already have a non-bare clone at `~/projects/<repo>/`, migrate with the supplied script (works for any repo, not just polyphony):
+
+```powershell
+# Step 1 — clone bare alongside the existing checkout (no destructive changes):
+./scripts/Migrate-ToBareRepo.ps1 -Commit
+
+# The script prints next-step instructions. Move your existing clone aside:
+Rename-Item ~/projects/<repo> ~/projects/<repo>.legacy
+
+# Step 2 — populate the new main worktree from the bare clone:
+./scripts/Migrate-ToBareRepo.ps1 -Phase2 -LegacyPath ~/projects/<repo>.legacy
+
+# Verify:
+git -C ~/projects/<repo> status   # → clean, on main
+```
+
+The script is idempotent, dry-run by default, and never touches `~/projects/<repo>/` until you've explicitly moved it aside in step 1's printed instructions. See [`docs/per-run-worktree-layout.md`](per-run-worktree-layout.md) for the manual procedure if you need to migrate without the script.
+
+### Verifying the layout
+
+Two preflight probes confirm the layout is wired correctly:
+
+```powershell
+# Run from anywhere inside ~/projects/<repo> (the main worktree):
+polyphony state preflight --work-item <ID>
+```
+
+Look for the `bare_repo` advisory check — `PASSED` means the common-dir resolved to `~/projects/<repo>.git/` and `git rev-parse --is-bare-repository` returned `true`.
+
+```powershell
+# Quick scan of stale per-run worktrees (default is dry-run):
+polyphony worktree gc
+
+# Scoped to a single apex:
+polyphony worktree gc --apex <ID>
+
+# Actually prune (after dry-run looks right):
+polyphony worktree gc --commit
+```
+
+`worktree gc` only ever considers worktrees under `~/projects/<repo>-runs/` — your main worktree and any sibling worktrees outside the runs root are never touched.
+
+### What this means for day-to-day work
+
+- **Edit code in `~/projects/<repo>/`.** That's your main worktree, always on `main`. The SDLC orchestrator never dispatches into it.
+- **Apex runs land in `~/projects/<repo>-runs/apex-{N}/`.** Each apex run gets its own subtree; nothing leaks across runs.
+- **Agents run in per-item worktrees** (e.g. `impl-{N}-{item}/`) created on demand by `polyphony worktree create` and torn down by `polyphony worktree gc`.
+- **The launcher (`Invoke-PolyphonySdlc.ps1`) auto-derives the right worktree path** from the apex id; you never need to pass `-WorktreeRoot` unless you're testing.
+
+---
+
+## 3. Process Template Selection
 
 The v2 workflow supports the four standard ADO process templates plus any
 **custom** template derived from one of them. You need to identify which one
@@ -117,7 +207,7 @@ auto-detect it from the `process_template` field.
 > Epic → **Primitive** → Task (plus Bug → Task), where `Primitive` is a
 > custom mid-level type that replaces `User Story` for a crypto-primitives
 > domain. We'll cover how to declare custom types in
-> [Section 4](#4-type-definitions).
+> [Section 5](#5-type-definitions).
 
 ### State Mappings Per Template
 
@@ -160,7 +250,7 @@ rejects it with `Unknown state '<X>'. Valid states: ...`.
 
 ---
 
-## 3. Bootstrap
+## 4. Bootstrap
 
 The `bootstrap-conductor.ps1` script generates a complete set of stub `.polyphony-config/`
 files, giving you a starting point to customize.
@@ -236,7 +326,7 @@ functional but generic.
 
 ---
 
-## 4. Type Definitions
+## 5. Type Definitions
 
 Type definitions live in `.polyphony-config/work-item-types/` as markdown files. They tell
 agents what each work item type represents, how it's used, and what conventions to
@@ -371,7 +461,7 @@ in `process-config.yaml` that is missing its `<slug>.md`.
 
 ---
 
-## 5. Templates
+## 6. Templates
 
 Templates live in `.polyphony-config/work-item-types/templates/` and define the expected
 structure of a work item's **Description** field. Agents use these when creating
@@ -501,7 +591,7 @@ codebase — it's where domain invariants get enforced by default.
 
 ---
 
-## 6. Agent Guidance
+## 7. Agent Guidance
 
 Agent guidance files live in `.polyphony-config/agent-guidance/` and provide project-specific
 instructions for each AI agent role. These are injected into agent prompts via Jinja2
@@ -591,7 +681,7 @@ calibration + areas where strictness matters most).
 
 ---
 
-## 7. Profile
+## 8. Profile
 
 The `profile.yaml` file describes your project's metadata, tech stack, build
 commands, and estimation settings. Polyphony checks only its existence
@@ -668,7 +758,7 @@ estimation:
 
 ---
 
-## 8. Config Validation
+## 9. Config Validation
 
 After creating your `.polyphony-config/` configuration, validate it with Polyphony before
 running the workflow.
@@ -755,7 +845,7 @@ spaces-to-hyphens (`ConfigValidator.cs:162-163`).
 
 ---
 
-## 9. First Run
+## 10. First Run
 
 Once validation passes, you're ready to drive an apex through the polyphony
 SDLC pipeline.
@@ -798,6 +888,37 @@ conductor run apex-driver@polyphony `
 > **Always launch detached** — wrap in `Start-Process -WindowStyle Hidden` so
 > conductor survives if the parent session drops. Always use `--web`, not
 > `--web-bg`.
+
+### Recommended: `Invoke-PolyphonySdlc.ps1`
+
+For day-to-day operator use, the launcher script `scripts/Invoke-PolyphonySdlc.ps1` wraps the `conductor run` invocation with the per-run worktree machinery from § 2. It auto-derives the worktree path under `~/projects/<repo>-runs/apex-{N}/`, refuses to dispatch into the operator's main worktree, refuses if the target is dirty, and threads the right twig org/project + git metadata through.
+
+```powershell
+# Dry-run (default) — print the resolved worktree path and the conductor command line, do NOT launch:
+./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <ID>
+
+# Launch detached after dry-run looks right:
+./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <ID> -Commit
+
+# Resume an in-flight apex:
+./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <ID> -Intent resume -Commit
+
+# Override the platform / org / project (defaults are read from .twig/config):
+./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <ID> -Platform github -Commit
+```
+
+Key parameters:
+
+| Parameter      | Purpose |
+|----------------|---------|
+| `-ApexId`      | Apex root work item id (required). |
+| `-Intent`      | `new` (default), `resume`, or `replan`. |
+| `-Platform`    | `ado` (default) or `github`. |
+| `-Commit`      | Actually launch. Without `-Commit`, the script is a dry-run that prints what it would do. |
+| `-NoDetach`    | Don't background the conductor process — useful for live debugging. |
+| `-WorktreeRoot`| Override the auto-derived path. The script REFUSES if this resolves inside the operator's main worktree. |
+
+The launcher's preflight chain (11 phases) catches every common failure mode before conductor starts: stale binary, dirty target worktree, wrong branch, hijack attempt, missing `.twig/config`, etc. See `scripts/Invoke-PolyphonySdlc.ps1` for the full list and the corresponding refusal messages.
 
 The apex-driver re-derives the right leg per item per wave from observable
 state, so individual sub-workflows (`plan-level`, `actionable`,
@@ -864,7 +985,7 @@ This shows the work item tree with type facets at each level.
 
 ---
 
-## 10. Kyber Worked Example
+## 11. Kyber Worked Example
 
 This section shows a complete, annotated `.polyphony-config/` configuration for kyber,
 a `KyberAgile` (custom) process repository on GitHub. Use this as a reference
