@@ -42,6 +42,10 @@ public sealed class ValidateConfigCommand
         var repoRoot = Path.GetFullPath(Path.Combine(config, ".."));
         var result = ConfigValidator.Validate(processConfig, repoRoot);
 
+        // Also validate the research: block in profile.yaml (if it exists).
+        var profilePath = Path.Combine(config, "profile.yaml");
+        result = AppendProfileValidation(result, profilePath);
+
         if (isJson)
         {
             Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.ConfigValidationResult));
@@ -80,6 +84,52 @@ public sealed class ValidateConfigCommand
         }
 
         return ExitCodes.ConfigError;
+    }
+
+    /// <summary>
+    /// Load profile.yaml and validate the research: block. Returns a new
+    /// result with any profile diagnostics appended to the original.
+    /// </summary>
+    private static ConfigValidationResult AppendProfileValidation(
+        ConfigValidationResult processResult, string profilePath)
+    {
+        if (!File.Exists(profilePath))
+            return processResult;
+
+        ProfileConfig profileConfig;
+        try
+        {
+            profileConfig = ProfileConfigLoader.Load(profilePath);
+        }
+        catch (InvalidOperationException ex)
+        {
+            var profileError = new ConfigValidationDiagnostic
+            {
+                RuleId = "CONFIG",
+                Message = $"profile.yaml: {ex.Message}",
+                Severity = ConfigValidationSeverity.Error,
+            };
+            return new ConfigValidationResult
+            {
+                IsValid = false,
+                Errors = [.. processResult.Errors, profileError],
+                Warnings = processResult.Warnings,
+            };
+        }
+
+        var researchDiags = ResearchConfigValidator.Validate(profileConfig);
+        if (researchDiags.Count == 0)
+            return processResult;
+
+        var combinedErrors = new List<ConfigValidationDiagnostic>(processResult.Errors);
+        combinedErrors.AddRange(researchDiags);
+
+        return new ConfigValidationResult
+        {
+            IsValid = combinedErrors.Count == 0,
+            Errors = combinedErrors.ToArray(),
+            Warnings = processResult.Warnings,
+        };
     }
 
     private static void RenderHuman(ConfigValidationResult result)
