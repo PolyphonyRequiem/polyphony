@@ -1,0 +1,77 @@
+schema_version: 1
+
+# .polyphony-config/policy-fasttrack.yaml — opt-in unattended policy.
+#
+# USE WHEN:
+#   You want a polyphony run to skip every gate that policy can govern —
+#   approvals, PR merges, open-questions, root_fallback, and renegotiation —
+#   because you're driving from a research script, an unattended dogfood,
+#   or a CI smoke run where any human prompt would deadlock the process.
+#
+# HOW TO ACTIVATE (per-shell):
+#   $env:POLYPHONY_POLICY_PATH = '.polyphony-config/policy-fasttrack.yaml'
+#   .\scripts\Invoke-PolyphonySdlc.ps1 -ApexId <N> -Platform <ado|github>
+#
+# OR (per-launch, recommended):
+#   .\scripts\Invoke-PolyphonySdlc.ps1 -ApexId <N> -Platform <ado|github> `
+#     -PolicyPath .polyphony-config/policy-fasttrack.yaml
+#
+# CAVEAT — necessary but NOT sufficient for fully unattended runs.
+# Many human gates in the workflow YAMLs are *deterministic* (not policy-
+# governed): user_acceptance, pending_review_gate, apex_completion_gate,
+# revise_cap_gate, remediation_cap_gate, pr_fix_exhausted_gate,
+# depth_exceeded_gate, closed_unmerged_gate, scope_violation_gate,
+# stale_generation_gate, dependency_gate, conflict_resolution_gate,
+# stuck_review_gate, ado_pr_changes_requested_gate, ado_pr_pending_gate,
+# and others. Those still fire on the happy path even with this policy.
+# A separate workstream is tracked under AB#3104 (follow-up) to make
+# them policy-controllable.
+#
+# WHAT THIS POLICY DOES:
+#   • approvals: auto everywhere — approve at the highest tolerated quality.
+#   • pr:        auto everywhere — auto-merge unless the cap is hit hard.
+#   • open_questions: auto — never gate, even on critical questions.
+#   • root_fallback: use_active_item — never prompt for a missing root id.
+#   • renegotiation: ignore — treat child renegotiation requests as advisory.
+#   • concurrency: unchanged from canonical defaults.
+
+approvals:
+  defaults:
+    mode: auto
+    max_revision_cycles: 5
+    quality_threshold:
+      avg_score_at_least: 85
+      blocking_count_at_most: 0
+  root:
+    mode: auto
+  by_type:
+    Task:
+      mode: auto
+
+pr:
+  defaults:
+    mode: auto
+    max_fix_loops: 10
+    max_remediation_cycles: 3
+  root:
+    mode: auto
+
+concurrency:
+  max_concurrent_children: 3
+
+open_questions:
+  defaults:
+    mode: auto
+    min_severity: moderate
+    max_question_loops: 3
+
+root_fallback:
+  # use_active_item — never surface the missing-root gate; treat the
+  # invoking sub-workflow's active item as root. Auditable via
+  # auto_policy_applied: true on the recorded decision.
+  auto_decide: use_active_item
+
+renegotiation:
+  # ignore — treat child renegotiation requests as advisory; do not
+  # restart the parent plan-level workflow and do not prompt the operator.
+  auto_decide: ignore

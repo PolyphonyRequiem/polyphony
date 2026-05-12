@@ -510,16 +510,49 @@ shouldn't be hardcoded in the YAML. Examples:
 
 Three verbs implement load-/validate-/resolve:
 
+#### Path resolution and `POLYPHONY_POLICY_PATH`
+
+All three policy verbs (and `polyphony guidance extract`,
+`polyphony agent compose-addendum`) share a single resolver. Precedence:
+
+1. An explicit non-default `--path` (or `--policy`) wins.
+2. Otherwise, the `POLYPHONY_POLICY_PATH` environment variable is used.
+3. Otherwise, the canonical default `.polyphony-config/policy.yaml`.
+
+Operator pattern — switch policy for a whole shell session (e.g. opt into
+the fast-track variant for unattended runs):
+
+```powershell
+$env:POLYPHONY_POLICY_PATH = '.polyphony-config/policy-fasttrack.yaml'
+polyphony policy load   # honours the env var
+```
+
+The launcher exposes the same override as `-PolicyPath` and exports
+`POLYPHONY_POLICY_PATH` to the conductor child:
+
+```powershell
+./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 `
+    -PolicyPath .polyphony-config/policy-fasttrack.yaml
+```
+
+> **Caveat — fast-track is necessary but not sufficient for fully
+> unattended runs.** A large set of human gates in the workflow YAMLs
+> (e.g. `user_acceptance`, `pending_review_gate`, `apex_completion_gate`,
+> `pr_fix_exhausted_gate`, `stuck_review_gate`) are *deterministic* — they
+> are not policy-governed, so they still fire on the happy path. Making
+> them policy-controllable is tracked separately.
+
 ### `polyphony policy load`
 
 ```text
 polyphony policy load [--path <file>]
 ```
 
-Loads `policy.yaml` (or `--path`) and returns a snapshot of the resolved
-configuration with built-in defaults applied. When the file doesn't exist,
-returns a defaults-only snapshot with `used_defaults: true`. This is the
-verb the root workflow calls once at the top to bake the policy into the run.
+Loads `policy.yaml` (or `--path`, or `$POLYPHONY_POLICY_PATH`) and returns
+a snapshot of the resolved configuration with built-in defaults applied.
+When the file doesn't exist, returns a defaults-only snapshot with
+`used_defaults: true`. This is the verb the root workflow calls once at
+the top to bake the policy into the run.
 
 ### `polyphony policy validate`
 

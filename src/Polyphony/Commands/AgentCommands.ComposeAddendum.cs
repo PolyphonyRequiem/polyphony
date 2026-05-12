@@ -44,13 +44,15 @@ public sealed partial class AgentCommands
     /// The verb looks up the item, reads its type's facet set, and
     /// composes the addendum from the bound facet profiles.</param>
     /// <param name="policy">Path to the policy file used for guidance
-    /// resolution. Defaults to <c>.polyphony-config/policy.yaml</c>.</param>
+    /// resolution. Defaults to <c>.polyphony-config/policy.yaml</c>;
+    /// the <c>POLYPHONY_POLICY_PATH</c> environment variable overrides the
+    /// default when no explicit non-default path is supplied.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("compose-addendum")]
     [VerbResult(typeof(AgentComposeAddendumResult))]
     public async Task<int> ComposeAddendum(
         [Argument] int workItem = RequiredInput.MissingInt,
-        string policy = ".polyphony-config/policy.yaml",
+        string policy = PolicyLoader.DefaultPath,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("agent compose-addendum",
@@ -109,7 +111,7 @@ public sealed partial class AgentCommands
         PolicyConfig policyConfig;
         try
         {
-            policyConfig = PolicyLoader.LoadOrDefault(policy);
+            policyConfig = PolicyLoader.LoadOrDefaultResolved(policy);
         }
         catch (Exception ex)
         {
