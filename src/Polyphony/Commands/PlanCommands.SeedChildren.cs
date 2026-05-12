@@ -148,6 +148,19 @@ public sealed partial class PlanCommands
     /// for children-json fallback. When omitted, defaults to
     /// <c>plans/plan-{workItem}.children.json</c> relative to cwd. Used by
     /// tests to point at temp files.</param>
+    /// <param name="childrenFromRef">Optional git ref to read the sidecar
+    /// from when neither the CLI input nor the local sidecar is present.
+    /// Used on re-entry paths (state_detector → merged_unseeded /
+    /// awaiting_review → seeder) where merge_plan_pr did not pull/checkout
+    /// the merged commit into the local worktree, so the sidecar isn't on
+    /// disk but IS reachable in the merged ref. The seeder runs
+    /// <c>git fetch &lt;remote&gt; &lt;branch&gt;</c> (best-effort) when
+    /// the ref looks like <c>&lt;remote&gt;/&lt;branch&gt;</c>, then
+    /// <c>git show &lt;ref&gt;:plans/plan-{workItem}.children.json</c>.
+    /// When the ref does not contain the sidecar, falls through to
+    /// apex_facets / refusal — so a ref that lacks the file is NOT a hard
+    /// error. A bad ref or other git failure IS a hard error. AB#3106
+    /// rubber-duck #1, deferred from the prior PR.</param>
     /// <param name="configDir">Polyphony config directory containing
     /// <c>work-item-types/templates/&lt;typeslug&gt;-template.md</c> files.
     /// When a template exists for the child's type, it's applied as the
@@ -166,6 +179,7 @@ public sealed partial class PlanCommands
         string planFile = "",
         string configDir = ".polyphony-config",
         string childrenFile = "",
+        string childrenFromRef = "",
         CancellationToken ct = default)
     {
         // --children-json is intentionally NOT in the required-input check:
@@ -180,11 +194,15 @@ public sealed partial class PlanCommands
 
         // Resolution order for the children list:
         //   1. CLI --children-json (when non-empty)
-        //   2. Sidecar plans/plan-{workItem}.children.json (when present)
-        //   3. apex_facets fallback (handled below)
-        //   4. Refusal (existing behaviour)
+        //   2. Sidecar plans/plan-{workItem}.children.json on local disk
+        //   3. Sidecar at git ref via --children-from-ref (re-entry recovery
+        //      after merge_plan_pr — sidecar exists in the merged ref but
+        //      not in the local worktree; AB#3106 rubber-duck #1)
+        //   4. apex_facets fallback (handled below)
+        //   5. Refusal (existing behaviour)
         // We track sourceLabel for diagnostics so a future failure can tell
-        // us whether the verb consumed CLI input, the sidecar, or neither.
+        // us whether the verb consumed CLI input, the sidecar, the from-ref
+        // recovery, or none of them.
         JsonNode? childrenNode = null;
         var childrenSource = "none";
         if (!string.IsNullOrWhiteSpace(childrenJson))
@@ -247,6 +265,100 @@ public sealed partial class PlanCommands
                 }
                 childrenSource = "sidecar";
             }
+            else if (!string.IsNullOrWhiteSpace(childrenFromRef))
+            {
+                // Re-entry recovery (AB#3106 rubber-duck #1, 2026-05-12).
+                // After merge_plan_pr the sidecar lives in the merged ref
+                // (typically origin/main) but the local worktree is still
+                // on its prior branch (e.g. feature/{id}) — MergePlanPr
+                // deliberately does NOT pull/checkout post-merge per
+                // Rev 4.2 (manifest is local + canonical). When the
+                // workflow re-enters into the seeder via state_detector
+                // (merged_unseeded / awaiting_review) we read the sidecar
+                // straight from the ref instead.
+                //
+                // Use forward slashes for the path inside `git show
+                // <ref>:<path>` — git's pathspec syntax is POSIX even on
+                // Windows, where Path.Combine would emit backslashes.
+                var sidecarRelPath = (string.IsNullOrEmpty(childrenFile)
+                        ? Path.Combine("plans", $"plan-{workItem}.children.json")
+                        : childrenFile)
+                    .Replace('\\', '/');
+
+                // Best-effort fetch when the ref looks like
+                // <remote>/<branch>. We fetch with an explicit refspec
+                // mapping to refs/remotes/<remote>/<branch> so the local
+                // remote-tracking ref is updated regardless of the repo's
+                // .git/config `fetch =` setting (rubber-duck #1, 2026-05-12).
+                // Without the colon-mapping, `git fetch <remote> <branch>`
+                // only writes FETCH_HEAD on some configs — leaving
+                // `origin/main` stale exactly when the seeder needs the
+                // freshly-merged sidecar.
+                //
+                // Failures are swallowed but their message is captured and
+                // included in the show-time error if show ALSO fails — so
+                // the operator sees the original cause rather than a
+                // misleading "ref not found" downstream symptom. When show
+                // succeeds (ref already local, or fetch raced ahead of an
+                // unrelated transient failure), the swallow is silent.
+                var slashAt = childrenFromRef.IndexOf('/');
+                string? fetchFailureMessage = null;
+                if (slashAt > 0)
+                {
+                    var remote = childrenFromRef[..slashAt];
+                    var branch = childrenFromRef[(slashAt + 1)..];
+                    var refspec = $"{branch}:refs/remotes/{remote}/{branch}";
+                    try
+                    {
+                        await git.FetchAsync(remote, refspec, ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        fetchFailureMessage = ex.Message;
+                    }
+                }
+
+                string? sidecarText;
+                try
+                {
+                    sidecarText = await git.ShowFileAtRefAsync(childrenFromRef, sidecarRelPath, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    var fetchClause = fetchFailureMessage is null
+                        ? ""
+                        : $"; best-effort `git fetch` also failed: {fetchFailureMessage}";
+                    EmitError($"failed to read children-json from git ref '{childrenFromRef}:{sidecarRelPath}': {ex.Message}{fetchClause}");
+                    return ExitCodes.ConfigError;
+                }
+
+                if (sidecarText is not null)
+                {
+                    try
+                    {
+                        childrenNode = JsonNode.Parse(sidecarText);
+                    }
+                    catch (JsonException ex)
+                    {
+                        EmitError($"children-json at git ref '{childrenFromRef}:{sidecarRelPath}' is not valid JSON: {ex.Message}");
+                        return ExitCodes.ConfigError;
+                    }
+                    if (childrenNode is not JsonArray)
+                    {
+                        // Same defensive stance as the local-disk sidecar
+                        // path: explicit `null` or a non-array value is a
+                        // hard error, not "skipped".
+                        var got = childrenNode is null ? "null" : childrenNode.GetType().Name;
+                        EmitError($"children-json at git ref '{childrenFromRef}:{sidecarRelPath}' must contain a JSON array (got {got})");
+                        return ExitCodes.ConfigError;
+                    }
+                    childrenSource = "from-ref";
+                }
+                // else: ref simply doesn't carry the sidecar — fall through
+                // to apex_facets / refusal below. ShowFileAtRefAsync returns
+                // null only for the "file does not exist at this ref" case;
+                // bad-ref / repo-error cases have already thrown above.
+            }
         }
 
         var children = childrenNode is JsonArray arr ? arr : new JsonArray();
@@ -304,9 +416,10 @@ public sealed partial class PlanCommands
             // restore the sidecar, or declare apex_facets.
             string sourceClause = childrenSource switch
             {
-                "cli"     => "the architect supplied an empty children-json",
-                "sidecar" => $"the children-json sidecar at '{(string.IsNullOrEmpty(childrenFile) ? Path.Combine("plans", $"plan-{workItem}.children.json") : childrenFile)}' is an empty array",
-                _         => $"no children-json was supplied (no --children-json arg and no sidecar at '{(string.IsNullOrEmpty(childrenFile) ? Path.Combine("plans", $"plan-{workItem}.children.json") : childrenFile)}')",
+                "cli"      => "the architect supplied an empty children-json",
+                "sidecar"  => $"the children-json sidecar at '{(string.IsNullOrEmpty(childrenFile) ? Path.Combine("plans", $"plan-{workItem}.children.json") : childrenFile)}' is an empty array",
+                "from-ref" => $"the children-json at git ref '{childrenFromRef}:{(string.IsNullOrEmpty(childrenFile) ? Path.Combine("plans", $"plan-{workItem}.children.json") : childrenFile).Replace('\\', '/')}' is an empty array",
+                _          => BuildEmptySourceClause(workItem, childrenFile, childrenFromRef),
             };
             EmitError(
                 $"children-json is empty and plan front-matter declares no apex_facets — refusing to stamp #{workItem} as planned ({sourceClause}). " +
@@ -806,6 +919,18 @@ public sealed partial class PlanCommands
             .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .ToArray();
+    }
+
+    private static string BuildEmptySourceClause(int workItem, string childrenFile, string childrenFromRef)
+    {
+        var sidecarPath = string.IsNullOrEmpty(childrenFile)
+            ? Path.Combine("plans", $"plan-{workItem}.children.json")
+            : childrenFile;
+        var sidecarSlash = sidecarPath.Replace('\\', '/');
+        var refClause = string.IsNullOrWhiteSpace(childrenFromRef)
+            ? ""
+            : $" and no file at git ref '{childrenFromRef}:{sidecarSlash}'";
+        return $"no children-json was supplied (no --children-json arg, no sidecar at '{sidecarPath}'{refClause})";
     }
 
     private static void EmitError(string message)
