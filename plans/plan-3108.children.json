@@ -1,0 +1,53 @@
+[
+  {
+    "acceptance_criteria": [
+      "\u0060ResearchConfig\u0060 record exists under \u0060src/Polyphony/Configuration/\u0060 with \u0060Repo\u0060, \u0060Branch\u0060, \u0060Platform\u0060, \u0060Auth\u0060 properties.",
+      "Profile loader deserializes a fixture profile.yaml containing a \u0060research:\u0060 block into the typed model.",
+      "Unknown keys under \u0060research:\u0060 do not throw.",
+      "Profile-schema documentation updated with the new block and one example per platform.",
+      "Unit tests cover happy-path deserialization and each documented field.",
+      "\u0060dotnet build --no-restore\u0060 and \u0060dotnet test --no-restore\u0060 pass with zero warnings."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Introduce a typed model for the \u0060research:\u0060 block in \u0060.polyphony-config/profile.yaml\u0060 and a YamlDotNet-based loader.\n\n**Scope**\n- New record(s) under \u0060src/Polyphony/Configuration/\u0060: \u0060ProfileConfig\u0060 (if not already present \u2014 profile.yaml is currently only existence-checked at [src/Polyphony/Configuration/ConfigValidator.cs](src/Polyphony/Configuration/ConfigValidator.cs):240) plus nested \u0060ResearchConfig\u0060, \u0060ResearchAuthConfig\u0060.\n- Fields: \u0060repo\u0060 (string), \u0060branch\u0060 (string, default \u0060main\u0060), \u0060platform\u0060 (enum \u0060github\u0060|\u0060ado\u0060), \u0060auth: { kind: env|gh-cli|ado-cli, env_var?: string }\u0060.\n- Loader uses YamlDotNet (consistent with \u0060ProcessConfigLoader.cs\u0060); AOT-safe code paths only.\n- Sealed records, primary constructors, source-gen JSON if any JSON crosses a boundary.\n- Unknown keys tolerated (forward-compat) \u2014 do not throw on extra fields.\n- Update [docs/polyphony-process-config-schema.md](docs/polyphony-process-config-schema.md) (or the profile-schema doc) with the new block and one worked example per platform.\n\n**Out of scope**\n- Validation rules (task-2).\n- Storage abstraction (task-3).",
+    "pg": "pg-1",
+    "title": "Add typed \u0060research:\u0060 schema \u002B profile loader",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "Validator emits errors for each documented malformed shape with actionable messages.",
+      "Validator emits a warning when \u0060research:\u0060 is absent.",
+      "Stable \u0060V-N\u0060 rule codes assigned; no collisions with existing V-1\u2013V-21 family.",
+      "Unit tests cover each new rule (one positive \u002B one negative case minimum).",
+      "\u0060dotnet build --no-restore\u0060 and \u0060dotnet test --no-restore\u0060 pass with zero warnings."
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Extend [src/Polyphony/Configuration/ConfigValidator.cs](src/Polyphony/Configuration/ConfigValidator.cs) with rules for the new \u0060research:\u0060 block, following the existing \u0060V-N\u0060 family and the validator-as-oracle principle (P8).\n\n**Scope**\n- New error rules (next free \u0060V-N\u0060 codes; coordinate with retired V-17/V-18 \u2014 see open question on the parent plan):\n  - \u0060research:\u0060 present but missing \u0060repo\u0060.\n  - \u0060research:\u0060 present but missing \u0060platform\u0060.\n  - \u0060research.platform\u0060 not in {\u0060github\u0060, \u0060ado\u0060}.\n  - \u0060research:\u0060 present but missing \u0060auth.kind\u0060.\n  - \u0060research.auth.kind: env\u0060 without \u0060env_var\u0060.\n- New warning rule:\n  - \u0060research:\u0060 absent \u2014 research features disabled (informational only).\n- All messages must name the offending field path and suggest the fix (P8).\n- Wire rules into the existing \u0060Validate(ProcessConfig, repoRoot)\u0060 entrypoint by extending the type / passing the loaded \u0060ProfileConfig\u0060 through; pick the smallest plumbing change consistent with current style.\n\n**Out of scope**\n- The schema model (task-1).\n- Storage abstraction (task-3).",
+    "pg": "pg-1",
+    "title": "Add validator rules for the \u0060research:\u0060 block",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060IResearchStorage\u0060 interface defined with \u0060WriteFileAsync\u0060 and \u0060ReadFileAsync\u0060 returning structured result types.",
+      "\u0060GitHubResearchStorage\u0060 and \u0060AdoResearchStorage\u0060 implementations exist and route through existing \u0060IGhClient\u0060 / \u0060IAdoClient\u0060.",
+      "\u0060ResearchStorageFactory\u0060 returns the correct impl for each \u0060platform\u0060 value and throws an actionable error for unsupported values.",
+      "Unit tests cover (a) factory selection per platform, (b) each impl\u0027s read/write happy path with mocked underlying client, (c) error propagation.",
+      "No live network calls in tests.",
+      "\u0060dotnet build --no-restore\u0060 and \u0060dotnet test --no-restore\u0060 pass with zero warnings."
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Introduce a narrow research-storage seam that follows polyphony\u0027s paired-client convention (mirroring [IGhClient](src/Polyphony/Infrastructure/Processes/IGhClient.cs) / [IAdoClient](src/Polyphony/Infrastructure/AzureDevOps/IAdoClient.cs)), so Issues 2\u20136 can read and write to a sibling research repo on either platform without per-repo code changes.\n\n**Scope**\n- New interface \u0060IResearchStorage\u0060 (suggested under \u0060src/Polyphony/Infrastructure/Research/\u0060) with the minimum operations sufficient for the downstream pipeline:\n  - \u0060Task\u003CResearchWriteResult\u003E WriteFileAsync(string path, string content, string commitMessage, CancellationToken)\u0060\n  - \u0060Task\u003CResearchReadResult\u003E ReadFileAsync(string path, CancellationToken)\u0060\n- Implementations:\n  - \u0060GitHubResearchStorage\u0060 \u2014 delegates to \u0060IGhClient\u0060 (use \u0060gh api\u0060 for contents endpoints; reuse retry/policy patterns).\n  - \u0060AdoResearchStorage\u0060 \u2014 delegates to \u0060IAdoClient\u0060 Git Items API (mirrors GH semantics).\n- Factory \u0060ResearchStorageFactory\u0060 selects impl from \u0060ResearchConfig.Platform\u0060.\n- All public APIs return structured result types (per project conventions).\n- Sealed records / classes, primary constructors, source-gen JSON, AOT-safe.\n\n**Out of scope**\n- Any caller wiring (Issues 2\u20136 will consume this).\n- Live API calls in tests \u2014 use NSubstitute for \u0060IGhClient\u0060/\u0060IAdoClient\u0060.",
+    "pg": "pg-1",
+    "title": "Build \u0060IResearchStorage\u0060 cross-platform abstraction (GitHub \u002B ADO impls)",
+    "type": "Task"
+  }
+]
