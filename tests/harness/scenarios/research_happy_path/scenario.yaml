@@ -1,0 +1,94 @@
+# research_happy_path — end-to-end scenario for research.yaml.
+#
+# Drives research.yaml through the full pipeline with scripted
+# research_assistant and researcher agents. The validate_input,
+# scan_archive, and write_findings script nodes run via the .NET shim;
+# agent outputs are scripted via FakeProvider.
+#
+# Proves:
+#   1. The five-step pipeline (validate → scan → assistant → researcher
+#      → write) routes correctly through to $end.
+#   2. Both the research_assistant and researcher agents are invoked.
+#   3. The researcher judges findings sufficient (no escalation).
+#   4. The workflow reaches terminal successfully.
+
+workflow: .conductor/registry/workflows/research.yaml
+
+inputs:
+  topic: "How to implement structured logging in .NET"
+  work_item_id: 99999
+  scratch_slug: "structured-logging"
+  archive_path: "/mock/kept-archive"
+  feature_branch: "feature/99999-test"
+
+cli_scripts:
+  # validate_input — inline pwsh -Command, no shim match needed.
+  # The validate_input node runs pwsh -Command inline, which the harness
+  # executes directly. No cli_script entry needed.
+
+  # scan_archive — also runs pwsh -Command inline. No shim entry needed.
+  # However, the scan_archive node calls Test-Path and Get-ChildItem on
+  # the archive_path. Since the path won't exist in the harness env,
+  # we need to handle this. The harness runs the real pwsh commands,
+  # so scan_archive will exit 1 (archive not found).
+  #
+  # To work around this, we override scan_archive behavior: the harness
+  # executes script nodes directly, so we need the path to exist.
+  # Instead, we rely on the fact that script nodes with inline -Command
+  # are executed by conductor's subprocess mechanism, which the shim
+  # intercepts when the command is 'pwsh'.
+
+  # For inline pwsh -Command steps, the conductor subprocess sees:
+  #   pwsh -NoProfile -Command <script>
+  # The shim matches on command='pwsh'. We script both script nodes.
+  - command: pwsh
+    args: ["-NoProfile", "-Command"]
+    stdout: |
+      {"topic":"How to implement structured logging in .NET","work_item_id":99999,"scratch_slug":"structured-logging","archive_path":"/mock/kept-archive","validated":true}
+    exit_code: 0
+    match_mode: prefix
+
+  - command: pwsh
+    args: ["-NoProfile", "-Command"]
+    stdout: |
+      {"archive_path":"/mock/kept-archive","article_count":2,"articles":[{"path":"/mock/kept-archive/serilog-guide.md","name":"serilog-guide.md","size_bytes":4500},{"path":"/mock/kept-archive/structured-logging-dotnet.md","name":"structured-logging-dotnet.md","size_bytes":3200}]}
+    exit_code: 0
+    match_mode: prefix
+    skip: 1
+
+  - command: pwsh
+    args: ["-NoProfile", "-Command"]
+    stdout: |
+      {"findings_path":"research/scratch/structured-logging/findings.md","citation_count":2}
+    exit_code: 0
+    match_mode: prefix
+    skip: 2
+
+agent_scripts:
+  research_assistant:
+    - content:
+        summary: "Found 2 relevant articles on structured logging in .NET covering Serilog configuration and best practices."
+        findings:
+          - title: "Serilog Configuration Guide"
+            relevance_summary: "Comprehensive guide to setting up Serilog with structured logging in .NET applications, covering sink configuration, enrichers, and message templates."
+            source_url: "https://example.com/serilog-guide"
+            capture_date: "2026-01-15"
+            archive_path: "/mock/kept-archive/serilog-guide.md"
+          - title: "Structured Logging Best Practices in .NET"
+            relevance_summary: "Overview of structured logging patterns in .NET, including comparison of logging frameworks and recommendations for production deployments."
+            source_url: "https://example.com/structured-logging-dotnet"
+            capture_date: "2026-02-20"
+            archive_path: "/mock/kept-archive/structured-logging-dotnet.md"
+
+  researcher:
+    - content:
+        decision: "sufficient"
+        rationale: "The archive contains two directly relevant articles covering Serilog configuration and structured logging best practices in .NET. Together they provide comprehensive guidance on sink configuration, enrichers, message templates, and framework comparison. No material gaps remain — the architect has enough context to proceed with implementation."
+        findings: "# Research Findings: Structured Logging in .NET\n\n## Serilog Configuration\n\nThe archive contains a comprehensive guide to Serilog setup covering sink configuration, enrichers, and message templates for structured logging in .NET applications.\n\n**Source:** https://example.com/serilog-guide (captured 2026-01-15)\n\n## Best Practices\n\nA comparison of logging frameworks with recommendations for production deployments, covering structured logging patterns across the .NET ecosystem.\n\n**Source:** https://example.com/structured-logging-dotnet (captured 2026-02-20)"
+        gaps: []
+
+expected_trace:
+  agents_executed:
+    - research_assistant
+    - researcher
+  reached_terminal: true

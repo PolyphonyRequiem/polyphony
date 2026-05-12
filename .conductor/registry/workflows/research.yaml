@@ -1,0 +1,601 @@
+# research — Research sub-workflow for the polyphony SDLC engine.
+#
+# Three-tier cost-tiered research pipeline invocable from any parent
+# architect workflow via the conductor sub-workflow mechanism.
+#
+# The workflow follows a six-step pipeline with a bounded escalation
+# loop:
+#
+#   validate_input → scan_archive → research_assistant → researcher
+#     → [sufficient] → write_findings → $end
+#     → [escalate]   → escalation_counter
+#         → [under cap]  → deep_researcher → researcher (loop back)
+#         → [cap reached] → escalation_cap_gate (human decides)
+#
+# Tiers:
+#   1. research_assistant (claude-haiku-4.5): lightweight archive-only
+#      first pass. Surfaces relevant articles already in the kept-archive.
+#   2. researcher (claude-sonnet-4.5): judges whether accumulated
+#      findings satisfy the research needs. Makes an explicit
+#      sufficient/escalate decision with recorded rationale on each pass.
+#   3. deep_researcher (claude-opus-4.6): extended tools (web search,
+#      GitHub search, MCP-provided integrations). Invoked ONLY on
+#      escalation to address specific gaps identified by the researcher.
+#
+# Escalation is bounded by max_escalations (default 2). Each escalation
+# cycle: deep_researcher gathers → researcher re-judges.
+#
+# Invariants:
+#   Pre:  archive_path points to a directory containing kept-archive
+#         articles. scratch_slug is a safe, single-segment path.
+#   Post: research/scratch/<slug>/findings.md exists with a fixed
+#         header + per-article citation schema. output.decision is one
+#         of "sufficient", "accepted_at_cap", or "abandoned".
+#
+# Out of scope (tracked in sibling Issues):
+#   - Curation/keep decisions (#3111)
+#   - Architect-side research_needs emission and loop-back (#3112)
+#
+# Temporary bridge: the agent reads the archive via direct filesystem
+# access. When #3108 (research storage abstraction) lands, the
+# scan_archive node will be updated to use the polyphony CLI verb
+# instead of raw directory listing.
+
+workflow:
+  name: research
+  description: >-
+    Three-tier research sub-workflow with cost-tiered escalation. A
+    lightweight research-assistant scans the archive first, then a
+    researcher judges sufficiency. On escalation, a deep-researcher
+    with extended tools runs and the researcher re-evaluates. Bounded
+    by max_escalations (default 2).
+  version: "2.4.0"
+  entry_point: validate_input
+  metadata:
+    min_polyphony_version: "2.4.0"
+
+  limits:
+    # Worst case: validate + scan + assistant + (researcher + counter +
+    # deep_researcher) × max_escalations + final researcher + write.
+    # Default max_escalations=2 → ~12 steps. 50 provides generous
+    # headroom for the escalation loop and any cap-gate re-entries.
+    max_iterations: 50
+
+  input:
+    topic:
+      type: string
+      required: true
+      description: >-
+        The research question or topic. The research-assistant agent
+        uses this to score relevance of archived articles.
+    work_item_id:
+      type: number
+      required: true
+      description: >-
+        ADO work item ID of the requesting item. Recorded in the
+        findings header for traceability.
+    scratch_slug:
+      type: string
+      required: true
+      description: >-
+        Single-segment directory name for scratch storage. Findings
+        are written to research/scratch/<slug>/findings.md. Must
+        contain only alphanumeric characters, hyphens, and underscores.
+    archive_path:
+      type: string
+      required: true
+      description: >-
+        Path to the kept-archive directory. The scan_archive node
+        reads this directory to build a manifest of available articles.
+        Temporary bridge until #3108 storage abstraction lands.
+    feature_branch:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        Feature branch name. Informational — recorded in the findings
+        header for context. The workflow assumes it is already on the
+        correct branch.
+    max_escalations:
+      type: number
+      required: false
+      default: 2
+      description: >-
+        Maximum number of deep-researcher escalation cycles before the
+        escalation cap gate fires. Each cycle = one deep_researcher
+        invocation followed by a researcher re-evaluation.
+
+tools:
+  - filesystem
+
+output:
+  findings_path: >-
+    {% if write_findings is defined and write_findings.output is defined -%}
+    {{ write_findings.output.findings_path | default('') }}
+    {%- else %}{% endif %}
+  citation_count: >-
+    {% if research_assistant is defined and research_assistant.output is defined -%}
+    {{ research_assistant.output.findings | length }}
+    {%- else %}0{% endif %}
+  topic: "{{ workflow.input.topic }}"
+  # Researcher decision fields (M3 guards, M7 boolean coercion)
+  decision: >-
+    {% if workflow_abandoned is defined %}abandoned
+    {%- elif escalation_cap_accept is defined %}accepted_at_cap
+    {%- elif researcher is defined and researcher.output is defined %}{{ researcher.output.decision | default('sufficient') }}
+    {%- else %}sufficient{% endif %}
+  sufficient: >-
+    {% if workflow_abandoned is defined %}false
+    {%- elif escalation_cap_accept is defined %}true
+    {%- elif researcher is defined and researcher.output is defined %}{{ (researcher.output.decision == 'sufficient') | string | lower }}
+    {%- else %}true{% endif %}
+  escalation_count: >-
+    {% if escalation_counter is defined and escalation_counter.output is defined -%}
+    {{ escalation_counter.output.iteration | default(0) }}
+    {%- else %}0{% endif %}
+
+agents:
+  # ── Input validation ────────────────────────────────────────────────────
+  #
+  # Sanitizes scratch_slug (must be a single safe path segment — no
+  # slashes, dots-only, or path traversal) and validates all required
+  # inputs are present. Emits the validated envelope for downstream
+  # consumption.
+  #
+  # Invariants:
+  #   Pre:  workflow.input.* are populated by the caller.
+  #   Post: output.scratch_slug is a sanitized, single-segment name.
+  - name: validate_input
+    type: script
+    description: Validate and sanitize research workflow inputs
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $topic = '{{ workflow.input.topic }}'
+        $workItemId = {{ workflow.input.work_item_id }}
+        $slug = '{{ workflow.input.scratch_slug }}'
+        $archivePath = '{{ workflow.input.archive_path }}'
+
+        # Sanitize slug: must be a single safe segment
+        if ($slug -match '[/\\]' -or $slug -match '^\.\.$' -or $slug -match '^\.$' -or [string]::IsNullOrWhiteSpace($slug)) {
+            @{ error = "Invalid scratch_slug: must be a non-empty, single-segment name without slashes or dot-traversal"; scratch_slug = $slug } | ConvertTo-Json -Compress
+            exit 1
+        }
+        if ($slug -notmatch '^[a-zA-Z0-9_-]+$') {
+            @{ error = "Invalid scratch_slug: must contain only alphanumeric characters, hyphens, and underscores"; scratch_slug = $slug } | ConvertTo-Json -Compress
+            exit 1
+        }
+
+        if ([string]::IsNullOrWhiteSpace($topic)) {
+            @{ error = "topic is required and must not be empty" } | ConvertTo-Json -Compress
+            exit 1
+        }
+
+        @{
+            topic         = $topic
+            work_item_id  = $workItemId
+            scratch_slug  = $slug
+            archive_path  = $archivePath
+            validated      = $true
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: scan_archive
+
+  # ── Archive manifest builder ────────────────────────────────────────────
+  #
+  # Reads the kept-archive directory and emits a manifest of files with
+  # basic metadata (path, size, last-modified). This is a temporary
+  # bridge — when #3108 lands, this node will call the polyphony CLI
+  # storage verb instead.
+  #
+  # Invariants:
+  #   Pre:  archive_path is a valid directory path.
+  #   Post: output.articles is an array of { path, name, size_bytes }.
+  - name: scan_archive
+    type: script
+    description: Build manifest of kept-archive articles
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $archivePath = '{{ workflow.input.archive_path }}'
+
+        if (-not (Test-Path $archivePath -PathType Container)) {
+            @{ error = "archive_path does not exist or is not a directory: $archivePath"; articles = @() } | ConvertTo-Json -Compress
+            exit 1
+        }
+
+        $articles = @(Get-ChildItem -Path $archivePath -File -Recurse | ForEach-Object {
+            @{
+                path       = $_.FullName
+                name       = $_.Name
+                size_bytes = $_.Length
+            }
+        })
+
+        @{
+            archive_path  = $archivePath
+            article_count = $articles.Count
+            articles      = $articles
+        } | ConvertTo-Json -Compress -Depth 5
+    routes:
+      - to: research_assistant
+
+  # ── Research assistant agent ────────────────────────────────────────────
+  #
+  # Lightweight first-pass researcher. Reads the archive manifest from
+  # scan_archive, examines relevant articles via filesystem tools, and
+  # emits structured findings with citations.
+  #
+  # Uses a cheap model (claude-haiku-4.5) — this is an archive-only
+  # first pass, not a deep-research agent.
+  #
+  # Invariants:
+  #   Pre:  scan_archive.output.articles is populated.
+  #   Post: output.findings is a non-empty array when relevant articles
+  #         exist; output.summary provides a narrative overview.
+  - name: research_assistant
+    type: agent
+    model: claude-haiku-4.5
+    description: >-
+      First-pass research assistant — reads kept-archive articles and
+      emits structured findings with citations.
+    tools:
+      - filesystem
+    output:
+      summary:
+        type: string
+        description: Narrative summary of research findings
+      findings:
+        type: array
+        description: List of relevant findings with citations
+        items:
+          type: object
+          properties:
+            title:
+              type: string
+              description: Brief descriptive title for the finding
+            relevance_summary:
+              type: string
+              description: One-paragraph summary of why this article is relevant
+            source_url:
+              type: string
+              description: Original source URL of the archived article
+            capture_date:
+              type: string
+              description: Date the article was captured/archived (ISO 8601)
+            archive_path:
+              type: string
+              description: Path to the article in the kept-archive
+    prompt: !file prompts/research-assistant.md
+    routes:
+      - to: researcher
+
+  # ── Researcher (sufficiency judge) ───────────────────────────────────
+  #
+  # Mid-tier model that evaluates whether accumulated findings satisfy
+  # the research topic. Makes an explicit sufficient/escalate decision
+  # with a recorded rationale on each pass.
+  #
+  # On first pass: sees research_assistant output only.
+  # On re-entry (after deep_researcher): sees both research_assistant and
+  # deep_researcher outputs via Jinja2 guards in the prompt template.
+  #
+  # Invariants:
+  #   Pre:  research_assistant has run; deep_researcher may have run.
+  #   Post: output.decision is exactly "sufficient" or "escalate".
+  #         output.rationale explains the decision.
+  #         output.findings is the synthesized findings document.
+  - name: researcher
+    type: agent
+    model: claude-sonnet-4.5
+    description: >-
+      Judge whether accumulated findings satisfy research needs;
+      synthesize findings and escalate to deep-researcher when gaps remain
+    tools:
+      - filesystem
+    output:
+      decision:
+        type: string
+        description: >-
+          Exactly "sufficient" or "escalate". Sufficient means the findings
+          adequately address the research topic. Escalate means material
+          gaps remain that require deeper research with extended tools.
+      rationale:
+        type: string
+        description: >-
+          Explanation of why the decision was made — what needs are met
+          (for sufficient) or what gaps remain (for escalate)
+      findings:
+        type: string
+        description: >-
+          Synthesized findings document in Markdown. Incorporates all
+          sources (assistant + any deep-researcher passes). Each finding
+          includes citations with source URL and capture date.
+      gaps:
+        type: array
+        description: >-
+          Specific gaps requiring deeper research (populated on escalate;
+          empty on sufficient). Each gap is actionable enough for the
+          deep-researcher to target.
+        items:
+          type: object
+          properties:
+            topic:
+              type: string
+              description: Brief topic of the gap
+            detail:
+              type: string
+              description: What information is needed and why
+    prompt: !file prompts/researcher.md
+    routes:
+      - to: write_findings
+        when: "{{ researcher.output.decision == 'sufficient' }}"
+      - to: escalation_counter
+        when: "{{ researcher.output.decision == 'escalate' }}"
+      # M4: catch-all routes to error gate — never silently succeed
+      - to: researcher_error_gate
+
+  # ── Escalation counter ───────────────────────────────────────────────
+  #
+  # Tracks deep-researcher escalation cycles. Uses a temp file scoped
+  # to this work item (same pattern as revise_counter in plan-level.yaml).
+  # Cap is driven by workflow.input.max_escalations.
+  - name: escalation_counter
+    type: script
+    description: Track escalation count, enforce max_escalations cap
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-research-escalation-{{ workflow.input.work_item_id }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        $maxEscalations = {{ workflow.input.max_escalations }}
+        $capReached = $count -ge $maxEscalations
+        @{ iteration = $count; max_escalations = $maxEscalations; cap_reached = $capReached } | ConvertTo-Json
+    routes:
+      - to: escalation_cap_gate
+        when: "{{ escalation_counter.output.cap_reached == true }}"
+      - to: deep_researcher
+
+  # ── Deep researcher (extended tools) ─────────────────────────────────
+  #
+  # Premium model with access to the full toolset: web search, GitHub
+  # search, MCP-provided integrations. Invoked ONLY on escalation —
+  # never on the happy path where existing findings suffice.
+  #
+  # Targets the specific gaps identified by the researcher rather than
+  # performing broad research.
+  #
+  # Invariants:
+  #   Pre:  researcher.output.decision == "escalate" and
+  #         researcher.output.gaps is populated.
+  #   Post: output.findings contains new research addressing the gaps.
+  - name: deep_researcher
+    type: agent
+    model: claude-opus-4.6
+    description: >-
+      Extended research with web search, GitHub search, and MCP tools —
+      invoked only on escalation to address specific gaps
+    tools:
+      - twig
+      - gh
+      - filesystem
+    output:
+      findings:
+        type: string
+        description: >-
+          Markdown document of new findings addressing the identified
+          gaps. Includes citations with source URL and capture date.
+      sources:
+        type: array
+        description: Sources consulted during deep research
+        items:
+          type: object
+          properties:
+            title:
+              type: string
+              description: Title of the source
+            url:
+              type: string
+              description: Source URL
+            capture_date:
+              type: string
+              description: Date the source was accessed (ISO 8601)
+      summary:
+        type: string
+        description: Brief summary of what was found and how it addresses the gaps
+    prompt: !file prompts/deep-researcher.md
+    routes:
+      - to: researcher
+
+  # ── Escalation cap gate ──────────────────────────────────────────────
+  #
+  # Human gate when the escalation cap is reached. The operator can
+  # accept the current findings (even if the researcher judged them
+  # insufficient), force one more deep-researcher cycle, or abort.
+  - name: escalation_cap_gate
+    type: human_gate
+    description: Escalation cap reached — human decides whether to accept, force, or abort
+    prompt: |
+      ## ⚠️ Research Escalation Cap Reached — Work Item {{ workflow.input.work_item_id }}
+
+      The researcher has escalated **{{ escalation_counter.output.iteration }}**
+      times (cap: **{{ escalation_counter.output.max_escalations }}**) but still
+      judges the findings insufficient.
+
+      ### Current researcher assessment
+
+      **Decision:** {{ researcher.output.decision }}
+
+      **Rationale:** {{ researcher.output.rationale }}
+
+      {% if researcher.output.gaps is defined and researcher.output.gaps | length > 0 %}
+      ### Remaining gaps
+      {% for gap in researcher.output.gaps %}
+      - **{{ gap.topic }}**: {{ gap.detail }}
+      {% endfor %}
+      {% endif %}
+
+      ---
+
+      Choose an action:
+      - **Accept** — use the current findings as-is (sufficient for planning)
+      - **Force one more** — send the deep-researcher through one more cycle
+      - **Abort** — abandon this research pass
+    options:
+      - label: "✅ Accept current findings"
+        value: accept
+        route: escalation_cap_accept
+      - label: "✏️ Force one more escalation"
+        value: force
+        route: deep_researcher
+      - label: "🛑 Abort research"
+        value: abort
+        route: workflow_abandoned
+
+  # ── Terminal: cap accepted ───────────────────────────────────────────
+  - name: escalation_cap_accept
+    type: script
+    description: Terminal — findings accepted at escalation cap
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        @{ status = "accepted_at_cap" } | ConvertTo-Json
+    routes:
+      - to: write_findings
+
+  # ── Terminal: abandoned ──────────────────────────────────────────────
+  - name: workflow_abandoned
+    type: script
+    description: Terminal — research abandoned by operator
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        @{ status = "abandoned" } | ConvertTo-Json
+    routes:
+      - to: $end
+
+  # ── Error gate: researcher produced invalid decision ─────────────────
+  - name: researcher_error_gate
+    type: human_gate
+    description: >-
+      Researcher produced an unrecognized decision value — human must
+      intervene to route manually.
+    prompt: |
+      ## ❌ Researcher Decision Error — Work Item {{ workflow.input.work_item_id }}
+
+      The researcher agent produced an unrecognized decision value.
+      Expected exactly "sufficient" or "escalate".
+
+      {% if researcher.output is defined %}
+      **Raw decision:** {{ researcher.output.decision | default("(missing)") }}
+
+      **Rationale:** {{ researcher.output.rationale | default("(none)") }}
+      {% endif %}
+
+      Choose how to proceed:
+    options:
+      - label: "✅ Treat as sufficient"
+        value: sufficient
+        route: write_findings
+      - label: "🔄 Re-run researcher"
+        value: retry
+        route: researcher
+      - label: "🛑 Abort"
+        value: abort
+        route: workflow_abandoned
+
+  # ── Findings writer ─────────────────────────────────────────────────────
+  #
+  # Deterministic script that renders the researcher's synthesized
+  # findings into a markdown document at the canonical scratch path.
+  # The researcher incorporates both assistant and deep-researcher
+  # findings into its synthesized output; this script just does I/O.
+  #
+  # Invariants:
+  #   Pre:  researcher.output.findings is populated with synthesized
+  #         markdown findings. research_assistant.output has raw findings.
+  #   Post: research/scratch/<slug>/findings.md exists on disk.
+  - name: write_findings
+    type: script
+    description: Write synthesized findings to scratch storage as markdown
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $slug = '{{ workflow.input.scratch_slug }}'
+        $topic = '{{ workflow.input.topic }}'
+        $workItemId = {{ workflow.input.work_item_id }}
+        $timestamp = (Get-Date -Format 'o')
+
+        # Use the researcher's synthesized findings (incorporates all
+        # tiers — assistant + deep-researcher). Falls back to assistant
+        # summary if researcher output is unavailable.
+        $synthesized = @'
+        {% if researcher is defined and researcher.output is defined and researcher.output.findings is defined -%}
+        {{ researcher.output.findings }}
+        {%- else -%}
+        {{ research_assistant.output.summary | default('No findings available.') }}
+        {%- endif %}
+        '@.Trim()
+
+        $decision = '{% if researcher is defined and researcher.output is defined %}{{ researcher.output.decision | default("unknown") }}{% else %}unknown{% endif %}'
+        $rationale = @'
+        {% if researcher is defined and researcher.output is defined -%}
+        {{ researcher.output.rationale | default('No rationale recorded.') }}
+        {%- else -%}
+        No rationale recorded.
+        {%- endif %}
+        '@.Trim()
+
+        $escalationCount = {% if escalation_counter is defined and escalation_counter.output is defined %}{{ escalation_counter.output.iteration | default(0) }}{% else %}0{% endif %}
+
+        $scratchDir = Join-Path 'research' 'scratch' $slug
+        New-Item -Path $scratchDir -ItemType Directory -Force | Out-Null
+
+        $findingsPath = Join-Path $scratchDir 'findings.md'
+
+        $md = @()
+        $md += "# Research Findings"
+        $md += ""
+        $md += "| Field | Value |"
+        $md += "|-------|-------|"
+        $md += "| **Topic** | $topic |"
+        $md += "| **Requested by** | AB#$workItemId |"
+        $md += "| **Generated** | $timestamp |"
+        $md += "| **Decision** | $decision |"
+        $md += "| **Escalations** | $escalationCount |"
+        $md += ""
+        $md += "## Decision Rationale"
+        $md += ""
+        $md += $rationale
+        $md += ""
+        $md += "## Synthesized Findings"
+        $md += ""
+        $md += $synthesized
+        $md += ""
+
+        $md -join "`n" | Set-Content -Path $findingsPath -NoNewline -Encoding utf8
+
+        @{
+            findings_path    = $findingsPath
+            decision         = $decision
+            escalation_count = $escalationCount
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
