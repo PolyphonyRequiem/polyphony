@@ -1,0 +1,46 @@
+[
+  {
+    "acceptance_criteria": [
+      "Sibling research repo has a \u0060README.md\u0060 documenting the JD scheme, Obsidian frontmatter fields, wiki-link convention, and file-naming rule.",
+      "Top-level JD area folders exist in the research repo (empty, with a \u0060.gitkeep\u0060 or area README).",
+      "README cross-links to the parent Epic plan in this repo for context."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Add \u0060README.md\u0060 at the root of the sibling research repo describing:\n\n- The Johnny-Decimal scheme (areas 10\u201319, 20\u201329, \u2026; categories; IDs \u0060AC.ID\u0060).\n- Obsidian frontmatter fields used by kept articles: \u0060id\u0060, \u0060title\u0060, \u0060tags\u0060, \u0060captured\u0060 (ISO date), \u0060source_url\u0060, and (Stretch hook) \u0060freshness\u0060.\n- Wiki-link convention: \u0060[[JD-ID title]]\u0060 with rationale (stable IDs survive renames).\n- File-naming: \u0060\u003CJD-ID\u003E \u003Cslug\u003E.md\u0060.\n\nAlso scaffold the empty top-level JD area folders so the archivist has somewhere to write the first article.\n\nThis Task carries no code in this repo \u2014 all changes land in the sibling research repo. It must precede task-2 because the archivist needs the conventions to apply.",
+    "pg": "pg-1",
+    "title": "Document JD \u002B Obsidian conventions in research-repo README",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "Archivist prompt/workflow assigns a JD ID and emits the documented frontmatter on every keep/expand.",
+      "Each keep/expand produces a single commit containing both the new/updated article and the updated \u0060INDEX.md\u0060 entry.",
+      "If the archivist prompt has regression coverage (harness scenario or prompt unit test), it is extended to assert JD assignment and INDEX.md update.",
+      "Build passes with zero errors and warnings; existing tests pass."
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Update the archivist agent prompt and/or workflow (introduced by Epic #3107, Issue 4) so that each keep/expand decision:\n\n1. Selects an appropriate JD area based on article topic (or creates a new category within an existing area).\n2. Assigns the next free JD ID in that area by reading existing files.\n3. Writes the article with the documented Obsidian frontmatter block.\n4. Appends or updates the matching entry in the area\u0027s \u0060INDEX.md\u0060 (JD ID \u002B title \u002B one-line description) \u2014 and commits both file writes together so the index never drifts from the article set.\n\nNo work-item-type or state-name strings should be hard-coded in the archivist prompt (P5).",
+    "pg": "pg-1",
+    "title": "Archivist: assign JD IDs, emit frontmatter, atomically maintain INDEX.md",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "EITHER: kept articles include a \u0060freshness\u0060 frontmatter field populated by the archivist, the threshold is configurable, and the README documents both \u2014 OR: the README contains a clearly-labelled deferral note for the freshness signal.",
+      "No regression in task-1/task-2 acceptance criteria.",
+      "Build passes with zero errors and warnings."
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-2"
+    ],
+    "description": "Extend the citation convention so each kept article\u0027s frontmatter includes a \u0060freshness\u0060 marker derived from \u0060captured\u0060 and a configurable staleness threshold (default 12 months): \u0060fresh\u0060 if within threshold, \u0060stale\u0060 if beyond, \u0060unknown\u0060 if \u0060captured\u0060 is missing.\n\nUpdate the README from task-1 to document the field and threshold. Update the archivist (task-2) to populate it on write.\n\nIf this Stretch is cut for scope reasons, close this Task with a one-paragraph deferral note appended to the research-repo README explaining why and what would be required to add it later.",
+    "pg": "pg-1",
+    "title": "Stretch: citation freshness signal (or document deferral)",
+    "type": "Task"
+  }
+]
