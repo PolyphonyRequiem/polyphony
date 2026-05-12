@@ -315,6 +315,86 @@ foreach ($route in $invalidRoutes) {
     }
 }
 
+# ── Check 18: Scope-revise cap structure (AB#3125) ───────────────────────
+# The scope_reviewer → primary_router revise loop must be capped to
+# prevent infinite loops on structurally-broken MGs (empty branch,
+# zero implementable items). The required nodes mirror the canonical
+# `revise_counter`/`revise_cap_gate` pattern from plan-level.yaml and
+# the `review_counter`/`pr_fix_exhausted_gate` pattern from
+# github-pr.yaml.
+#
+# Required structure:
+#   1. scope_revise_counter script node (with cap_reached output field).
+#   2. scope_revise_cap_gate human_gate node with options re_loop /
+#      force_accept / abort.
+#   3. scope_revise_reset script node.
+#   4. scope_reviewer routes the `changes_requested` verdict (and its
+#      catch-all) to scope_revise_counter, NOT directly to primary_router.
+$reviseNodes = @('scope_revise_counter', 'scope_revise_cap_gate', 'scope_revise_reset')
+foreach ($node in $reviseNodes) {
+    if ($content -notmatch "name:\s*$node\b") {
+        $violations += [PSCustomObject]@{
+            Rule   = 'missing-scope-revise-node'
+            Detail = "Missing $node — required to cap the scope_reviewer revise loop (AB#3125)"
+        }
+    }
+}
+
+# scope_revise_cap_gate options: re_loop / force_accept / abort
+$capGateBlock = ''
+$inCapGate = $false
+foreach ($line in $lines) {
+    if ($line -match 'name:\s*scope_revise_cap_gate\s*$') { $inCapGate = $true; continue }
+    if ($inCapGate) {
+        if ($line -match '^\s*-\s*name:') { break }
+        $capGateBlock += $line + "`n"
+    }
+}
+if ($capGateBlock) {
+    foreach ($opt in @('re_loop', 'force_accept', 'abort')) {
+        if ($capGateBlock -notmatch "value:\s*$opt\b") {
+            $violations += [PSCustomObject]@{
+                Rule   = 'missing-scope-revise-gate-option'
+                Detail = "scope_revise_cap_gate missing option value: '$opt'"
+            }
+        }
+    }
+}
+
+# scope_revise_counter must declare cap_reached output (routes read it per M2)
+$counterBlock = ''
+$inCounter = $false
+foreach ($line in $lines) {
+    if ($line -match 'name:\s*scope_revise_counter\s*$') { $inCounter = $true; continue }
+    if ($inCounter) {
+        if ($line -match '^\s*-\s*name:') { break }
+        $counterBlock += $line + "`n"
+    }
+}
+if ($counterBlock -and $counterBlock -notmatch 'scope_revise_counter\.output\.cap_reached') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'scope-revise-counter-missing-cap-reached-route'
+        Detail = "scope_revise_counter must route based on output.cap_reached (per conductor-mechanics M2)"
+    }
+}
+
+# scope_reviewer must route changes_requested through scope_revise_counter
+$scopeReviewerBlock = ''
+$inReviewer = $false
+foreach ($line in $lines) {
+    if ($line -match 'name:\s*scope_reviewer\s*$') { $inReviewer = $true; continue }
+    if ($inReviewer) {
+        if ($line -match '^\s*-\s*name:') { break }
+        $scopeReviewerBlock += $line + "`n"
+    }
+}
+if ($scopeReviewerBlock -and $scopeReviewerBlock -notmatch 'to:\s*scope_revise_counter') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'scope-reviewer-bypasses-cap'
+        Detail = "scope_reviewer must route to scope_revise_counter (changes_requested + catch-all), not directly to primary_router (AB#3125)"
+    }
+}
+
 # ── Report ────────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "FAIL: $($violations.Count) implement-merge-group.yaml violation(s)" -ForegroundColor Red

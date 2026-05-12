@@ -160,8 +160,38 @@ agents:
     routes:
       - to: user_acceptance
         when: "{{ scope_reviewer.output.verdict == 'approved' }}"
-      - to: primary_router
+      - to: scope_revise_counter
         when: "{{ scope_reviewer.output.verdict == 'changes_requested' }}"
+      - to: scope_revise_counter
+  - name: scope_revise_counter
+    type: script
+    command: pwsh
+    args: ["-Command", "@{ cap_reached = $false } | ConvertTo-Json"]
+    routes:
+      - to: scope_revise_cap_gate
+        when: "{{ scope_revise_counter.output.cap_reached == true }}"
+      - to: primary_router
+        when: "{{ scope_revise_counter.output.cap_reached == false }}"
+      - to: scope_revise_cap_gate
+  - name: scope_revise_cap_gate
+    type: human_gate
+    prompt: "Scope revise cap hit"
+    options:
+      - label: "Re-loop"
+        value: re_loop
+        route: scope_revise_reset
+      - label: "Force-accept"
+        value: force_accept
+        route: mg_pr_open
+      - label: "Abort"
+        value: abort
+        route: $end
+  - name: scope_revise_reset
+    type: script
+    command: pwsh
+    args: ["-Command", "@{} | ConvertTo-Json"]
+    routes:
+      - to: primary_router
   - name: user_acceptance
     type: human_gate
     prompt: "Accept MG?"
@@ -431,6 +461,50 @@ agents:
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'invalid-route-target'
+        }
+
+        It 'Fails when scope_revise_counter agent is missing (AB#3125)' {
+            $yaml = ($script:ValidYaml) -replace '(?ms)  - name: scope_revise_counter\r?\n.*?\r?\n  - name: scope_revise_cap_gate', '  - name: scope_revise_cap_gate'
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-scope-revise-node'
+        }
+
+        It 'Fails when scope_revise_cap_gate human_gate is missing (AB#3125)' {
+            $yaml = ($script:ValidYaml) -replace '(?ms)  - name: scope_revise_cap_gate\r?\n.*?\r?\n  - name: scope_revise_reset', '  - name: scope_revise_reset'
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-scope-revise-node'
+        }
+
+        It 'Fails when scope_revise_reset script is missing (AB#3125)' {
+            $yaml = ($script:ValidYaml) -replace '(?ms)  - name: scope_revise_reset\r?\n.*?\r?\n  - name: user_acceptance', '  - name: user_acceptance'
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-scope-revise-node'
+        }
+
+        It 'Fails when scope_revise_cap_gate is missing the re_loop option (AB#3125)' {
+            $yaml = ($script:ValidYaml) -replace 'value: re_loop', 'value: continue_revising'
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-scope-revise-gate-option'
+        }
+
+        It 'Fails when scope_reviewer routes changes_requested directly to primary_router (AB#3125)' {
+            # Strip the cap-gate trio AND rewire scope_reviewer to bypass it.
+            # The "scope-reviewer-bypasses-cap" check fires when no route in
+            # the scope_reviewer block targets scope_revise_counter.
+            $yaml = ($script:ValidYaml) `
+                -replace 'to: scope_revise_counter', 'to: primary_router'
+            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'scope-reviewer-bypasses-cap'
         }
     }
 }
