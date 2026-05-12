@@ -911,6 +911,7 @@ public sealed class PolicyCommandsTests : CommandTestBase
     [InlineData("auto", "skip", "auto_proceed")]
     [InlineData("auto", "wait", "auto_fail")]
     [InlineData("manual", "skip", "auto_proceed")]
+    [InlineData("auto", "auto", "auto_proceed")]
     public void Load_FileWithUnattended_PreservesAllModes(
         string acceptance, string reviewWait, string cap)
     {

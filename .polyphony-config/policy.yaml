@@ -162,12 +162,25 @@ unattended:
   #            checkpoints — distinct from "the reviewer has not
   #            yet weighed in" review-wait gates below).
   #
-  # review_wait_mode (one of `wait`, `skip`):
+  # review_wait_mode (one of `wait`, `skip`, `auto`):
   #   wait   — surface the PR-review-wait gate when triggered (default).
   #   skip   — keep polling the review state instead of escalating.
   #            Affects: pending_review_gate, stuck_review_gate,
   #            ado_stuck_review_gate, ado_pr_pending_gate,
   #            ado_pr_changes_requested_gate.
+  #   auto   — post the SHA-bound `polyphony:approve <head_sha>` magic
+  #            comment from the PR-author identity, then re-poll. The
+  #            next poll observes the comment via PrPollStateDerivation
+  #            and returns `approved`, allowing the workflow to proceed
+  #            to merge hands-off. Use for fully unattended dogfood / CI
+  #            runs where the operator IS the PR author.
+  #            GitHub-only at MVP: on ADO, falls back to `skip` semantics
+  #            until AB#3104 PR2 wires the ADO equivalent. If the gh
+  #            actor is not the PR author the script falls back to the
+  #            human pending_review_gate (silent no-op merge prevented).
+  #            Affects: pending_review_gate (the auto-approve path);
+  #            stuck_review_gate falls through to the human gate when
+  #            `auto` (escalation path — auto-approve never converged).
   #
   # cap_mode (one of `manual`, `auto_proceed`, `auto_fail`):
   #   manual       — surface the cap-hit gate (default).

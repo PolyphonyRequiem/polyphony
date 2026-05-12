@@ -211,8 +211,27 @@ public static class UnattendedReviewWaitMode
     /// indefinitely for review rather than abandoning the run.</summary>
     public const string Skip = "skip";
 
+    /// <summary>Auto-approve: post the SHA-bound <c>polyphony:approve &lt;head_sha&gt;</c>
+    /// magic comment from the PR-author identity (the only identity GitHub honors
+    /// for a self-PR), then re-poll. The next poll observes the comment via
+    /// <see cref="Commands.PrPollStateDerivation.DeriveState"/> and returns
+    /// <c>approved</c>, allowing the workflow to proceed to merge.
+    ///
+    /// <para>Use for fully unattended dogfood / CI runs where the operator is
+    /// the PR author and wants the run to merge hands-off. The comment is
+    /// idempotent (skipped if already present for the current head SHA) and
+    /// SHA-pinned (a new commit silently invalidates it — no stale-approve
+    /// risk on revisions).</para>
+    ///
+    /// <para><b>GitHub-only at MVP.</b> The workflow router falls back to
+    /// <see cref="Skip"/> semantics when <c>workflow.input.platform != 'github'</c>.
+    /// ADO support requires a parallel <c>polyphony pr post-comment</c> path that
+    /// honors ADO's review-vote conventions — tracked under AB#3104 PR2.</para>
+    /// </summary>
+    public const string Auto = "auto";
+
     /// <summary>True when <paramref name="value"/> is one of the canonical tokens.</summary>
-    public static bool IsValid(string value) => value is Wait or Skip;
+    public static bool IsValid(string value) => value is Wait or Skip or Auto;
 }
 
 /// <summary>Canonical string constants for <see cref="UnattendedPolicy.CapMode"/>.</summary>
