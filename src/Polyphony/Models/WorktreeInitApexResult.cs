@@ -14,6 +14,7 @@ namespace Polyphony;
 ///   <item><c>created</c>     — branch did not exist, worktree created via <c>git worktree add -b</c> rooted at local <c>main</c>.</item>
 ///   <item><c>attached</c>    — branch existed locally, worktree attached via <c>git worktree add &lt;path&gt; &lt;branch&gt;</c>.</item>
 ///   <item><c>idempotent</c>  — target path already a worktree on the expected branch (or became so under a race; see post-failure re-list).</item>
+///   <item><c>dry_run</c>     — <c>--dry-run</c> was set; paths were resolved but no filesystem or git mutations performed. <see cref="DryRun"/> is true.</item>
 ///   <item><c>failed</c>      — refusal or git failure; <see cref="Reason"/> classifies, <see cref="Error"/> carries detail.</item>
 /// </list>
 ///
@@ -48,6 +49,23 @@ public sealed record WorktreeInitApexResult
     public string? ApexRoot { get; init; }
 
     /// <summary>
+    /// Absolute path to the per-run worktree root (<c>{parent}/{repo}-runs/</c>)
+    /// resolved from <c>git rev-parse --git-common-dir</c>. Null when failure
+    /// occurred before path resolution. Surfaced for launcher consumption so
+    /// PowerShell does not have to mirror <see cref="Polyphony.Infrastructure.Worktrees.RunsRootResolver"/>.
+    /// </summary>
+    public string? RunsRoot { get; init; }
+
+    /// <summary>
+    /// Absolute path to the conventional main worktree (sibling of the bare
+    /// gitdir, named <c>{parent}/{repo}/</c>). Null when failure occurred
+    /// before path resolution. Surfaced for launcher consumption so the
+    /// hijack-refusal check (<c>WorktreeRoot</c> is or is inside main)
+    /// can be done without mirroring resolver logic in PowerShell.
+    /// </summary>
+    public string? MainWorktreePath { get; init; }
+
+    /// <summary>
     /// Absolute path to the <c>feature/{N}</c> worktree at
     /// <c>{runs_root}/apex-{N}/feature-{N}/</c>. Null when failure
     /// occurred before path resolution.
@@ -62,9 +80,17 @@ public sealed record WorktreeInitApexResult
 
     /// <summary>
     /// One of <c>created</c>, <c>attached</c>, <c>idempotent</c>,
-    /// <c>failed</c>. See record-level docs for semantics.
+    /// <c>dry_run</c>, <c>failed</c>. See record-level docs for semantics.
     /// </summary>
     public required string Outcome { get; init; }
+
+    /// <summary>
+    /// True when <c>--dry-run</c> was supplied: paths are resolved and
+    /// the create-or-attach matrix is classified, but no filesystem or
+    /// git mutations are performed. The launcher uses this to derive
+    /// paths for <c>-DryRun</c> mode without creating worktrees.
+    /// </summary>
+    public bool DryRun { get; init; }
 
     /// <summary>
     /// Failure-classification code; null on success. See record-level
