@@ -1260,26 +1260,108 @@ agents:
 
   # ── Pending-review gate policy router (AB#3104) ───────────────────────
   #
-  # Reads `policy.unattended.review_wait_mode`. When `skip`, bypasses the
-  # `pending_review_gate` by routing directly to `pr_poll_platform_router`
-  # (the same target the operator's "Continue" option selects — re-poll
-  # the PR). When `wait` or unknown, falls through to the human gate.
+  # Reads `policy.unattended.review_wait_mode`. Three modes:
+  #   • `auto`  → post `polyphony:approve <head_sha>` magic comment via
+  #               `auto_approve_plan_pr`, then re-poll. The next poll observes
+  #               the comment and returns `approved`. GitHub-only — falls back
+  #               to `skip` semantics on ADO (AB#3104 PR2 wires ADO).
+  #   • `skip`  → bypasses the `pending_review_gate` by routing directly to
+  #               `pr_poll_platform_router` (the same target the operator's
+  #               "Continue" option selects — re-poll the PR). Polls forever
+  #               until the cap, then surfaces `stuck_review_gate`.
+  #   • `wait`  → falls through to the human gate (default).
   #
   # Invariants:
   #   Pre:  pending_poll_counter has been computed (cap not reached).
   #   Post: load_policy.output.unattended.review_wait_mode is
-  #         {wait, skip} (validated by the loader).
+  #         {wait, skip, auto} (validated by the loader).
   - name: pending_review_gate_policy_router
     type: script
-    description: Bypass pending_review_gate when policy.unattended.review_wait_mode=skip
+    description: Bypass pending_review_gate when policy.unattended.review_wait_mode is skip or auto
     command: polyphony
     args:
       - "policy"
       - "load"
     routes:
+      - to: auto_approve_plan_pr
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' and workflow.input.platform == 'github' }}"
       - to: pr_poll_platform_router
-        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' or pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
       - to: pending_review_gate
+
+  # ── Auto-approve plan PR (AB#3104, fasttrack mode) ────────────────────
+  #
+  # Posts the SHA-bound `polyphony:approve <head_sha>` magic comment on the
+  # plan PR so the next poll observes the approval (per
+  # PrPollStateDerivation — the comment is recognized only from the PR
+  # author identity). After posting, routes back to `pr_poll_platform_router`
+  # to re-poll; the next poll returns `approved` and the workflow proceeds
+  # to merge.
+  #
+  # Idempotent: if a matching `polyphony:approve <head_sha>` comment from
+  # the PR author is already present, the script skips the post and routes
+  # straight back to re-poll. SHA-pinning means a new commit on the PR
+  # silently invalidates a stale approve comment — auto-approve will post
+  # a fresh one for the new SHA on the next iteration.
+  #
+  # Defensive: if the gh-authenticated identity differs from the PR author,
+  # GitHub will accept the comment but `PrPollStateDerivation` will not
+  # recognize it (only author-posted approves count). In that case the
+  # script falls back to the human `pending_review_gate` rather than
+  # silently looping forever.
+  #
+  # GitHub-only at MVP. The router gates this step on
+  # `workflow.input.platform == 'github'`; ADO falls through to skip
+  # semantics until AB#3104 PR2 wires the ADO equivalent.
+  #
+  # Invariants:
+  #   Pre:  poll_status returned state == 'pending' with pr_number, head_sha,
+  #         repo_slug populated; workflow.input.platform == 'github'.
+  #   Post: output.posted in {true, false}; output.fall_back is true when
+  #         the gh actor is not the PR author (workflow routes to
+  #         pending_review_gate to surface to a human).
+  - name: auto_approve_plan_pr
+    type: script
+    description: Post SHA-bound polyphony:approve magic comment from PR author identity (idempotent)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-NoLogo"
+      - "-Command"
+      - |
+        $ErrorActionPreference = 'Stop'
+        $prNumber = {{ poll_status.output.pr_number }}
+        $headSha  = '{{ poll_status.output.head_sha }}'
+        $repoSlug = '{{ poll_status.output.repo_slug }}'
+        $body     = "polyphony:approve $headSha"
+
+        try {
+          $actor = (gh api user --jq '.login' 2>$null).Trim()
+          $author = (gh pr view $prNumber --repo $repoSlug --json author --jq '.author.login' 2>$null).Trim()
+          if (-not $actor -or -not $author) {
+            @{ posted = $false; fall_back = $true; reason = "could not resolve gh actor or PR author"; head_sha = $headSha; pr_number = $prNumber } | ConvertTo-Json -Compress
+            exit 0
+          }
+          if ($actor -ne $author) {
+            @{ posted = $false; fall_back = $true; reason = "gh actor '$actor' is not PR author '$author'; magic-approve only honored from author"; head_sha = $headSha; pr_number = $prNumber; actor = $actor; author = $author } | ConvertTo-Json -Compress
+            exit 0
+          }
+
+          $existing = gh pr view $prNumber --repo $repoSlug --json comments --jq "[.comments[] | select(.author.login == `"$author`" and .body == `"$body`")] | length" 2>$null
+          if ($existing -and [int]$existing -gt 0) {
+            @{ posted = $false; fall_back = $false; reason = "magic-approve already present for head_sha"; head_sha = $headSha; pr_number = $prNumber; body = $body } | ConvertTo-Json -Compress
+            exit 0
+          }
+
+          $null = gh pr comment $prNumber --repo $repoSlug --body $body 2>&1
+          @{ posted = $true; fall_back = $false; head_sha = $headSha; pr_number = $prNumber; body = $body; actor = $actor } | ConvertTo-Json -Compress
+        } catch {
+          @{ posted = $false; fall_back = $true; reason = "auto_approve_plan_pr exception: $($_.Exception.Message)"; head_sha = $headSha; pr_number = $prNumber } | ConvertTo-Json -Compress
+        }
+    routes:
+      - to: pending_review_gate
+        when: "{{ auto_approve_plan_pr.output.fall_back == true }}"
+      - to: pr_poll_platform_router
 
   # ── Pending-review gate (in-workflow human checkpoint) ────────────────
   #
@@ -1339,20 +1421,24 @@ agents:
 
   # ── Stuck-review gate policy router (AB#3104) ─────────────────────────
   #
-  # Reads `policy.unattended.review_wait_mode`. When `skip`, bypasses the
-  # `stuck_review_gate` by routing directly to `stuck_review_reset` (the
-  # same target the operator's "Continue waiting" option selects — reset
-  # the poll counter and keep waiting). When `wait` or unknown, falls
-  # through to the human gate so the operator can decide between waiting,
-  # overriding, and aborting.
+  # Reads `policy.unattended.review_wait_mode`. Three modes:
+  #   • `auto`  → falls through to the human `stuck_review_gate`. Reaching
+  #               poll #60 with `auto` enabled means the magic-approve
+  #               comment never took effect (wrong actor identity, gh
+  #               failure, or a derivation bug) — escalate to a human
+  #               rather than silently merging or polling forever.
+  #   • `skip`  → bypasses `stuck_review_gate` and routes to
+  #               `stuck_review_reset` (the operator's "Continue waiting"
+  #               choice — reset the counter, keep polling).
+  #   • `wait`  → falls through to the human gate (default).
   #
   # Invariants:
   #   Pre:  pending_poll_counter.cap_reached == true.
   #   Post: load_policy.output.unattended.review_wait_mode is
-  #         {wait, skip} (validated by the loader).
+  #         {wait, skip, auto} (validated by the loader).
   - name: stuck_review_gate_policy_router
     type: script
-    description: Bypass stuck_review_gate when policy.unattended.review_wait_mode=skip
+    description: Bypass stuck_review_gate when policy.unattended.review_wait_mode=skip; auto escalates to human
     command: polyphony
     args:
       - "policy"

@@ -259,7 +259,8 @@ public static class PolicyLoader
         if (unattended.ReviewWaitMode is { } wait && !UnattendedReviewWaitMode.IsValid(wait))
             throw new InvalidOperationException(
                 $"unattended.review_wait_mode '{wait}' is not a known mode. " +
-                $"Expected '{UnattendedReviewWaitMode.Wait}' or '{UnattendedReviewWaitMode.Skip}'.");
+                $"Expected '{UnattendedReviewWaitMode.Wait}', '{UnattendedReviewWaitMode.Skip}', " +
+                $"or '{UnattendedReviewWaitMode.Auto}'.");
 
         if (unattended.CapMode is { } cap && !UnattendedCapMode.IsValid(cap))
             throw new InvalidOperationException(
