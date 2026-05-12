@@ -380,7 +380,10 @@ Describe 'apex-driver e2e — outer loop reachability' {
         $byValue = @{}
         foreach ($o in $opts) { $byValue[$o.value] = $o.route }
         $byValue['renegotiate'] | Should -Be 'build_worklist'
-        $byValue['override']    | Should -Be 'apex_completion_gate'
+        # PR #321 wrapped apex_completion_gate in a Bucket-C policy router so
+        # unattended runs can bypass the gate. The override path enters the
+        # router (which then either auto-confirms or escalates to the gate).
+        $byValue['override']    | Should -Be 'apex_completion_gate_policy_router'
         $byValue['abort']       | Should -Be 'terminal_apex_abandoned'
     }
 
@@ -537,7 +540,7 @@ Describe 'apex-driver e2e — outer iterate-until-stable loop (PR #9)' {
         }
     }
 
-    It 'outer_loop_evaluator routes dispatch_failures->terminal_apex_dispatch_failures, complete->apex_completion_gate, cap->terminal_apex_iteration_cap, blocked->terminal_apex_blocked, continue->build_worklist (with M4 catch-all to terminal_apex_blocked)' {
+    It 'outer_loop_evaluator routes dispatch_failures->terminal_apex_dispatch_failures, complete->apex_completion_gate_policy_router, cap->terminal_apex_iteration_cap, blocked->terminal_apex_blocked, continue->build_worklist (with M4 catch-all to terminal_apex_blocked)' {
         $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'outer_loop_evaluator')
         # Conditional routes — match by their `when` predicate.
         $byDecision = @{}
@@ -549,7 +552,9 @@ Describe 'apex-driver e2e — outer iterate-until-stable loop (PR #9)' {
             if ($r.When -match "decision == 'continue'") { $byDecision['continue'] = $r.Target }
         }
         $byDecision['dispatch_failures'] | Should -Be 'terminal_apex_dispatch_failures'
-        $byDecision['complete'] | Should -Be 'apex_completion_gate'
+        # PR #321: complete routes through the Bucket-C policy router so
+        # unattended runs can bypass the human apex_completion_gate.
+        $byDecision['complete'] | Should -Be 'apex_completion_gate_policy_router'
         $byDecision['cap']      | Should -Be 'terminal_apex_iteration_cap'
         $byDecision['blocked']  | Should -Be 'terminal_apex_blocked'
         # `continue` is the loop-back that wraps the wave dispatch loop.
