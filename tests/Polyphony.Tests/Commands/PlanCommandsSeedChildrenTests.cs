@@ -35,7 +35,16 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     private static void StubPatchOk(FakeProcessRunner runner)
-        => runner.WhenStartsWith("twig", new[] { "patch" }, new ProcessResult(0, "{}", ""));
+    {
+        runner.WhenStartsWith("twig", new[] { "patch" }, new ProcessResult(0, "{}", ""));
+        // The seeder's parent-tag patch is followed by `twig sync` to flush
+        // the staged change to ADO (AB#3128). Tests that stub the patch
+        // also need to stub the sync, otherwise FakeProcessRunner throws.
+        StubSync(runner);
+    }
+
+    private static void StubSync(FakeProcessRunner runner)
+        => runner.WhenExact("twig", new[] { "sync", "--output", "json" }, new ProcessResult(0, "{}", ""));
 
     private static void StubCreateChild(FakeProcessRunner runner, int newId)
         => runner.WhenStartsWith("twig", new[] { "new" },
@@ -55,6 +64,86 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         result.ErrorCount.ShouldBe(1);
         result.Errors[0].Error.ShouldContain("apex_facets");
         result.PlannedTagSet.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SeedChildren_AfterParentTagPatch_FlushesViaSync()
+    {
+        // AB#3128 regression: `seed-children` must call `twig sync`
+        // immediately after `twig patch` so the staged parent-tag
+        // mutation (polyphony:planned, polyphony:facets=...) is durable
+        // in ADO before the verb returns. Otherwise the staged change is
+        // invisible to the next reader (e.g. `state_detector` in
+        // `apex-driver.yaml` checking `polyphony:planned`), which reads
+        // cache directly without syncing first. Sister-bug to AB#3126
+        // (BranchCommands.NextImpl + close-scope).
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 100);
+        StubShowParent(runner, 100, tagsField: "");
+        StubPatchOk(runner);
+
+        var planFile = WriteTempPlanFile(100, "---\napex_facets: [implementable]\n---\n");
+        try
+        {
+            var (exit, _) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(100, "[]", "polyphony:planned", planFile));
+            exit.ShouldBe(ExitCodes.Success);
+
+            // Find the index of the `twig patch` invocation; the post-patch
+            // flush must come after it.
+            var patchIdx = -1;
+            for (var i = 0; i < runner.Invocations.Count; i++)
+            {
+                var inv = runner.Invocations[i];
+                if (inv.Executable == "twig"
+                    && inv.Arguments.Count >= 1
+                    && inv.Arguments[0] == "patch")
+                {
+                    patchIdx = i;
+                    break;
+                }
+            }
+            patchIdx.ShouldBeGreaterThan(-1, "expected a twig patch invocation for the parent tag");
+
+            var postPatchSync = runner.Invocations
+                .Select((inv, idx) => (inv, idx))
+                .FirstOrDefault(x => x.idx > patchIdx
+                    && x.inv.Executable == "twig"
+                    && x.inv.Arguments.Count >= 1
+                    && x.inv.Arguments[0] == "sync");
+
+            postPatchSync.inv.ShouldNotBeNull(
+                "seed-children must invoke `twig sync` after `twig patch` to flush the staged parent-tag mutation (AB#3128)");
+        }
+        finally
+        {
+            File.Delete(planFile);
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_NoParentTagPatch_DoesNotFlush()
+    {
+        // Belt-and-suspenders: when no patch was needed (tag already
+        // present on parent, idempotent re-run), the post-patch flush is
+        // skipped — no need to push an empty change set. AB#3128.
+        var (cmd, runner) = CreateCommand();
+        const string existing = """[{"id":555,"title":"Do thing","type":"Task","description":"x\n<!-- polyphony:plan-child-id=task-1 -->"}]""";
+        StubShowTreeChildren(runner, 100, existing);
+        StubShowParent(runner, 100, tagsField: "polyphony:planned; other-tag");
+        // No patch stub and no sync stub — neither must be called.
+
+        var children = """[{"child_id":"task-1","title":"Do thing","type":"Task","description":"x"}]""";
+        var (exit, _) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, children));
+        exit.ShouldBe(ExitCodes.Success);
+
+        var patchCalled = runner.Invocations.Any(i =>
+            i.Executable == "twig" && i.Arguments.Count >= 1 && i.Arguments[0] == "patch");
+        patchCalled.ShouldBeFalse();
+
+        var syncCalled = runner.Invocations.Any(i =>
+            i.Executable == "twig" && i.Arguments.Count >= 1 && i.Arguments[0] == "sync");
+        syncCalled.ShouldBeFalse();
     }
 
     [Fact]

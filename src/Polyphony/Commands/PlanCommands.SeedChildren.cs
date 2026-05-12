@@ -582,6 +582,17 @@ public sealed partial class PlanCommands
                 {
                     await twig.PatchFieldsAsync(workItem,
                         new Dictionary<string, string> { ["System.Tags"] = tags.Format() }, ct).ConfigureAwait(false);
+
+                    // Flush the staged parent-tag patch to ADO before
+                    // returning. `twig patch` only mutates the local cache +
+                    // pending queue; without this push the planned/facets
+                    // tag is invisible to any subsequent process (e.g.
+                    // `state_detector` in `apex-driver.yaml` checking
+                    // `polyphony:planned`) that reads cache directly without
+                    // first calling sync. AB#3128: sister-bug to AB#3126 —
+                    // same staged-but-never-pushed failure mode at the
+                    // seeder's parent-tag stamping edge.
+                    await twig.SyncAsync(ct).ConfigureAwait(false);
                 }
                 tagSet = true;
             }
