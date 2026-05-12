@@ -470,6 +470,17 @@ agents:
   #
   # No worktree is spawned — this leg is purely an observable-state
   # transition, same as fast-path / monitoring / blocked.
+  #
+  # AB#3129 (sister of AB#3126): both `twig sync` calls are durability-
+  # critical. The first refreshes the local cache so the validate event
+  # sees fresh ADO state; the second flushes the staged `twig state`
+  # transition back to ADO so the next reader (apex-driver outer loop,
+  # next-ready evaluator, downstream wave) sees the item in its terminal
+  # state rather than its pre-transition state still queued in twig.
+  # `$ErrorActionPreference = 'Stop'` and
+  # `$PSNativeCommandUseErrorActionPreference = $true` ensure that a
+  # failed sync raises a terminating error caught by the surrounding
+  # try/catch — the AB#3066 observable-error envelope still applies.
   - name: terminal_satisfied
     type: script
     description: Terminal — perform ADO state transition for item_satisfied
@@ -478,12 +489,15 @@ agents:
       - "-NoProfile"
       - "-Command"
       - |
+        $ErrorActionPreference = 'Stop';
+        $PSNativeCommandUseErrorActionPreference = $true;
         $errMsg = '';
         try {
           twig sync;
           $validate = polyphony validate --work-item {{ workflow.input.work_item_id }} --event item_satisfied | ConvertFrom-Json;
           if ($validate.target_state) {
             twig state $validate.target_state --id {{ workflow.input.work_item_id }};
+            twig sync;
           }
         } catch {
           # Capture, don't swallow: the apex driver's outer loop (PR #9)

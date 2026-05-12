@@ -11,7 +11,7 @@
 
     Plus the three companion scripts under .conductor/registry/scripts/.
 
-    Verifies eight structural requirement classes:
+    Verifies nine structural requirement classes:
 
       1. apex-driver.yaml has `name: apex-driver`, `entry_point:
          preflight_sync`, and the four-input contract (apex_id,
@@ -51,6 +51,13 @@
               exposes a top-level renegotiation_pending.
          Skipped when apex-item-dispatch still carries the original
          `lifecycle_dispatch_placeholder` step (MVP deferred shape).
+
+      9. State-mutation durability (AB#3129, sister-bug to AB#3126):
+         every PowerShell `script` node that calls `twig state` must
+         declare the fail-fast prologue (`$ErrorActionPreference = 'Stop'`
+         + `$PSNativeCommandUseErrorActionPreference = $true`) and follow
+         the `twig state` invocation with a `twig sync` so the staged
+         transition is flushed to ADO before the script returns.
 
     Exits 0 if clean, 1 if violations are found.
 #>
@@ -285,6 +292,72 @@ if (Test-Path $itemYaml) {
             Add-Violation 'missing-renegotiation-bubble-up' "apex-driver.yaml: output map must declare a 'renegotiation_pending' field rolled up across the wave dispatch loop."
         }
     }
+}
+
+# ── Check 9: state-mutation durability (AB#3126 / AB#3129 class-of-bug) ───
+#
+# Every PowerShell `script` node in the apex-driver suite that calls
+# `twig state` MUST:
+#   (a) declare the fail-fast prologue so a failed `twig sync` halts the
+#       script rather than silently propagating stale state:
+#         $ErrorActionPreference = 'Stop'
+#         $PSNativeCommandUseErrorActionPreference = $true
+#   (b) follow the `twig state` invocation with a `twig sync` that flushes
+#       the staged transition back to ADO before the script returns.
+#
+# Without (b), the transition sits in twig's local pending queue and is
+# never pushed; subsequent processes reading ADO see stale state. This
+# is the AB#3126 root cause; AB#3129 was the same shape in apex-driver
+# > close_mark_satisfied and apex-item-dispatch > terminal_satisfied.
+# See `.github/skills/polyphony-cli-developer/SKILL.md` >
+# "State-mutation durability" for the full convention.
+function Test-StateMutationDurability {
+    param(
+        [string]$Yaml
+    )
+    if (-not (Test-Path $Yaml)) { return }
+    $leaf = Split-Path -Leaf $Yaml
+    $content = Get-Content $Yaml -Raw
+
+    # Slice each `- name: <foo>\n    type: script` block out of the YAML
+    # so we can examine its embedded pwsh body in isolation.
+    $blockPattern = '(?ms)^  - name:\s*(\S+)\s*\r?\n    type:\s*script\b.*?(?=^  - name: |\Z)'
+    foreach ($m in [regex]::Matches($content, $blockPattern)) {
+        $name = $m.Groups[1].Value
+        $body = $m.Value
+
+        # Only flag blocks that actually invoke `twig state` (the mutation
+        # we care about). `twig note` is also a stager but no current
+        # workflow uses it without a downstream sync.
+        if ($body -notmatch '(?m)^\s*twig\s+state\b') { continue }
+
+        # (a) fail-fast prologue
+        if ($body -notmatch [regex]::Escape("`$ErrorActionPreference = 'Stop'")) {
+            Add-Violation 'missing-fail-fast-prologue' "${leaf}: script '$name' calls 'twig state' but does not declare `$ErrorActionPreference = 'Stop' (AB#3129 — required so a failed 'twig sync' halts the script rather than silently propagating stale state)."
+        }
+        if ($body -notmatch [regex]::Escape("`$PSNativeCommandUseErrorActionPreference = `$true")) {
+            Add-Violation 'missing-fail-fast-prologue' "${leaf}: script '$name' calls 'twig state' but does not declare `$PSNativeCommandUseErrorActionPreference = `$true (AB#3129 — required so native-command (twig) failures honor `$ErrorActionPreference)."
+        }
+
+        # (b) every `twig state` must be followed by a `twig sync` later in
+        # the body. A simple ordinal check is sufficient — the script bodies
+        # are short and a missing post-state sync is the bug we want to
+        # catch, not subtle ordering games.
+        $stateMatches = [regex]::Matches($body, '(?m)^\s*twig\s+state\b')
+        $syncMatches  = [regex]::Matches($body, '(?m)^\s*twig\s+sync\b')
+        $lastStateIdx = ($stateMatches | ForEach-Object { $_.Index } | Measure-Object -Maximum).Maximum
+        $hasPostStateSync = $false
+        foreach ($s in $syncMatches) {
+            if ($s.Index -gt $lastStateIdx) { $hasPostStateSync = $true; break }
+        }
+        if (-not $hasPostStateSync) {
+            Add-Violation 'missing-post-state-sync' "${leaf}: script '$name' calls 'twig state' but does not follow it with 'twig sync' (AB#3129 — staged transition must be flushed to ADO before the script returns; see polyphony-cli-developer SKILL.md > 'State-mutation durability')."
+        }
+    }
+}
+
+foreach ($yaml in @($apexYaml, $waveYaml, $itemYaml)) {
+    Test-StateMutationDurability -Yaml $yaml
 }
 
 # ── Report ────────────────────────────────────────────────────────────────

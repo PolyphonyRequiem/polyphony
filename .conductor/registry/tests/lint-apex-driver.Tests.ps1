@@ -288,6 +288,85 @@ agents:
             ($output -join "`n") | Should -Match 'missing-bool-coercion'
         }
 
+        # ── AB#3129 Check 9 mutation tests — state-mutation durability ─
+
+        It "Lint Check 9 fires when a script's post-state 'twig sync' is removed" {
+            # Inject a deliberately-broken script node into the synthetic
+            # apex-driver.yaml: calls `twig state` but no follow-up sync.
+            # Includes the fail-fast prologue so we isolate the sync rule.
+            $bad = $script:ValidApexYaml -replace '(?m)^      - to: \$end\s*$', @"
+      - to: bad_durability
+  - name: bad_durability
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        `$ErrorActionPreference = 'Stop';
+        `$PSNativeCommandUseErrorActionPreference = `$true;
+        twig sync;
+        twig state Done --id 1;
+        Write-Host 'no follow-up sync'
+    routes:
+      - to: `$end
+"@
+            $bad | Out-File -FilePath (Join-Path $script:TempWorkflows 'apex-driver.yaml') -Encoding utf8
+            $lint = Join-Path $script:TempTests 'lint-apex-driver.ps1'
+            $output = pwsh -NoProfile -File $lint 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'missing-post-state-sync'
+        }
+
+        It "Lint Check 9 fires when a script's fail-fast prologue is missing" {
+            # Same shape but with a post-state sync — only the prologue is
+            # missing. Demonstrates the prologue is checked independently.
+            $bad = $script:ValidApexYaml -replace '(?m)^      - to: \$end\s*$', @"
+      - to: bad_prologue
+  - name: bad_prologue
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        twig sync;
+        twig state Done --id 1;
+        twig sync
+    routes:
+      - to: `$end
+"@
+            $bad | Out-File -FilePath (Join-Path $script:TempWorkflows 'apex-driver.yaml') -Encoding utf8
+            $lint = Join-Path $script:TempTests 'lint-apex-driver.ps1'
+            $output = pwsh -NoProfile -File $lint 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'missing-fail-fast-prologue'
+        }
+
+        It "Lint Check 9 ignores script blocks that don't call 'twig state'" {
+            # Sanity check: a script that stages a `twig note` but never
+            # calls `twig state` should NOT trigger the durability rule.
+            # (Notes are also stagers, but no current workflow uses them
+            # as the sole mutation; broaden the rule when one does.)
+            $ok = $script:ValidApexYaml -replace '(?m)^      - to: \$end\s*$', @"
+      - to: notes_only
+  - name: notes_only
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        twig note --text 'hello'
+    routes:
+      - to: `$end
+"@
+            $ok | Out-File -FilePath (Join-Path $script:TempWorkflows 'apex-driver.yaml') -Encoding utf8
+            $lint = Join-Path $script:TempTests 'lint-apex-driver.ps1'
+            $output = pwsh -NoProfile -File $lint 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
         # ── Phase 7 follow-up — per-item lifecycle dispatch wiring ─────
         # These tests live inside this Context (rather than a sibling)
         # because they reuse the synthetic temp tree set up in the
@@ -444,6 +523,48 @@ agents:
             foreach ($n in @('plan_level_dispatch', 'actionable_dispatch', 'implement_merge_group_dispatch', 'feature_pr_dispatch')) {
                 $itemContent | Should -Match "to:\s*$n"
             }
+        }
+    }
+
+    Context 'State-mutation durability — AB#3129 (sister of AB#3126)' {
+
+        # Pin the AB#3129 fix shape to the two known sites and exercise
+        # the Check 9 lint via mutation tests. These guard against a
+        # silent regression where someone removes either the post-state
+        # `twig sync` or the fail-fast prologue from a script that
+        # transitions ADO state.
+
+        It "Real apex-driver.yaml > close_mark_satisfied has fail-fast prologue + post-state sync" {
+            $apexContent = Get-Content $script:ApexYaml -Raw
+            $pattern = '(?ms)^  - name: close_mark_satisfied\b.*?(?=^  - name: |\Z)'
+            $match = [regex]::Match($apexContent, $pattern)
+            $match.Success | Should -BeTrue
+            $block = $match.Value
+
+            $block | Should -Match ([regex]::Escape("`$ErrorActionPreference = 'Stop'"))
+            $block | Should -Match ([regex]::Escape("`$PSNativeCommandUseErrorActionPreference = `$true"))
+
+            # twig state must be followed by twig sync inside the block.
+            $stateIdx = $block.IndexOf('twig state')
+            $postSync = $block.IndexOf('twig sync', $stateIdx + 1)
+            $stateIdx | Should -BeGreaterThan -1
+            $postSync | Should -BeGreaterThan $stateIdx
+        }
+
+        It "Real apex-item-dispatch.yaml > terminal_satisfied has fail-fast prologue + post-state sync" {
+            $itemContent = Get-Content $script:ItemYaml -Raw
+            $pattern = '(?ms)^  - name: terminal_satisfied\b.*?(?=^  - name: |\Z)'
+            $match = [regex]::Match($itemContent, $pattern)
+            $match.Success | Should -BeTrue
+            $block = $match.Value
+
+            $block | Should -Match ([regex]::Escape("`$ErrorActionPreference = 'Stop'"))
+            $block | Should -Match ([regex]::Escape("`$PSNativeCommandUseErrorActionPreference = `$true"))
+
+            $stateIdx = $block.IndexOf('twig state')
+            $postSync = $block.IndexOf('twig sync', $stateIdx + 1)
+            $stateIdx | Should -BeGreaterThan -1
+            $postSync | Should -BeGreaterThan $stateIdx
         }
     }
 }
