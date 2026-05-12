@@ -1,0 +1,106 @@
+[
+  {
+    "acceptance_criteria": [
+      "\u0060research:\u0060 block parses and validates from \u0060.polyphony-config/profile.yaml\u0060; invalid config produces actionable errors.",
+      "Storage abstraction can read from and write to a sibling research repo on the same platform as the source repo (github\u2192github proven end-to-end).",
+      "Auth defaults to platform-router credential reuse; no new secret plumbing required for the github\u2192github happy path.",
+      "Schema accepts an optional explicit auth reference field without breaking the default path (forward-compat for cross-platform; not exercised here).",
+      "Abstraction does not foreclose cross-platform combinations (interface boundary documented).",
+      "Unit/integration coverage for schema validation and the storage round-trip."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Introduce the \u0060research:\u0060 block in \u0060.polyphony-config/profile.yaml\u0060 and the storage abstraction that addresses the sibling research repo. Schema must validate, surface clear errors, and route through polyphony\u0027s existing platform-router so a fresh repo can opt in by config alone.\n\n**Auth model (resolved):** the schema defaults to **reusing the platform-router\u0027s existing credential resolution** (gh/az) \u2014 no per-repo secret references required in the common case. An optional explicit auth reference is accepted for forward-compatibility with cross-platform combinations (e.g. source-on-ADO, research-on-GitHub), but is not required and not exercised in this Epic\u0027s minimum bar.",
+    "pg": "pg-1",
+    "title": "\u0060research:\u0060 profile config \u002B storage abstraction with platform-router auth reuse",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "Sub-workflow accepts a \u0060research_needs\u0060 payload and returns a synthesized findings document.",
+      "\u0060research-assistant\u0060 agent is archive-only (no web, GitHub, or MCP tools wired).",
+      "End-to-end call works against an empty archive (returns a well-formed \u0022no prior art\u0022 findings doc) and a populated archive.",
+      "Findings include citations to archived articles with stable references.",
+      "Sub-workflow is invocable from a test harness independent of the architect integration."
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Add the research sub-workflow skeleton and the cheapest tier \u2014 \u0060research-assistant\u0060 \u2014 which answers \u0060research_needs\u0060 strictly from already-archived material in the sibling research repo. No web, no MCP, no extended tools. Proves the call/return loop end-to-end before escalation is wired in.\n\nModel selection defers to polyphony\u0027s existing per-agent model resolution \u2014 no tier-specific pinning in this Issue.",
+    "pg": "pg-2",
+    "title": "Research sub-workflow \u002B \u0060research-assistant\u0060 (archive-only first pass)",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060researcher\u0060 agent inspects assistant output and emits a structured sufficiency verdict (accept / escalate, with reason).",
+      "\u0060deep-researcher\u0060 agent has access to extended tools (web, GitHub, MCP) and is invoked only on escalation.",
+      "Escalation defaults to 1 per \u0060research_needs\u0060 topic; cap is overridable via \u0060research:\u0060 profile and the override is validated.",
+      "Escalation decisions and tool invocations are logged for cost auditing.",
+      "End-to-end test: a topic with no archive prior art escalates exactly once and returns synthesized findings citing fresh sources."
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Add the middle and top tiers of the locked three-tier pattern. \u0060researcher\u0060 judges sufficiency of the assistant\u0027s first pass and either accepts it or escalates to \u0060deep-researcher\u0060, which has extended tools (web, GitHub, MCP) and a stronger model.\n\n**Escalation cap (resolved):** default to **1 escalation per \u0060research_needs\u0060 topic**. Overridable via the \u0060research:\u0060 profile for users who want a different ceiling. Per-tier model selection defers to polyphony\u0027s existing per-agent model resolution.",
+    "pg": "pg-2",
+    "title": "\u0060researcher\u0060 sufficiency check \u002B \u0060deep-researcher\u0060 escalation (extended tools, default cap = 1)",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060archivist\u0060 agent classifies each finding as keep / discard / expand with rationale.",
+      "Kept articles are written to the sibling research repo with frontmatter and citations (URL \u002B capture date).",
+      "Scratch findings land under \u0060research/scratch/\u003Crun\u003E/\u0060 on the feature branch.",
+      "Scratch pruning hook fires at apex close (verification of end-to-end pruning is Stretch per Epic).",
+      "Curation pass is idempotent across re-runs of the same \u0060research_needs\u0060."
+    ],
+    "child_id": "task-4",
+    "depends_on": [
+      "task-2",
+      "task-3"
+    ],
+    "description": "Run an \u0060archivist\u0060 curation pass at the end of every research call: keep / discard / expand each scratch finding, and graduate kept articles into the sibling research repo with Obsidian-friendly frontmatter and academic-style citations (URL \u002B capture date minimum). Scratch lives under \u0060research/scratch/\u003Crun\u003E/\u0060 on the feature branch and is auto-pruned at apex close.",
+    "pg": "pg-2",
+    "title": "\u0060archivist\u0060 curation pass \u002B sibling-repo write",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "Architect output schema accepts a \u0060research_needs\u0060 array (topic \u002B rationale).",
+      "When \u0060research_needs\u0060 is non-empty, the workflow invokes the research sub-workflow and routes findings back into the next architect iteration.",
+      "Loop-back path bypasses the plan-review gate.",
+      "Findings document is provided to the architect as input context for the next iteration.",
+      "End-to-end run on a non-trivial work item demonstrates at least one research loop completing and informing a subsequent plan iteration."
+    ],
+    "child_id": "task-5",
+    "depends_on": [
+      "task-2",
+      "task-3",
+      "task-4"
+    ],
+    "description": "Wire the architect agent to emit structured \u0060research_needs\u0060 and the workflow to invoke the research sub-workflow, feeding findings back into the next architect iteration. The loop-back must bypass the plan-review gate \u2014 research is context, not commitment.",
+    "pg": "pg-3",
+    "title": "Architect integration: \u0060research_needs\u0060 emission \u002B loop-back routing bypassing review",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "Kept articles follow Johnny-Decimal numbering on write.",
+      "Frontmatter and wiki-links render correctly in Obsidian.",
+      "Citation enforcement: every kept article has at least URL \u002B capture date for each source.",
+      "\u0060INDEX.md\u0060 is regenerated/updated automatically when articles are added or moved.",
+      "A future research call can discover and cite an article written by a prior call (round-trip discoverability proven)."
+    ],
+    "child_id": "task-6",
+    "depends_on": [
+      "task-4"
+    ],
+    "description": "Final pass to make accumulated knowledge actually discoverable for the next run: Johnny-Decimal numbering, Obsidian-compatible frontmatter and wiki-links, citation rigor enforcement (URL \u002B capture date minimum), and \u0060INDEX.md\u0060 maintenance whenever an article is added or moved.",
+    "pg": "pg-3",
+    "title": "Wiki polish: Johnny-Decimal layout, Obsidian frontmatter/wiki-links, citation rigor, \u0060INDEX.md\u0060",
+    "type": "Issue"
+  }
+]
