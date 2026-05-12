@@ -1,0 +1,50 @@
+[
+  {
+    "acceptance_criteria": [
+      "Schema file committed in-repo at a path consistent with polyphony-workflow-author conventions",
+      "Schema captures \u0060topics[]\u0060, \u0060context\u0060, \u0060budget_hint\u0060, \u0060archive_scope\u0060 fields with documented types",
+      "Short README or in-file comments document the shape and its role as the architect \u2194 research sub-workflow contract",
+      "Schema validates against at least one hand-authored example payload (committed alongside)"
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Author the \u0060research_needs\u0060 payload schema that the architect emits and the research sub-workflow consumes. This is the stable contract that Issue #3136 binds to \u2014 it must land first so downstream work has something concrete to reference.\n\n**Shape (minimum):**\n- \u0060topics[]\u0060 \u2014 required questions or research areas (string list, non-empty)\n- \u0060context\u0060 \u2014 originating work-item id \u002B relevant plan excerpt\n- \u0060budget_hint\u0060 \u2014 \u0060cheap\u0060 | \u0060extended\u0060 (this issue only honors \u0060cheap\u0060)\n- \u0060archive_scope\u0060 \u2014 optional path/tag constraints for the archive lookup\n\n**Location:** Land under [.polyphony-config/](\\.polyphony-config/) or a workflow-adjacent path consistent with polyphony-workflow-author conventions. Document the shape in a short README adjacent to the schema file.\n\n**No code consumers required in this task** \u2014 task-2 wires the sub-workflow to consume it, task-3 wires the agent.",
+    "pg": "pg-1",
+    "title": "Define \u0060research_needs\u0060 payload schema",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "New workflow YAML committed under [workflows/](workflows/) with a name consistent with the three-vocabulary rule",
+      "Workflow accepts a \u0060research_needs\u0060 payload conforming to the task-1 schema",
+      "Workflow routes to the \u0060research-assistant\u0060 agent and surfaces its output as a findings Markdown document",
+      "\u0060polyphony validate\u0060 (or equivalent in-repo workflow validator) passes on the new YAML",
+      "Build passes with zero errors and warnings"
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Author a new conductor workflow YAML under [workflows/](workflows/) that accepts a \u0060research_needs\u0060 payload (per the schema from task-1), routes to the \u0060research-assistant\u0060 agent (added in task-3), and returns a synthesized findings Markdown document.\n\n**Conventions to follow:**\n- polyphony-workflow-author skill: shell-out idiom, three-vocabulary rule (events / state names / categories), established helper scripts.\n- conductor-mechanics: agent output access, route conditions, model selection (cheap tier for \u0060research-assistant\u0060).\n\n**Scope:** Skeleton only \u2014 single agent leg (no sufficiency check, no escalation, no archivist write). Those land in #3134 / #3135.\n\n**Invocability:** Must be invokable from the harness (see [tests/harness/](tests/harness/)) \u2014 task-3 adds the actual scenario; this task must leave the workflow in a state where the harness can drive it.",
+    "pg": "pg-1",
+    "title": "Research sub-workflow YAML skeleton",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060research-assistant\u0060 agent prompt and agent-guidance entry committed; cheap tier wired via profile",
+      "Agent guidance documents the archive-only constraint and the chosen archive surface",
+      "Harness scenario under [tests/harness/scenarios/](tests/harness/scenarios/) drives the sub-workflow end-to-end with a scripted \u0060FakeProvider\u0060",
+      "Scenario asserts the returned findings document shape (Markdown, per-topic sections, sources)",
+      "Build passes with zero errors and warnings; new and existing tests pass"
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-2"
+    ],
+    "description": "Author the \u0060research-assistant\u0060 agent prompt and agent-guidance entry, and add a harness scenario that drives the sub-workflow from task-2 end-to-end with a scripted \u0060FakeProvider\u0060.\n\n**Agent constraints:**\n- Cheap model tier per [.polyphony-config/profile.yaml](.polyphony-config/profile.yaml).\n- **Archive-only** \u2014 no live web/MCP/tool calls wired in this pass. Sources are limited to whatever archive surface the repo currently exposes (document the chosen surface in the agent guidance).\n- Output: a single synthesized findings Markdown document with a simple, documented shape (e.g., \u0060# Findings\u0060, per-topic sections, sources list).\n\n**Harness scenario (under [tests/harness/scenarios/](tests/harness/scenarios/)):**\n- Drive the sub-workflow with a representative \u0060research_needs\u0060 payload (the example from task-1).\n- Use a scripted \u0060FakeProvider\u0060 to simulate the assistant\u0027s response.\n- Assert the workflow returns a findings document of the expected shape.\n\n**Out of scope:** Sufficiency check, \u0060deep-researcher\u0060 escalation, archivist write \u2014 those are #3134 / #3135.",
+    "pg": "pg-1",
+    "title": "\u0060research-assistant\u0060 agent (archive-only) \u002B harness scenario",
+    "type": "Task"
+  }
+]
