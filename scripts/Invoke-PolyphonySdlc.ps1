@@ -69,6 +69,16 @@
     not yet run scripts/Migrate-ToBareRepo.ps1. Will be removed once all
     operators have migrated.
 
+.PARAMETER PolicyPath
+    Optional path to an alternate policy YAML. Exported as
+    `POLYPHONY_POLICY_PATH` to the conductor child process so every nested
+    `polyphony policy` / `polyphony guidance` / `polyphony agent
+    compose-addendum` invocation honours it without per-call --policy flags.
+    Use `.polyphony-config/policy-fasttrack.yaml` for unattended-style runs
+    that should bypass policy-governed gates. Caveat: many human gates in
+    workflow YAMLs are deterministic (not policy-governed) and still fire;
+    see policy-fasttrack.yaml for the list.
+
 .EXAMPLE
     cd ~/projects/polyphony
     ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 -Intent new
@@ -79,6 +89,13 @@
     ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 -DryRun | ConvertFrom-Json
     Resolves the worktree path + conductor command without creating worktrees
     or launching anything.
+
+.EXAMPLE
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 `
+        -PolicyPath .polyphony-config/policy-fasttrack.yaml
+    Launches apex-driver with the fast-track policy active for the entire
+    conductor subtree (auto-approve, auto-merge, auto-resolve renegotiation
+    and root-fallback).
 #>
 [CmdletBinding()]
 param(
@@ -101,7 +118,9 @@ param(
 
     [switch]$DryRun,
 
-    [switch]$SkipLayoutCheck
+    [switch]$SkipLayoutCheck,
+
+    [string]$PolicyPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -538,6 +557,18 @@ if ($Platform -eq 'github') {
     $env:GH_TOKEN = $identity.Token
     $env:GH_HOST  = 'github.com'
     Write-Host "[polyphony-sdlc] gh identity pinned: user='$($identity.User)' source=$($identity.Source) token_len=$($identity.TokenLength)" -ForegroundColor Cyan
+}
+
+# ─── Pin POLYPHONY_POLICY_PATH (optional, all platforms) ─────────────────────
+
+# Exported BEFORE conductor launches so every nested polyphony invocation
+# (policy load/validate/resolve, guidance extract, agent compose-addendum)
+# resolves the alternate policy file. Inherited by both the in-process
+# (-NoDetach) and Start-Process spawn paths via the conductor child env.
+if ($PolicyPath) {
+    $resolvedPolicyPath = Resolve-Path -LiteralPath $PolicyPath -ErrorAction Stop
+    $env:POLYPHONY_POLICY_PATH = $resolvedPolicyPath.ProviderPath
+    Write-Host "[polyphony-sdlc] policy override: POLYPHONY_POLICY_PATH=$($env:POLYPHONY_POLICY_PATH)" -ForegroundColor Cyan
 }
 
 # ─── Launch conductor ────────────────────────────────────────────────────────

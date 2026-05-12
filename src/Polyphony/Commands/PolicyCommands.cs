@@ -26,27 +26,31 @@ public sealed class PolicyCommands
     /// applied. When the file does not exist, returns a defaults-only snapshot
     /// with <c>used_defaults: true</c>.
     /// </summary>
-    /// <param name="path">Path to the policy file. Defaults to <c>.polyphony-config/policy.yaml</c>.</param>
+    /// <param name="path">Path to the policy file. Defaults to <c>.polyphony-config/policy.yaml</c>;
+    /// the <c>POLYPHONY_POLICY_PATH</c> environment variable overrides the default when no
+    /// explicit non-default path is supplied.</param>
     [Command("load")]
     [VerbResult(typeof(PolicyLoadResult))]
-    public int Load(string path = ".polyphony-config/policy.yaml")
+    public int Load(string path = PolicyLoader.DefaultPath)
     {
+        var resolvedPath = PolicyLoader.ResolvePath(path);
+
         PolicyConfig config;
         try
         {
-            config = PolicyLoader.LoadOrDefault(path);
+            config = PolicyLoader.LoadOrDefault(resolvedPath);
         }
         catch (Exception ex)
         {
-            EmitLoadError(path, ex.Message);
+            EmitLoadError(resolvedPath, ex.Message);
             return ExitCodes.ConfigError;
         }
 
         var result = new PolicyLoadResult
         {
             SchemaVersion = config.SchemaVersion,
-            SourcePath = File.Exists(path) ? path : null,
-            UsedDefaults = !File.Exists(path),
+            SourcePath = File.Exists(resolvedPath) ? resolvedPath : null,
+            UsedDefaults = !File.Exists(resolvedPath),
             Approvals = SnapshotDomain(config.Approvals!),
             Pr = SnapshotDomain(config.Pr!),
             OpenQuestions = SnapshotDomain(config.OpenQuestions!),
@@ -68,18 +72,22 @@ public sealed class PolicyCommands
     /// missing required fields and unknown enum values as warnings/errors so the
     /// operator can choose to opt into defaults explicitly.
     /// </summary>
-    /// <param name="path">Path to the policy file. Defaults to <c>.polyphony-config/policy.yaml</c>.</param>
+    /// <param name="path">Path to the policy file. Defaults to <c>.polyphony-config/policy.yaml</c>;
+    /// the <c>POLYPHONY_POLICY_PATH</c> environment variable overrides the default when no
+    /// explicit non-default path is supplied.</param>
     [Command("validate")]
     [VerbResult(typeof(PolicyValidateResult))]
-    public int Validate(string path = ".polyphony-config/policy.yaml")
+    public int Validate(string path = PolicyLoader.DefaultPath)
     {
-        if (!File.Exists(path))
+        var resolvedPath = PolicyLoader.ResolvePath(path);
+
+        if (!File.Exists(resolvedPath))
         {
             var missing = new PolicyValidateResult
             {
                 Valid = false,
-                SourcePath = path,
-                Errors = [$"Policy file not found: {path}"],
+                SourcePath = resolvedPath,
+                Errors = [$"Policy file not found: {resolvedPath}"],
                 Warnings = [],
             };
             Console.WriteLine(JsonSerializer.Serialize(missing, PolyphonyJsonContext.Default.PolicyValidateResult));
@@ -89,14 +97,14 @@ public sealed class PolicyCommands
         PolicyConfig config;
         try
         {
-            config = PolicyLoader.Parse(File.ReadAllText(path), path);
+            config = PolicyLoader.Parse(File.ReadAllText(resolvedPath), resolvedPath);
         }
         catch (Exception ex)
         {
             var failed = new PolicyValidateResult
             {
                 Valid = false,
-                SourcePath = path,
+                SourcePath = resolvedPath,
                 Errors = [ex.Message],
                 Warnings = [],
             };
@@ -109,7 +117,7 @@ public sealed class PolicyCommands
         var result = new PolicyValidateResult
         {
             Valid = errors.Count == 0,
-            SourcePath = path,
+            SourcePath = resolvedPath,
             SchemaVersion = config.SchemaVersion,
             Errors = [.. errors],
             Warnings = [.. warnings],
@@ -126,10 +134,12 @@ public sealed class PolicyCommands
     /// </summary>
     /// <param name="scope">Scope token: <c>root</c>, <c>default</c>, or <c>type:Name</c>.</param>
     /// <param name="domain">Either <c>approvals</c> or <c>pr</c>.</param>
-    /// <param name="path">Path to the policy file. Defaults to <c>.polyphony-config/policy.yaml</c>.</param>
+    /// <param name="path">Path to the policy file. Defaults to <c>.polyphony-config/policy.yaml</c>;
+    /// the <c>POLYPHONY_POLICY_PATH</c> environment variable overrides the default when no
+    /// explicit non-default path is supplied.</param>
     [Command("resolve")]
     [VerbResult(typeof(ResolvedRule))]
-    public int Resolve(string scope = "", string domain = "", string path = ".polyphony-config/policy.yaml")
+    public int Resolve(string scope = "", string domain = "", string path = PolicyLoader.DefaultPath)
     {
         if (RequiredInput.HaltIfMissing("policy resolve",
             ("--scope", string.IsNullOrEmpty(scope)),
@@ -145,7 +155,7 @@ public sealed class PolicyCommands
         PolicyConfig config;
         try
         {
-            config = PolicyLoader.LoadOrDefault(path);
+            config = PolicyLoader.LoadOrDefaultResolved(path);
         }
         catch (Exception ex)
         {

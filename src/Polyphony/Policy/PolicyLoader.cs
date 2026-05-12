@@ -37,6 +37,45 @@ namespace Polyphony.Policy;
 public static class PolicyLoader
 {
     /// <summary>
+    /// Canonical default policy file path, relative to the repo/worktree root.
+    /// Centralised so CLI verbs and the env-var resolver agree on what
+    /// "the default" means.
+    /// </summary>
+    public const string DefaultPath = ".polyphony-config/policy.yaml";
+
+    /// <summary>
+    /// Environment variable that overrides the default policy path when no
+    /// explicit non-default path is supplied by a caller. Lets an operator
+    /// switch policies for an entire shell session (e.g. fast-track) without
+    /// editing every CLI invocation.
+    /// </summary>
+    public const string PathEnvVar = "POLYPHONY_POLICY_PATH";
+
+    /// <summary>
+    /// Resolves the effective policy path with precedence:
+    /// <list type="number">
+    ///   <item>Explicit non-default <paramref name="explicitPath"/> wins (CLI <c>--path other.yaml</c>, programmatic).</item>
+    ///   <item>Otherwise, <see cref="PathEnvVar"/> (when set and non-whitespace).</item>
+    ///   <item>Otherwise, <see cref="DefaultPath"/>.</item>
+    /// </list>
+    /// Note: passing the literal default path is treated as "no explicit override",
+    /// so the env var still wins. This matches the common CLI shape where
+    /// <c>--path</c> defaults to <see cref="DefaultPath"/> and we cannot tell whether
+    /// the operator typed it or accepted the default.
+    /// </summary>
+    public static string ResolvePath(string? explicitPath)
+    {
+        if (!string.IsNullOrEmpty(explicitPath) && explicitPath != DefaultPath)
+            return explicitPath;
+
+        var fromEnv = Environment.GetEnvironmentVariable(PathEnvVar);
+        if (!string.IsNullOrWhiteSpace(fromEnv))
+            return fromEnv;
+
+        return DefaultPath;
+    }
+
+    /// <summary>
     /// Loads a policy config from <paramref name="path"/>. When the file does not
     /// exist, returns a fully-defaulted config (no exception). When the file exists
     /// but parses cleanly, defaults are merged into any missing fields so callers
@@ -49,6 +88,14 @@ public static class PolicyLoader
         ApplyBuiltInDefaults(config);
         return config;
     }
+
+    /// <summary>
+    /// Convenience wrapper: <see cref="ResolvePath"/> followed by <see cref="LoadOrDefault"/>.
+    /// CLI verbs and other env-var-aware callers use this instead of
+    /// <see cref="LoadOrDefault"/> so the <see cref="PathEnvVar"/> override is honoured.
+    /// </summary>
+    public static PolicyConfig LoadOrDefaultResolved(string? explicitPath = null)
+        => LoadOrDefault(ResolvePath(explicitPath));
 
     /// <summary>
     /// Parses YAML text into a <see cref="PolicyConfig"/> WITHOUT applying built-in

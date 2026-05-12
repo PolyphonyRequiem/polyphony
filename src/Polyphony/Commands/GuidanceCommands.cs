@@ -25,12 +25,14 @@ public sealed class GuidanceCommands(IWorkItemRepository repository)
     /// </summary>
     /// <param name="workItem">ADO work item ID to extract guidance from.</param>
     /// <param name="policy">Path to the policy file. Defaults to
-    /// <c>.polyphony-config/policy.yaml</c>.</param>
+    /// <c>.polyphony-config/policy.yaml</c>; the <c>POLYPHONY_POLICY_PATH</c>
+    /// environment variable overrides the default when no explicit non-default
+    /// path is supplied.</param>
     [Command("extract")]
     [VerbResult(typeof(GuidanceExtractResult))]
     public async Task<int> Extract(
         int workItem = RequiredInput.MissingInt,
-        string policy = ".polyphony-config/policy.yaml",
+        string policy = PolicyLoader.DefaultPath,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("guidance extract",
@@ -47,7 +49,7 @@ public sealed class GuidanceCommands(IWorkItemRepository repository)
         PolicyConfig config;
         try
         {
-            config = PolicyLoader.LoadOrDefault(policy);
+            config = PolicyLoader.LoadOrDefaultResolved(policy);
         }
         catch (Exception ex)
         {
