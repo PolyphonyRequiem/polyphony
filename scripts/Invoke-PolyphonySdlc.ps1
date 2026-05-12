@@ -1,71 +1,84 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Canonical wrapper for `conductor run apex-driver@polyphony` — the polyphony SDLC entry point.
+    Canonical wrapper for `conductor run apex-driver@polyphony` — the polyphony
+    SDLC entry point. Enforces the AB#3085 bare-repo + per-run-worktree layout.
 
 .DESCRIPTION
-    Constructs the full conductor invocation with all required `--input` flags and the
-    six `--metadata` (`-m`) fields the dashboard / observation filer / post-mortem skills
-    consume. Validates that the worktree contains a `.twig/` directory (preflight gate
-    addressing AB#3010 symptom), resolves org/project/repo from `.twig/config`, and
-    launches conductor with the `--web` dashboard. By default opens conductor in a new
-    PowerShell console window (TTY-attached) so gate agents can read stdin and the
-    operator's launching shell stays free. Pass `-NoDetach` to run synchronously in
-    the current shell instead.
+    The launcher self-derives the conductor's worktree from
+    `polyphony worktree init-apex --apex {ApexId}`, which produces (and reports)
+    a worktree at `{runs_root}/apex-{N}/feature-{N}/`. The operator's cwd is
+    expected to be the canonical main worktree (or any worktree of the bare
+    repo); the conductor never runs in the main worktree.
 
-    Closes AB#3011. Replaces the prose recipe at .github/skills/polyphony-sdlc/SKILL.md.
+    Two production bugs the new contract eliminates by construction:
+      1. Hijack — the previous launcher defaulted WorktreeRoot to (Get-Location).
+         Running from `~/projects/polyphony` (the main worktree) made conductor
+         hammer main directly. The new contract refuses any WorktreeRoot that
+         resolves to or inside the main-worktree path.
+      2. Cross-contamination — the previous shared-worktree model meant
+         parallel SDLC runs collided on `git stash` / `worktree dirty`. The new
+         contract puts each apex run in its own per-apex tree under
+         `{runs_root}/apex-{N}/`.
 
-    NOTE: The original AB#3011 spec referenced `polyphony-full@polyphony` and a
-    `-UserPlanPath` parameter. polyphony-full was deleted (PR #147); apex-driver
-    (`apex-driver@polyphony`) is the canonical SDLC entry point as of PRs #146/#149/#150/#152.
-    UserPlanPath is dropped — apex-driver does not consume it. Intent now defaults to `new`
-    and the typed enum is enforced via `ValidateSet`.
+    See docs/per-run-worktree-layout.md for the layout contract and
+    scripts/Migrate-ToBareRepo.ps1 for migrating an existing non-bare clone.
+
+    Closes AB#3011 (the original wrapper) and AB#3098 (this rework).
 
 .PARAMETER ApexId
     Apex (run-root) work item ID. Required.
 
 .PARAMETER Intent
     Apex-driver intent enum: `new` | `resume` | `replan`. Default: `new`.
+    `-Intent resume` refuses to dispatch when init-apex reports outcome=created
+    (no prior state to resume).
 
 .PARAMETER WorktreeRoot
-    Worktree directory to run conductor from. Default: current directory.
+    OPTIONAL EXPERT OVERRIDE of the conductor's worktree path. When supplied,
+    must canonicalize to the same path init-apex returns; otherwise the launcher
+    refuses with a clear message. The normal flow is to omit this and let the
+    launcher self-derive.
 
 .PARAMETER Platform
     PR platform override (`ado` | `github`). Default: auto-detected from
-    `git remote get-url origin` of the worktree — `github.com` URLs route
-    to `github`, `dev.azure.com` / `*.visualstudio.com` URLs route to `ado`.
-    Falls back to `ado` when the remote is unrecognized or absent.
-
-    NOTE: this is the **PR** platform threaded through to lifecycle
-    sub-workflows (which is conflated with apex-driver's `platform` input
-    today). Work-item tracker is independently configured via `.twig/config`.
+    `git remote get-url origin` of the main worktree.
 
 .PARAMETER Repository
     Repository identifier passed to the lifecycle sub-workflows. Default:
-    auto-derived from the git remote URL — `<owner>/<name>` for GitHub,
-    `<repo>` for ADO. Required (and validated downstream) only on the
-    ADO leg. Override when the auto-detection picks the wrong value or
-    the remote is non-standard.
+    auto-derived from the git remote URL (GitHub: `<owner>/<name>`; ADO:
+    `<repo>`).
 
 .PARAMETER GitRepo
-    Source-of-truth git repo path (NOT the worktree). Default: parent of WorktreeRoot
-    if WorktreeRoot ends in `<repo>-<id>`; otherwise WorktreeRoot itself.
+    Source-of-truth git repo path metadata field. Default: the canonical main
+    worktree path returned by init-apex (no longer derived from the WorktreeRoot
+    sibling-name heuristic, which is wrong under the new layout).
 
 .PARAMETER NoDetach
-    Run conductor in the foreground (don't Start-Process). Useful for debugging the
-    invocation. Default: detached.
+    Run conductor in the foreground (don't Start-Process). Useful for debugging
+    the invocation. Default: detached into a new console window.
 
 .PARAMETER DryRun
-    Print the resolved command and exit without executing. Returns the JSON envelope
-    that would otherwise be emitted on launch.
+    Print the resolved command and exit without executing. Calls
+    `polyphony worktree init-apex --dry-run` so no worktrees are created.
+    Returns the JSON envelope that would otherwise be emitted on launch.
+
+.PARAMETER SkipLayoutCheck
+    ESCAPE HATCH for legacy non-bare layouts. Skips the bare-repo preflight.
+    Strongly discouraged; intended for transition-period operators who have
+    not yet run scripts/Migrate-ToBareRepo.ps1. Will be removed once all
+    operators have migrated.
 
 .EXAMPLE
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 2919 -Intent new
-    Launches apex-driver against work item 2919 from the current worktree.
+    cd ~/projects/polyphony
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 -Intent new
+    Bootstraps `~/projects/polyphony-runs/apex-3085/feature-3085/` and launches
+    apex-driver against work item 3085 inside it.
 
 .EXAMPLE
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 2919 -DryRun | ConvertFrom-Json
-    Prints the resolved command without launching.
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 -DryRun | ConvertFrom-Json
+    Resolves the worktree path + conductor command without creating worktrees
+    or launching anything.
 #>
 [CmdletBinding()]
 param(
@@ -75,7 +88,7 @@ param(
     [ValidateSet('new', 'resume', 'replan')]
     [string]$Intent = 'new',
 
-    [string]$WorktreeRoot = (Get-Location).Path,
+    [string]$WorktreeRoot,
 
     [ValidateSet('ado', 'github')]
     [string]$Platform,
@@ -86,98 +99,367 @@ param(
 
     [switch]$NoDetach,
 
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    [switch]$SkipLayoutCheck
 )
 
 $ErrorActionPreference = 'Stop'
 
-# ─── Preflight ────────────────────────────────────────────────────────────────
+# ─── Constants ────────────────────────────────────────────────────────────────
 
-if (-not (Test-Path $WorktreeRoot -PathType Container)) {
-    throw "WorktreeRoot does not exist or is not a directory: $WorktreeRoot"
+$script:LayoutDoc        = 'docs/per-run-worktree-layout.md'
+$script:MigrationScript  = 'scripts/Migrate-ToBareRepo.ps1'
+
+# ─── Helper: canonical path comparison (boundary-aware, OS-aware) ─────────────
+
+function Get-CanonicalPath {
+    param([Parameter(Mandatory)][string]$Path)
+    $full = [System.IO.Path]::GetFullPath($Path)
+    return $full.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
 }
 
-$WorktreeRoot = (Resolve-Path $WorktreeRoot).Path
-$twigDir = Join-Path $WorktreeRoot '.twig'
-if (-not (Test-Path $twigDir -PathType Container)) {
-    throw @"
-Worktree preflight FAILED.
-Path:    $WorktreeRoot
-Missing: $twigDir
+function Test-IsSameOrInside {
+    param(
+        [Parameter(Mandatory)][string]$Candidate,
+        [Parameter(Mandatory)][string]$Container
+    )
+    $cand = Get-CanonicalPath $Candidate
+    $cont = Get-CanonicalPath $Container
+    $cmp = if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+        [System.StringComparison]::OrdinalIgnoreCase
+    } else {
+        [System.StringComparison]::Ordinal
+    }
+    if ([string]::Equals($cand, $cont, $cmp)) { return $true }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    return $cand.StartsWith($cont + $sep, $cmp)
+}
 
-apex-driver requires a .twig/ directory in the worktree (twig is its work-item provider).
-Standard worktree setup:
-    git worktree add -b sdlc/<ID> ../polyphony-<ID> main
-    cd ../polyphony-<ID>
-    Copy-Item -Recurse ../polyphony/.twig .twig
-    twig set <ID>
-    twig sync
+# ─── Helper: invoke polyphony and parse JSON result ───────────────────────────
+
+function Invoke-PolyphonyJson {
+    param([Parameter(Mandatory)][string[]]$ArgList)
+    $stdout = & polyphony @ArgList 2>&1
+    $exit = $LASTEXITCODE
+    if ($exit -ne 0) {
+        throw "[polyphony-sdlc] polyphony $($ArgList -join ' ') exited $exit. Output:`n$stdout"
+    }
+    try {
+        return ($stdout | ConvertFrom-Json)
+    } catch {
+        throw "[polyphony-sdlc] Could not parse JSON from polyphony $($ArgList -join ' ').`nOutput: $stdout`nParse error: $($_.Exception.Message)"
+    }
+}
+
+# ─── Phase 1: cwd is a worktree of a git repo ────────────────────────────────
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "[polyphony-sdlc] git is not on PATH. Install git before invoking apex-driver."
+}
+
+$cwd = (Get-Location).Path
+$commonDir = & git rev-parse --path-format=absolute --git-common-dir 2>&1
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commonDir)) {
+    $global:LASTEXITCODE = 0
+    throw @"
+[polyphony-sdlc] Cwd is not inside a git repository.
+Cwd: $cwd
+
+Launch from a worktree of the polyphony bare repo (the canonical main worktree
+is the conventional choice). See $script:LayoutDoc.
+"@
+}
+$commonDir = $commonDir.Trim()
+
+# ─── Phase 2: bare-repo layout preflight ─────────────────────────────────────
+
+# Inline check (2 git calls) is faster than `polyphony state preflight`, which
+# drags in GH-auth + dotnet SDK probes and is the wrong granularity for a
+# fail-fast launcher gate. This duplicates the bare_repo check in
+# StateCommands.cs (Name="bare_repo"); both paths converge on the same
+# remediation (per docs/per-run-worktree-layout.md + Migrate-ToBareRepo.ps1).
+if (-not $SkipLayoutCheck) {
+    $isBare = & git --git-dir $commonDir rev-parse --is-bare-repository 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $global:LASTEXITCODE = 0
+        throw @"
+[polyphony-sdlc] Could not probe bare-repo state of common-dir.
+Common-dir: $commonDir
+Output:     $isBare
+
+This usually means the common-dir is corrupted. See $script:LayoutDoc.
+"@
+    }
+    if ($isBare.Trim().ToLower() -ne 'true') {
+        throw @"
+[polyphony-sdlc] Repo-layout preflight FAILED.
+Common-dir: $commonDir
+This is a non-bare clone (legacy layout).
+
+The AB#3085 SDLC orchestration requires the bare-repo + per-run-worktree
+layout to prevent the hijack and cross-contamination bugs by construction.
+
+To migrate:
+    ./$script:MigrationScript            # dry-run (default) — see what would happen
+    ./$script:MigrationScript -Commit    # execute (with risk-material refusal)
+
+For background, see $script:LayoutDoc.
+
+To bypass this gate (NOT recommended, transition period only):
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -SkipLayoutCheck
+"@
+    }
+}
+
+# ─── Phase 3: invoke init-apex (--dry-run if -DryRun) ────────────────────────
+
+# init-apex self-derives the apex worktree path from the common-dir. It MUST
+# run from a worktree of the bare repo (the operator's cwd is fine; init-apex
+# does not refuse cwd-inside-main because the launcher legitimately calls it
+# from main during bootstrap).
+$initArgs = @('worktree', 'init-apex', '--apex', $ApexId)
+if ($DryRun) { $initArgs += '--dry-run' }
+$initResult = Invoke-PolyphonyJson -ArgList $initArgs
+
+if ($initResult.outcome -eq 'failed') {
+    $remediation = switch ($initResult.reason) {
+        'branch_in_use' {
+            "The branch is checked out in another worktree. Run 'git worktree list' " +
+            "to find it; either remove that worktree (`git worktree remove <path>`) or " +
+            "use -Intent resume to attach to the existing apex run."
+        }
+        'path_exists_wrong_branch' {
+            "The apex worktree exists but is on the wrong branch. Inspect the path " +
+            "and either remove it (`git worktree remove $($initResult.worktree_path)`) " +
+            "or check out the expected branch in place."
+        }
+        'path_exists_not_worktree' {
+            "Path exists but isn't a registered worktree (likely a leftover directory). " +
+            "Remove it manually: Remove-Item -Recurse '$($initResult.worktree_path)'."
+        }
+        'remote_branch_exists' {
+            "Local branch '$($initResult.branch)' is missing but origin/$($initResult.branch) " +
+            "exists. Fetch and create the local branch first:`n" +
+            "    git --git-dir $commonDir fetch origin '$($initResult.branch):$($initResult.branch)'"
+        }
+        'common_dir_unavailable' { "See $script:LayoutDoc." }
+        default                  { '' }
+    }
+    throw @"
+[polyphony-sdlc] worktree init-apex failed.
+Reason: $($initResult.reason)
+Error:  $($initResult.error)
+$remediation
 "@
 }
 
-$twigConfigPath = Join-Path $twigDir 'config'
-if (-not (Test-Path $twigConfigPath -PathType Leaf)) {
-    throw "Worktree preflight FAILED. .twig/ exists but config file missing: $twigConfigPath"
+$derivedWorktree = $initResult.worktree_path
+$mainWorktree    = $initResult.main_worktree_path
+$runsRoot        = $initResult.runs_root
+$expectedBranch  = $initResult.branch
+$initOutcome     = $initResult.outcome
+
+if (-not $derivedWorktree -or -not $mainWorktree) {
+    throw "[polyphony-sdlc] init-apex returned outcome=$initOutcome but did not populate worktree_path / main_worktree_path. Update polyphony to a version that supports the new fields."
 }
 
+# ─── Phase 4: hijack-refusal (defense in depth) ──────────────────────────────
+
+# init-apex's PathBoundary check already prevents the derived path from being
+# the main worktree, but the launcher checks again because nothing legitimate
+# should ever pass.
+if (Test-IsSameOrInside -Candidate $derivedWorktree -Container $mainWorktree) {
+    throw @"
+[polyphony-sdlc] HIJACK REFUSAL — derived apex worktree is or is inside the main worktree.
+  Derived worktree: $derivedWorktree
+  Main worktree:    $mainWorktree
+
+This is a defense-in-depth check; init-apex should have already refused.
+File a bug against polyphony if you see this. See $script:LayoutDoc.
+"@
+}
+
+# ─── Phase 5: -WorktreeRoot override validation ──────────────────────────────
+
+if ($PSBoundParameters.ContainsKey('WorktreeRoot')) {
+    if (-not (Test-Path $WorktreeRoot)) {
+        # Allow a non-existent override only when init-apex would have created
+        # the same path. The path must canonicalize to the derived path.
+    }
+    $canonicalOverride = Get-CanonicalPath $WorktreeRoot
+    $canonicalDerived  = Get-CanonicalPath $derivedWorktree
+    $cmp = if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+        [System.StringComparison]::OrdinalIgnoreCase
+    } else {
+        [System.StringComparison]::Ordinal
+    }
+    if (-not [string]::Equals($canonicalOverride, $canonicalDerived, $cmp)) {
+        throw @"
+[polyphony-sdlc] -WorktreeRoot override does not match the canonical apex worktree.
+  Override:  $canonicalOverride
+  Canonical: $canonicalDerived
+
+The canonical worktree for apex $ApexId is determined by the bare repo's layout
+(see $script:LayoutDoc). The override was added so advanced operators could
+verify their assumptions; if your intent was to use the canonical path, omit
+-WorktreeRoot.
+"@
+    }
+}
+
+$WorktreeRoot = $derivedWorktree
+
+# ─── Phase 6: intent semantics — refuse 'created' on resume ──────────────────
+
+if ($Intent -eq 'resume' -and $initOutcome -eq 'created') {
+    throw @"
+[polyphony-sdlc] -Intent resume refused: init-apex reported outcome=created.
+  Apex worktree: $WorktreeRoot
+  Branch:        $expectedBranch
+
+There is no prior state to resume — the apex worktree was just created. If you
+intended to start a new run, re-invoke with -Intent new (the default).
+"@
+}
+
+# ─── Phase 7: copy .twig/ from main worktree if missing in apex worktree ─────
+
+# .twig/ is gitignored, so a freshly-created worktree from `git worktree add`
+# does not have it. The launcher copies it once from main; subsequent launches
+# (resume) reuse the apex worktree's existing .twig/ unchanged.
+$mainTwigDir = Join-Path $mainWorktree '.twig'
+$apexTwigDir = Join-Path $WorktreeRoot '.twig'
+$twigSourceForConfig = $null
+
+if (Test-Path $apexTwigDir -PathType Container) {
+    $twigSourceForConfig = $apexTwigDir
+} elseif (Test-Path $mainTwigDir -PathType Container) {
+    if (-not $DryRun) {
+        # On a real launch, copy main's .twig/ into the apex worktree so twig
+        # commands inside the apex have local state. Skip-if-exists; never
+        # clobber operator-curated state in an existing apex worktree.
+        if (Test-Path $WorktreeRoot -PathType Container) {
+            Copy-Item -LiteralPath $mainTwigDir -Destination $apexTwigDir -Recurse -Force
+            $twigSourceForConfig = $apexTwigDir
+        } else {
+            # Apex worktree path doesn't exist yet (init-apex returned a path
+            # it would have created in non-dry-run; shouldn't happen here).
+            throw "[polyphony-sdlc] init-apex reported outcome=$initOutcome but worktree path '$WorktreeRoot' does not exist. Aborting."
+        }
+    } else {
+        # DryRun: read .twig/config from main since we can't copy.
+        $twigSourceForConfig = $mainTwigDir
+    }
+} else {
+    throw @"
+[polyphony-sdlc] No .twig/ directory found in main worktree.
+Main worktree: $mainWorktree
+
+apex-driver requires twig for work-item context. Bootstrap twig in the main
+worktree first:
+    cd $mainWorktree
+    twig init <organization> <project>
+    twig set $ApexId
+"@
+}
+
+$twigConfigPath = Join-Path $twigSourceForConfig 'config'
+if (-not (Test-Path $twigConfigPath -PathType Leaf)) {
+    throw "[polyphony-sdlc] .twig/ exists at $twigSourceForConfig but config file is missing."
+}
 $twigConfig = Get-Content $twigConfigPath -Raw | ConvertFrom-Json
 if (-not $twigConfig.organization -or -not $twigConfig.project) {
-    throw "twig config at $twigConfigPath is missing 'organization' or 'project'."
+    throw "[polyphony-sdlc] twig config at $twigConfigPath is missing 'organization' or 'project'."
 }
 
-# ─── Resolve metadata ─────────────────────────────────────────────────────────
+# ─── Phase 8: assert-clean (skip on -DryRun) ─────────────────────────────────
+
+if (-not $DryRun) {
+    $cleanResult = Invoke-PolyphonyJson -ArgList @(
+        'worktree', 'assert-clean',
+        '--path', $WorktreeRoot,
+        '--expected-branch', $expectedBranch
+    )
+    if (-not $cleanResult.ok) {
+        $remediation = switch ($cleanResult.reason) {
+            'dirty' {
+                $dirtyList = if ($cleanResult.dirty_paths) {
+                    "`n    " + (($cleanResult.dirty_paths) -join "`n    ")
+                } else { '' }
+                "Working tree has uncommitted changes. Inspect and resolve:$dirtyList`n" +
+                "    cd '$WorktreeRoot'`n" +
+                "    git status"
+            }
+            'wrong_branch' {
+                "Worktree is on branch '$($cleanResult.current_branch)', not '$expectedBranch'.`n" +
+                "    cd '$WorktreeRoot'`n" +
+                "    git checkout $expectedBranch"
+            }
+            'git_operation_in_progress' {
+                "A git operation (rebase/merge/cherry-pick/bisect) is mid-flight in the worktree. " +
+                "Complete or abort it before launching."
+            }
+            'not_a_worktree' {
+                "Path is not a registered git worktree. init-apex should have ensured this; " +
+                "re-run the launcher to retry, or remove the path manually."
+            }
+            'path_missing' {
+                "Path does not exist. init-apex should have ensured this; " +
+                "re-run the launcher to retry."
+            }
+            default { '' }
+        }
+        throw @"
+[polyphony-sdlc] assert-clean refused dispatch.
+  Path:   $WorktreeRoot
+  Reason: $($cleanResult.reason)
+$remediation
+"@
+    }
+}
+
+# ─── Phase 9: derive metadata ────────────────────────────────────────────────
 
 $projectUrl = 'https://dev.azure.com/{0}/{1}' -f $twigConfig.organization, $twigConfig.project
 $worktreeName = Split-Path -Leaf $WorktreeRoot
 
 if (-not $GitRepo) {
-    # Convention: worktree is at <parent>/<repo>-<id>; source repo is at <parent>/<repo>.
-    # If the worktree doesn't follow the convention, fall back to the worktree itself.
-    $parent = Split-Path -Parent $WorktreeRoot
-    $repoCandidate = if ($worktreeName -match '^(?<repo>[^-]+(?:-[^-\d]+)*)-\d+$') {
-        Join-Path $parent $Matches.repo
-    } else {
-        $WorktreeRoot
-    }
-    $GitRepo = if (Test-Path (Join-Path $repoCandidate '.git')) { $repoCandidate } else { $WorktreeRoot }
+    # Default to the canonical main worktree (NOT the apex worktree, which is
+    # a per-run scratch space). Downstream consumers (dashboard, observation,
+    # post-mortem skills) treat git_repo as the source-of-truth checkout.
+    $GitRepo = $mainWorktree
 }
 
-# Auto-detect platform + repository from git remote URL of the worktree.
-# Detection lives here (not in apex-driver) because the lifecycle sub-workflows
-# treat `platform` + `repository` as opaque inputs — the wrapper is the only
-# layer that knows about the actual git remote.
-$detectedPlatform = $null
+# Auto-detect platform + repository from git remote URL of the MAIN WORKTREE.
+# The previous launcher detected from $WorktreeRoot, which was wrong under
+# the new layout (apex worktree shares the bare's remotes anyway, but reading
+# from main is the intentful choice — main is the canonical source-of-truth).
+$detectedPlatform   = $null
 $detectedRepository = $null
-$remoteUrl = $null
-if (Get-Command git -ErrorAction SilentlyContinue) {
-    $remoteUrl = (& git -C $WorktreeRoot remote get-url origin 2>$null)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteUrl)) {
-        $remoteUrl = $null
-        $global:LASTEXITCODE = 0
-    }
+$remoteUrl = & git -C $mainWorktree remote get-url origin 2>&1
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteUrl)) {
+    $remoteUrl = $null
+    $global:LASTEXITCODE = 0
 }
 
 if ($remoteUrl) {
     switch -Regex ($remoteUrl) {
-        # GitHub https / ssh
         '^(?:https?://github\.com/|git@github\.com:)(?<owner>[^/]+)/(?<name>[^/]+?)(?:\.git)?/?$' {
             $detectedPlatform = 'github'
             $detectedRepository = "$($Matches.owner)/$($Matches.name)"
             break
         }
-        # ADO modern: https://dev.azure.com/<org>/<project>/_git/<repo>
         '^https?://(?:[^@/]+@)?dev\.azure\.com/(?<org>[^/]+)/(?<project>[^/]+)/_git/(?<repo>[^/?#]+?)(?:\.git)?/?$' {
             $detectedPlatform = 'ado'
             $detectedRepository = $Matches.repo
             break
         }
-        # ADO legacy: https://<org>.visualstudio.com/<project>/_git/<repo>
         '^https?://(?:[^@/]+@)?(?<org>[^.]+)\.visualstudio\.com/(?<project>[^/]+)/_git/(?<repo>[^/?#]+?)(?:\.git)?/?$' {
             $detectedPlatform = 'ado'
             $detectedRepository = $Matches.repo
             break
         }
-        # ADO ssh: git@ssh.dev.azure.com:v3/<org>/<project>/<repo>
         '^git@ssh\.dev\.azure\.com:v\d+/(?<org>[^/]+)/(?<project>[^/]+)/(?<repo>[^/?#]+?)(?:\.git)?/?$' {
             $detectedPlatform = 'ado'
             $detectedRepository = $Matches.repo
@@ -194,22 +476,8 @@ if (-not $PSBoundParameters.ContainsKey('Repository')) {
     $Repository = if ($detectedRepository) { $detectedRepository } else { '' }
 }
 
-# ─── Build the command ───────────────────────────────────────────────────────
+# ─── Phase 10: build the conductor command ───────────────────────────────────
 
-# Always use foreground --web. We previously tried --web-bg for the
-# detached path, but conductor's bg_runner spawns the workflow child
-# with stdin=DEVNULL (cli/bg_runner.py:172,178,210). Any agent that
-# reads stdin — most notably gate agents waiting for the operator's
-# answer fallback — hits EOFError immediately on startup, kills the
-# subworkflow, and cascades up through for_each_item_failed. The web
-# dashboard's "Answer" button never gets a listener because the gate
-# agent died before it could register one. See AB#3071 dogfood
-# 2026-05-11 (PR #300 regression).
-#
-# The detached path below spawns conductor inside a *new* PowerShell
-# console window so it inherits a real TTY (stdin attached). That
-# satisfies foreground --web's TTY requirement without blocking the
-# operator's launching shell.
 $conductorArgs = @(
     'run', 'apex-driver@polyphony'
     '--web'
@@ -218,9 +486,6 @@ $conductorArgs = @(
     '--input', "platform=$Platform"
     '--input', "organization=$($twigConfig.organization)"
     '--input', "project=$($twigConfig.project)"
-    # apex-driver `repository` defaults to "" and is consumed only by ADO PR verbs.
-    # Auto-derived from `git remote get-url origin` (GitHub: `<owner>/<name>`;
-    # ADO: `<repo>`); -Repository overrides; falls back to "" when undetectable.
     '--input', "repository=$Repository"
     '-m', "tracker=ado"
     '-m', "project_url=$projectUrl"
@@ -231,19 +496,25 @@ $conductorArgs = @(
 )
 
 $resolved = [pscustomobject]@{
-    success        = $true
-    workflow       = 'apex-driver@polyphony'
-    apex_id        = $ApexId
-    intent         = $Intent
-    platform       = $Platform
-    repository     = $Repository
-    remote_url     = $remoteUrl
-    worktree_root  = $WorktreeRoot
-    git_repo       = $GitRepo
-    project_url    = $projectUrl
-    command        = "conductor $($conductorArgs -join ' ')"
-    args           = $conductorArgs
-    detached       = -not $NoDetach
+    success            = $true
+    workflow           = 'apex-driver@polyphony'
+    apex_id            = $ApexId
+    intent             = $Intent
+    platform           = $Platform
+    repository         = $Repository
+    remote_url         = $remoteUrl
+    worktree_root      = $WorktreeRoot
+    main_worktree_path = $mainWorktree
+    runs_root          = $runsRoot
+    apex_root          = $initResult.apex_root
+    branch             = $expectedBranch
+    init_apex_outcome  = $initOutcome
+    git_repo           = $GitRepo
+    project_url        = $projectUrl
+    command            = "conductor $($conductorArgs -join ' ')"
+    args               = $conductorArgs
+    detached           = -not $NoDetach
+    layout_check_skipped = [bool]$SkipLayoutCheck
 }
 
 if ($DryRun) {
@@ -254,38 +525,14 @@ if ($DryRun) {
 
 # ─── Pin gh identity (github platform only) ──────────────────────────────────
 
-# Auto-detect whoever is logged into gh at this moment, capture that user's
-# token, validate it against the GitHub API, then pin the validated identity
-# into GH_TOKEN + GH_HOST for the entire conductor + polyphony subprocess
-# tree. This protects against two concrete failure modes:
-#
-#   1. Competing-worker auth slippage. Another agent in a sibling worktree
-#      can call `gh auth switch` mid-run, flipping the active gh user out
-#      from under us. Without pinning, every subsequent gh call inside
-#      conductor re-resolves the active user — and if the new active user
-#      has no token cached for github.com, gh falls through to DPAPI in a
-#      non-TTY context and hangs the per-attempt timeout (60s × 3 retries).
-#      Diagnosed during the AB#3066 dogfood (2026-05-09).
-#
-#   2. Stale or wrong-scope token. By validating once at launch, an
-#      expired/insufficient-scope token surfaces as a clear fail-fast at
-#      startup with the exact remediation command, instead of as 60s gh
-#      hangs on every PR-poll cycle hours later.
-#
-# Identity is auto-detected (whoever is active right now) — no hardcoded
-# username, no flag required from the caller. The diagnostic emit prints the
-# resolved login so the operator can spot a wrong-account launch immediately.
-#
-# Skipped on -Platform ado (no gh needed) and on -DryRun (no subprocess
-# calls during dry-run).
+# (Pattern unchanged from PR #250: auto-detect active gh user, validate, pin
+# GH_TOKEN+GH_HOST for the conductor subprocess tree. See repo memory
+# 'launcher gh probe'.)
 if ($Platform -eq 'github') {
     . (Join-Path $PSScriptRoot 'Resolve-GhIdentity.ps1')
     try {
         $identity = Resolve-GhIdentity
     } catch {
-        # Re-throw with launcher context so the operator knows where the
-        # failure originated. The inner exception already carries the
-        # actionable remediation command.
         throw "[polyphony-sdlc] gh identity probe failed:`n$($_.Exception.Message)"
     }
     $env:GH_TOKEN = $identity.Token
@@ -295,10 +542,8 @@ if ($Platform -eq 'github') {
 
 # ─── Launch conductor ────────────────────────────────────────────────────────
 
-# Verify conductor is on PATH so we fail fast with a clear message instead of
-# Start-Process surfacing a generic "no such file" later.
 if (-not (Get-Command conductor -ErrorAction SilentlyContinue)) {
-    throw "conductor is not on PATH. Install it before invoking apex-driver."
+    throw "[polyphony-sdlc] conductor is not on PATH. Install it before invoking apex-driver."
 }
 
 if ($NoDetach) {
@@ -319,29 +564,9 @@ $logDir = Join-Path ([System.IO.Path]::GetTempPath()) 'polyphony-sdlc-runs'
 $logTimestamp = (Get-Date -Format 'yyyyMMdd-HHmmss')
 $transcriptLog = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-transcript.log"
 
-# Spawn conductor inside a new PowerShell console window. The new console
-# gives conductor a real TTY (stdin attached), which is required for both:
-#   1. foreground --web mode itself (Rich/Textual rendering),
-#   2. gate agents that fall back to stdin when no web answer arrives.
-#
-# Why not Start-Process conductor directly with -RedirectStandard*?
-#   Start-Process redirected stdin → conductor's gate agents EOFError on
-#   startup (same failure shape as --web-bg's stdin=DEVNULL).
-#
-# Why not -WindowStyle Hidden?
-#   No console handles → conductor (Rich) hangs at 0% CPU on first output
-#   flush, dashboard port never opens.
-#
-# Why -NoExit?
-#   Keeps the new window open after conductor exits so the operator can
-#   read the final stack trace / exit code without losing it.
-#
-# The launching shell stays free; the operator can minimize the new
-# window. Output is also tee'd to a transcript file under
-# %TEMP%\polyphony-sdlc-runs\ for post-mortem.
-
-# Build the conductor command line as a single string. Quote individual
-# args defensively in case any value contains whitespace or quotes.
+# Spawn conductor inside a new PowerShell console window. Pattern unchanged
+# from PR #302 — TTY-attached so gate agents can read stdin and the
+# operator's launching shell stays free.
 $conductorCmd = 'conductor ' + (($conductorArgs | ForEach-Object {
     if ($_ -match '[\s"'']') { "'" + ($_ -replace "'", "''") + "'" }
     else { $_ }

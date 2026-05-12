@@ -499,4 +499,167 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
         output.ShouldNotContain("\"branch\"");
         output.ShouldContain("\"reason\":\"common_dir_unavailable\"");
     }
+
+    // ─── Resolved-paths surfacing (PR 3 launcher dependency) ────────────
+
+    [Fact]
+    public async Task InitApex_SuccessfulOutcome_PopulatesRunsRootAndMainWorktreePath()
+    {
+        var (cmd, runner, _, worktreePath) = Setup();
+        Directory.CreateDirectory(worktreePath);
+        runner.WhenExact("git", ["worktree", "list", "--porcelain"],
+            new ProcessResult(0, PorcelainEntry(worktreePath, "feature/3085"), ""));
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Outcome.ShouldBe("idempotent");
+        result.RunsRoot.ShouldBe(_runsRoot);
+        result.MainWorktreePath.ShouldBe(_mainPath);
+        // Wire-format check: snake_case keys present
+        output.ShouldContain("\"runs_root\":");
+        output.ShouldContain("\"main_worktree_path\":");
+    }
+
+    [Fact]
+    public async Task InitApex_FailureAfterPathResolution_PopulatesRunsRootAndMainWorktreePath()
+    {
+        var (cmd, runner, _, worktreePath) = Setup();
+        Directory.CreateDirectory(worktreePath);
+        runner.WhenExact("git", ["worktree", "list", "--porcelain"],
+            new ProcessResult(0, PorcelainEntry(worktreePath, "feature/9999"), ""));
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Outcome.ShouldBe("failed");
+        result.Reason.ShouldBe("path_exists_wrong_branch");
+        // Even on failure, the launcher needs runs_root + main_worktree_path
+        // so it can render the boundary-aware diagnostic.
+        result.RunsRoot.ShouldBe(_runsRoot);
+        result.MainWorktreePath.ShouldBe(_mainPath);
+    }
+
+    // ─── Dry-run mode (PR 3 launcher dependency) ────────────────────────
+
+    [Fact]
+    public async Task InitApex_DryRun_NewBranchPath_NoMutations_EmitsDryRunOutcome()
+    {
+        var (cmd, runner, apexRoot, worktreePath) = Setup();
+        runner.WhenExact("git", ["worktree", "list", "--porcelain"],
+            new ProcessResult(0, PorcelainEntry(_mainPath, "main"), ""));
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Outcome.ShouldBe("dry_run");
+        result.DryRun.ShouldBeTrue();
+        result.Reason.ShouldBeNull();
+        result.WorktreePath.ShouldBe(worktreePath);
+        result.RunsRoot.ShouldBe(_runsRoot);
+        result.MainWorktreePath.ShouldBe(_mainPath);
+        // Mutating side effects must NOT have happened.
+        Directory.Exists(apexRoot).ShouldBeFalse();
+        Directory.Exists(worktreePath).ShouldBeFalse();
+        // No worktree add / rev-parse for the apex branch should have run.
+        runner.Invocations.ShouldNotContain(i =>
+            i.Arguments.Count >= 2 && i.Arguments[0] == "worktree" && i.Arguments[1] == "add");
+    }
+
+    [Fact]
+    public async Task InitApex_DryRun_AlreadyOnExpectedBranch_StillEmitsDryRunOutcome()
+    {
+        // Even when the matrix would have classified as 'idempotent',
+        // dry-run reports 'dry_run'. Operator can infer "no work needed"
+        // from the absence of a needs-create indicator.
+        var (cmd, runner, apexRoot, worktreePath) = Setup();
+        Directory.CreateDirectory(worktreePath);
+        runner.WhenExact("git", ["worktree", "list", "--porcelain"],
+            new ProcessResult(0, PorcelainEntry(worktreePath, "feature/3085"), ""));
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Outcome.ShouldBe("dry_run");
+        result.DryRun.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task InitApex_DryRun_PathExistsWrongBranch_PropagatesFailure()
+    {
+        // Hard-refusal cases must surface at dry-run time so the operator
+        // sees the problem before -Commit (the launcher's contract).
+        var (cmd, runner, _, worktreePath) = Setup();
+        Directory.CreateDirectory(worktreePath);
+        runner.WhenExact("git", ["worktree", "list", "--porcelain"],
+            new ProcessResult(0, PorcelainEntry(worktreePath, "feature/9999"), ""));
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Outcome.ShouldBe("failed");
+        result.Reason.ShouldBe("path_exists_wrong_branch");
+        result.DryRun.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task InitApex_DryRun_BranchInUse_PropagatesFailure()
+    {
+        var (cmd, runner, _, _) = Setup();
+        var stalePath = Path.Combine(_tempDir, "polyphony-old", "feature-3085");
+        runner.WhenExact("git", ["worktree", "list", "--porcelain"],
+            new ProcessResult(0, PorcelainEntry(stalePath, "feature/3085"), ""));
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Outcome.ShouldBe("failed");
+        result.Reason.ShouldBe("branch_in_use");
+        result.DryRun.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task InitApex_DryRun_PathExistsNotWorktree_PropagatesFailure()
+    {
+        var (cmd, runner, apexRoot, worktreePath) = Setup();
+        Directory.CreateDirectory(apexRoot);
+        Directory.CreateDirectory(worktreePath);
+        runner.WhenExact("git", ["worktree", "list", "--porcelain"],
+            new ProcessResult(0, "", ""));
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Outcome.ShouldBe("failed");
+        result.Reason.ShouldBe("path_exists_not_worktree");
+        result.DryRun.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task InitApex_DryRun_PreResolutionFailure_DryRunFlagPreserved()
+    {
+        // Even on common_dir failure, dry_run flag must round-trip so
+        // the launcher can distinguish "dry-run that hit an error" from
+        // "live attempt that hit an error".
+        var (cmd, runner, _, _) = Setup(stubCommonDir: false);
+        runner.WhenExact(
+            "git",
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            new ProcessResult(0, "", ""));
+
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Outcome.ShouldBe("failed");
+        result.Reason.ShouldBe("common_dir_unavailable");
+        result.DryRun.ShouldBeTrue();
+    }
 }
