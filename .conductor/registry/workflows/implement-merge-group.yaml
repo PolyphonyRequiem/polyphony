@@ -832,11 +832,153 @@ agents:
     routes:
       - to: user_acceptance_policy_router
         when: "{{ scope_reviewer.output.verdict == 'approved' }}"
-      - to: primary_router
+      - to: scope_revise_counter
         when: "{{ scope_reviewer.output.verdict == 'changes_requested' }}"
-      # Catch-all per M4: unknown verdict (typo, schema drift) routes back
-      # to primary_router for another iteration rather than raising
-      # `No matching route found`.
+      # Catch-all per M4: unknown verdict (typo, schema drift) routes
+      # through the revise counter so that even malformed verdicts cannot
+      # bypass the cap. This is the AB#3125 fix — previously this catch-all
+      # routed back to primary_router, which combined with `next-impl`
+      # returning `all_items_done` produced an infinite loop burning Opus
+      # calls when an MG was structurally empty (see dogfood Run #7).
+      - to: scope_revise_counter
+
+  # ── Scope revise counter (AB#3125) ────────────────────────────────────
+  #
+  # Caps the scope_reviewer → primary_router revise cycle so that when
+  # an MG is structurally broken (empty branch, no implementable items,
+  # reviewer correctly emits `changes_requested` per its empty-MG check)
+  # the workflow escalates to a human gate after MAX_REVISIONS instead
+  # of looping forever burning Opus-4.7 calls.
+  #
+  # Mirrors the canonical pattern from `github-pr.yaml` (`review_counter`)
+  # and `plan-level.yaml` (`revise_counter`). Counter file keyed by
+  # work_item_id + mg_path so parallel sibling MGs under the same parent
+  # do not clobber each other's counters.
+  #
+  # Invariants:
+  #   Pre:  scope_reviewer.output.verdict is 'changes_requested' or unknown.
+  #   Post: output.cap_reached is true after MAX_REVISIONS=3 cycles.
+  #
+  # Known limitation (filed separately): the counter file persists
+  # across conductor runs (TempPath is per-user, not per-run). A
+  # successful run that took 1-2 revisions leaves stale state that can
+  # cause the next run to hit the cap early. Same gap exists in the
+  # canonical patterns; tracking as a sibling concern.
+  - name: scope_revise_counter
+    type: script
+    description: Track scope-reviewer revise-loop iteration count (cap 3)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-mg-scope-revise-{{ workflow.input.work_item_id }}-{{ workflow.input.mg_path }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        $maxRevisions = 3
+        $capReached = $count -ge $maxRevisions
+        @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached } | ConvertTo-Json
+    routes:
+      - to: scope_revise_cap_gate
+        when: "{{ scope_revise_counter.output.cap_reached == true }}"
+      - to: primary_router
+        when: "{{ scope_revise_counter.output.cap_reached == false }}"
+      # Catch-all per M4: defensive against cap_reached missing/malformed.
+      # Routes to the gate so a human resolves it rather than silently
+      # bypassing the cap.
+      - to: scope_revise_cap_gate
+
+  # ── Scope revise cap gate (AB#3125) ───────────────────────────────────
+  #
+  # Fires when scope_revise_counter hits MAX_REVISIONS. Surfaces the
+  # last reviewer feedback so the operator can diagnose whether the MG
+  # is salvageable. Three options matching the canonical
+  # `pr_fix_exhausted_gate` shape from github-pr.yaml.
+  #
+  # Invariants:
+  #   Pre:  scope_revise_counter.output.cap_reached == true.
+  #   Post: Operator chose re_loop (reset + retry), force_accept (bypass
+  #         to MG PR open), or abort (end this MG).
+  - name: scope_revise_cap_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Scope Review Cap Hit — MG `{{ workflow.input.mg_path }}`
+
+      The scope reviewer for MG `{{ workflow.input.mg_path }}` (work item
+      **{{ workflow.input.work_item_id }}**) has produced
+      **{{ scope_revise_counter.output.iteration }}** consecutive
+      `changes_requested` verdicts without converging.
+
+      ### MG Details
+
+      | Field | Value |
+      |-------|-------|
+      | MG path | `{{ workflow.input.mg_path }}` |
+      | MG branch | `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` |
+      | Parent work item | `AB#{{ workflow.input.work_item_id }}` |
+      | Tasks in MG | {{ workflow.input.work_item_ids | length }} |
+      | Cycles attempted | {{ scope_revise_counter.output.iteration }} of {{ scope_revise_counter.output.max_revisions }} |
+
+      ### Latest Reviewer Feedback
+
+      {{ scope_reviewer.output.feedback }}
+
+      {% if scope_reviewer.output.issues %}
+      ### Reviewer-Identified Issues
+
+      {% for issue in scope_reviewer.output.issues %}
+      - {{ issue }}
+      {% endfor %}
+      {% endif %}
+
+      ---
+
+      A repeated `changes_requested` verdict with no implementable items
+      remaining usually indicates the MG is structurally broken (empty
+      branch, no commits, classifier seeded zero tasks) — not the kind
+      of issue that another revise cycle can fix.
+
+      Choose an action:
+      - **Re-loop** — reset the counter and run another full revise budget. Use this if you have addressed the upstream cause (e.g. seeded missing tasks, recovered the branch).
+      - **Force-accept** — accept the current MG state and proceed to MG PR open, bypassing the scope review verdict. Use this if you have inspected the MG and consider it acceptable despite the reviewer's complaint.
+      - **Abort** — end this MG. The operator will reconcile out-of-band.
+    options:
+      - label: "🔄 Re-loop (reset budget)"
+        value: re_loop
+        route: scope_revise_reset
+      - label: "⚡ Force-accept (proceed to MG PR)"
+        value: force_accept
+        route: pr_platform_router
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Scope revise reset (AB#3125) ──────────────────────────────────────
+  #
+  # Resets the scope-revise iteration counter when the operator chooses
+  # to continue at the cap gate. Routes back to primary_router to resume
+  # the loop with a fresh budget. Mirrors `review_counter_reset` in
+  # github-pr.yaml.
+  #
+  # Invariants:
+  #   Pre:  Operator chose 're_loop' at scope_revise_cap_gate.
+  #   Post: Counter file is reset to 0; loop resumes with fresh budget.
+  - name: scope_revise_reset
+    type: script
+    description: Reset scope-revise iteration counter for continued revising
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-mg-scope-revise-{{ workflow.input.work_item_id }}-{{ workflow.input.mg_path }}"
+        Set-Content $counterFile 0
+        @{ iteration = 0; reset = $true } | ConvertTo-Json
+    routes:
       - to: primary_router
 
   # ── User acceptance policy router (AB#3104) ───────────────────────────
