@@ -1,104 +1,92 @@
 [
   {
     "acceptance_criteria": [
-      "\u0060research:\u0060 block parses and validates from \u0060.polyphony-config/profile.yaml\u0060; invalid config produces actionable errors.",
-      "Storage abstraction can read from and write to a sibling research repo on the same platform as the source repo (github\u2192github proven end-to-end).",
-      "Auth defaults to platform-router credential reuse; no new secret plumbing required for the github\u2192github happy path.",
-      "Schema accepts an optional explicit auth reference field without breaking the default path (forward-compat for cross-platform; not exercised here).",
-      "Abstraction does not foreclose cross-platform combinations (interface boundary documented).",
-      "Unit/integration coverage for schema validation and the storage round-trip."
+      "\u0060research:\u0060 block parses and validates from \u0060.polyphony-config/profile.yaml\u0060.",
+      "Storage abstraction round-trips (read/write/list) against a sibling github repo using platform-router credentials.",
+      "Schema exposes an optional explicit auth override but defaults to platform-router reuse \u2014 no new secret plumbing in the common path."
     ],
-    "child_id": "task-1",
+    "child_id": "issue-1",
     "depends_on": [],
-    "description": "Introduce the \u0060research:\u0060 block in \u0060.polyphony-config/profile.yaml\u0060 and the storage abstraction that addresses the sibling research repo. Schema must validate, surface clear errors, and route through polyphony\u0027s existing platform-router so a fresh repo can opt in by config alone.\n\n**Auth model (resolved):** the schema defaults to **reusing the platform-router\u0027s existing credential resolution** (gh/az) \u2014 no per-repo secret references required in the common case. An optional explicit auth reference is accepted for forward-compatibility with cross-platform combinations (e.g. source-on-ADO, research-on-GitHub), but is not required and not exercised in this Epic\u0027s minimum bar.",
+    "description": "Introduce the \u0060research:\u0060 block in \u0060.polyphony-config/profile.yaml\u0060 (schema \u002B validation) and a storage abstraction for the sibling research repo. Auth defaults to reusing the platform-router\u0027s existing credential resolution (gh/az); the schema accepts an optional explicit auth reference for cross-platform cases without breaking the default path. No new secret plumbing in the common case.",
     "pg": "pg-1",
-    "title": "\u0060research:\u0060 profile config \u002B storage abstraction with platform-router auth reuse",
+    "title": "\u0060research:\u0060 profile config \u002B storage abstraction (cross-platform remote, auth via platform-router reuse)",
     "type": "Issue"
   },
   {
     "acceptance_criteria": [
-      "Sub-workflow accepts a \u0060research_needs\u0060 payload and returns a synthesized findings document.",
-      "\u0060research-assistant\u0060 agent is archive-only (no web, GitHub, or MCP tools wired).",
-      "End-to-end call works against an empty archive (returns a well-formed \u0022no prior art\u0022 findings doc) and a populated archive.",
-      "Findings include citations to archived articles with stable references.",
-      "Sub-workflow is invocable from a test harness independent of the architect integration."
+      "Sub-workflow accepts a \u0060research_needs\u0060 payload and returns a synthesized findings document, end-to-end, callable from a test harness.",
+      "\u0060research-assistant\u0060 sources strictly from the archive on this first pass (no live tools).",
+      "\u0060research_needs\u0060 payload schema is defined in this issue and consumed unchanged by Issue 5."
     ],
-    "child_id": "task-2",
+    "child_id": "issue-2",
     "depends_on": [
-      "task-1"
+      "issue-1"
     ],
-    "description": "Add the research sub-workflow skeleton and the cheapest tier \u2014 \u0060research-assistant\u0060 \u2014 which answers \u0060research_needs\u0060 strictly from already-archived material in the sibling research repo. No web, no MCP, no extended tools. Proves the call/return loop end-to-end before escalation is wired in.\n\nModel selection defers to polyphony\u0027s existing per-agent model resolution \u2014 no tier-specific pinning in this Issue.",
+    "description": "Implement the research sub-workflow skeleton and the \u0060research-assistant\u0060 agent (archive-only, cheap tier). Define the \u0060research_needs\u0060 payload schema as part of this issue so downstream consumers (Issue 5) bind to a stable contract.",
     "pg": "pg-2",
     "title": "Research sub-workflow \u002B \u0060research-assistant\u0060 (archive-only first pass)",
     "type": "Issue"
   },
   {
     "acceptance_criteria": [
-      "\u0060researcher\u0060 agent decides per-topic whether archive-only output is sufficient.",
-      "When insufficient, \u0060deep-researcher\u0060 is invoked with web/GitHub/MCP tools wired.",
-      "Escalation cap defaults to 1 per \u0060research_needs\u0060 topic and is overridable via the \u0060research:\u0060 profile block.",
-      "Findings produced via escalation cite both archive and live sources.",
-      "Escalation events are observable (logged with topic \u002B tier \u002B tool calls used)."
+      "Archive-insufficient cases escalate to the \u0060deep-researcher\u0060 tier with extended tools (web/GitHub/MCP).",
+      "Escalation cap defaults to 1 per \u0060research_needs\u0060 topic and is overridable via the \u0060research:\u0060 profile.",
+      "Findings cite both archive and live sources when the deep tier is invoked."
     ],
-    "child_id": "task-3",
+    "child_id": "issue-3",
     "depends_on": [
-      "task-2"
+      "issue-2"
     ],
-    "description": "Layer the \u0060researcher\u0060 orchestrator (sufficiency judge over archive-only output) and the \u0060deep-researcher\u0060 tier (web, GitHub, MCP) on top of the archive-only loop from Issue 2. Adds the cost-tiered escalation ladder.\n\n**Escalation cap (resolved default):** 1 escalation per \u0060research_needs\u0060 topic. The cap is overridable via the \u0060research:\u0060 profile block; widening is an explicit opt-in, not the default.",
+    "description": "Add the \u0060researcher\u0060 sufficiency-judge step and the \u0060deep-researcher\u0060 escalation tier (web/GitHub/MCP tools) inside the sub-workflow loop. Escalation cap defaults to 1 per \u0060research_needs\u0060 topic and is overridable via the \u0060research:\u0060 profile.",
     "pg": "pg-3",
-    "title": "\u0060researcher\u0060 sufficiency check \u002B \u0060deep-researcher\u0060 escalation (extended tools)",
+    "title": "\u0060researcher\u0060 sufficiency check \u002B \u0060deep-researcher\u0060 escalation (extended tools, default cap = 1)",
     "type": "Issue"
   },
   {
     "acceptance_criteria": [
-      "\u0060archivist\u0060 runs at the end of every research call and emits a per-finding keep/discard/expand decision.",
-      "Kept findings are written to the sibling research repo via the Issue 1 storage abstraction.",
-      "Discarded findings remain in \u0060research/scratch/\u003Crun\u003E/\u0060 for the duration of the run.",
-      "Curation decisions are recorded so a reviewer can audit why a finding was kept or discarded.",
-      "End-to-end test exercises archive-only path (Issue 2) \u2192 curation \u2192 sibling-repo write."
+      "Every research call ends with an archivist keep/discard/expand decision.",
+      "Kept articles land in the sibling research repo with Johnny-Decimal layout and frontmatter.",
+      "\u0060INDEX.md\u0060 is updated as part of the curation write."
     ],
-    "child_id": "task-4",
+    "child_id": "issue-4",
     "depends_on": [
-      "task-2"
+      "issue-2"
     ],
-    "description": "Add the \u0060archivist\u0060 agent that runs at the end of every research call and decides keep / discard / expand for each finding. Kept articles are written to the sibling research repo via the Issue 1 storage abstraction. Turns ephemeral scratch findings into durable knowledge for future runs.",
+    "description": "Append an \u0060archivist\u0060 curation step at the end of every research call (keep / discard / expand) and wire the sibling-repo writer using the storage abstraction from Issue 1. Kept articles land with Johnny-Decimal layout and frontmatter; \u0060INDEX.md\u0060 is updated.",
     "pg": "pg-3",
     "title": "\u0060archivist\u0060 curation pass \u002B sibling-repo write",
     "type": "Issue"
   },
   {
     "acceptance_criteria": [
-      "Architect output schema accepts a \u0060research_needs\u0060 array (at any planning depth).",
-      "When non-empty, the workflow invokes the research sub-workflow and feeds the synthesized findings into the next architect iteration.",
-      "Loop-back bypasses the plan-review gate (research is context, not a plan revision).",
-      "End-to-end smoke: an architect emits \u0060research_needs\u0060, the sub-workflow runs, and the next iteration\u0027s prompt contains the findings.",
-      "Behavior is opt-in: an architect that never emits \u0060research_needs\u0060 is unaffected."
+      "An architect can emit \u0060research_needs\u0060 and the workflow runs the research sub-workflow.",
+      "The next architect iteration receives the findings without traversing the plan-review gate.",
+      "A harness / dogfood scenario demonstrates the full architect \u2192 research \u2192 architect loop on a non-trivial prompt without human intervention."
     ],
-    "child_id": "task-5",
+    "child_id": "issue-5",
     "depends_on": [
-      "task-3",
-      "task-4"
+      "issue-3",
+      "issue-4"
     ],
-    "description": "Teach the architect agent to emit structured \u0060research_needs\u0060 and wire the workflow to invoke the research sub-workflow and feed findings back into the next architect iteration without traversing the plan-review gate. Research is context, not commitment.",
+    "description": "Wire the architect agent to emit \u0060research_needs\u0060, run the research sub-workflow, and feed findings back into the next architect iteration without traversing the plan-review gate. Includes a harness / dogfood scenario that proves the full loop end-to-end on a non-trivial prompt.",
     "pg": "pg-4",
     "title": "Architect integration: \u0060research_needs\u0060 emission \u002B loop-back routing bypassing review",
     "type": "Issue"
   },
   {
     "acceptance_criteria": [
-      "Kept articles follow Johnny-Decimal numbering with a documented allocation scheme.",
-      "Articles render correctly in Obsidian (frontmatter parsed, \u0060[[wiki-links]]\u0060 resolve).",
-      "Every citation includes source URL and capture date at minimum.",
-      "\u0060INDEX.md\u0060 is regenerated deterministically and reflects the current set of kept articles.",
-      "Lint/check exists (or is documented) so future archivist writes do not silently drift from the conventions."
+      "Kept articles validate against the declared frontmatter schema.",
+      "Every wiki-link target resolves to an existing article in the sibling repo.",
+      "Citations include URL and capture date.",
+      "\u0060INDEX.md\u0060 regenerates deterministically (byte-identical for the same input set)."
     ],
-    "child_id": "task-6",
+    "child_id": "issue-6",
     "depends_on": [
-      "task-4"
+      "issue-4"
     ],
-    "description": "Make the accumulated research repo actually discoverable: enforce Johnny-Decimal numbering for kept articles, Obsidian-friendly frontmatter and \u0060[[wiki-links]]\u0060, academic-style citations (URL \u002B capture date minimum), and deterministic \u0060INDEX.md\u0060 regeneration.",
+    "description": "Tighten the kept-article surface so the accumulated knowledge is mechanically discoverable for the next run: Johnny-Decimal numbering, Obsidian-compatible frontmatter and wiki-links, citation rigor (URL \u002B capture date minimum), and deterministic \u0060INDEX.md\u0060 regeneration. Validation is structural (CI-checkable), not GUI-dependent.",
     "pg": "pg-4",
-    "title": "Wiki polish: Johnny-Decimal layout, Obsidian frontmatter/wiki-links, citation rigor, \u0060INDEX.md\u0060",
+    "title": "Wiki polish: Johnny-Decimal numbering, Obsidian frontmatter / wiki-links, citation rigor, \u0060INDEX.md\u0060 maintenance",
     "type": "Issue"
   }
 ]
