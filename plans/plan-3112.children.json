@@ -1,0 +1,52 @@
+[
+  {
+    "acceptance_criteria": [
+      "Architect output schema in plan-level.yaml includes \u0060research_needs[]\u0060 with documented item shape.",
+      "Architect prompt and agent-guidance doc explain when to emit \u0060research_needs\u0060 vs \u0060open_questions\u0060.",
+      "Architect-prompt-reentry tests assert the new field is present and defaults to empty array.",
+      "Workflow behavior unchanged when \u0060research_needs\u0060 is empty (no new routes triggered yet).",
+      "Build passes with zero errors and warnings."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Extend the architect step\u0027s output schema in [.conductor/registry/workflows/plan-level.yaml](.conductor/registry/workflows/plan-level.yaml) with a \u0060research_needs[]\u0060 array (items: \u0060topic\u0060, \u0060question\u0060, \u0060why_it_matters\u0060, optional \u0060suggested_sources\u0060). Update [.conductor/registry/prompts/architect-plan-level.md](.conductor/registry/prompts/architect-plan-level.md) and [.polyphony-config/agent-guidance/architect.md](.polyphony-config/agent-guidance/architect.md) so architects know when to emit \u0060research_needs\u0060 vs. \u0060open_questions\u0060 (research = \u0022I\u0027ll investigate then re-plan\u0022; open question = \u0022I need a human decision\u0022). Update the existing schema-shape unit/contract tests in [tests/architect-prompt-reentry.Tests.ps1](tests/architect-prompt-reentry.Tests.ps1) to cover the new field with a default empty array. Pure schema/prompt change \u2014 no routing yet; emitting the field must be a no-op in workflow behavior.",
+    "pg": "pg-1",
+    "title": "Architect output schema \u002B prompt: emit \u0060research_needs\u0060",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "New steps \u0060research_needs_counter\u0060 and (when needed) \u0060research_cap_gate\u0060 exist in \u0060plan-level.yaml\u0060 and follow the structural pattern of the open_questions triad.",
+      "Architect \u2192 research sub-workflow \u2192 architect re-entry path skips \u0060open_questions_policy\u0060, the plan PR steps, and \u0060plan_reviewer\u0060.",
+      "\u0060max_research_loops\u0060 is sourced from policy with a sensible default and respected by the counter.",
+      "Cap-reached path surfaces a human gate; no infinite loop is reachable from a misbehaving architect.",
+      "Findings document path from #3109 is exposed to the next architect iteration via a documented context channel.",
+      "Conductor workflow lint/validate passes; build passes with zero errors and warnings."
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Add routing in [.conductor/registry/workflows/plan-level.yaml](.conductor/registry/workflows/plan-level.yaml) so that when \u0060architect.output.research_needs | length \u003E 0\u0060, control flows into the research sub-workflow from #3109 and then re-enters \u0060architect\u0060, bypassing \u0060open_questions_policy\u0060, the plan PR steps, and \u0060plan_reviewer\u0060 entirely. Mirror the existing \u0060open_questions_counter\u0060 pattern to add a \u0060research_needs_counter\u0060 that computes \u0060iteration\u0060 and \u0060cap_reached\u0060 against a \u0060max_research_loops\u0060 policy value (default 3, surfaced via the same \u0060policy_resolver\u0060 mechanism used by \u0060open_questions_policy\u0060). When \u0060cap_reached\u0060, route to a new \u0060research_cap_gate\u0060 (human_gate) that mirrors the cap behavior of \u0060open_questions_gate\u0060. Thread the findings document path produced by #3109 into the next architect iteration via the same context channel \u0060ancestor_chain\u0060 uses (or document the chosen channel in the YAML comment header).",
+    "pg": "pg-2",
+    "title": "plan-level.yaml routing: research sub-workflow invocation, review-bypass re-entry, bounded loop",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060bypass\u0060 scenario passes and asserts plan-review nodes were skipped.",
+      "\u0060bound\u0060 scenario passes and asserts cap_gate fires at the expected iteration.",
+      "End-to-end demo notes are captured and linked from the Issue close-out comment.",
+      "All existing harness scenarios still pass.",
+      "Build passes with zero errors and warnings."
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-2"
+    ],
+    "description": "Add two scenarios under [tests/harness/scenarios/](tests/harness/scenarios/) using the existing \u0060FakeProvider\u0060 pattern: (1) **bypass** \u2014 script an architect that emits a single \u0060research_needs\u0060 entry on its first turn and a clean plan on its second; assert the research sub-workflow ran, assert \u0060open_questions_policy\u0060/plan-PR/\u0060plan_reviewer\u0060 nodes did NOT run, and assert the second architect invocation received the findings document. (2) **bound** \u2014 script an architect that emits \u0060research_needs\u0060 on every turn; assert the workflow halts at \u0060research_cap_gate\u0060 after \u0060max_research_loops\u0060 iterations and does not invoke the research sub-workflow further. Record an end-to-end dogfood demo (notes \u002B run id) on a real planning iteration once #3108 and #3109 are merged.",
+    "pg": "pg-3",
+    "title": "Harness scenarios \u002B end-to-end demo: bypass and bound",
+    "type": "Task"
+  }
+]
