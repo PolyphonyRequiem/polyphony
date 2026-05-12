@@ -34,72 +34,70 @@
   },
   {
     "acceptance_criteria": [
-      "\u0060researcher\u0060 agent inspects assistant output and emits a structured sufficiency verdict (accept / escalate, with reason).",
-      "\u0060deep-researcher\u0060 agent has access to extended tools (web, GitHub, MCP) and is invoked only on escalation.",
-      "Escalation defaults to 1 per \u0060research_needs\u0060 topic; cap is overridable via \u0060research:\u0060 profile and the override is validated.",
-      "Escalation decisions and tool invocations are logged for cost auditing.",
-      "End-to-end test: a topic with no archive prior art escalates exactly once and returns synthesized findings citing fresh sources."
+      "\u0060researcher\u0060 agent decides per-topic whether archive-only output is sufficient.",
+      "When insufficient, \u0060deep-researcher\u0060 is invoked with web/GitHub/MCP tools wired.",
+      "Escalation cap defaults to 1 per \u0060research_needs\u0060 topic and is overridable via the \u0060research:\u0060 profile block.",
+      "Findings produced via escalation cite both archive and live sources.",
+      "Escalation events are observable (logged with topic \u002B tier \u002B tool calls used)."
     ],
     "child_id": "task-3",
     "depends_on": [
-      "task-1"
+      "task-2"
     ],
-    "description": "Add the middle and top tiers of the locked three-tier pattern. \u0060researcher\u0060 judges sufficiency of the assistant\u0027s first pass and either accepts it or escalates to \u0060deep-researcher\u0060, which has extended tools (web, GitHub, MCP) and a stronger model.\n\n**Escalation cap (resolved):** default to **1 escalation per \u0060research_needs\u0060 topic**. Overridable via the \u0060research:\u0060 profile for users who want a different ceiling. Per-tier model selection defers to polyphony\u0027s existing per-agent model resolution.",
-    "pg": "pg-2",
-    "title": "\u0060researcher\u0060 sufficiency check \u002B \u0060deep-researcher\u0060 escalation (extended tools, default cap = 1)",
+    "description": "Layer the \u0060researcher\u0060 orchestrator (sufficiency judge over archive-only output) and the \u0060deep-researcher\u0060 tier (web, GitHub, MCP) on top of the archive-only loop from Issue 2. Adds the cost-tiered escalation ladder.\n\n**Escalation cap (resolved default):** 1 escalation per \u0060research_needs\u0060 topic. The cap is overridable via the \u0060research:\u0060 profile block; widening is an explicit opt-in, not the default.",
+    "pg": "pg-3",
+    "title": "\u0060researcher\u0060 sufficiency check \u002B \u0060deep-researcher\u0060 escalation (extended tools)",
     "type": "Issue"
   },
   {
     "acceptance_criteria": [
-      "\u0060archivist\u0060 agent classifies each finding as keep / discard / expand with rationale.",
-      "Kept articles are written to the sibling research repo with frontmatter and citations (URL \u002B capture date).",
-      "Scratch findings land under \u0060research/scratch/\u003Crun\u003E/\u0060 on the feature branch.",
-      "Scratch pruning hook fires at apex close (verification of end-to-end pruning is Stretch per Epic).",
-      "Curation pass is idempotent across re-runs of the same \u0060research_needs\u0060."
+      "\u0060archivist\u0060 runs at the end of every research call and emits a per-finding keep/discard/expand decision.",
+      "Kept findings are written to the sibling research repo via the Issue 1 storage abstraction.",
+      "Discarded findings remain in \u0060research/scratch/\u003Crun\u003E/\u0060 for the duration of the run.",
+      "Curation decisions are recorded so a reviewer can audit why a finding was kept or discarded.",
+      "End-to-end test exercises archive-only path (Issue 2) \u2192 curation \u2192 sibling-repo write."
     ],
     "child_id": "task-4",
     "depends_on": [
-      "task-2",
-      "task-3"
+      "task-2"
     ],
-    "description": "Run an \u0060archivist\u0060 curation pass at the end of every research call: keep / discard / expand each scratch finding, and graduate kept articles into the sibling research repo with Obsidian-friendly frontmatter and academic-style citations (URL \u002B capture date minimum). Scratch lives under \u0060research/scratch/\u003Crun\u003E/\u0060 on the feature branch and is auto-pruned at apex close.",
-    "pg": "pg-2",
+    "description": "Add the \u0060archivist\u0060 agent that runs at the end of every research call and decides keep / discard / expand for each finding. Kept articles are written to the sibling research repo via the Issue 1 storage abstraction. Turns ephemeral scratch findings into durable knowledge for future runs.",
+    "pg": "pg-3",
     "title": "\u0060archivist\u0060 curation pass \u002B sibling-repo write",
     "type": "Issue"
   },
   {
     "acceptance_criteria": [
-      "Architect output schema accepts a \u0060research_needs\u0060 array (topic \u002B rationale).",
-      "When \u0060research_needs\u0060 is non-empty, the workflow invokes the research sub-workflow and routes findings back into the next architect iteration.",
-      "Loop-back path bypasses the plan-review gate.",
-      "Findings document is provided to the architect as input context for the next iteration.",
-      "End-to-end run on a non-trivial work item demonstrates at least one research loop completing and informing a subsequent plan iteration."
+      "Architect output schema accepts a \u0060research_needs\u0060 array (at any planning depth).",
+      "When non-empty, the workflow invokes the research sub-workflow and feeds the synthesized findings into the next architect iteration.",
+      "Loop-back bypasses the plan-review gate (research is context, not a plan revision).",
+      "End-to-end smoke: an architect emits \u0060research_needs\u0060, the sub-workflow runs, and the next iteration\u0027s prompt contains the findings.",
+      "Behavior is opt-in: an architect that never emits \u0060research_needs\u0060 is unaffected."
     ],
     "child_id": "task-5",
     "depends_on": [
-      "task-2",
       "task-3",
       "task-4"
     ],
-    "description": "Wire the architect agent to emit structured \u0060research_needs\u0060 and the workflow to invoke the research sub-workflow, feeding findings back into the next architect iteration. The loop-back must bypass the plan-review gate \u2014 research is context, not commitment.",
-    "pg": "pg-3",
+    "description": "Teach the architect agent to emit structured \u0060research_needs\u0060 and wire the workflow to invoke the research sub-workflow and feed findings back into the next architect iteration without traversing the plan-review gate. Research is context, not commitment.",
+    "pg": "pg-4",
     "title": "Architect integration: \u0060research_needs\u0060 emission \u002B loop-back routing bypassing review",
     "type": "Issue"
   },
   {
     "acceptance_criteria": [
-      "Kept articles follow Johnny-Decimal numbering on write.",
-      "Frontmatter and wiki-links render correctly in Obsidian.",
-      "Citation enforcement: every kept article has at least URL \u002B capture date for each source.",
-      "\u0060INDEX.md\u0060 is regenerated/updated automatically when articles are added or moved.",
-      "A future research call can discover and cite an article written by a prior call (round-trip discoverability proven)."
+      "Kept articles follow Johnny-Decimal numbering with a documented allocation scheme.",
+      "Articles render correctly in Obsidian (frontmatter parsed, \u0060[[wiki-links]]\u0060 resolve).",
+      "Every citation includes source URL and capture date at minimum.",
+      "\u0060INDEX.md\u0060 is regenerated deterministically and reflects the current set of kept articles.",
+      "Lint/check exists (or is documented) so future archivist writes do not silently drift from the conventions."
     ],
     "child_id": "task-6",
     "depends_on": [
       "task-4"
     ],
-    "description": "Final pass to make accumulated knowledge actually discoverable for the next run: Johnny-Decimal numbering, Obsidian-compatible frontmatter and wiki-links, citation rigor enforcement (URL \u002B capture date minimum), and \u0060INDEX.md\u0060 maintenance whenever an article is added or moved.",
-    "pg": "pg-3",
+    "description": "Make the accumulated research repo actually discoverable: enforce Johnny-Decimal numbering for kept articles, Obsidian-friendly frontmatter and \u0060[[wiki-links]]\u0060, academic-style citations (URL \u002B capture date minimum), and deterministic \u0060INDEX.md\u0060 regeneration.",
+    "pg": "pg-4",
     "title": "Wiki polish: Johnny-Decimal layout, Obsidian frontmatter/wiki-links, citation rigor, \u0060INDEX.md\u0060",
     "type": "Issue"
   }
