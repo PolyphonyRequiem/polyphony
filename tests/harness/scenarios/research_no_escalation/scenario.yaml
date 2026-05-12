@@ -1,0 +1,62 @@
+# research_no_escalation — researcher judges findings sufficient on first pass.
+#
+# Exercises the happy path through research.yaml:
+#   1. validate_input: sanitizes scratch_slug
+#   2. scan_archive: builds archive manifest
+#   3. research_assistant: lightweight first pass (scripted)
+#   4. researcher: judges "sufficient" (scripted)
+#   5. write_findings: writes synthesized findings to scratch
+#
+# The deep_researcher is NOT invoked — the researcher's first-pass
+# judgement finds the assistant's findings adequate.
+#
+# Proves: the researcher makes an explicit sufficient/escalate decision,
+# the "sufficient" route skips the deep_researcher entirely, and the
+# write_findings node uses the researcher's synthesized output.
+
+workflow: .conductor/registry/workflows/research.yaml
+
+inputs:
+  work_item_id: 99001
+  topic: "What testing frameworks does the project use?"
+  scratch_slug: "test-frameworks"
+  archive_path: "/tmp/test-archive"
+  max_escalations: 2
+
+cli_scripts:
+  # validate_input — passes through (inline script, no CLI call)
+  # scan_archive — inline script reads the archive directory.
+  # Since the archive path won't exist in the harness, this will
+  # exit 1. The shim intercepts the pwsh call.
+
+  # No polyphony CLI calls in this workflow — all script nodes use
+  # inline pwsh commands. The harness handles inline scripts directly.
+
+agent_scripts:
+  research_assistant:
+    - content:
+        summary: "Found 2 relevant articles about testing in the archive."
+        findings:
+          - title: "Testing Strategy Guide"
+            relevance_summary: "Covers the project's xUnit + Shouldly + NSubstitute stack"
+            source_url: "https://internal.wiki/testing-strategy"
+            capture_date: "2026-03-15"
+            archive_path: "/tmp/test-archive/testing-strategy.md"
+          - title: "CI Pipeline Reference"
+            relevance_summary: "Documents the dotnet test integration and parallel execution"
+            source_url: "https://internal.wiki/ci-pipeline"
+            capture_date: "2026-04-01"
+            archive_path: "/tmp/test-archive/ci-pipeline.md"
+
+  researcher:
+    - content:
+        decision: "sufficient"
+        rationale: "The archive contains comprehensive coverage of the testing stack (xUnit, Shouldly, NSubstitute) and CI integration. No material gaps remain."
+        findings: "# Research Findings\n\n## Testing Frameworks\n\nThe project uses xUnit with Shouldly assertions and NSubstitute for mocking. CI runs via dotnet test with parallel execution enabled.\n\n### Sources\n- Testing Strategy Guide (https://internal.wiki/testing-strategy, captured 2026-03-15)\n- CI Pipeline Reference (https://internal.wiki/ci-pipeline, captured 2026-04-01)"
+        gaps: []
+
+expected_trace:
+  agents_executed:
+    - research_assistant
+    - researcher
+  reached_terminal: true
