@@ -187,7 +187,7 @@ foreach ($typeName in $typeNames) {
 }
 
 # ── Check 10: Prompt file reference exists ───────────────────────────────
-if ($content -match '!file\s+prompts/research-assistant\.md') {
+if ($content -match '!file\s+(\.\.\/)?prompts/research-assistant\.md') {
     $promptPath = Join-Path $repoRoot 'prompts' 'research-assistant.md'
     if (-not (Test-Path $promptPath)) {
         $violations += [PSCustomObject]@{
@@ -198,7 +198,7 @@ if ($content -match '!file\s+prompts/research-assistant\.md') {
 } else {
     $violations += [PSCustomObject]@{
         Rule   = 'no-prompt-file-reference'
-        Detail = "research_assistant should reference prompt via !file prompts/research-assistant.md"
+        Detail = "research_assistant should reference prompt via !file ../prompts/research-assistant.md"
     }
 }
 

@@ -1,15 +1,16 @@
 # research_happy_path — end-to-end scenario for research.yaml.
 #
-# Drives research.yaml through the full pipeline with a scripted
-# research_assistant agent that returns two findings. The validate_input
-# and scan_archive script nodes run via the .NET shim; the agent output
-# is scripted via FakeProvider.
+# Drives research.yaml through the full pipeline with scripted
+# research_assistant and researcher agents. The validate_input,
+# scan_archive, and write_findings script nodes run via the .NET shim;
+# agent outputs are scripted via FakeProvider.
 #
 # Proves:
-#   1. The four-step pipeline (validate → scan → agent → write) routes
-#      correctly through to $end.
-#   2. The research_assistant agent is invoked exactly once.
-#   3. The workflow reaches terminal successfully.
+#   1. The five-step pipeline (validate → scan → assistant → researcher
+#      → write) routes correctly through to $end.
+#   2. Both the research_assistant and researcher agents are invoked.
+#   3. The researcher judges findings sufficient (no escalation).
+#   4. The workflow reaches terminal successfully.
 
 workflow: .conductor/registry/workflows/research.yaml
 
@@ -79,7 +80,15 @@ agent_scripts:
             capture_date: "2026-02-20"
             archive_path: "/mock/kept-archive/structured-logging-dotnet.md"
 
+  researcher:
+    - content:
+        decision: "sufficient"
+        rationale: "The archive contains two directly relevant articles covering Serilog configuration and structured logging best practices in .NET. Together they provide comprehensive guidance on sink configuration, enrichers, message templates, and framework comparison. No material gaps remain — the architect has enough context to proceed with implementation."
+        findings: "# Research Findings: Structured Logging in .NET\n\n## Serilog Configuration\n\nThe archive contains a comprehensive guide to Serilog setup covering sink configuration, enrichers, and message templates for structured logging in .NET applications.\n\n**Source:** https://example.com/serilog-guide (captured 2026-01-15)\n\n## Best Practices\n\nA comparison of logging frameworks with recommendations for production deployments, covering structured logging patterns across the .NET ecosystem.\n\n**Source:** https://example.com/structured-logging-dotnet (captured 2026-02-20)"
+        gaps: []
+
 expected_trace:
   agents_executed:
     - research_assistant
+    - researcher
   reached_terminal: true
