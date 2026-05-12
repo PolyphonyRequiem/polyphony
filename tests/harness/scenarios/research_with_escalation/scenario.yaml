@@ -1,0 +1,67 @@
+# research_with_escalation — researcher escalates, deep-researcher runs,
+# researcher re-evaluates and judges sufficient on second pass.
+#
+# Exercises the escalation path through research.yaml:
+#   1. validate_input → scan_archive → research_assistant (first pass)
+#   2. researcher: judges "escalate" — gaps identified
+#   3. escalation_counter: count=1, cap_reached=false
+#   4. deep_researcher: extended research addressing gaps
+#   5. researcher: re-evaluates with combined findings, judges "sufficient"
+#   6. write_findings: writes synthesized findings to scratch
+#
+# Proves: the escalation loop works end-to-end, the deep_researcher
+# runs only on escalation, the researcher sees deep_researcher output
+# on re-entry, and the escalation counter increments correctly.
+
+workflow: .conductor/registry/workflows/research.yaml
+
+inputs:
+  work_item_id: 99002
+  topic: "What is the deprecation timeline for Ubuntu 22.04 GitHub Actions runners?"
+  scratch_slug: "runner-deprecation"
+  archive_path: "/tmp/test-archive"
+  max_escalations: 2
+
+agent_scripts:
+  research_assistant:
+    - content:
+        summary: "No relevant articles found about GitHub Actions runner deprecation in the archive."
+        findings: []
+
+  researcher:
+    # First invocation: escalate (no archive coverage)
+    - content:
+        decision: "escalate"
+        rationale: "The archive has zero coverage of GitHub Actions runner lifecycle or deprecation timelines. This requires checking current GitHub documentation."
+        findings: "# Research Findings (Partial)\n\nNo relevant information found in the archive."
+        gaps:
+          - topic: "Ubuntu 22.04 runner deprecation timeline"
+            detail: "Need the official deprecation schedule from GitHub. Check github.com/actions/runner-images for announcements and issues."
+          - topic: "Migration guidance to Ubuntu 24.04"
+            detail: "Need to know what breaking changes to expect when migrating from 22.04 to 24.04 runners."
+    # Second invocation: sufficient (deep-researcher filled the gaps)
+    - content:
+        decision: "sufficient"
+        rationale: "The deep researcher found the official deprecation announcement and migration guide. Both gaps are now adequately covered."
+        findings: "# Research Findings\n\n## Ubuntu 22.04 Runner Deprecation\n\nGitHub announced deprecation of Ubuntu 22.04 runners effective 2026-08-01. Migration to 24.04 requires updating the `runs-on` field.\n\n### Sources\n- GitHub Actions Runner Images Issue #4321 (https://github.com/actions/runner-images/issues/4321, captured 2026-05-12)\n- Migration Guide (https://github.com/actions/runner-images/blob/main/docs/migrate-2404.md, captured 2026-05-12)"
+        gaps: []
+
+  deep_researcher:
+    - content:
+        findings: "# Deep Research Findings\n\n## Gap 1: Ubuntu 22.04 Runner Deprecation Timeline\n\nPer GitHub Actions Runner Images Issue #4321, Ubuntu 22.04 (ubuntu-22.04) will be deprecated on 2026-08-01.\n\n## Gap 2: Migration Guidance\n\nThe official migration guide documents three breaking changes when moving to 24.04."
+        sources:
+          - title: "Runner Images Issue #4321 - Ubuntu 22.04 deprecation"
+            url: "https://github.com/actions/runner-images/issues/4321"
+            capture_date: "2026-05-12"
+          - title: "Migration Guide - Ubuntu 22.04 to 24.04"
+            url: "https://github.com/actions/runner-images/blob/main/docs/migrate-2404.md"
+            capture_date: "2026-05-12"
+        summary: "Addressed both gaps. Found the deprecation timeline (2026-08-01) and the official migration guide with 3 documented breaking changes."
+
+expected_trace:
+  agents_executed:
+    - research_assistant
+    - researcher
+    - deep_researcher
+    - researcher
+  reached_terminal: true
