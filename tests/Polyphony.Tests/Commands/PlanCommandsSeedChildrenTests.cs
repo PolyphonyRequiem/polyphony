@@ -461,6 +461,263 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         return path;
     }
 
+    // Pair helper for the sidecar-fallback tests (AB#3106 dogfood,
+    // 2026-05-12). Writes a children-json sidecar to a fresh temp dir and
+    // returns the absolute path the test can pass via --children-file.
+    private static string WriteTempChildrenSidecar(string contents)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"polyphony-sidecar-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "plan.children.json");
+        File.WriteAllText(path, contents);
+        return path;
+    }
+
+    // ---- Sidecar-fallback resolution (AB#3106 dogfood, 2026-05-12) ----
+    //
+    // The architect emits children in workflow-runtime context only. On
+    // re-entry (state_detector(awaiting_review|merged_unseeded) → seeder)
+    // the CLI arg is empty. The verb's contract: fall back to the
+    // children-json sidecar that write-plan committed alongside the plan
+    // markdown. Tests pin down the resolution order, error envelopes, and
+    // defensive extraction promised by the design.
+
+    [Fact]
+    public async Task SeedChildren_SidecarFallback_ConsumesSidecarChildren()
+    {
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 200);
+        StubShowParent(runner, 200, tagsField: "");
+        StubPatchOk(runner);
+        StubCreateChild(runner, 9001);
+
+        var sidecar = WriteTempChildrenSidecar(
+            """[{"child_id":"task-1","title":"From sidecar","type":"Task","description":"x"}]""");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(200, "", "polyphony:planned", "", ".polyphony-config", sidecar));
+            exit.ShouldBe(ExitCodes.Success);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.WorkItemId.ShouldBe(200);
+            result.ChildCount.ShouldBe(1);
+            result.SeededCount.ShouldBe(1);
+            result.ErrorCount.ShouldBe(0);
+            result.PlannedTagSet.ShouldBeTrue();
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(sidecar)!, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_CliWinsOverSidecar()
+    {
+        // Both CLI --children-json and sidecar are present. CLI must win
+        // (resolution order #1) — the sidecar's child_id must NOT appear.
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 201);
+        StubShowParent(runner, 201, tagsField: "");
+        StubPatchOk(runner);
+        StubCreateChild(runner, 9002);
+
+        var sidecar = WriteTempChildrenSidecar(
+            """[{"child_id":"sidecar-only","title":"Sidecar","type":"Task"}]""");
+        try
+        {
+            var cli = """[{"child_id":"cli-only","title":"CLI","type":"Task"}]""";
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(201, cli, "polyphony:planned", "", ".polyphony-config", sidecar));
+            exit.ShouldBe(ExitCodes.Success);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ChildCount.ShouldBe(1);
+            result.SeededCount.ShouldBe(1);
+            // Verify the seeded child came from CLI, not sidecar.
+            var newCall = runner.Invocations.First(i =>
+                i.Executable == "twig" && i.Arguments.Contains("new"));
+            string.Join(" ", newCall.Arguments).ShouldContain("CLI");
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(sidecar)!, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_SidecarMalformedJson_RoutesError()
+    {
+        var (cmd, _) = CreateCommand();
+        var sidecar = WriteTempChildrenSidecar("[not valid json");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(202, "", "polyphony:planned", "", ".polyphony-config", sidecar));
+            exit.ShouldBe(ExitCodes.ConfigError);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ErrorCount.ShouldBe(1);
+            result.Errors[0].Error.ShouldContain("sidecar");
+            result.Errors[0].Error.ShouldContain("not valid JSON");
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(sidecar)!, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_CliExplicitNull_RejectedAsNonArray()
+    {
+        // Rubber-duck #3 (AB#3106 dogfood, 2026-05-12): explicit `null` on
+        // the CLI must be rejected with the same shape as on write-plan.
+        var (cmd, _) = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(220, "null"));
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(1);
+        result.Errors[0].Error.ShouldContain("got null");
+    }
+
+    [Fact]
+    public async Task SeedChildren_SidecarExplicitNull_RejectedAsNonArray()
+    {
+        // Same as CLI but for the sidecar branch — a hand-edited sidecar
+        // holding `null` shouldn't masquerade as "skipped".
+        var (cmd, _) = CreateCommand();
+        var sidecar = WriteTempChildrenSidecar("null");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(221, "", "polyphony:planned", "", ".polyphony-config", sidecar));
+            exit.ShouldBe(ExitCodes.ConfigError);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ErrorCount.ShouldBe(1);
+            result.Errors[0].Error.ShouldContain("got null");
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(sidecar)!, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_SidecarNotArray_RoutesError()
+    {
+        var (cmd, _) = CreateCommand();
+        var sidecar = WriteTempChildrenSidecar("""{"not":"array"}""");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(203, "", "polyphony:planned", "", ".polyphony-config", sidecar));
+            exit.ShouldBe(ExitCodes.ConfigError);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ErrorCount.ShouldBe(1);
+            result.Errors[0].Error.ShouldContain("must contain a JSON array");
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(sidecar)!, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_SidecarEmpty_NoApexFacets_RoutesError_WithSidecarDiagnostic()
+    {
+        // Sidecar exists but is empty array AND no apex_facets → refusal,
+        // but the message must name the sidecar so the operator knows
+        // what's actually missing (vs the no-source case).
+        var (cmd, _) = CreateCommand();
+        var sidecar = WriteTempChildrenSidecar("[]");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(204, "", "polyphony:planned", "", ".polyphony-config", sidecar));
+            exit.ShouldBe(ExitCodes.ConfigError);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ErrorCount.ShouldBe(1);
+            result.Errors[0].Error.ShouldContain("sidecar");
+            result.Errors[0].Error.ShouldContain("empty array");
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(sidecar)!, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_NoCliNoSidecar_NoApexFacets_RoutesError_WithNoSourceDiagnostic()
+    {
+        // No CLI, no sidecar (childrenFile points nowhere), no
+        // apex_facets → refusal with the "no source" diagnostic. Differs
+        // from the empty-sidecar case in the wording so operators can tell
+        // them apart.
+        var (cmd, _) = CreateCommand();
+        var nonexistent = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json");
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.SeedChildren(205, "", "polyphony:planned", "", ".polyphony-config", nonexistent));
+        exit.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+        result.ErrorCount.ShouldBe(1);
+        result.Errors[0].Error.ShouldContain("no children-json was supplied");
+    }
+
+    [Fact]
+    public async Task SeedChildren_SidecarChildren_PlusApexFacets_MutuallyExclusive()
+    {
+        // Same mutual-exclusion rule as CLI children + apex_facets — the
+        // sidecar shouldn't be a back door around it.
+        var (cmd, _) = CreateCommand();
+        var planFile = WriteTempPlanFile(206, "---\napex_facets: [implementable]\n---\n");
+        var sidecar = WriteTempChildrenSidecar(
+            """[{"child_id":"x","title":"X","type":"Task"}]""");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(206, "", "polyphony:planned", planFile, ".polyphony-config", sidecar));
+            exit.ShouldBe(ExitCodes.ConfigError);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ErrorCount.ShouldBe(1);
+            result.Errors[0].Error.ShouldContain("mutually exclusive");
+        }
+        finally
+        {
+            File.Delete(planFile);
+            try { Directory.Delete(Path.GetDirectoryName(sidecar)!, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task SeedChildren_SidecarChildWithNumericTitle_RoutesPerChildSeedError()
+    {
+        // Defensive extraction (TryReadStringField). A hand-edited or
+        // architect-broken sidecar with a non-string field must NOT crash
+        // the verb out of the loop — it must surface as a per-child
+        // SeedError with the rest of the children still processed (or, when
+        // it's the only child, an error envelope with PlannedTag NOT set).
+        var (cmd, runner) = CreateCommand();
+        StubShowTreeNoChildren(runner, 207);
+        StubShowParent(runner, 207, tagsField: "");
+
+        var sidecar = WriteTempChildrenSidecar(
+            """[{"child_id":"c1","title":42,"type":"Task"}]""");
+        try
+        {
+            var (exit, output) = await CaptureConsoleAsync(
+                () => cmd.SeedChildren(207, "", "polyphony:planned", "", ".polyphony-config", sidecar));
+            // Verb completes (no crash). Per-child error in envelope.
+            exit.ShouldBe(ExitCodes.Success);
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
+            result.ErrorCount.ShouldBeGreaterThan(0);
+            result.SeededCount.ShouldBe(0);
+            result.Errors[0].Error.ShouldContain("title or type");
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(sidecar)!, recursive: true); } catch { }
+        }
+    }
+
     // ---- ExtractCreatedId hardening (AB#3071 dogfood, 2026-05-10) ----
     //
     // Six children seeded successfully into ADO but the seeder emitted

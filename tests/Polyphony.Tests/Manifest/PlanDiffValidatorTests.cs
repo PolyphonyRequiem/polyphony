@@ -323,6 +323,104 @@ public sealed class PlanDiffValidatorTests
         result.ParentPlanFiles.Count.ShouldBe(1);
     }
 
+    // ---- Children-json sidecar bucketing (AB#3106 dogfood, 2026-05-12) ----
+    //
+    // The sidecar at plans/plan-{id}.children.json is a sibling artifact
+    // of plans/plan-{id}.md and must be classified into the same bucket
+    // as its plan markdown (self/parent/ancestor). Otherwise a child plan
+    // PR could touch its parent's sidecar undetected — leaking the
+    // architect's children map across plan boundaries.
+
+    private const string SelfSidecar = "plans/plan-1234.children.json";
+    private const string ParentSidecar = "plans/plan-1000.children.json";
+
+    [Fact]
+    public void SelfSidecarOnly_IsOk()
+    {
+        var result = PlanDiffValidator.Check(
+            changedPaths: new[] { SelfSidecar },
+            selfPlanFile: SelfPlan,
+            parentPlanFile: ParentPlan,
+            ancestorPlanFiles: Array.Empty<string>(),
+            requestsParentChange: false,
+            frontMatterStatus: FrontMatterStatus.Absent);
+
+        result.Severity.ShouldBe(ValidationSeverity.None);
+        result.Code.ShouldBe("ok");
+        result.SelfPlanFiles.ShouldBe(new[] { SelfSidecar });
+    }
+
+    [Fact]
+    public void SelfPlanAndSelfSidecar_BothInSelfBucket()
+    {
+        var result = PlanDiffValidator.Check(
+            changedPaths: new[] { SelfPlan, SelfSidecar },
+            selfPlanFile: SelfPlan,
+            parentPlanFile: ParentPlan,
+            ancestorPlanFiles: Array.Empty<string>(),
+            requestsParentChange: false,
+            frontMatterStatus: FrontMatterStatus.Absent);
+
+        result.Severity.ShouldBe(ValidationSeverity.None);
+        result.Code.ShouldBe("ok");
+        result.SelfPlanFiles.ShouldBe(new[] { SelfPlan, SelfSidecar });
+    }
+
+    [Fact]
+    public void ChildTouchedParentSidecar_IsBlocking_ChildTouchedParent()
+    {
+        // The whole point of the sidecar bucketing: a child PR that
+        // touches its parent's sidecar is the same violation as touching
+        // the parent's .md. Without sidecar bucketing this would land in
+        // OtherFiles and slip past the merge guard.
+        var result = PlanDiffValidator.Check(
+            changedPaths: new[] { SelfPlan, ParentSidecar },
+            selfPlanFile: SelfPlan,
+            parentPlanFile: ParentPlan,
+            ancestorPlanFiles: Array.Empty<string>(),
+            requestsParentChange: false,
+            frontMatterStatus: FrontMatterStatus.Present);
+
+        result.Severity.ShouldBe(ValidationSeverity.Blocking);
+        result.Code.ShouldBe("child_touched_parent_plan");
+        result.ParentPlanFiles.ShouldBe(new[] { ParentSidecar });
+        result.SelfPlanFiles.ShouldBe(new[] { SelfPlan });
+    }
+
+    [Fact]
+    public void ParentSidecarWithFlag_AndPresentFrontMatter_IsOk()
+    {
+        var result = PlanDiffValidator.Check(
+            changedPaths: new[] { SelfPlan, ParentSidecar },
+            selfPlanFile: SelfPlan,
+            parentPlanFile: ParentPlan,
+            ancestorPlanFiles: Array.Empty<string>(),
+            requestsParentChange: true,
+            frontMatterStatus: FrontMatterStatus.Present);
+
+        result.Severity.ShouldBe(ValidationSeverity.None);
+        result.Code.ShouldBe("ok");
+        result.ParentPlanFiles.ShouldBe(new[] { ParentSidecar });
+    }
+
+    [Fact]
+    public void ChildTouchedAncestorSidecar_IsBlocking_ChildTouchedAncestor()
+    {
+        const string ancestorPlan = "plans/plan-100.md";
+        const string ancestorSidecar = "plans/plan-100.children.json";
+        var result = PlanDiffValidator.Check(
+            changedPaths: new[] { SelfPlan, ancestorSidecar },
+            selfPlanFile: SelfPlan,
+            parentPlanFile: ParentPlan,
+            ancestorPlanFiles: new[] { ancestorPlan },
+            requestsParentChange: true,
+            frontMatterStatus: FrontMatterStatus.Present);
+
+        result.Severity.ShouldBe(ValidationSeverity.Blocking);
+        result.Code.ShouldBe("child_touched_ancestor_plan");
+        result.AncestorPlanFiles.ShouldBe(new[] { ancestorSidecar });
+    }
+
     [Fact]
     public void EmptyBucketsUseArrayEmpty_NotNull()
     {
