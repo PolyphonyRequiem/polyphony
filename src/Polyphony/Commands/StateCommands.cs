@@ -68,6 +68,12 @@ public sealed partial class StateCommands(
                 await CheckGitRepoAsync(ct).ConfigureAwait(false),
                 await CheckTwigCliAsync(ct).ConfigureAwait(false),
                 CheckPolyphonyCli(),
+                // bare_repo: required as of AB#3085 (per-run-worktree epic). The
+                // launcher writes per-run worktree paths under
+                // {runs_root}/apex-{N}/, which only resolves correctly when the
+                // shared gitdir is bare. scripts/Migrate-ToBareRepo.ps1 is the
+                // operator-facing migration tool.
+                await CheckBareRepoAsync(ct).ConfigureAwait(false),
             };
 
             var versionCheck = TryCheckPolyphonyVersion(workflowYaml, requiredVersion);
@@ -156,18 +162,18 @@ public sealed partial class StateCommands(
                 required.Add(versionCheck);
             }
 
+            // bare_repo is required as of AB#3085 (per-run-worktree epic). The
+            // launcher writes per-run worktree paths under {runs_root}/apex-{N}/,
+            // which only resolves correctly when the shared gitdir is bare.
+            // Operators on the legacy non-bare layout should run
+            // scripts/Migrate-ToBareRepo.ps1 (AB#3097) before invoking the SDLC.
+            required.Add(await CheckBareRepoAsync(ct).ConfigureAwait(false));
+
             var advisory = new List<PreflightCheck>
             {
                 await CheckGhAuthAsync(ct).ConfigureAwait(false),
                 CheckPolyphonyCli(),
                 await CheckDotnetSdkAsync(ct).ConfigureAwait(false),
-                // bare_repo: ADVISORY for now — flip to required (and add to
-                // PreflightLite) once scripts/Migrate-ToBareRepo.ps1 (PR 2 of
-                // the AB#3085 stack) ships and operators have migrated.
-                // Required-now would create a chicken-and-egg gate: every
-                // SDLC apex run would block on a layout the operator has no
-                // tooling to fix.
-                await CheckBareRepoAsync(ct).ConfigureAwait(false),
             };
 
             var failed = required.Count(c => !c.Passed);
