@@ -318,6 +318,17 @@ public sealed partial class BranchCommands(
                 }
             }
 
+            // Flush the staged terminal-state transitions to ADO in one
+            // batched push after the loop completes. `twig state` only
+            // mutates the local cache + pending queue; without this push
+            // the closures are invisible to the next reader. AB#3126:
+            // sibling-bug to next-impl — same staged-but-never-pushed
+            // failure mode at the completion edge.
+            if (closed.Count > 0)
+            {
+                await twig.SyncAsync(ct).ConfigureAwait(false);
+            }
+
             result = new BranchCloseScopeResult
             {
                 MergeGroupName = resolvedMergeGroup,

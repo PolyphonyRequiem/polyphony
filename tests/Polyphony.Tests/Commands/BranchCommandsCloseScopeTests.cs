@@ -218,6 +218,79 @@ public sealed class BranchCommandsCloseScopeTests : CommandTestBase
         output.ShouldNotContain("\"ClosedItems\"");
     }
 
+    [Fact]
+    public async Task CloseScope_BatchedTransitions_FlushesOnceAfterLoop()
+    {
+        // AB#3126 (sibling-bug to next-impl): close-scope must call
+        // `twig sync` once after all transitions to flush the staged
+        // terminal-state changes to ADO. Without this push the cluster
+        // of closures is invisible to subsequent readers.
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner, "org", "proj");
+        ExpectSetActiveAndState(runner, 200, "Done");
+        ExpectSetActiveAndState(runner, 201, "Done");
+
+        var root = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Epic").WithState("Doing");
+        var c1 = new WorkItemBuilder().WithId(200).WithType("Task").WithTitle("T1")
+            .WithState("Doing").WithTags("PG-1").WithParentId(100);
+        var c2 = new WorkItemBuilder().WithId(201).WithType("Task").WithTitle("T2")
+            .WithState("Doing").WithTags("PG-1").WithParentId(100);
+        await SeedAsync(root.Build(), c1.Build(), c2.Build());
+
+        await CaptureConsoleAsync(() => cmd.CloseScope(workItem: 100, pgName: "PG-1"));
+
+        // Find the index of the LAST `twig state Done` invocation; the
+        // post-loop flush must come after it.
+        var lastStateIdx = -1;
+        for (var i = 0; i < runner.Invocations.Count; i++)
+        {
+            var inv = runner.Invocations[i];
+            if (inv.Executable == "twig"
+                && inv.Arguments.Count >= 2
+                && inv.Arguments[0] == "state"
+                && inv.Arguments[1] == "Done")
+            {
+                lastStateIdx = i;
+            }
+        }
+        lastStateIdx.ShouldBeGreaterThan(-1, "expected at least one twig state Done invocation");
+
+        var postLoopSync = runner.Invocations
+            .Select((inv, idx) => (inv, idx))
+            .FirstOrDefault(x => x.idx > lastStateIdx
+                && x.inv.Executable == "twig"
+                && x.inv.Arguments.Count >= 1
+                && x.inv.Arguments[0] == "sync");
+
+        postLoopSync.inv.ShouldNotBeNull(
+            "close-scope must invoke `twig sync` after the transition loop to flush staged closures (AB#3126)");
+    }
+
+    [Fact]
+    public async Task CloseScope_NoTransitions_DoesNotFlush()
+    {
+        // Belt-and-suspenders: when nothing transitioned (all items already
+        // terminal), the post-loop flush is skipped — no need to push an
+        // empty change set.
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner, "org", "proj");
+
+        var root = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Epic").WithState("Doing");
+        var done = new WorkItemBuilder().WithId(200).WithType("Task").WithTitle("Already done")
+            .WithState("Done").WithTags("PG-1").WithParentId(100);
+        await SeedAsync(root.Build(), done.Build());
+
+        await CaptureConsoleAsync(() => cmd.CloseScope(workItem: 100, pgName: "PG-1"));
+
+        // Exactly one `twig sync` (the start-of-verb sync). No second sync
+        // because the loop made no transitions.
+        var syncCount = runner.Invocations.Count(i =>
+            i.Executable == "twig" && i.Arguments.Count >= 1 && i.Arguments[0] == "sync");
+        syncCount.ShouldBe(1);
+    }
+
     private static BranchCloseScopeResult Deserialize(string output)
         => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchCloseScopeResult)
             ?? throw new InvalidOperationException("Failed to deserialize close-scope output");

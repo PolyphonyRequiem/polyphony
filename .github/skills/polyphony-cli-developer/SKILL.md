@@ -262,6 +262,105 @@ case must fail loudly rather than silently fall through.
 
 ---
 
+## State-mutation durability — when ADO must hold transition X
+
+Sister-pattern to "post-condition verification" above, but for ADO work-item
+state rather than git remotes. `twig` mutations (`twig state`, `twig note`,
+`twig update`) **stage** the change in twig's local cache + pending queue —
+they do NOT push to ADO. The push happens on the next `twig sync` (push +
+pull) or `twig save` (push only).
+
+This matters whenever a verb's **caller** is going to read fresh ADO state
+in a subsequent process — e.g. a workflow step that calls
+`polyphony validate` (which reads from `IWorkItemRepository` without
+syncing) right after a step that called `polyphony branch next-impl`.
+Without an explicit flush in `next-impl`, validate sees the pre-mutation
+state and refuses transitions whose precondition the staged change would
+have satisfied. AB#3126 was exactly this pattern.
+
+### The contract
+
+Verbs that mutate ADO state via `ITwigClient.SetStateAsync` /
+`PatchFieldsAsync` / `AddNoteAsync` and whose callers need that mutation
+to be visible to a different process **MUST** flush via
+`twig.SyncAsync(ct)` before returning:
+
+```csharp
+await twig.SetActiveAsync(workItemId, ct).ConfigureAwait(false);
+await twig.SetStateAsync(targetState, ct).ConfigureAwait(false);
+
+// Flush the staged transition to ADO before returning. Without this,
+// the change is invisible to any subsequent process that reads cache
+// directly (e.g. polyphony validate) without first calling sync.
+await twig.SyncAsync(ct).ConfigureAwait(false);
+```
+
+For verbs that batch multiple mutations in a loop, do **one** post-loop
+sync rather than syncing per item — `twig sync` flushes all dirty items
+in a single ADO round-trip. Guard with a `count > 0` check so an empty
+loop doesn't trigger an unnecessary push:
+
+```csharp
+foreach (var item in items)
+{
+    await twig.SetStateAsync(...).ConfigureAwait(false);
+    closed.Add(...);
+}
+
+if (closed.Count > 0)
+{
+    await twig.SyncAsync(ct).ConfigureAwait(false);
+}
+```
+
+### Workflow scripts have the same hazard
+
+PowerShell `script` nodes in workflow YAML that call `twig state` or
+`twig note` and then read fresh state in the same script (or hand off to
+another step that reads fresh state) need an explicit `twig sync;` between
+the mutation and the next reader. The `primary_completer` script in
+`implement-merge-group.yaml` is the canonical pattern: pre-validate sync,
+mutate, post-mutate sync, with `$ErrorActionPreference = 'Stop'` and
+`$PSNativeCommandUseErrorActionPreference = $true` so a failed sync halts
+the script rather than silently propagating stale state.
+
+### Why not just sync at the start of every verb?
+
+Most verbs already do this (`SyncAsync` at the top of the try block),
+which protects them from stale **input** state. The bug class addressed
+here is the symmetric output side: stale state visible to the **next**
+process. Both syncs are needed for end-to-end durability across a
+multi-process workflow.
+
+### Tests
+
+Use `runner.Invocations` to assert the call sequence in `FakeProcessRunner`-
+backed tests:
+
+```csharp
+var stateIdx = runner.Invocations.ToList().FindIndex(
+    i => i.Executable == "twig"
+        && i.Arguments.Count >= 2
+        && i.Arguments[0] == "state"
+        && i.Arguments[1] == "Doing");
+
+var postStateSync = runner.Invocations
+    .Select((inv, idx) => (inv, idx))
+    .FirstOrDefault(x => x.idx > stateIdx
+        && x.inv.Executable == "twig"
+        && x.inv.Arguments.Count >= 1
+        && x.inv.Arguments[0] == "sync");
+
+postStateSync.inv.ShouldNotBeNull(
+    "verb must invoke `twig sync` after `twig state` to flush the staged transition");
+```
+
+See `BranchCommandsNextImplTests.NextImpl_HappyPath_FlushesStagedTransitionAfterSetState`
+and `BranchCommandsCloseScopeTests.CloseScope_BatchedTransitions_FlushesOnceAfterLoop`
+for canonical examples.
+
+---
+
 ## Test scaffolding
 
 ### `CommandTestBase` (`tests/Polyphony.Tests/Commands/CommandTestBase.cs`)
