@@ -231,10 +231,30 @@ try {
             exit 0
         }
         'monitoring' {
-            $envelope.success = $true
-            $envelope.lifecycle_workflow = 'monitoring'
-            Write-Envelope $envelope
-            exit 0
+            # 'monitoring' originally short-circuited to the no-op terminal,
+            # but the plan/action/impl lifecycle sub-workflows are designed to
+            # be idempotent and resumable on existing in-flight artifacts
+            # (e.g. plan-level can resume on an OPEN plan PR and drive it
+            # through its review+merge phases, especially under unattended
+            # policy with review_wait_mode=auto). When the fulfilling kinds
+            # are ones a lifecycle workflow CAN drive forward, fall through
+            # to classification and re-enter the right lifecycle. Only stay
+            # in monitoring when fulfilling kinds are purely external
+            # (item_satisfied rolled up from children, or unrecognized).
+            $dispatchableFulfilling = @($envelope.fulfilling_kinds | Where-Object {
+                $_ -in @('plan_authored','plan_reviewed','plan_promoted','children_seeded',
+                         'action_satisfied','evidence_accepted','implementation_merged')
+            })
+            if ($dispatchableFulfilling.Count -eq 0) {
+                $envelope.success = $true
+                $envelope.lifecycle_workflow = 'monitoring'
+                Write-Envelope $envelope
+                exit 0
+            }
+            # Fall through to classification, treating the fulfilling kinds
+            # as the dispatch source. This is the "drive an in-flight PR
+            # through merge" path — without it, an open plan PR stalls the
+            # apex driver indefinitely (decision=blocked, iterations=1).
         }
         'blocked' {
             $envelope.success = $true
@@ -260,6 +280,17 @@ try {
     }
 
     # Classification: pick the lifecycle workflow from the ready kinds.
+    # When status='monitoring' fell through (above), next_kinds is empty
+    # and the classification source is fulfilling_kinds — the kinds that
+    # are observably in-flight and that a lifecycle workflow can drive
+    # forward via its idempotent resume path (e.g. plan-level on an OPEN
+    # plan PR).
+    $classifySource = if ($envelope.next_kinds.Count -gt 0) {
+        $envelope.next_kinds
+    } else {
+        $envelope.fulfilling_kinds
+    }
+
     # Order matters when a multi-facet item has more than one ready kind:
     #   1. planning kinds win (plan-level always sequences before action/impl)
     #   2. actionable kinds next (action-evidence before implementation)
@@ -272,10 +303,10 @@ try {
     $implKinds = @('implementation_merged')
     $terminalKinds = @('item_satisfied')
 
-    $hasPlanReady = @($envelope.next_kinds | Where-Object { $planKinds -contains $_ }).Count -gt 0
-    $hasActionReady = @($envelope.next_kinds | Where-Object { $actionKinds -contains $_ }).Count -gt 0
-    $hasImplReady = @($envelope.next_kinds | Where-Object { $implKinds -contains $_ }).Count -gt 0
-    $hasTerminalReady = @($envelope.next_kinds | Where-Object { $terminalKinds -contains $_ }).Count -gt 0
+    $hasPlanReady = @($classifySource | Where-Object { $planKinds -contains $_ }).Count -gt 0
+    $hasActionReady = @($classifySource | Where-Object { $actionKinds -contains $_ }).Count -gt 0
+    $hasImplReady = @($classifySource | Where-Object { $implKinds -contains $_ }).Count -gt 0
+    $hasTerminalReady = @($classifySource | Where-Object { $terminalKinds -contains $_ }).Count -gt 0
 
     if ($hasPlanReady) {
         $envelope.success = $true
@@ -327,7 +358,7 @@ try {
     }
     else {
         $envelope.error_code = 'classification_indeterminate'
-        $envelope.error_message = "dispatchable item with no recognized ready kinds (next=$($envelope.next_kinds -join ','))"
+        $envelope.error_message = "dispatchable item with no recognized ready kinds (next=$($envelope.next_kinds -join ','); fulfilling=$($envelope.fulfilling_kinds -join ','))"
     }
 
     Write-Envelope $envelope
