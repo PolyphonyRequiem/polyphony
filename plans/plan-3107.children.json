@@ -1,0 +1,99 @@
+[
+  {
+    "acceptance_criteria": [
+      "\u0060research:\u0060 block schema defined and documented in the profile.yaml docs.",
+      "Validator rejects malformed \u0060research:\u0060 blocks with actionable error messages.",
+      "A storage abstraction exists that can target a sibling research repo on either GitHub or ADO without code changes per repo.",
+      "Unit tests cover schema validation and storage-abstraction selection per platform combination.",
+      "A fresh repo can opt in by adding only the \u0060research:\u0060 block \u2014 no code changes required."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Establish the foundation other phases stand on.\n\n**Scope**\n- Define and validate a new \u0060research:\u0060 block in [.polyphony-config/profile.yaml](.polyphony-config/profile.yaml) declaring the archive repo, branch, and auth.\n- Build a cross-platform research-storage abstraction that reuses polyphony\u0027s existing platform-router pattern so source-on-ADO \u2194 research-on-GitHub (and vice versa) is at least architecturally supported.\n- Surface clear schema validation errors when the block is missing/malformed.\n\n**Out of scope**\n- Any agent logic (assistant/researcher/archivist) \u2014 that is Issues 2\u20134.\n- Cross-platform proof-by-demo (Stretch on the Epic).\n\n**Notes for planner**\n- Look at the existing platform-router pattern before designing; do not invent a parallel abstraction.\n- Keep the schema minimal but extensible (future fields for archive metadata).",
+    "pg": "pg-1",
+    "title": "Research storage abstraction \u0026 \u0060research:\u0060 profile block",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "A research sub-workflow is registered and invocable from a parent architect workflow.",
+      "\u0060research-assistant\u0060 agent reads the kept-archive and emits a structured findings document with citations (source URL \u002B capture date).",
+      "Findings are written to scratch under \u0060research/scratch/\u003Crun-id\u003E/\u0060 on the feature branch.",
+      "Workflow can be exercised end-to-end with a mocked archive in tests.",
+      "Citations include source URL and capture date (Minimum bar)."
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Stand up the research sub-workflow and the lightweight first-pass agent.\n\n**Scope**\n- New conductor sub-workflow under [.conductor/registry/workflows/](.conductor/registry/workflows/) that any architect can invoke.\n- \u0060research-assistant\u0060 agent: lightweight model, archive-only first pass; surfaces relevant articles already in the kept-archive.\n- Scratch storage on the feature branch under \u0060research/scratch/\u003Crun-id\u003E/\u0060 (pruning belongs to architect-integration / close-out, not this Issue).\n- Findings document format that downstream architects can consume.\n\n**Out of scope**\n- Sufficiency judgement and escalation \u2014 Issue 3.\n- Curation/keep decisions \u2014 Issue 4.\n- Architect-side \u0060research_needs\u0060 emission and loop-back routing \u2014 Issue 5.",
+    "pg": "pg-2",
+    "title": "Research sub-workflow \u0026 \u0060research-assistant\u0060 agent",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060researcher\u0060 agent makes an explicit sufficient/escalate decision on each pass with a recorded rationale.",
+      "\u0060deep-researcher\u0060 agent runs only on escalation and has access to the extended toolset.",
+      "Escalation is bounded (no unbounded loop) and the bound is configurable or documented.",
+      "Tests cover both the no-escalation and escalation paths."
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-2"
+    ],
+    "description": "Layer the cost-tiered escalation on top of the assistant first pass.\n\n**Scope**\n- \u0060researcher\u0060 agent: judges whether the assistant\u0027s findings answer the research_needs; orchestrates escalation when not.\n- \u0060deep-researcher\u0060 agent: extended tools (web search, GitHub search, MCP-provided integrations); invoked only when the researcher escalates.\n- Bounded escalation policy so the pipeline cannot loop indefinitely.\n\n**Out of scope**\n- Curation decisions (archivist) \u2014 Issue 4.\n- Integrating the pipeline into the architect loop \u2014 Issue 5.",
+    "pg": "pg-2",
+    "title": "\u0060researcher\u0060 sufficiency check \u0026 \u0060deep-researcher\u0060 escalation",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060archivist\u0060 runs at the end of each research sub-workflow invocation.",
+      "Each scratch article receives a recorded keep / discard / expand decision with rationale.",
+      "Kept articles are written into the configured sibling research repo via the storage abstraction from Issue 1.",
+      "Tests cover all three decisions and the sibling-repo write path."
+    ],
+    "child_id": "task-4",
+    "depends_on": [
+      "task-3"
+    ],
+    "description": "Add the curation step that runs at the end of every research pass.\n\n**Scope**\n- \u0060archivist\u0060 agent: decides keep / discard / expand for each scratch article, judging relevance to domain, codebase, technology stacks, ecosystem, and linkability.\n- Sibling-repo writer that graduates kept articles into the configured research repo as Obsidian-friendly markdown.\n- Hand-off contract for scratch lifecycle (creation in Issue 2; pruning at apex close in Issue 5 or as a follow-on).\n\n**Out of scope**\n- Johnny-Decimal numbering, Obsidian polish, INDEX.md maintenance \u2014 Issue 6.\n- Architect-side wiring \u2014 Issue 5.",
+    "pg": "pg-3",
+    "title": "\u0060archivist\u0060 curation pass \u2014 keep / discard / expand",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "Architects can emit a structured \u0060research_needs\u0060 block as part of their normal output.",
+      "Workflow routing detects \u0060research_needs\u0060, invokes the research sub-workflow, and re-enters the same architect with the findings document available.",
+      "Research output bypasses the plan-review gate (verified by workflow tests).",
+      "End-to-end demo: an architect declares \u0060research_needs\u0060, receives synthesized findings, and produces a refined plan in its next iteration.",
+      "Loop is bounded so a misbehaving architect cannot trigger infinite research cycles."
+    ],
+    "child_id": "task-5",
+    "depends_on": [
+      "task-2"
+    ],
+    "description": "Wire the subsystem into the existing planning workflows so any architect at any depth can request research and resume.\n\n**Scope**\n- Architect prompt / output schema gains a structured \u0060research_needs\u0060 field.\n- Routing in the relevant workflows under [.conductor/registry/workflows/](.conductor/registry/workflows/) so when an architect emits \u0060research_needs\u0060, the research sub-workflow runs and its output feeds the architect\u0027s next iteration **without** going through the plan-review gate.\n- Apex close-out wires scratch pruning under \u0060research/scratch/\u003Crun-id\u003E/\u0060 (Stretch unless trivially tucked in).\n- End-to-end demo on a real planning iteration (this Epic\u0027s own children may serve, after the subsystem exists).\n\n**Out of scope**\n- Wiki polish \u2014 Issue 6.\n- Cross-platform proof \u2014 Stretch.",
+    "pg": "pg-4",
+    "title": "Architect integration: \u0060research_needs\u0060 emission \u0026 review-bypass loop",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "New kept articles receive a Johnny-Decimal ID and conform to the documented Obsidian frontmatter / wiki-link conventions.",
+      "\u0060INDEX.md\u0060 is updated atomically with each keep/expand decision.",
+      "Citations include a freshness signal in addition to URL \u002B capture date (Stretch \u2014 document if deferred).",
+      "A short README in the research repo explains the JD scheme and Obsidian conventions."
+    ],
+    "child_id": "task-6",
+    "depends_on": [
+      "task-4"
+    ],
+    "description": "Tighten the kept-archive into a discoverable wiki. Most items here are Stretch on the Epic; deliver what fits.\n\n**Scope**\n- Johnny-Decimal numbering scheme for kept articles.\n- Obsidian compatibility: wiki-links, frontmatter conventions.\n- Citation rigor: at minimum URL \u002B capture date (Minimum, also covered in Issue 2); freshness signal added here as Stretch.\n- \u0060INDEX.md\u0060 maintenance: archivist updates a topical index with JD IDs and brief descriptions on each keep/expand.\n\n**Out of scope**\n- Migrating existing in-tree docs into the wiki (out of scope on the Epic).",
+    "pg": "pg-5",
+    "title": "Wiki polish: Johnny-Decimal, Obsidian, citations, \u0060INDEX.md\u0060",
+    "type": "Issue"
+  }
+]
