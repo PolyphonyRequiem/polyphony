@@ -37,6 +37,11 @@ public sealed record PolicyLoadResult
 
     /// <summary>Resolved renegotiation bubble-up policy (Phase 7 apex-driver).</summary>
     public required PolicyRenegotiationSnapshot Renegotiation { get; init; }
+
+    /// <summary>Resolved unattended-run policy (AB#3104). Three-mode bypass for
+    /// the deterministic Bucket-C human gates catalogued during the AB#3103
+    /// audit (happy-path acceptance, PR-review-wait, cap/recovery).</summary>
+    public required PolicyUnattendedSnapshot Unattended { get; init; }
 }
 
 /// <summary>
@@ -105,4 +110,24 @@ public sealed record PolicyRenegotiationSnapshot
     /// <summary>One of <c>prompt</c>, <c>auto_restart</c>, or <c>ignore</c>
     /// (the <see cref="Polyphony.Policy.RenegotiationAutoDecide"/> constants).</summary>
     public required string AutoDecide { get; init; }
+}
+
+/// <summary>
+/// Unattended-run snapshot exposed via <c>policy load</c> (AB#3104). Captures
+/// the three modes that govern Bucket-C human gates so per-gate router scripts
+/// can read <c>output.unattended.acceptance_mode</c> etc. directly.
+/// </summary>
+public sealed record PolicyUnattendedSnapshot
+{
+    /// <summary>One of the <see cref="Polyphony.Policy.UnattendedAcceptanceMode"/>
+    /// constants — controls happy-path acceptance gates.</summary>
+    public required string AcceptanceMode { get; init; }
+
+    /// <summary>One of the <see cref="Polyphony.Policy.UnattendedReviewWaitMode"/>
+    /// constants — controls PR-review-wait gates.</summary>
+    public required string ReviewWaitMode { get; init; }
+
+    /// <summary>One of the <see cref="Polyphony.Policy.UnattendedCapMode"/>
+    /// constants — controls cap-hit / recovery gates.</summary>
+    public required string CapMode { get; init; }
 }

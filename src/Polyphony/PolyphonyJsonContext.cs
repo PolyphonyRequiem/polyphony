@@ -45,6 +45,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(PolicyGuidanceSnapshot))]
 [JsonSerializable(typeof(PolicyRootFallbackSnapshot))]
 [JsonSerializable(typeof(PolicyRenegotiationSnapshot))]
+[JsonSerializable(typeof(PolicyUnattendedSnapshot))]
 [JsonSerializable(typeof(ResolvedRule))]
 [JsonSerializable(typeof(GuidanceExtractResult))]
 [JsonSerializable(typeof(BranchEnsureFeatureResult))]

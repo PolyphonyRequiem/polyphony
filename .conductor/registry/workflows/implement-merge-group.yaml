@@ -830,7 +830,7 @@ agents:
       {{ scope_guidance_loader.output.reviewer.type_refinement }}
       {% endif %}
     routes:
-      - to: user_acceptance
+      - to: user_acceptance_policy_router
         when: "{{ scope_reviewer.output.verdict == 'approved' }}"
       - to: primary_router
         when: "{{ scope_reviewer.output.verdict == 'changes_requested' }}"
@@ -838,6 +838,29 @@ agents:
       # to primary_router for another iteration rather than raising
       # `No matching route found`.
       - to: primary_router
+
+  # ── User acceptance policy router (AB#3104) ───────────────────────────
+  #
+  # Reads `policy.unattended.acceptance_mode`. When `auto`, bypasses the
+  # `user_acceptance` gate by routing directly to `pr_platform_router`
+  # (the same target the operator's "accept" option selects). When
+  # `manual` or unknown, falls through to the human gate.
+  #
+  # Invariants:
+  #   Pre:  scope_reviewer.output.verdict == 'approved'.
+  #   Post: load_policy.output.unattended.acceptance_mode is
+  #         {manual, auto} (validated by the loader).
+  - name: user_acceptance_policy_router
+    type: script
+    description: Bypass user_acceptance gate when policy.unattended.acceptance_mode=auto
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+    routes:
+      - to: pr_platform_router
+        when: "{{ user_acceptance_policy_router.output.unattended.acceptance_mode == 'auto' }}"
+      - to: user_acceptance
 
   # ── User acceptance gate ──────────────────────────────────────────────
   #

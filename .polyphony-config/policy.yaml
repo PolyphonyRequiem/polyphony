@@ -144,3 +144,41 @@ renegotiation:
   #                   requests are advisory rather than blocking.
   auto_decide: prompt
 
+unattended:
+  # ACTIVE DEFAULTS: Manual / wait / manual — every Bucket-C human gate
+  # (deterministic, non-policy gates catalogued during the AB#3103 audit)
+  # surfaces normally. Set any mode to its bypass token to opt that family
+  # of gates out of human interaction (typical for fast-track / dogfood / CI
+  # runs). See `.polyphony-config/policy-fasttrack.yaml` for the all-bypass
+  # preset.
+  #
+  # acceptance_mode (one of `manual`, `auto`):
+  #   manual — surface the happy-path acceptance gate (default).
+  #            Operator confirms accept / change-request.
+  #   auto   — auto-confirm: the gate is bypassed by routing to the
+  #            same target the operator's "accept" option would have.
+  #            Affects: user_acceptance, apex_completion_gate,
+  #            human_satisfaction_gate (the "you accept this work"
+  #            checkpoints — distinct from "the reviewer has not
+  #            yet weighed in" review-wait gates below).
+  #
+  # review_wait_mode (one of `wait`, `skip`):
+  #   wait   — surface the PR-review-wait gate when triggered (default).
+  #   skip   — keep polling the review state instead of escalating.
+  #            Affects: pending_review_gate, stuck_review_gate,
+  #            ado_stuck_review_gate, ado_pr_pending_gate,
+  #            ado_pr_changes_requested_gate.
+  #
+  # cap_mode (one of `manual`, `auto_proceed`, `auto_fail`):
+  #   manual       — surface the cap-hit gate (default).
+  #   auto_proceed — accept the current state and continue. Use when the
+  #                  cap itself is the only failure signal and the partial
+  #                  work is usable.
+  #   auto_fail    — terminate the run with a clear error. Use when cap
+  #                  firing indicates a real bug worth surfacing loudly.
+  #            Affects: revise_cap_gate, remediation_cap_gate,
+  #            pr_fix_exhausted_gate, depth_exceeded_gate, etc.
+  acceptance_mode: manual
+  review_wait_mode: wait
+  cap_mode: manual
+

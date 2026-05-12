@@ -842,7 +842,7 @@ agents:
     routes:
       - to: terminal_apex_dispatch_failures
         when: "{{ outer_loop_evaluator.output.decision == 'dispatch_failures' }}"
-      - to: apex_completion_gate
+      - to: apex_completion_gate_policy_router
         when: "{{ outer_loop_evaluator.output.decision == 'complete' }}"
       - to: terminal_apex_iteration_cap
         when: "{{ outer_loop_evaluator.output.decision == 'cap' }}"
@@ -907,7 +907,7 @@ agents:
         route: build_worklist
       - label: "✅ Override — accept the child plans, proceed to completion"
         value: override
-        route: apex_completion_gate
+        route: apex_completion_gate_policy_router
       - label: "🛑 Abort"
         value: abort
         route: terminal_apex_abandoned
@@ -1063,6 +1063,30 @@ agents:
   # ─────────────────────────────────────────────────────────────────────────
   # SECTION 3 — Apex completion gate
   # ─────────────────────────────────────────────────────────────────────────
+
+  # ── Apex completion gate policy router (AB#3104) ─────────────────────────
+  #
+  # Reads `policy.unattended.acceptance_mode` and either bypasses the
+  # apex_completion_gate (auto → close_mark_satisfied, the route the
+  # operator's "confirm" option would have selected) or falls through
+  # to the human gate.
+  #
+  # Invariants:
+  #   Pre:  outer_loop_evaluator decided `complete`.
+  #   Post: load_policy.output.unattended.acceptance_mode is
+  #         {manual, auto} (validated by the loader).
+  - name: apex_completion_gate_policy_router
+    type: script
+    description: Bypass apex_completion_gate when policy.unattended.acceptance_mode=auto
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+    routes:
+      - to: close_mark_satisfied
+        when: "{{ apex_completion_gate_policy_router.output.unattended.acceptance_mode == 'auto' }}"
+      # Default + 'manual' + any unknown → surface the human gate.
+      - to: apex_completion_gate
 
   # ── Apex completion gate ─────────────────────────────────────────────────
   #

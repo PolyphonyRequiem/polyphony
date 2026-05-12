@@ -18,14 +18,11 @@ schema_version: 1
 #
 # CAVEAT — necessary but NOT sufficient for fully unattended runs.
 # Many human gates in the workflow YAMLs are *deterministic* (not policy-
-# governed): user_acceptance, pending_review_gate, apex_completion_gate,
-# revise_cap_gate, remediation_cap_gate, pr_fix_exhausted_gate,
-# depth_exceeded_gate, closed_unmerged_gate, scope_violation_gate,
-# stale_generation_gate, dependency_gate, conflict_resolution_gate,
-# stuck_review_gate, ado_pr_changes_requested_gate, ado_pr_pending_gate,
-# and others. Those still fire on the happy path even with this policy.
-# A separate workstream is tracked under AB#3104 (follow-up) to make
-# them policy-controllable.
+# governed): see AB#3104 for the audit. The first wave of those gates is
+# now policy-controllable via the `unattended` block below. Wave 1 (this PR)
+# wires: apex_completion_gate, user_acceptance, pending_review_gate,
+# stuck_review_gate. Remaining 18 gates ship in a follow-on PR — until then
+# they still fire even with this policy active.
 #
 # WHAT THIS POLICY DOES:
 #   • approvals: auto everywhere — approve at the highest tolerated quality.
@@ -33,6 +30,7 @@ schema_version: 1
 #   • open_questions: auto — never gate, even on critical questions.
 #   • root_fallback: use_active_item — never prompt for a missing root id.
 #   • renegotiation: ignore — treat child renegotiation requests as advisory.
+#   • unattended: auto / skip / auto_proceed — bypass the wired Bucket-C gates.
 #   • concurrency: unchanged from canonical defaults.
 
 approvals:
@@ -75,3 +73,12 @@ renegotiation:
   # ignore — treat child renegotiation requests as advisory; do not
   # restart the parent plan-level workflow and do not prompt the operator.
   auto_decide: ignore
+
+unattended:
+  # auto / skip / auto_proceed — bypass the wired Bucket-C deterministic
+  # human gates so the run completes hands-off. PR1 (AB#3104) wires:
+  # apex_completion_gate, user_acceptance, pending_review_gate,
+  # stuck_review_gate. Additional gates land in PR2 — see AB#3104.
+  acceptance_mode: auto
+  review_wait_mode: skip
+  cap_mode: auto_proceed

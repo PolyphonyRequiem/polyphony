@@ -1254,8 +1254,31 @@ agents:
         $cap = 60
         @{ count = $count; cap = $cap; cap_reached = ($count -ge $cap) } | ConvertTo-Json
     routes:
-      - to: stuck_review_gate
+      - to: stuck_review_gate_policy_router
         when: "{{ pending_poll_counter.output.cap_reached == true }}"
+      - to: pending_review_gate_policy_router
+
+  # ── Pending-review gate policy router (AB#3104) ───────────────────────
+  #
+  # Reads `policy.unattended.review_wait_mode`. When `skip`, bypasses the
+  # `pending_review_gate` by routing directly to `pr_poll_platform_router`
+  # (the same target the operator's "Continue" option selects — re-poll
+  # the PR). When `wait` or unknown, falls through to the human gate.
+  #
+  # Invariants:
+  #   Pre:  pending_poll_counter has been computed (cap not reached).
+  #   Post: load_policy.output.unattended.review_wait_mode is
+  #         {wait, skip} (validated by the loader).
+  - name: pending_review_gate_policy_router
+    type: script
+    description: Bypass pending_review_gate when policy.unattended.review_wait_mode=skip
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+    routes:
+      - to: pr_poll_platform_router
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
       - to: pending_review_gate
 
   # ── Pending-review gate (in-workflow human checkpoint) ────────────────
@@ -1313,6 +1336,31 @@ agents:
       - label: "🛑 Abort"
         value: abort
         route: $end
+
+  # ── Stuck-review gate policy router (AB#3104) ─────────────────────────
+  #
+  # Reads `policy.unattended.review_wait_mode`. When `skip`, bypasses the
+  # `stuck_review_gate` by routing directly to `stuck_review_reset` (the
+  # same target the operator's "Continue waiting" option selects — reset
+  # the poll counter and keep waiting). When `wait` or unknown, falls
+  # through to the human gate so the operator can decide between waiting,
+  # overriding, and aborting.
+  #
+  # Invariants:
+  #   Pre:  pending_poll_counter.cap_reached == true.
+  #   Post: load_policy.output.unattended.review_wait_mode is
+  #         {wait, skip} (validated by the loader).
+  - name: stuck_review_gate_policy_router
+    type: script
+    description: Bypass stuck_review_gate when policy.unattended.review_wait_mode=skip
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+    routes:
+      - to: stuck_review_reset
+        when: "{{ stuck_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
+      - to: stuck_review_gate
 
   # ── Stuck-review gate (poll-cap escalation) ───────────────────────────
   #
@@ -1384,7 +1432,7 @@ agents:
         Set-Content $counterFile 0
         @{ count = 0; reset = $true } | ConvertTo-Json
     routes:
-      - to: pending_review_gate
+      - to: pending_review_gate_policy_router
 
   # ── Stuck-review override router ──────────────────────────────────────
   #
