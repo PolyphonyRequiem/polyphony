@@ -209,4 +209,162 @@ public sealed class PlanCommandsWritePlanTests : CommandTestBase, IDisposable
         (await File.ReadAllTextAsync(result.Path)).ShouldBe(content);
         result.BytesWritten.ShouldBe(Encoding.UTF8.GetByteCount(content));
     }
+
+    // ---------------------------------------------------------------------
+    // Children-json sidecar tests (AB#3106 dogfood, 2026-05-12).
+    //
+    // The sidecar is the durable handoff between the architect (which emits
+    // the children list in workflow-runtime context only) and the seeder
+    // (which may run in a later workflow execution where that runtime
+    // context has been reset). These tests pin down the verb's contract:
+    // arg-omitted is a no-op; arg-supplied always writes (even `[]`);
+    // refusal-before-write atomicity guarantees no half-applied state.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public async Task ChildrenJson_Omitted_DoesNotEmitSidecar()
+    {
+        var cmd = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(() =>
+            cmd.WritePlan(123, EncodeJson("# plan"), _tempDir));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Error.ShouldBeNull();
+        result.ChildrenSkipped.ShouldBeTrue();
+        result.ChildrenPath.ShouldBe(string.Empty);
+        result.ChildrenSha256.ShouldBe(string.Empty);
+        result.ChildrenUnchanged.ShouldBeFalse();
+        File.Exists(Path.Combine(_tempDir, "plan-123.children.json")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ChildrenJson_EmptyArray_WritesSidecarAndReportsHash()
+    {
+        var cmd = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(() =>
+            cmd.WritePlan(123, EncodeJson("# plan"), _tempDir, "[]"));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Error.ShouldBeNull();
+        result.ChildrenSkipped.ShouldBeFalse();
+        result.ChildrenPath.ShouldEndWith(Path.Combine(_tempDir, "plan-123.children.json"));
+        result.ChildrenSha256.Length.ShouldBe(64);
+        result.ChildrenUnchanged.ShouldBeFalse();
+        File.Exists(result.ChildrenPath).ShouldBeTrue();
+        // Canonicalized indented form of an empty array is "[]" (no newline,
+        // no whitespace — JsonNode's WriteIndented makes empty arrays compact).
+        (await File.ReadAllTextAsync(result.ChildrenPath)).ShouldBe("[]");
+    }
+
+    [Fact]
+    public async Task ChildrenJson_ValidArray_WritesCanonicalSidecar()
+    {
+        var cmd = CreateCommand();
+        var children = "[{\"child_id\":\"c1\",\"title\":\"first\",\"type\":\"Issue\"}]";
+        var (exit, output) = await CaptureConsoleAsync(() =>
+            cmd.WritePlan(456, EncodeJson("# plan"), _tempDir, children));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Error.ShouldBeNull();
+        result.ChildrenSkipped.ShouldBeFalse();
+        File.Exists(result.ChildrenPath).ShouldBeTrue();
+
+        // Sidecar must round-trip as a JSON array (canonicalized via the
+        // verb's indented-writer; we don't pin exact indentation here but
+        // we DO require it parses back to the same logical content).
+        var sidecarText = await File.ReadAllTextAsync(result.ChildrenPath);
+        var parsed = System.Text.Json.Nodes.JsonNode.Parse(sidecarText);
+        parsed.ShouldBeOfType<System.Text.Json.Nodes.JsonArray>();
+        var arr = (System.Text.Json.Nodes.JsonArray)parsed;
+        arr.Count.ShouldBe(1);
+        arr[0]!["child_id"]!.GetValue<string>().ShouldBe("c1");
+        arr[0]!["title"]!.GetValue<string>().ShouldBe("first");
+        arr[0]!["type"]!.GetValue<string>().ShouldBe("Issue");
+    }
+
+    [Fact]
+    public async Task ChildrenJson_NonArray_ErrorsAndWritesNeitherFile()
+    {
+        var cmd = CreateCommand();
+        // Pre-validation must catch this BEFORE the markdown is written —
+        // otherwise we'd leave a half-applied state (md updated, sidecar
+        // missing) that breaks the commit_and_push --paths contract.
+        var (exit, output) = await CaptureConsoleAsync(() =>
+            cmd.WritePlan(789, EncodeJson("# plan"), _tempDir, "{\"not\":\"array\"}"));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Error.ShouldNotBeNull();
+        result.Error.ShouldContain("--children-json must decode to a JSON array");
+        File.Exists(Path.Combine(_tempDir, "plan-789.md")).ShouldBeFalse();
+        File.Exists(Path.Combine(_tempDir, "plan-789.children.json")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ChildrenJson_Malformed_ErrorsAndWritesNeitherFile()
+    {
+        var cmd = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(() =>
+            cmd.WritePlan(790, EncodeJson("# plan"), _tempDir, "[not valid json"));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Error.ShouldNotBeNull();
+        result.Error.ShouldContain("--children-json is not valid JSON");
+        File.Exists(Path.Combine(_tempDir, "plan-790.md")).ShouldBeFalse();
+        File.Exists(Path.Combine(_tempDir, "plan-790.children.json")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ChildrenJson_ExplicitNull_RejectedAsNonArray()
+    {
+        // Rubber-duck #3 (AB#3106 dogfood, 2026-05-12): JsonNode.Parse("null")
+        // returns null and the previous null-tolerant guard would have silently
+        // treated this as "skipped". Reject explicitly so a malformed
+        // architect output can't slip through.
+        var cmd = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(() =>
+            cmd.WritePlan(791, EncodeJson("# plan"), _tempDir, "null"));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Error.ShouldNotBeNull();
+        result.Error.ShouldContain("got null");
+        File.Exists(Path.Combine(_tempDir, "plan-791.md")).ShouldBeFalse();
+        File.Exists(Path.Combine(_tempDir, "plan-791.children.json")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ChildrenJson_IdenticalRewrite_ReportsUnchanged()
+    {
+        var cmd = CreateCommand();
+        var children = "[{\"child_id\":\"c1\",\"title\":\"x\",\"type\":\"Issue\"}]";
+        await CaptureConsoleAsync(() =>
+            cmd.WritePlan(901, EncodeJson("# plan"), _tempDir, children));
+
+        var (exit, output) = await CaptureConsoleAsync(() =>
+            cmd.WritePlan(901, EncodeJson("# plan"), _tempDir, children));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Error.ShouldBeNull();
+        result.Unchanged.ShouldBeTrue();
+        result.ChildrenUnchanged.ShouldBeTrue();
+        result.ChildrenSkipped.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ChildrenJson_DifferentRewrite_ChildrenUnchangedFalse()
+    {
+        var cmd = CreateCommand();
+        await CaptureConsoleAsync(() =>
+            cmd.WritePlan(902, EncodeJson("# plan"), _tempDir, "[]"));
+
+        var nextChildren = "[{\"child_id\":\"c1\",\"title\":\"x\",\"type\":\"Issue\"}]";
+        var (exit, output) = await CaptureConsoleAsync(() =>
+            cmd.WritePlan(902, EncodeJson("# plan"), _tempDir, nextChildren));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.Error.ShouldBeNull();
+        result.ChildrenUnchanged.ShouldBeFalse();
+        var sidecarText = await File.ReadAllTextAsync(result.ChildrenPath);
+        var parsed = System.Text.Json.Nodes.JsonNode.Parse(sidecarText)!;
+        parsed.AsArray().Count.ShouldBe(1);
+    }
 }

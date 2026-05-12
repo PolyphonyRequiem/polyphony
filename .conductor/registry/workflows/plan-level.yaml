@@ -705,7 +705,7 @@ agents:
   #         is the absolute path; output.unchanged indicates noop on resume.
   - name: write_plan
     type: script
-    description: Write architect's plan markdown to plans/plan-{item_id}.md
+    description: Write architect's plan markdown + children-json sidecar to plans/
     command: polyphony
     args:
       - "plan"
@@ -714,6 +714,14 @@ agents:
       - "{{ workflow.input.work_item_id }}"
       - "--content-json"
       - "{{ architect.output.plan | tojson }}"
+      # AB#3106 dogfood (2026-05-12): persist children-json into a sidecar
+      # so the seeder can recover the architect's structured decomposition
+      # on workflow re-entry (e.g. when state_detector lands in
+      # awaiting_review and the architect agent is skipped). Always pass
+      # — even an empty array `[]` — so commit_and_push --paths sees a
+      # file. The seeder's resolution order is CLI > sidecar > apex_facets.
+      - "--children-json"
+      - "{{ architect.output.children | tojson }}"
     routes:
       - to: write_plan_error_gate
         when: "{{ write_plan.output.error is defined and write_plan.output.error }}"
@@ -811,7 +819,7 @@ agents:
   #         this content; open_plan_pr handles reuse).
   - name: commit_and_push
     type: script
-    description: Stage plans/plan-{item_id}.md, commit, push to origin
+    description: Stage plan markdown + children-json sidecar, commit, push to origin
     command: polyphony
     args:
       - "plan"
@@ -820,8 +828,12 @@ agents:
       - "{{ ensure_plan_branch.output.branch }}"
       - "--message"
       - "plan({{ workflow.input.work_item_id }}): write plan-{{ workflow.input.work_item_id }}.md"
+      # AB#3106 dogfood (2026-05-12): include the children-json sidecar
+      # written by `write_plan --children-json`. The sidecar is the
+      # seeder's contract for re-entry recovery, so it MUST land in the
+      # plan PR alongside the markdown.
       - "--paths"
-      - "plans/plan-{{ workflow.input.work_item_id }}.md"
+      - "plans/plan-{{ workflow.input.work_item_id }}.md,plans/plan-{{ workflow.input.work_item_id }}.children.json"
     routes:
       - to: commit_and_push_error_gate
         when: "{{ commit_and_push.output.error is defined and commit_and_push.output.error }}"
@@ -1974,8 +1986,16 @@ agents:
       - "seed-children"
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
+      # AB#3106 dogfood (2026-05-12): when the architect ran in this
+      # execution, pass its tojson'd children verbatim. When the
+      # architect did NOT run (re-entry on awaiting_review or
+      # merged_unseeded), pass an EMPTY string so the verb falls back
+      # to reading the children-json sidecar at
+      # plans/plan-{id}.children.json. (An explicit '[]' would mean
+      # "architect ran and emitted no children" — a different signal
+      # that routes to the apex_facets check.)
       - "--children-json"
-      - "{{ architect.output.children | tojson if (architect is defined and architect.output.children is defined) else '[]' }}"
+      - "{{ architect.output.children | tojson if (architect is defined and architect.output.children is defined) else '' }}"
     routes:
       - to: seeder_error_gate
         when: "{{ seeder.output.error_count is defined and seeder.output.error_count > 0 }}"

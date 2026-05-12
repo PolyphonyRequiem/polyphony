@@ -131,7 +131,12 @@ public sealed partial class PlanCommands
     /// </summary>
     /// <param name="workItem">Parent work item ID.</param>
     /// <param name="childrenJson">JSON array of child objects from <c>architect.output.children</c>.
-    /// Each child entry requires <c>child_id</c>, <c>title</c>, <c>type</c>, <c>description</c>.</param>
+    /// Each child entry requires <c>child_id</c>, <c>title</c>, <c>type</c>, <c>description</c>.
+    /// When omitted/empty, the verb falls back to reading the sidecar file
+    /// <c>plans/plan-{workItem}.children.json</c> (written by <c>plan write-plan
+    /// --children-json</c>) so re-entering workflow executions — whose
+    /// <c>architect.output.children</c> is no longer in context — can still
+    /// recover the architect's decomposition.</param>
     /// <param name="plannedTag">Tag value to apply to the parent on success
     /// (defaults to <c>polyphony:planned</c>).</param>
     /// <param name="planFile">Optional plan markdown file to read for
@@ -139,6 +144,10 @@ public sealed partial class PlanCommands
     /// defaults to <c>plans/plan-{workItem}.md</c> relative to cwd. Missing
     /// file is treated as "no front-matter declared" and behaviour is
     /// unchanged.</param>
+    /// <param name="childrenFile">Optional override of the sidecar path used
+    /// for children-json fallback. When omitted, defaults to
+    /// <c>plans/plan-{workItem}.children.json</c> relative to cwd. Used by
+    /// tests to point at temp files.</param>
     /// <param name="configDir">Polyphony config directory containing
     /// <c>work-item-types/templates/&lt;typeslug&gt;-template.md</c> files.
     /// When a template exists for the child's type, it's applied as the
@@ -156,23 +165,88 @@ public sealed partial class PlanCommands
         string plannedTag = "polyphony:planned",
         string planFile = "",
         string configDir = ".polyphony-config",
+        string childrenFile = "",
         CancellationToken ct = default)
     {
+        // --children-json is intentionally NOT in the required-input check:
+        // when omitted, the verb falls back to the sidecar (or — for
+        // indivisible apexes — the plan front-matter's apex_facets). This
+        // is the recovery seam for re-entering workflow executions where
+        // architect.output.children is no longer in workflow context
+        // (AB#3106 dogfood, 2026-05-12).
         if (RequiredInput.HaltIfMissing("plan seed-children",
-            ("--work-item", workItem == RequiredInput.MissingInt),
-            ("--children-json", string.IsNullOrEmpty(childrenJson))) is { } halt)
+            ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
-        // Parse children (tolerate empty / null payloads — atomic items have no children to seed).
-        JsonNode? childrenNode;
-        try
+        // Resolution order for the children list:
+        //   1. CLI --children-json (when non-empty)
+        //   2. Sidecar plans/plan-{workItem}.children.json (when present)
+        //   3. apex_facets fallback (handled below)
+        //   4. Refusal (existing behaviour)
+        // We track sourceLabel for diagnostics so a future failure can tell
+        // us whether the verb consumed CLI input, the sidecar, or neither.
+        JsonNode? childrenNode = null;
+        var childrenSource = "none";
+        if (!string.IsNullOrWhiteSpace(childrenJson))
         {
-            childrenNode = string.IsNullOrWhiteSpace(childrenJson) ? null : JsonNode.Parse(childrenJson);
+            try
+            {
+                childrenNode = JsonNode.Parse(childrenJson);
+            }
+            catch (JsonException ex)
+            {
+                EmitError($"--children-json is not valid JSON: {ex.Message}");
+                return ExitCodes.ConfigError;
+            }
+            if (childrenNode is not JsonArray)
+            {
+                // Reject anything that isn't a JsonArray, including
+                // explicit `null`. Same defensive stance as write-plan
+                // (rubber-duck #3, AB#3106 dogfood, 2026-05-12).
+                var got = childrenNode is null ? "null" : childrenNode.GetType().Name;
+                EmitError($"--children-json must decode to a JSON array (got {got})");
+                return ExitCodes.ConfigError;
+            }
+            childrenSource = "cli";
         }
-        catch (JsonException ex)
+        else
         {
-            EmitError($"children_json is not valid JSON: {ex.Message}");
-            return ExitCodes.ConfigError;
+            var resolvedSidecar = string.IsNullOrEmpty(childrenFile)
+                ? Path.Combine("plans", $"plan-{workItem}.children.json")
+                : childrenFile;
+            if (File.Exists(resolvedSidecar))
+            {
+                string sidecarText;
+                try
+                {
+                    sidecarText = await File.ReadAllTextAsync(resolvedSidecar, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    EmitError($"failed to read children-json sidecar '{resolvedSidecar}': {ex.Message}");
+                    return ExitCodes.ConfigError;
+                }
+
+                try
+                {
+                    childrenNode = JsonNode.Parse(sidecarText);
+                }
+                catch (JsonException ex)
+                {
+                    EmitError($"children-json sidecar '{resolvedSidecar}' is not valid JSON: {ex.Message}");
+                    return ExitCodes.ConfigError;
+                }
+                if (childrenNode is not JsonArray)
+                {
+                    // Reject anything that isn't a JsonArray, including
+                    // explicit `null`. A hand-edited sidecar holding `null`
+                    // shouldn't be silently treated as "skipped".
+                    var got = childrenNode is null ? "null" : childrenNode.GetType().Name;
+                    EmitError($"children-json sidecar '{resolvedSidecar}' must contain a JSON array (got {got})");
+                    return ExitCodes.ConfigError;
+                }
+                childrenSource = "sidecar";
+            }
         }
 
         var children = childrenNode is JsonArray arr ? arr : new JsonArray();
@@ -217,12 +291,27 @@ public sealed partial class PlanCommands
         // preflight having implemented nothing. We refuse rather than guess.
         // To declare indivisibility, the planner must add `apex_facets:` to
         // the plan front-matter.
+        //
+        // Note (AB#3106 dogfood, 2026-05-12): when the workflow re-enters
+        // and the architect did not run, --children-json is empty and the
+        // sidecar fallback path runs first (see resolution above). If the
+        // sidecar is also absent, we land here. The error message names
+        // both recovery surfaces so the operator knows what's missing.
         if (children.Count == 0 && (apexFacets is null || apexFacets.Count == 0))
         {
+            // Trust childrenSource for the exact diagnostic shape so the
+            // operator knows whether they need to fix the architect output,
+            // restore the sidecar, or declare apex_facets.
+            string sourceClause = childrenSource switch
+            {
+                "cli"     => "the architect supplied an empty children-json",
+                "sidecar" => $"the children-json sidecar at '{(string.IsNullOrEmpty(childrenFile) ? Path.Combine("plans", $"plan-{workItem}.children.json") : childrenFile)}' is an empty array",
+                _         => $"no children-json was supplied (no --children-json arg and no sidecar at '{(string.IsNullOrEmpty(childrenFile) ? Path.Combine("plans", $"plan-{workItem}.children.json") : childrenFile)}')",
+            };
             EmitError(
-                $"children-json is empty and plan front-matter declares no apex_facets — refusing to stamp #{workItem} as planned. " +
+                $"children-json is empty and plan front-matter declares no apex_facets — refusing to stamp #{workItem} as planned ({sourceClause}). " +
                 $"To declare an indivisible apex, add `apex_facets: [<facet>, ...]` to the front-matter of '{resolvedPlanFile}'. " +
-                $"Otherwise, supply --children-json containing the architect's structured decomposition.");
+                $"Otherwise, supply --children-json containing the architect's structured decomposition (or commit a children-json sidecar via `polyphony plan write-plan --children-json`).");
             return ExitCodes.ConfigError;
         }
 
@@ -253,18 +342,25 @@ public sealed partial class PlanCommands
                 continue;
             }
 
-            var childId = child["child_id"]?.GetValue<string>();
-            var title = child["title"]?.GetValue<string>();
-            var type = child["type"]?.GetValue<string>();
+            // Defensive extraction (AB#3106 sidecar review, 2026-05-12).
+            // Persisted sidecars may be hand-edited; a value of the wrong
+            // shape (e.g. a number where a string is expected) would
+            // otherwise throw InvalidOperationException out of the foreach
+            // loop and crash the verb without a routing envelope. Convert
+            // to typed values via a tolerant helper that returns null on
+            // type mismatch, then surface as a per-child SeedError.
+            var childId = TryReadStringField(child, "child_id");
+            var title = TryReadStringField(child, "title");
+            var type = TryReadStringField(child, "type");
 
             if (string.IsNullOrWhiteSpace(childId))
             {
-                errors.Add(new SeedError { Title = title, Error = "child entry missing required child_id" });
+                errors.Add(new SeedError { Title = title, Error = "child entry missing required child_id (or value was not a string)" });
                 continue;
             }
             if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(type))
             {
-                errors.Add(new SeedError { ChildId = childId, Title = title, Error = "child entry missing required title or type" });
+                errors.Add(new SeedError { ChildId = childId, Title = title, Error = "child entry missing required title or type (or value was not a string)" });
                 continue;
             }
 
@@ -405,6 +501,31 @@ public sealed partial class PlanCommands
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PlanSeedChildrenResult));
         return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Tolerantly read a string field from a JSON child entry. Returns null
+    /// for missing fields, JSON nulls, or fields whose value isn't a string
+    /// (e.g. a hand-edited sidecar where a number ended up where a title
+    /// should be). Callers surface the null as a per-child SeedError instead
+    /// of crashing the verb out of the reconciliation loop.
+    /// </summary>
+    private static string? TryReadStringField(JsonObject child, string fieldName)
+    {
+        var node = child[fieldName];
+        if (node is null) return null;
+        try
+        {
+            return node.GetValue<string>();
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

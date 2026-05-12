@@ -15,6 +15,11 @@ namespace Polyphony.Manifest;
 /// <para>Path conventions (all repo-relative, forward-slash):</para>
 /// <list type="bullet">
 ///   <item><c>plans/plan-{id}.md</c> — plan file for work item <c>{id}</c>.</item>
+///   <item><c>plans/plan-{id}.children.json</c> — children-json sidecar for
+///     work item <c>{id}</c>. Treated as part of the same artifact as the
+///     plan markdown for self/parent/ancestor scope rules — a child plan PR
+///     touching its parent's sidecar is the same violation as touching the
+///     parent's <c>.md</c> (added 2026-05-12, AB#3106 dogfood).</item>
 ///   <item><c>.polyphony/**</c> — polyphony state (run manifest, locks, audit). Always blocked.</item>
 ///   <item>Anything else — implementation/code/doc files, treated as OK.</item>
 /// </list>
@@ -23,29 +28,42 @@ namespace Polyphony.Manifest;
 /// <list type="number">
 ///   <item>Any path under <c>.polyphony/**</c> → <see cref="ValidationSeverity.Blocking"/>,
 ///     code <c>child_touched_polyphony_state</c>.</item>
-///   <item>Any path matching an ancestor's plan file (above parent) →
+///   <item>Any path matching an ancestor's plan file or sidecar (above parent) →
 ///     <see cref="ValidationSeverity.Blocking"/>, code <c>child_touched_ancestor_plan</c>.</item>
-///   <item>Path matches parent plan file AND <c>requestsParentChange == false</c> →
+///   <item>Path matches parent plan file or sidecar AND <c>requestsParentChange == false</c> →
 ///     <see cref="ValidationSeverity.Blocking"/>, code <c>child_touched_parent_plan</c>.</item>
-///   <item>Path matches parent plan file AND front-matter status is
+///   <item>Path matches parent plan file or sidecar AND front-matter status is
 ///     <see cref="FrontMatterStatus.Malformed"/> →
 ///     <see cref="ValidationSeverity.Blocking"/>, code <c>malformed_front_matter</c>.</item>
-///   <item>Path matches parent plan file AND front-matter status is
+///   <item>Path matches parent plan file or sidecar AND front-matter status is
 ///     <see cref="FrontMatterStatus.Absent"/> →
 ///     <see cref="ValidationSeverity.Blocking"/>, code <c>missing_front_matter</c>.</item>
-///   <item><c>requestsParentChange == true</c> AND no parent plan file touched →
+///   <item><c>requestsParentChange == true</c> AND no parent plan file/sidecar touched →
 ///     <see cref="ValidationSeverity.Warning"/>, code <c>flag_set_no_parent_changes</c>.</item>
 ///   <item>Otherwise → <see cref="ValidationSeverity.None"/>, code <c>ok</c>.</item>
 /// </list>
 ///
-/// <para>Self plan file changes (the item's OWN plan) are always allowed;
-/// they're the entire point of the PR.</para>
+/// <para>Self plan file/sidecar changes (the item's OWN artifacts) are always
+/// allowed; they're the entire point of the PR.</para>
 ///
 /// <para>Empty <paramref name="changedPaths"/> → severity <c>None</c> with
 /// every bucket empty (degenerate but valid).</para>
 /// </summary>
 public static class PlanDiffValidator
 {
+    /// <summary>
+    /// Derive the children-json sidecar path that pairs with a plan
+    /// markdown path. Returns null when the input doesn't end in
+    /// <c>.md</c> (so the caller can skip the comparison without
+    /// branching on every loop iteration).
+    /// </summary>
+    private static string? SidecarFor(string? planFile)
+    {
+        if (string.IsNullOrEmpty(planFile)) return null;
+        if (!planFile.EndsWith(".md", StringComparison.Ordinal)) return null;
+        return string.Concat(planFile.AsSpan(0, planFile.Length - 3), ".children.json");
+    }
+
     /// <summary>
     /// Result of a diff classification. <see cref="Severity"/> drives the
     /// caller's flow; <see cref="Code"/> is the stable machine-readable
@@ -83,10 +101,16 @@ public static class PlanDiffValidator
         FrontMatterStatus frontMatterStatus)
     {
         // Bucket every path exactly once, in priority order:
-        //   polyphony state > ancestor plan > parent plan > self plan > other.
+        //   polyphony state > ancestor plan (md or sidecar) >
+        //   parent plan (md or sidecar) > self plan (md or sidecar) > other.
         // Dedupe the input — gh shouldn't emit duplicates, but be defensive
         // so a repeated path doesn't get counted as multiple violations.
         var ancestorSet = new HashSet<string>(ancestorPlanFiles, StringComparer.Ordinal);
+        var ancestorSidecarSet = new HashSet<string>(
+            ancestorPlanFiles.Select(SidecarFor).Where(s => s is not null)!,
+            StringComparer.Ordinal);
+        var parentSidecar = SidecarFor(parentPlanFile);
+        var selfSidecar = SidecarFor(selfPlanFile);
 
         var selfBucket = new List<string>();
         var parentBucket = new List<string>();
@@ -106,19 +130,21 @@ public static class PlanDiffValidator
                 continue;
             }
 
-            if (ancestorSet.Contains(raw))
+            if (ancestorSet.Contains(raw) || ancestorSidecarSet.Contains(raw))
             {
                 ancestorBucket.Add(raw);
                 continue;
             }
 
-            if (parentPlanFile is not null && string.Equals(raw, parentPlanFile, StringComparison.Ordinal))
+            if ((parentPlanFile is not null && string.Equals(raw, parentPlanFile, StringComparison.Ordinal)) ||
+                (parentSidecar is not null && string.Equals(raw, parentSidecar, StringComparison.Ordinal)))
             {
                 parentBucket.Add(raw);
                 continue;
             }
 
-            if (string.Equals(raw, selfPlanFile, StringComparison.Ordinal))
+            if (string.Equals(raw, selfPlanFile, StringComparison.Ordinal) ||
+                (selfSidecar is not null && string.Equals(raw, selfSidecar, StringComparison.Ordinal)))
             {
                 selfBucket.Add(raw);
                 continue;
