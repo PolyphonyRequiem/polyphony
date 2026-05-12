@@ -1,0 +1,55 @@
+[
+  {
+    "acceptance_criteria": [
+      "\u0060architect\u0060 step\u0027s declared \u0060output:\u0060 schema in plan-level.yaml includes a \u0060research_needs\u0060 array matching issue-2\u0027s payload shape.",
+      "Architect prompt includes guidance on when to emit \u0060research_needs\u0060 vs. an open question vs. proceeding.",
+      "Architect prompt has a new StrictUndefined-safe re-entry branch that surfaces research findings and the prior plan, instructing surgical refinement.",
+      "Existing re-entry branches (revise_counter, extract_parent_patch, open_questions_gate) remain untouched and continue to work.",
+      "Build passes with zero errors and warnings; lint-jinja-resolver and lint-type-agnostic checks pass."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "## Summary\nExtend the \u0060architect\u0060 step\u0027s \u0060output:\u0060 schema in [.conductor/registry/workflows/plan-level.yaml](.conductor/registry/workflows/plan-level.yaml) to include a \u0060research_needs\u0060 array matching the payload shape defined by sibling issue-2. Update [.conductor/registry/prompts/architect-plan-level.md](.conductor/registry/prompts/architect-plan-level.md) to (a) teach the architect when emitting \u0060research_needs\u0060 is preferable to raising an open question or guessing, and (b) add a new re-entry branch that fires when the prior step in \u0060context.history\u0060 is the research sub-workflow, surfacing the findings document(s) to the architect for incorporation into the next plan iteration.\n\n## Scope\n- Output schema field: \u0060research_needs: array\u0060 of objects with whatever shape issue-2 locks (topic / context / why-needed at minimum).\n- Prompt guidance: a short section explaining the three-way choice \u2014 proceed, open_question (gates on human), research_needs (gates on archive/research, no human).\n- New StrictUndefined-safe re-entry branch in the prompt template, mirroring the existing \u0060revise_counter\u0060 / \u0060extract_parent_patch\u0060 / \u0060open_questions_gate\u0060 branches, that surfaces findings.\n- Prior plan must be passed through to the re-entry branch so the architect refines surgically rather than regenerating.\n\n## Out of Scope\n- The workflow wiring that *invokes* the research sub-workflow (task-2).\n- The research sub-workflow itself or its findings shape (sibling issue-2).\n",
+    "pg": "pg-1",
+    "title": "Extend architect output schema \u002B prompt to emit and consume \u0060research_needs\u0060",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060architect\u0060 step routes to a new \u0060research_dispatch\u0060 node when \u0060research_needs\u0060 is non-empty AND the \u0060research:\u0060 profile block is present, taking precedence over the open_questions route.",
+      "After \u0060research_dispatch\u0060 returns, control routes back to \u0060architect\u0060 and never touches \u0060open_questions_gate\u0060, \u0060ensure_plan_branch\u0060, \u0060write_plan\u0060, \u0060commit_and_push\u0060, \u0060open_plan_pr\u0060, or \u0060plan_reviewer\u0060.",
+      "A \u0060research_loop_counter\u0060 derived from \u0060context.history\u0060 caps repeated \u0060research_needs\u0060 emissions; cap default is profile-overridable.",
+      "When the research cap is reached, control surfaces a human gate or proceeds to \u0060open_questions_policy\u0060 (whichever the design lands on) \u2014 no infinite loop is possible.",
+      "Repos without a \u0060research:\u0060 profile block see no behavioural change in \u0060plan-level.yaml\u0060 execution (regression check on existing harness scenarios).",
+      "Build passes with zero errors and warnings; all existing tests pass; new tests cover the new routing edges and the cap path.",
+      "Polyphony\u0027s P5 (no hard-coded state names) is honoured \u2014 gating is on payload presence \u002B profile config, not on parent-process state vocabulary."
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "## Summary\nIn [.conductor/registry/workflows/plan-level.yaml](.conductor/registry/workflows/plan-level.yaml), change the \u0060architect\u0060 step\u0027s \u0060routes:\u0060 so that when \u0060architect.output.research_needs | length \u003E 0\u0060 AND the \u0060research:\u0060 profile block is configured, control flows to a new \u0060research_dispatch\u0060 node that invokes the research sub-workflow defined by sibling issue-2/3/4. After the sub-workflow returns, route directly back to \u0060architect\u0060. The path must NOT touch \u0060open_questions_policy\u0060, \u0060open_questions_gate\u0060, \u0060ensure_plan_branch\u0060, \u0060write_plan\u0060, \u0060commit_and_push\u0060, \u0060open_plan_pr\u0060, or \u0060plan_reviewer\u0060. Add a \u0060research_loop_counter\u0060 script step (mirroring \u0060open_questions_counter\u0060 / \u0060revise_counter\u0060) that derives iteration count from \u0060context.history\u0060 and caps the loop, surfacing a \u0060research_cap_gate\u0060 (or auto-proceeding) when the cap is reached.\n\n## Scope\n- New routing edges off \u0060architect\u0060 for the research case (precedence: research before open_questions).\n- New \u0060research_dispatch\u0060 node invoking the research sub-workflow.\n- New \u0060research_loop_counter\u0060 step \u002B cap policy resolution (default cap profile-overridable; mirror existing counter pattern).\n- New \u0060research_cap_gate\u0060 (or fall-through to existing flow) when cap is hit.\n- Profile gating: when \u0060.polyphony-config/profile.yaml\u0060 has no \u0060research:\u0060 block, the new edges are unreachable and the workflow behaves identically to today.\n\n## Out of Scope\n- The research sub-workflow itself (sibling issue-2) and its agents (issues 3/4).\n- The architect prompt \u002B schema changes (task-1).\n- The end-to-end proof scenario (task-3).\n",
+    "pg": "pg-2",
+    "title": "Wire research-loop routing in plan-level.yaml bypassing the plan-review gate",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "A single end-to-end demonstration (harness scenario OR dogfood recipe, per Q3 resolution) exercises the architect \u2192 research \u2192 architect loop on a non-trivial prompt.",
+      "The demonstration runs without human intervention.",
+      "The captured trace (or harness assertions) confirm bypass of \u0060open_questions_gate\u0060, \u0060ensure_plan_branch\u0060, \u0060write_plan\u0060, \u0060open_plan_pr\u0060, and \u0060plan_reviewer\u0060.",
+      "If a harness scenario, it runs in CI alongside existing harness scenarios and passes deterministically.",
+      "If a dogfood scenario, the recipe is committed under [docs/](docs/) and the captured trace is attached to the parent issue.",
+      "Build passes with zero errors and warnings; all existing tests pass."
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-1",
+      "task-2"
+    ],
+    "description": "## Summary\nProduce *one* end-to-end demonstration that the full architect \u2192 research \u2192 architect loop closes on a non-trivial prompt without human intervention. The acceptance criterion in the parent issue allows either a path-coverage harness scenario under [tests/harness/scenarios/](tests/harness/scenarios/) **or** a live dogfood scenario; the choice is gated on open question Q3.\n\n## Scope (harness path)\n- New scenario directory under [tests/harness/scenarios/](tests/harness/scenarios/), modelled on the existing \u0060close_out_happy_path\u0060 and \u0060cascade_remedy_no_stale\u0060 scenarios.\n- FakeProvider script for the architect that emits \u0060research_needs\u0060 on its first invocation, then emits a complete plan on its second invocation after receiving findings.\n- FakeProvider script for the research sub-workflow\u0027s agents that returns a synthesised findings document.\n- Assertions that the trace shows architect \u2192 research_dispatch \u2192 architect, with no traversal of \u0060open_questions_gate\u0060, \u0060ensure_plan_branch\u0060, \u0060write_plan\u0060, \u0060open_plan_pr\u0060, or \u0060plan_reviewer\u0060.\n\n## Scope (dogfood path)\n- A reproducible recipe (markdown doc \u002B pinned prompt) that runs polyphony against a live non-trivial work item, captures the run trace, and demonstrates the loop closing.\n\n## Out of Scope\n- Any harness/dogfood proof for the broader research subsystem (issues 2/3/4 own their own coverage).\n- Multi-iteration deep-research escalation behaviour (issue-3\u0027s territory).\n",
+    "pg": "pg-3",
+    "title": "End-to-end proof scenario for architect \u2192 research \u2192 architect loop",
+    "type": "Task"
+  }
+]
