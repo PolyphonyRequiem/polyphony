@@ -190,7 +190,7 @@ agent_scripts:
           - All existing tests pass
         children: []
         open_questions: []
-        research_needs: {}
+        research_needs: {topics: []}
         summary: "Final plan incorporating research findings on CLI command patterns."
 
   # ── Research assistant: returns findings ─────────────────────────────
