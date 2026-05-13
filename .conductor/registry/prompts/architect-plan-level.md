@@ -137,6 +137,57 @@ explains why the child's parent-change request was not integrated.
 
 ---
 
+{% elif last == "research_dispatch"
+        and research_dispatch is defined
+        and research_dispatch.output is defined %}
+## 🔬 You Are Being Re-Invoked With Research Findings
+
+You previously requested research before finalizing the plan. The research
+sub-workflow has returned findings. Your job this iteration is to **refine
+the prior plan** incorporating the research results — not regenerate from
+scratch.
+
+### Research rules
+
+1. **Surgical refinement.** Incorporate the findings into the relevant
+   sections of the prior plan. Do NOT restructure or rewrite sections
+   unaffected by the research.
+2. **Cite findings.** When the research informs a decision, briefly note
+   it (e.g., "Per research: existing commands use guard-clause validation").
+3. **No re-requesting the same topics.** Emit `research_needs: {}` (or
+   omit topics) this iteration unless genuinely new research questions
+   arose from the findings. Repeated research requests on the same topics
+   will hit the loop cap.
+4. **Open questions are still available.** If the research raised NEW
+   ambiguity that requires human input, emit it as an `open_question`.
+
+### Research findings
+
+{{ research_dispatch.output.findings }}
+
+{% if research_dispatch.output.summary is defined and research_dispatch.output.summary %}
+### Findings summary
+
+{{ research_dispatch.output.summary }}
+{% endif %}
+
+{% if research_dispatch.output.sources is defined and research_dispatch.output.sources %}
+### Sources cited
+
+{% for src in research_dispatch.output.sources %}
+- `{{ src.path }}`{% if src.lines %} (lines {{ src.lines }}){% endif %}{% if src.relevance %} — {{ src.relevance }}{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if architect is defined and architect.output is defined and architect.output.plan is defined %}
+### Prior plan (refine surgically, do not regenerate)
+```markdown
+{{ architect.output.plan }}
+```
+{% endif %}
+
+---
+
 {% elif last == "open_questions_gate"
         and open_questions_gate is defined
         and open_questions_gate.output is defined
@@ -304,6 +355,22 @@ Read the user plan from the filesystem and use it as your starting point.
    by the open_questions policy) determine which questions actually gate —
    emit all questions that have documentation or decision value.
 
+5. **Identify research needs** — If you encounter questions that could be
+   answered by searching the repository archive (codebase patterns,
+   existing conventions, prior decisions, file structures), emit them as
+   `research_needs` instead of open questions. The three-way choice:
+
+   | Signal | When to use | What happens |
+   |---|---|---|
+   | **Proceed** (empty `open_questions` + empty `research_needs`) | You have enough context to write a complete plan | Plan flows to review |
+   | **`open_questions`** | Ambiguity requires **human** judgment (scope decisions, priority trade-offs, external constraints) | Workflow gates on human input |
+   | **`research_needs`** | Questions answerable from the **repository archive** (code patterns, existing conventions, file layouts, prior decisions) | Workflow invokes research sub-workflow and re-invokes you with findings — no human gate |
+
+   When emitting `research_needs`, set `open_questions: []` — research and
+   open questions should not be emitted in the same pass. If you have BOTH
+   research needs and human questions, prefer research first (the human
+   questions may resolve once you have the findings).
+
    | Severity | Meaning | Action |
    |---|---|---|
    | `critical` | Plan cannot proceed without an answer (would invalidate the design) | Emit as open question |
@@ -345,9 +412,37 @@ Return a JSON object with this structure:
       "severity": "moderate"
     }
   ],
+  "research_needs": {
+    "topics": ["What patterns do existing CLI commands follow?"],
+    "context": {
+      "work_item_id": 12345,
+      "plan_excerpt": "Relevant excerpt framing the research need"
+    },
+    "budget_hint": "cheap",
+    "archive_scope": {
+      "paths": ["src/"],
+      "tags": []
+    }
+  },
   "summary": "Brief one-paragraph summary of the plan"
 }
 ```
+
+### `research_needs` field
+
+When you need to investigate the repository archive before finalizing the plan,
+emit a `research_needs` object matching this shape. When you do NOT need research,
+emit `research_needs: {}` (empty object) or omit the `topics` array.
+
+- **`topics`** — non-empty array of research questions (triggers the loop).
+- **`context.work_item_id`** — the current work item ID.
+- **`context.plan_excerpt`** — a brief excerpt framing the research need.
+- **`budget_hint`** — always `"cheap"` (archive-only, first pass).
+- **`archive_scope.paths`** — optional file prefixes to narrow the search.
+- **`archive_scope.tags`** — optional ADO tags to filter related work items.
+
+When emitting `research_needs` with topics, emit `open_questions: []` — the
+workflow processes research before open questions.
 
 ### `children` field — read this carefully
 

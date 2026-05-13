@@ -20,14 +20,21 @@ namespace Polyphony.Commands;
 public sealed class ResearchCommands(IResearchStorage storage)
 {
     /// <summary>
-    /// Reads the archivist's curation output from <paramref name="inputFile"/>
-    /// (or stdin when <c>-</c>) and writes kept articles to the sibling
-    /// research repository. Each article receives a deterministically
+    /// Reads the archivist's curation output and writes kept articles to the
+    /// sibling research repository. Each article receives a deterministically
     /// allocated Johnny-Decimal number, YAML frontmatter, and an INDEX.md entry.
     /// </summary>
     /// <param name="inputFile">
     /// Path to a JSON file containing the <see cref="ArchivistOutput"/>
-    /// payload, or <c>-</c> to read from stdin.
+    /// payload, or <c>-</c> to read from stdin. Ignored when
+    /// <paramref name="inputJson"/> is supplied.
+    /// </param>
+    /// <param name="inputJson">
+    /// Inline JSON payload (<see cref="ArchivistOutput"/>). When supplied,
+    /// takes precedence over <paramref name="inputFile"/>. Used by conductor
+    /// workflow script steps which cannot pipe to stdin (per the workflow
+    /// schema's prohibition on a <c>stdin:</c> field on <c>type: script</c>
+    /// steps) — JSON is templated inline as an arg.
     /// </param>
     /// <param name="workItem">ADO work item ID that triggered the research.</param>
     /// <param name="ct">Cancellation token.</param>
@@ -35,6 +42,7 @@ public sealed class ResearchCommands(IResearchStorage storage)
     [VerbResult(typeof(ResearchWriteArticlesResult))]
     public async Task<int> WriteArticles(
         string inputFile = "-",
+        string inputJson = "",
         int workItem = RequiredInput.MissingInt,
         CancellationToken ct = default)
     {
@@ -45,9 +53,19 @@ public sealed class ResearchCommands(IResearchStorage storage)
         ArchivistOutput? output;
         try
         {
-            var json = inputFile == "-"
-                ? await Console.In.ReadToEndAsync(ct).ConfigureAwait(false)
-                : await File.ReadAllTextAsync(inputFile, ct).ConfigureAwait(false);
+            string json;
+            if (!string.IsNullOrEmpty(inputJson))
+            {
+                json = inputJson;
+            }
+            else if (inputFile == "-")
+            {
+                json = await Console.In.ReadToEndAsync(ct).ConfigureAwait(false);
+            }
+            else
+            {
+                json = await File.ReadAllTextAsync(inputFile, ct).ConfigureAwait(false);
+            }
 
             output = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ArchivistOutput);
         }

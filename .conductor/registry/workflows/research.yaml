@@ -27,7 +27,7 @@ workflow:
     search, then the archivist evaluates findings for keep/discard/expand
     and writes kept articles to the sibling research repo.
   version: "2.4.0"
-  entry_point: research_assistant
+  entry_point: guidance_loader
   metadata:
     min_polyphony_version: "2.4.0"
 
@@ -81,6 +81,27 @@ output:
   expand_flagged: "{% if archivist is defined %}{{ archivist.output.items | selectattr('disposition', 'equalto', 'expand') | list | length }}{% else %}0{% endif %}"
 
 agents:
+  # ── Guidance loader (script node) ──────────────────────────────────────
+  #
+  # Loads per-agent guidance markdown files from .polyphony-config/agent-guidance/.
+  # The downstream agent prompts (research_assistant, archivist) reference
+  # {{ guidance_loader.output.agents.<agent_name> }} via Jinja2 {% if defined %}
+  # blocks; without this step those references would not resolve.
+  #
+  # Mirrors the pattern in actionable.yaml / close-out.yaml / github-pr.yaml /
+  # implement-merge-group.yaml / plan-level.yaml.
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for research agent prompts
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.context_work_item_id }}"
+    routes:
+      - to: research_assistant
+
   # ── Research assistant (archive-only, cheap tier) ──────────────────────
   #
   # Searches the repository archive to answer the architect's research
@@ -190,6 +211,11 @@ agents:
       - "write-articles"
       - "--work-item"
       - "{{ workflow.input.context_work_item_id }}"
-    stdin: "{{ archivist.output | json }}"
+      # Conductor's `type: script` schema rejects a `stdin:` field, so the
+      # archivist's curation output is templated inline as an arg. The verb
+      # accepts --input-json as a parallel of --input-file (see
+      # ResearchCommands.WriteArticles).
+      - "--input-json"
+      - "{{ archivist.output | tojson }}"
     routes:
       - to: $end

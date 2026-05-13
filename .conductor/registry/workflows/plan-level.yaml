@@ -594,8 +594,149 @@ agents:
       summary:
         type: string
         description: Brief one-paragraph summary of the plan
+      research_needs:
+        type: object
+        description: >-
+          Research payload the architect emits when it needs archive/codebase
+          investigation before finalizing the plan. Matches the
+          research-needs.schema.yaml contract. When non-empty (topics has
+          items), the workflow routes to the research sub-workflow before
+          proceeding. When absent or topics is empty, the workflow proceeds
+          to the open_questions gate as before.
+        properties:
+          topics:
+            type: array
+            description: >-
+              Research questions the architect needs answered (non-empty
+              triggers the research loop).
+            items:
+              type: string
+          context:
+            type: object
+            description: Originating context for the research request.
+            properties:
+              work_item_id:
+                type: number
+                description: ADO work item ID that initiated the research request.
+              plan_excerpt:
+                type: string
+                description: Relevant excerpt framing the research need.
+          budget_hint:
+            type: string
+            description: >-
+              Controls depth/cost. "cheap" = archive-only (first pass).
+          archive_scope:
+            type: object
+            description: Optional constraints narrowing the archive search surface.
+            properties:
+              paths:
+                type: array
+                items:
+                  type: string
+                description: File path prefixes to narrow the search.
+              tags:
+                type: array
+                items:
+                  type: string
+                description: ADO tags to filter related work items.
     routes:
+      - to: research_loop_counter
+
+  # ── Research loop counter ───────────────────────────────────────────────
+  #
+  # Counts the number of research_dispatch invocations in this run's
+  # history. When the architect emits research_needs.topics (non-empty)
+  # and the cap has not been reached, routes to research_dispatch. When
+  # the cap is reached or no research is requested, falls through to
+  # open_questions_policy.
+  #
+  # Hard cap: 3 research loops per plan invocation (MVP). The cap
+  # prevents infinite loops when the architect repeatedly requests
+  # research without converging. The default is intentionally hard-coded;
+  # promotion to policy.yaml is deferred to a future PR.
+  #
+  # TODO(research-loop-policy): elevate to policy.yaml > research:
+  #   { max_loops: 3 } when the policy schema lands.
+  - name: research_loop_counter
+    type: script
+    description: Track research loop iteration count and gate on cap / payload presence
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $count = {{ context.history | select('eq', 'research_dispatch') | list | length }}
+        $maxLoops = 3
+        $capReached = $count -ge $maxLoops
+        $hasTopics = {{ (architect.output.research_needs.topics | default([]) | length > 0) | string | lower }}
+        @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached; has_topics = $hasTopics } | ConvertTo-Json
+    routes:
+      # No research requested (empty topics or no research_needs) — fall through.
       - to: open_questions_policy
+        when: "{{ research_loop_counter.output.has_topics == false }}"
+      # Cap reached — surface to human or fall through.
+      - to: research_cap_gate
+        when: "{{ research_loop_counter.output.cap_reached == true }}"
+      # Research requested and under cap — dispatch.
+      - to: research_dispatch
+
+  # ── Research dispatch ──────────────────────────────────────────────────
+  #
+  # Invokes the research sub-workflow (research.yaml) with the architect's
+  # research_needs payload mapped to the sub-workflow's input schema. After
+  # the sub-workflow returns, routes directly back to architect — bypassing
+  # open_questions_policy, ensure_plan_branch, write_plan, commit_and_push,
+  # open_plan_pr, and plan_reviewer entirely.
+  #
+  # Invariants:
+  #   Pre:  architect.output.research_needs.topics is non-empty.
+  #   Post: research_dispatch.output.findings contains the synthesized
+  #         Markdown document; routes back to architect for incorporation.
+  - name: research_dispatch
+    type: workflow
+    description: Invoke archive-only research sub-workflow to answer architect's research questions.
+    workflow: ./research.yaml
+    input_mapping:
+      topics: "{{ architect.output.research_needs.topics }}"
+      context_work_item_id: "{{ workflow.input.work_item_id }}"
+      plan_excerpt: "{{ architect.output.research_needs.context.plan_excerpt | default('') }}"
+      budget_hint: "{{ architect.output.research_needs.budget_hint | default('cheap') }}"
+      archive_scope_paths: "{{ architect.output.research_needs.archive_scope.paths | default([]) }}"
+      archive_scope_tags: "{{ architect.output.research_needs.archive_scope.tags | default([]) }}"
+    routes:
+      - to: architect
+
+  # ── Research cap gate ──────────────────────────────────────────────────
+  #
+  # Fires when the research loop counter reaches the cap. The architect
+  # keeps requesting research but isn't converging. Surface to the
+  # operator with options to proceed (skip research, continue to open
+  # questions) or force one more research cycle.
+  - name: research_cap_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Research Loop Cap Reached — Work Item {{ workflow.input.work_item_id }}
+
+      The architect has requested research **{{ research_loop_counter.output.max_loops }}**
+      times without converging on a final plan. The research loop cap
+      prevents infinite loops.
+
+      **Iteration:** {{ research_loop_counter.output.iteration }} of {{ research_loop_counter.output.max_loops }}
+
+      Decide what to do:
+
+      ---
+
+      Choose an action:
+      - **Proceed** — skip research and continue to open questions / plan review
+      - **Force one more** — allow one additional research cycle
+    options:
+      - label: "⏩ Proceed without research"
+        value: proceed
+        route: open_questions_policy
+      - label: "🔬 Force one more research cycle"
+        value: force
+        route: research_dispatch
 
   # ── Open questions policy resolver ─────────────────────────────────────
   #
