@@ -1,0 +1,79 @@
+# research_happy_path — archive-only research sub-workflow end-to-end.
+#
+# Drives research.yaml with a representative research_needs payload and
+# a scripted FakeProvider response from the research_assistant agent.
+# Proves the workflow:
+#   1. Accepts the flattened research_needs inputs.
+#   2. Routes to research_assistant as entry point.
+#   3. Returns a findings document with per-topic sections and sources.
+#   4. Reaches the terminal node ($end).
+#
+# No cli_scripts needed — research.yaml has no script: nodes (no
+# guidance_loader; the agent is the entry point).
+
+workflow: .conductor/registry/workflows/research.yaml
+
+inputs:
+  topics:
+    - "What patterns do existing polyphony CLI commands follow for parameter validation and error handling?"
+    - "How does PolyphonyJsonContext register new serializable types?"
+  context_work_item_id: 3133
+  plan_excerpt: >-
+    Implement the research sub-workflow skeleton and the research-assistant
+    agent (archive-only, cheap tier).
+  budget_hint: cheap
+  archive_scope_paths:
+    - "src/Polyphony/Commands/"
+    - "tests/Polyphony.Tests/"
+  archive_scope_tags: []
+
+agent_scripts:
+  research_assistant:
+    - content:
+        findings: |
+          # Findings
+
+          ## Topic 1: What patterns do existing polyphony CLI commands follow for parameter validation and error handling?
+
+          Polyphony CLI commands use the ConsoleAppFramework pattern with primary constructors for DI.
+          Commands validate parameters at entry, returning structured error results via the routing-style
+          envelope convention (always exit 0, surface errors in JSON fields like `error` and `error_code`).
+
+          Key patterns observed:
+          - Commands are in `src/Polyphony/Commands/` with one file per command group
+          - Parameter validation uses guard clauses at method entry
+          - All output goes through `PolyphonyJsonContext` for AOT-safe serialization
+          - Error results include `error` (message) and `error_code` (machine-readable) fields
+
+          ## Topic 2: How does PolyphonyJsonContext register new serializable types?
+
+          New types are registered by adding `[JsonSerializable(typeof(NewType))]` to the
+          `PolyphonyJsonContext` partial class in `src/Polyphony/PolyphonyJsonContext.cs`.
+          The context uses `JsonKnownNamingPolicy.SnakeCaseLower` and
+          `JsonIgnoreCondition.WhenWritingNull`.
+
+          ## Sources
+
+          - `src/Polyphony/Commands/ValidateCommand.cs` — canonical command pattern
+          - `src/Polyphony/PolyphonyJsonContext.cs` — JSON serialization registration
+          - `src/Polyphony/Models/ValidateResult.cs` — routing-style envelope example
+        sources:
+          - path: "src/Polyphony/Commands/ValidateCommand.cs"
+            lines: "1-50"
+            relevance: "Canonical CLI command pattern with parameter validation"
+          - path: "src/Polyphony/PolyphonyJsonContext.cs"
+            lines: "12-192"
+            relevance: "Source-generated JSON context with type registration"
+          - path: "src/Polyphony/Models/ValidateResult.cs"
+            lines: "1-30"
+            relevance: "Routing-style envelope convention for error handling"
+        summary: >-
+          Polyphony CLI commands follow a consistent pattern: ConsoleAppFramework with
+          primary-constructor DI, guard-clause validation, routing-style envelope
+          convention (exit 0 + JSON error fields), and AOT-safe serialization via
+          PolyphonyJsonContext. New types are registered with [JsonSerializable] attributes.
+
+expected_trace:
+  agents_executed:
+    - research_assistant
+  reached_terminal: true

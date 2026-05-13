@@ -1,0 +1,27 @@
+# Example research_needs payload — validates against research-needs.schema.yaml.
+#
+# Scenario: the architect is planning a new CLI verb and needs to understand
+# existing command patterns, JSON serialization conventions, and test coverage.
+
+topics:
+  - "What patterns do existing polyphony CLI commands follow for parameter validation and error handling?"
+  - "How does PolyphonyJsonContext register new serializable types, and what naming conventions apply?"
+  - "What test infrastructure exists for CLI command output contract tests?"
+
+context:
+  work_item_id: 3133
+  plan_excerpt: >-
+    Implement the research sub-workflow skeleton and the research-assistant
+    agent (archive-only, cheap tier). Define the research_needs payload
+    schema as part of this issue so downstream consumers (Issue 5) bind to
+    a stable contract.
+
+budget_hint: cheap
+
+archive_scope:
+  paths:
+    - "src/Polyphony/Commands/"
+    - "tests/Polyphony.Tests/"
+    - "docs/"
+  tags:
+    - "polyphony:planned"
