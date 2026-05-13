@@ -25,9 +25,33 @@ public sealed class NullResearchStorageTests
     }
 
     [Fact]
-    public void WriteAsync_ThrowsInvalidOperationException()
+    public async Task WriteAsync_NoOpsAndDoesNotThrow()
     {
-        Should.Throw<InvalidOperationException>(
-            () => _storage.WriteAsync("path.md", "content", "msg"));
+        await _storage.WriteAsync("path.md", "content", "msg");
+    }
+
+    [Fact]
+    public async Task WriteAsync_OnlyWarnsOnceAcrossManyWrites()
+    {
+        var originalErr = Console.Error;
+        try
+        {
+            using var capture = new StringWriter();
+            Console.SetError(capture);
+
+            for (var i = 0; i < 5; i++)
+            {
+                await _storage.WriteAsync($"path-{i}.md", "content", "msg");
+            }
+
+            var output = capture.ToString();
+            var occurrences = output.Split("research storage is not configured").Length - 1;
+            occurrences.ShouldBe(1);
+            output.ShouldContain("path-0.md");
+        }
+        finally
+        {
+            Console.SetError(originalErr);
+        }
     }
 }

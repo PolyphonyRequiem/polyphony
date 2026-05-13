@@ -36,5 +36,16 @@ estimation:
   unit: hours
   confidence_default: medium
 
+# Research storage (AB#3131). Polyphony writes its own research findings
+# back into this same repo under `research/` on `main` via the GitHub
+# Contents API. Same-repo (rather than a sibling research repo) is the
+# intentional choice for polyphony itself: research-as-code, reviewable
+# in the same backlog, no extra repo to provision.
+research:
+  repository: PolyphonyRequiem/polyphony
+  base_path: research
+  branch: main
+  escalation_cap: 1
+
 mcp_servers:
   - twig-mcp
