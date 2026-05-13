@@ -697,7 +697,7 @@ agents:
     routes:
       - to: dependency_gate
         when: "{{ dependency_check.output.status == 'blocked' }}"
-      - to: scope_guidance_loader
+      - to: fetch_for_scope_review
         when: "{{ dependency_check.output.status == 'not_blocked' }}"
       # Catch-all per M4: an unknown status value routes to the gate so
       # a human resolves it rather than raising `No matching route found`.
@@ -749,7 +749,7 @@ agents:
         route: dependency_check
       - label: "⏩ Override"
         value: override
-        route: scope_guidance_loader
+        route: fetch_for_scope_review
       - label: "🔀 Reassign"
         value: reassign
         route: $end
@@ -763,6 +763,57 @@ agents:
   # Invariants:
   #   Pre:  All tasks complete; dependencies resolved (or overridden).
   #   Post: output.verdict is 'approved' or 'changes_requested'.
+  # ── Fetch for scope review (AB#3157) ──────────────────────────────────
+  #
+  # In the bare-repo + per-run worktree model, all worktrees share
+  # `.git/refs`. When the impl PR merges into the MG branch via
+  # `gh pr merge`, only `origin/mg/...` is updated; local
+  # `refs/heads/mg/...` stays at the SHA the worktree was created with.
+  # That stale local ref poisoned scope_reviewer (which compared against
+  # bare branch names): it saw zero new commits on the MG and emitted a
+  # spurious `empty_merge_group_structural_violation` (see AB#3157,
+  # validated in the AB#3127 dogfood Run #3).
+  #
+  # This deterministic pre-fetch is the workflow leg of a belt + suspenders
+  # fix; the prompt-level leg (use `origin/...` refs in the example
+  # commands) is the suspenders.
+  #
+  # Invariants:
+  #   Pre:  feature_branch + MG branch exist on origin (the MG's first
+  #         push is `branch ensure-mg`, well upstream of this step).
+  #   Post: `origin/feature_branch` and `origin/mg/...` reflect remote;
+  #         local heads have been fast-forwarded to match when safe.
+  - name: fetch_for_scope_review
+    type: script
+    description: Pre-fetch origin refs so scope_reviewer sees fresh state (AB#3157)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $feature = '{{ workflow.input.feature_branch }}'
+        $mg = 'mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}'
+        git fetch --quiet origin $feature $mg
+        if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $feature, $mg" }
+        # Defensive fast-forward of local heads so any consumer that
+        # uses bare names (without the origin/ prefix) sees fresh state.
+        foreach ($branch in @($feature, $mg)) {
+            $remoteRef = "refs/remotes/origin/$branch"
+            $localRef = "refs/heads/$branch"
+            $localExists = (git rev-parse --verify --quiet $localRef 2>$null) -ne $null
+            if ($localExists) {
+                & git merge-base --is-ancestor $localRef $remoteRef
+                if ($LASTEXITCODE -eq 0) {
+                    git update-ref $localRef $remoteRef
+                } else {
+                    Write-Host "::warning:: local $branch has commits not on origin; not fast-forwarding"
+                }
+            }
+        }
+        @{ ok = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: scope_guidance_loader
+
   - name: scope_guidance_loader
     type: script
     description: Load agent guidance for the MG's parent work item (drives scope_reviewer's type refinement)
@@ -818,22 +869,26 @@ agents:
 
       1. Read the parent work item description: `twig show {{ workflow.input.work_item_id }}`.
       2. Inspect the MG branch in full:
-         - `git log --oneline {{ workflow.input.feature_branch }}..mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+         - `git log --oneline origin/{{ workflow.input.feature_branch }}..origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
            to see every commit added by this MG (one squash commit per impl PR).
-         - `git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat`
+         - `git diff origin/{{ workflow.input.feature_branch }}...origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat`
            for an aggregate file/line summary.
          - Read the modified files in full as needed.
       3. **Empty-MG structural check** (FAIL LOUDLY — do not punt to the
          user_acceptance gate):
 
+         Refs were freshly fetched from origin immediately upstream;
+         compare against `origin/...` refs to avoid stale-cache false
+         positives. (See AB#3157.)
+
          An MG that satisfies *any* of the following is structurally
          broken and MUST receive `verdict: "changes_requested"`:
 
          a. The branch `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
-            does not exist (`git rev-parse --verify` fails).
-         b. `git log --oneline {{ workflow.input.feature_branch }}..mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+            does not exist (`git rev-parse --verify origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` fails).
+         b. `git log --oneline origin/{{ workflow.input.feature_branch }}..origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
             returns zero commits.
-         c. `git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat`
+         c. `git diff origin/{{ workflow.input.feature_branch }}...origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat`
             shows zero files changed.
          d. `{{ workflow.input.work_item_ids | length }}` is zero (the MG was
             dispatched with no tasks).
@@ -1068,6 +1123,54 @@ agents:
     routes:
       - to: pr_platform_router
         when: "{{ user_acceptance_policy_router.output.unattended.acceptance_mode == 'auto' }}"
+      - to: fetch_for_user_acceptance
+
+  # ── Fetch for user acceptance (AB#3157) ───────────────────────────────
+  #
+  # Mirror of `fetch_for_scope_review` placed before the user_acceptance
+  # human gate. The gate's prompt renders `git log` / `git diff` example
+  # commands the operator may copy into a worktree shell to inspect the
+  # MG; that inspection is only meaningful if local refs (or `origin/...`
+  # refs) reflect what `gh pr merge` pushed. Pre-fetching here keeps the
+  # operator's commands honest and brings local heads up to date even
+  # when the user_acceptance_policy_router runs in `manual` mode (the
+  # `auto` path bypasses this step and goes straight to pr_platform_router,
+  # which uses platform verbs that handle their own ref freshness).
+  #
+  # Invariants:
+  #   Pre:  scope_reviewer.output.verdict == 'approved' AND
+  #         policy.unattended.acceptance_mode == 'manual'.
+  #   Post: `origin/feature_branch` and `origin/mg/...` reflect remote;
+  #         local heads have been fast-forwarded to match when safe.
+  - name: fetch_for_user_acceptance
+    type: script
+    description: Pre-fetch origin refs so the operator's inspection commands see fresh state (AB#3157)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $feature = '{{ workflow.input.feature_branch }}'
+        $mg = 'mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}'
+        git fetch --quiet origin $feature $mg
+        if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $feature, $mg" }
+        # Defensive fast-forward of local heads so any consumer that
+        # uses bare names (without the origin/ prefix) sees fresh state.
+        foreach ($branch in @($feature, $mg)) {
+            $remoteRef = "refs/remotes/origin/$branch"
+            $localRef = "refs/heads/$branch"
+            $localExists = (git rev-parse --verify --quiet $localRef 2>$null) -ne $null
+            if ($localExists) {
+                & git merge-base --is-ancestor $localRef $remoteRef
+                if ($LASTEXITCODE -eq 0) {
+                    git update-ref $localRef $remoteRef
+                } else {
+                    Write-Host "::warning:: local $branch has commits not on origin; not fast-forwarding"
+                }
+            }
+        }
+        @{ ok = $true } | ConvertTo-Json -Compress
+    routes:
       - to: user_acceptance
 
   # ── User acceptance gate ──────────────────────────────────────────────
@@ -1099,10 +1202,14 @@ agents:
 
       ### Inspect the MG branch
 
+      > Refs were freshly fetched from origin immediately upstream;
+      > compare against `origin/...` refs to avoid stale-cache false
+      > positives. (See AB#3157.)
+
       ```
-      git log --oneline {{ workflow.input.feature_branch }}..mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}
-      git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat
-      git diff {{ workflow.input.feature_branch }}...mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}
+      git log --oneline origin/{{ workflow.input.feature_branch }}..origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}
+      git diff origin/{{ workflow.input.feature_branch }}...origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat
+      git diff origin/{{ workflow.input.feature_branch }}...origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}
       ```
 
       ---
