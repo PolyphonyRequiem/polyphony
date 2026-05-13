@@ -1,0 +1,38 @@
+[
+  {
+    "acceptance_criteria": [
+      "\u0060ResearchProfileConfig\u0060 DTO exists and deserializes the documented \u0060research:\u0060 block from \u0060profile.yaml\u0060.",
+      "Canonical immutable \u0060ResearchProfile\u0060 record \u002B extension method available for downstream consumers.",
+      "New V-rule fires with a clear message when \u0060research.enabled=true\u0060 and required \u0060remote.*\u0060 fields are missing or \u0060auth.kind\u0060 is unrecognized.",
+      "When the \u0060research:\u0060 block is omitted entirely, no V-rule trips and \u0060ResearchProfile.Enabled\u0060 is false.",
+      "\u0060escalation_cap\u0060 defaults to 1 when omitted.",
+      "Build passes with zero errors and warnings.",
+      "New unit tests cover happy-path parsing, default values, and each new validator failure mode; all existing tests continue to pass."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Add a new \u0060research:\u0060 block to \u0060.polyphony-config/profile.yaml\u0060 with schema, deserialization, and validation.\n\n## Scope\n- New \u0060ResearchProfileConfig\u0060 YAML-friendly DTO under [src/Polyphony/Configuration/](src/Polyphony/Configuration/), modeled on [FacetProfileConfig.cs](src/Polyphony/Configuration/FacetProfileConfig.cs) (mutable properties, \u0060[YamlMember]\u0060 aliases).\n- Fields: \u0060enabled\u0060 (bool, default false), \u0060remote: { platform: github|azuredevops, owner, repo, branch (default main), path_prefix? }\u0060, \u0060auth?: { kind: env|gh-cli|az-cli, var?: string }\u0060, \u0060escalation_cap\u0060 (int, default 1).\n- Canonical immutable \u0060ResearchProfile\u0060 record \u002B \u0060GetResearchProfile()\u0060 extension on the top-level profile loader, mirroring \u0060ProcessConfigFacetExtensions\u0060.\n- New V-rule in [ConfigValidator.cs](src/Polyphony/Configuration/ConfigValidator.cs): when \u0060research.enabled = true\u0060, \u0060remote.platform\u0060/\u0060owner\u0060/\u0060repo\u0060 MUST be present; \u0060auth.kind\u0060 MUST be a recognized kind when supplied; otherwise no-op (additive \u2014 does not change existing V-rule behavior).\n- Unit tests in [tests/Polyphony.Tests/Configuration/](tests/Polyphony.Tests/Configuration/): valid block round-trips, missing fields trip the new V-rule with a clear message, omitted block leaves \u0060ResearchProfile\u0060 empty/disabled, default values applied when fields omitted.\n\n## Out of Scope\n- Storage implementation (covered by task-2).\n- Architect integration / sub-workflow consumption (later issues in epic AB#3131).",
+    "pg": "pg-1",
+    "title": "\u0060research:\u0060 profile schema \u002B validator",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060IResearchStorage\u0060 abstraction defined with \u0060ListAsync\u0060, \u0060ReadAsync\u0060, \u0060WriteAsync\u0060.",
+      "Both \u0060GitHubResearchStorage\u0060 and \u0060AzureDevOpsResearchStorage\u0060 implementations exist; both reuse the existing platform-router token resolvers in the default (no-override) path.",
+      "\u0060ResearchStorageFactory\u0060 selects the implementation from \u0060ResearchProfile.Remote.Platform\u0060 and honors the optional explicit \u0060auth\u0060 override per-instance without mutating global state.",
+      "Unit tests prove default-path credential reuse (no new secret plumbing) and override-path per-instance resolver wiring with fake clients.",
+      "Gated integration test round-trips a small markdown document (write \u2192 list \u2192 read \u2192 assert content equality) against a real sibling github repo.",
+      "DI registration is in place so consumers resolve \u0060IResearchStorage\u0060 via the factory.",
+      "Build passes with zero errors and warnings; all existing tests continue to pass."
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Implement a sibling-repo storage abstraction reusing the existing platform-router credential resolution.\n\n## Scope\n- New \u0060IResearchStorage\u0060 interface under \u0060src/Polyphony/Infrastructure/Research/\u0060 exposing \u0060ListAsync(pathPrefix, ct)\u0060, \u0060ReadAsync(path, ct)\u0060, \u0060WriteAsync(doc, ct)\u0060.\n- \u0060GitHubResearchStorage\u0060 implementation that delegates to the existing \u0060IGhClient\u0060 ([src/Polyphony/Infrastructure/Processes/IGhClient.cs](src/Polyphony/Infrastructure/Processes/IGhClient.cs)) so credentials flow from [GhTokenResolver.cs](src/Polyphony/Infrastructure/Processes/GhTokenResolver.cs) automatically.\n- \u0060AzureDevOpsResearchStorage\u0060 implementation using \u0060IAdoClient\u0060 ([src/Polyphony/Infrastructure/AzureDevOps/IAdoClient.cs](src/Polyphony/Infrastructure/AzureDevOps/IAdoClient.cs)) with credentials from [AdoTokenResolver.cs](src/Polyphony/Infrastructure/AzureDevOps/AdoTokenResolver.cs).\n- \u0060ResearchStorageFactory(ResearchProfile)\u0060 that selects the implementation from \u0060Remote.Platform\u0060. When \u0060auth\u0060 override is present, the factory builds a one-off client with the alternative credential resolver for that storage instance only \u2014 does NOT mutate the global router.\n- DI registration in [PolyphonyServiceRegistration.cs](src/Polyphony/Infrastructure/PolyphonyServiceRegistration.cs).\n- Tests:\n  - Unit: factory selects correct implementation per platform; explicit \u0060auth\u0060 override builds a per-instance client without touching the global router; deterministic round-trip with fake \u0060IGhClient\u0060 / \u0060IAdoClient\u0060.\n  - Integration: real round-trip against a sibling github repo, gated behind an env var (e.g. \u0060POLYPHONY_RESEARCH_INTEGRATION=1\u0060) so CI without creds simply skips it.\n\n## Out of Scope\n- Article schema / Johnny-Decimal layout / frontmatter (Issue 4 \u002B Issue 6 territory).\n- INDEX.md maintenance (Issue 4/6).\n- Sub-workflow wiring (Issue 2).",
+    "pg": "pg-1",
+    "title": "\u0060IResearchStorage\u0060 abstraction with platform-router credential reuse",
+    "type": "Task"
+  }
+]
