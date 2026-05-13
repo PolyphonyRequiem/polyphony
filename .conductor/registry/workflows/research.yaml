@@ -1,0 +1,195 @@
+# research — Research sub-workflow with archivist curation.
+#
+# Accepts a research_needs payload (per .conductor/registry/schemas/
+# research-needs.schema.yaml) and returns synthesized findings plus
+# archivist curation results. Kept articles are written to the sibling
+# research repository via `polyphony research write-articles`.
+#
+# Agent pipeline:
+#   1. research_assistant — archive-only search, cheap tier (AB#3133)
+#   2. archivist — keep/discard/expand curation pass (AB#3135)
+#   3. article_writer — script node writing kept articles to sibling repo
+#
+# Sufficiency check + deep-researcher escalation (AB#3134) not yet wired.
+#
+# Invariants:
+#   Pre:  topics[] is non-empty; budget_hint is "cheap" (only honored value).
+#   Post: output.findings contains Markdown; output.sources lists cited files;
+#         output.summary provides a one-paragraph synthesis;
+#         output.curation_summary describes archivist decisions;
+#         kept articles are written to sibling research repo with JD layout.
+
+workflow:
+  name: research
+  description: >-
+    Research sub-workflow with archivist curation. Accepts a research_needs
+    payload, routes to the research-assistant agent (cheap tier) for archive
+    search, then the archivist evaluates findings for keep/discard/expand
+    and writes kept articles to the sibling research repo.
+  version: "2.4.0"
+  entry_point: research_assistant
+  metadata:
+    min_polyphony_version: "2.4.0"
+
+  limits:
+    max_iterations: 25
+
+  input:
+    topics:
+      type: array
+      required: true
+      description: >-
+        Research questions or areas the architect needs answered (non-empty).
+    context_work_item_id:
+      type: number
+      required: true
+      description: ADO work item ID that initiated the research request.
+    plan_excerpt:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        Relevant excerpt from the plan document that frames the research need.
+    budget_hint:
+      type: string
+      required: true
+      description: >-
+        Controls depth/cost. This workflow only honors "cheap" (archive-only).
+    archive_scope_paths:
+      type: array
+      required: false
+      default: []
+      description: File path prefixes to restrict the archive search.
+    archive_scope_tags:
+      type: array
+      required: false
+      default: []
+      description: ADO tags to filter related work items.
+
+tools:
+  - filesystem
+  - gh
+
+output:
+  # Backward-compatible: preserve findings/sources/summary from research_assistant.
+  findings: "{{ research_assistant.output.findings }}"
+  sources: "{{ research_assistant.output.sources | json }}"
+  summary: "{{ research_assistant.output.summary | default('') }}"
+  # New: curation results from the archivist pass.
+  curation_summary: "{{ archivist.output.summary | default('') }}"
+  articles_written: "{% if article_writer is defined %}{{ article_writer.output.total_kept | default(0) }}{% else %}0{% endif %}"
+  expand_flagged: "{% if archivist is defined %}{{ archivist.output.items | selectattr('disposition', 'equalto', 'expand') | list | length }}{% else %}0{% endif %}"
+
+agents:
+  # ── Research assistant (archive-only, cheap tier) ──────────────────────
+  #
+  # Searches the repository archive to answer the architect's research
+  # questions. Sources are limited to the filesystem and gh tools — no
+  # live web, no MCP. Output is a structured findings document.
+  #
+  # Cheap tier: claude-sonnet-4.6 per profile.yaml + M5 model table.
+  - name: research_assistant
+    type: agent
+    model: claude-sonnet-4.6
+    description: >-
+      Archive-only research agent that synthesizes findings from the
+      repository to answer the architect's research questions.
+    tools:
+      - filesystem
+      - gh
+    output:
+      findings:
+        type: string
+        description: >-
+          Markdown document with per-topic findings sections and a sources
+          list. Starts with "# Findings".
+      sources:
+        type: array
+        description: List of source references cited in the findings.
+        items:
+          type: object
+          properties:
+            path:
+              type: string
+              description: File path relative to repo root.
+            lines:
+              type: string
+              description: Line range (e.g., "10-25") or empty string.
+            relevance:
+              type: string
+              description: Brief note on why this source is relevant.
+      summary:
+        type: string
+        description: One-paragraph synthesis of key findings.
+    prompt: !file ../prompts/research-assistant.md
+    routes:
+      - to: archivist
+
+  # ── Archivist (curation pass) ──────────────────────────────────────────
+  #
+  # Evaluates research findings and assigns keep/discard/expand dispositions.
+  # For kept items, synthesizes complete articles ready for writing to the
+  # sibling research repo. Added by AB#3135.
+  - name: archivist
+    type: agent
+    model: claude-sonnet-4.6
+    description: >-
+      Curation agent that evaluates research findings and decides which
+      are worth preserving as permanent articles in the research wiki.
+    output:
+      items:
+        type: array
+        description: >-
+          Per-finding curation decisions with disposition and optional article.
+        items:
+          type: object
+          properties:
+            disposition:
+              type: string
+              description: "keep | discard | expand"
+            rationale:
+              type: string
+            source_refs:
+              type: array
+              items:
+                type: string
+            article:
+              type: object
+              description: Present only for keep dispositions.
+              properties:
+                title:
+                  type: string
+                body_markdown:
+                  type: string
+                category:
+                  type: string
+                topics:
+                  type: array
+                  items:
+                    type: string
+      summary:
+        type: string
+        description: One-line summary of curation decisions.
+    prompt: !file ../prompts/archivist.md
+    routes:
+      - to: article_writer
+
+  # ── Article writer (script node) ───────────────────────────────────────
+  #
+  # Writes kept articles to the sibling research repo using the storage
+  # abstraction (IResearchStorage). Deterministically assigns JD numbers,
+  # generates frontmatter, and updates INDEX.md.
+  - name: article_writer
+    type: script
+    description: >-
+      Writes archivist-curated articles to the sibling research repository
+      with Johnny-Decimal layout, YAML frontmatter, and INDEX.md update.
+    command: polyphony
+    args:
+      - "research"
+      - "write-articles"
+      - "--work-item"
+      - "{{ workflow.input.context_work_item_id }}"
+    stdin: "{{ archivist.output | json }}"
+    routes:
+      - to: $end
