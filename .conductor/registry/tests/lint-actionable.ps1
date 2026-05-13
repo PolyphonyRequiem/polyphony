@@ -29,6 +29,12 @@
          be absent (its presence indicates the wiring was reverted)
     11c. The actionable_agent prompt template injects the
          compose_addendum envelope (skills / mcps / guidance) — Phase 6 PR #5
+    13. Verb argument-shape: each polyphony invocation that reads
+        `workflow.input.work_item_id` MUST pass it via a named flag
+        (`--work-item-id` or `--work-item`), not positionally. Guards
+        against AB#3154-class verb-signature drift, where the workflow
+        author wrote a positional value but the verb declares all
+        parameters as named (ConsoleAppFramework default).
     Exits 0 if clean, 1 if violations found.
 #>
 [CmdletBinding()]
@@ -278,6 +284,44 @@ if ($content -notmatch 'min_polyphony_version:\s*"[0-9]') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-min-polyphony-version'
         Detail = "Workflow must declare metadata.min_polyphony_version (per polyphony-workflow-author skill)"
+    }
+}
+
+# ── Check 13: Named-flag invariant for work_item_id passing ──────────────
+# AB#3154 — actionable.yaml's ensure_evidence_branch and open_evidence_pr
+# steps drifted to passing the work item ID positionally. The CLI verbs
+# declare those parameters as named (ConsoleAppFramework default), so the
+# positional value is rejected at runtime ("Argument '3138' is not
+# recognized."), parking the workflow at workflow_error_gate. The fix is
+# always one line — insert the named flag before the templated value.
+#
+# Detection strategy: capture the step block from `- name: <step>` up to
+# the next `- name:` and assert the named flag literal is present
+# anywhere in the step. Works for both block-form and inline-form args.
+function Get-StepBlock {
+    param([string]$StepName, [string[]]$Lines)
+    $block = ''
+    $inStep = $false
+    foreach ($line in $Lines) {
+        if ($line -match "^\s*-\s+name:\s*$StepName\s*$") { $inStep = $true; continue }
+        if ($inStep -and $line -match '^\s*-\s+name:') { break }
+        if ($inStep) { $block += $line + "`n" }
+    }
+    return $block
+}
+
+$workItemFlagSteps = @(
+    @{ Step = 'ensure_evidence_branch'; Flag = '--work-item-id'; Verb = 'branch ensure-evidence-branch' },
+    @{ Step = 'open_evidence_pr';       Flag = '--work-item';    Verb = 'pr open-evidence-pr'           }
+)
+foreach ($entry in $workItemFlagSteps) {
+    $stepBlock = Get-StepBlock -StepName $entry.Step -Lines $lines
+    if (-not $stepBlock) { continue }
+    if ($stepBlock -notmatch [regex]::Escape("`"$($entry.Flag)`"")) {
+        $violations += [PSCustomObject]@{
+            Rule   = 'positional-work-item-arg'
+            Detail = "Step '$($entry.Step)' must pass work_item_id via the named flag '$($entry.Flag)' before the templated value (verb '$($entry.Verb)' rejects positional args). See AB#3154."
+        }
     }
 }
 

@@ -88,7 +88,7 @@ agents:
   - name: ensure_evidence_branch
     type: script
     command: polyphony
-    args: ["branch", "ensure-evidence-branch", "1"]
+    args: ["branch", "ensure-evidence-branch", "--work-item-id", "1"]
     routes:
       - to: workflow_error_gate
         when: "{{ ensure_evidence_branch.output.error is defined and ensure_evidence_branch.output.error != '' }}"
@@ -121,7 +121,7 @@ agents:
   - name: open_evidence_pr
     type: script
     command: polyphony
-    args: ["pr", "open-evidence-pr", "1"]
+    args: ["pr", "open-evidence-pr", "--work-item", "1"]
     routes:
       - to: workflow_error_gate
         when: "{{ open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' }}"
@@ -290,6 +290,22 @@ agents:
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'missing-node.*human_satisfaction_gate'
+        }
+
+        It 'Fails when ensure_evidence_branch passes work-item-id positionally (AB#3154)' {
+            $yaml = ($script:ValidYaml) -replace '"branch", "ensure-evidence-branch", "--work-item-id", "1"', '"branch", "ensure-evidence-branch", "1"'
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'positional-work-item-arg.*ensure_evidence_branch'
+        }
+
+        It 'Fails when open_evidence_pr passes work-item positionally (AB#3154)' {
+            $yaml = ($script:ValidYaml) -replace '"pr", "open-evidence-pr", "--work-item", "1"', '"pr", "open-evidence-pr", "1"'
+            Set-Content (Join-Path $script:WorkflowsDir 'actionable.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-actionable.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'positional-work-item-arg.*open_evidence_pr'
         }
 
         It 'Fails when ensure-evidence-branch verb is not invoked' {
