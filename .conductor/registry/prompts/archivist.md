@@ -21,9 +21,25 @@ proper source attribution.
 
 {{ research_assistant.output.findings }}
 
+{% if deep_researcher is defined and deep_researcher.output is defined and deep_researcher.output.findings %}
+### Deep-Tier Findings (escalation)
+
+The cheap-tier research_assistant could not fully answer the architect's
+questions. The deep_researcher escalation tier added the following live-source
+findings, which you should evaluate alongside the cheap-tier findings above:
+
+{{ deep_researcher.output.findings }}
+{% endif %}
+
 ## Sources
 
 {{ research_assistant.output.sources | json }}
+
+{% if deep_researcher is defined and deep_researcher.output is defined and deep_researcher.output.sources %}
+### Deep-Tier Sources (live, time-stamped)
+
+{{ deep_researcher.output.sources | json }}
+{% endif %}
 
 ## Instructions
 

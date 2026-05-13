@@ -19,6 +19,9 @@ public static partial class ResearchConfigValidator
     /// <summary>Rule: base_path must not contain path-traversal segments.</summary>
     public const string BasePathTraversalRuleId = "V-24";
 
+    /// <summary>Rule: escalation_cap must be a non-negative integer.</summary>
+    public const string EscalationCapNegativeRuleId = "V-25";
+
     // owner/repo — at least one char each, no whitespace.
     [GeneratedRegex(@"^[^\s/]+/[^\s/]+$")]
     private static partial Regex OwnerRepoPattern();
@@ -72,6 +75,19 @@ public static partial class ResearchConfigValidator
             errors.Add(Error(BasePathTraversalRuleId,
                 $"research.base_path '{research.BasePath}' contains path-traversal segments " +
                 "('..' or leading '/'). Use a simple relative path."));
+        }
+
+        // V-25: escalation_cap must be a non-negative integer. The workflow
+        // currently only honors 0 (escalation disabled) or 1 (single-shot
+        // escalation, the design default). Higher values are accepted here
+        // for forward compatibility but are clamped to 1 at the workflow
+        // boundary until a proper escalation loop is wired.
+        if (research.EscalationCap < 0)
+        {
+            errors.Add(Error(EscalationCapNegativeRuleId,
+                $"research.escalation_cap '{research.EscalationCap}' must be a non-negative integer. " +
+                "Use 0 to disable deep-researcher escalation entirely, or 1 (default) for a single-shot " +
+                "escalation per research_needs call."));
         }
 
         return errors;

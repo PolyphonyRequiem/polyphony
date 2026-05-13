@@ -124,6 +124,12 @@ cli_scripts:
     stdout: '{"has_plannable_children":false,"plannable_children":[]}'
     exit_code: 0
 
+  # ── Research sub-workflow (article writer terminal script) ──────────
+  - command: polyphony
+    args: [research, write-articles]
+    stdout: '{"total_kept":0,"articles_written":[],"index_updated":false}'
+    exit_code: 0
+
 agent_scripts:
   # ── Architect: 1st call — emits research_needs ──────────────────────
   # The architect needs to understand existing patterns before planning.
@@ -239,14 +245,33 @@ agent_scripts:
 
           _This is an advisory comment from the polyphony plan_reviewer agent._
 
+  # ── Researcher (sufficiency judge in research sub-workflow) ──────────
+  # Declares cheap-tier findings sufficient — no deep_researcher escalation.
+  researcher:
+    - content:
+        sufficient: true
+        rationale: "Cheap-tier findings answer both topics from internal sources."
+        gaps: []
+        escalation_topics: []
+
+  # ── Archivist (curation pass in research sub-workflow) ──────────────
+  archivist:
+    - content:
+        items: []
+        summary: "No items kept (loop test focuses on routing, not curation)."
+
 expected_trace:
-  # Ordered subsequence: architect → research_assistant → architect → plan_reviewer.
-  # This proves research_assistant appears between the two architect invocations,
-  # and plan_reviewer only appears AFTER the second architect (not during the
-  # research loop).
+  # Ordered subsequence: architect → research_assistant → researcher →
+  # archivist → architect → plan_reviewer.
+  # Proves the research sub-workflow now walks the full three-agent
+  # pipeline (research_assistant + researcher + archivist) before
+  # returning to architect, and plan_reviewer only appears AFTER the
+  # second architect (not during the research loop).
   agents_executed:
     - architect
     - research_assistant
+    - researcher
+    - archivist
     - architect
     - plan_reviewer
   reached_terminal: true

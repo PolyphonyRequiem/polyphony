@@ -255,6 +255,97 @@ public sealed class ResearchConfigValidatorTests
 
     #endregion
 
+    #region V-25: escalation_cap non-negative
+
+    [Fact]
+    public void V25_DefaultEscalationCap_Accepts()
+    {
+        var profile = new ProfileConfig
+        {
+            Research = new ResearchConfig { Repository = "owner/repo" }
+        };
+
+        var diagnostics = ResearchConfigValidator.Validate(profile);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void V25_ZeroEscalationCap_Accepts()
+    {
+        var profile = new ProfileConfig
+        {
+            Research = new ResearchConfig
+            {
+                Repository = "owner/repo",
+                EscalationCap = 0
+            }
+        };
+
+        var diagnostics = ResearchConfigValidator.Validate(profile);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void V25_OneEscalationCap_Accepts()
+    {
+        var profile = new ProfileConfig
+        {
+            Research = new ResearchConfig
+            {
+                Repository = "owner/repo",
+                EscalationCap = 1
+            }
+        };
+
+        var diagnostics = ResearchConfigValidator.Validate(profile);
+
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void V25_HighEscalationCap_AcceptsForForwardCompatibility()
+    {
+        var profile = new ProfileConfig
+        {
+            Research = new ResearchConfig
+            {
+                Repository = "owner/repo",
+                EscalationCap = 5
+            }
+        };
+
+        var diagnostics = ResearchConfigValidator.Validate(profile);
+
+        // Workflow currently clamps to 1 but config accepts higher values
+        // for forward compatibility (when the loop lands).
+        diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void V25_NegativeEscalationCap_Rejects()
+    {
+        var profile = new ProfileConfig
+        {
+            Research = new ResearchConfig
+            {
+                Repository = "owner/repo",
+                EscalationCap = -1
+            }
+        };
+
+        var diagnostics = ResearchConfigValidator.Validate(profile);
+
+        diagnostics.ShouldHaveSingleItem();
+        diagnostics[0].RuleId.ShouldBe(ResearchConfigValidator.EscalationCapNegativeRuleId);
+        diagnostics[0].Severity.ShouldBe(ConfigValidationSeverity.Error);
+        diagnostics[0].Message.ShouldContain("escalation_cap");
+        diagnostics[0].Message.ShouldContain("-1");
+    }
+
+    #endregion
+
     #region Multiple errors
 
     [Fact]

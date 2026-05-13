@@ -703,6 +703,13 @@ agents:
       budget_hint: "{{ architect.output.research_needs.budget_hint | default('cheap') }}"
       archive_scope_paths: "{{ architect.output.research_needs.archive_scope.paths | default([]) }}"
       archive_scope_tags: "{{ architect.output.research_needs.archive_scope.tags | default([]) }}"
+      # AB#3134: deep_researcher escalation cap. The architect can request
+      # a specific cap via research_needs.escalation_cap; otherwise we
+      # default to 1 (single-shot escalation when researcher decides the
+      # cheap-tier findings are insufficient). Profile-driven cap from
+      # research.escalation_cap is a deferred follow-up — when it lands,
+      # this default will be sourced from the resolved profile.
+      escalation_cap: "{{ architect.output.research_needs.escalation_cap | default(1) }}"
     routes:
       - to: architect
 
