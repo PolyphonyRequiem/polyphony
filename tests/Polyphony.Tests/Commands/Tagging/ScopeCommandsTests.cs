@@ -247,4 +247,67 @@ public sealed class ScopeCommandsTests : CommandTestBase
         result.Changed.ShouldBeFalse();
         result.TagsAfter.ShouldBe(["polyphony:root"]);
     }
+
+    // ─── post-patch flush (AB#3127 regression) ──────────────────────────────
+
+    [Fact]
+    public async Task Tag_FlushesStagedPatchWithSyncAfterMutation()
+    {
+        // AB#3127 regression: TagMutationAsync must call `twig sync` after
+        // `twig patch` so the staged tag change is durable in ADO before the
+        // verb returns. Without this, subsequent readers (e.g. `polyphony validate`)
+        // see stale state.
+        await SeedAsync(new WorkItemBuilder().WithId(1).WithTags("twig").Build());
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        runner.WhenStartsWith("twig", ["patch", "--id", "1", "--json"], new ProcessResult(0, "{}", ""));
+
+        await CaptureConsoleAsync(() => cmd.Tag(workItem: 1));
+
+        var invocations = runner.Invocations.ToList();
+        var patchIdx = invocations.FindIndex(
+            i => i.Executable == "twig"
+                && i.Arguments.Count > 0
+                && i.Arguments[0] == "patch");
+        patchIdx.ShouldBeGreaterThan(-1, "twig patch must have been invoked");
+
+        var postPatchSync = invocations
+            .Select((inv, idx) => (inv, idx))
+            .FirstOrDefault(x => x.idx > patchIdx
+                && x.inv.Executable == "twig"
+                && x.inv.Arguments.Count >= 1
+                && x.inv.Arguments[0] == "sync");
+
+        postPatchSync.inv.ShouldNotBeNull(
+            "scope tag must invoke `twig sync` after `twig patch` to flush the staged mutation (AB#3127)");
+    }
+
+    [Fact]
+    public async Task Untag_FlushesStagedPatchWithSyncAfterMutation()
+    {
+        // AB#3127 regression: same flush requirement for untag path.
+        await SeedAsync(new WorkItemBuilder().WithId(1).WithTags("polyphony; twig").Build());
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        runner.WhenStartsWith("twig", ["patch"], new ProcessResult(0, "{}", ""));
+
+        await CaptureConsoleAsync(() => cmd.Untag(workItem: 1));
+
+        var invocations = runner.Invocations.ToList();
+        var patchIdx = invocations.FindIndex(
+            i => i.Executable == "twig"
+                && i.Arguments.Count > 0
+                && i.Arguments[0] == "patch");
+        patchIdx.ShouldBeGreaterThan(-1, "twig patch must have been invoked");
+
+        var postPatchSync = invocations
+            .Select((inv, idx) => (inv, idx))
+            .FirstOrDefault(x => x.idx > patchIdx
+                && x.inv.Executable == "twig"
+                && x.inv.Arguments.Count >= 1
+                && x.inv.Arguments[0] == "sync");
+
+        postPatchSync.inv.ShouldNotBeNull(
+            "scope untag must invoke `twig sync` after `twig patch` to flush the staged mutation (AB#3127)");
+    }
 }
