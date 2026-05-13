@@ -1,0 +1,67 @@
+[
+  {
+    "acceptance_criteria": [
+      "\u0060archivist\u0060 agent prompt and registration land in the standard agent location used by \u0060research-assistant\u0060 (AB#3133).",
+      "Output schema is declared once and referenced by both the writer step (task-3) and the sub-workflow routing (task-2).",
+      "\u0060expand\u0060 decisions populate \u0060refined_research_needs\u0060 matching AB#3141\u0027s payload schema; \u0060keep\u0060 decisions populate \u0060title\u0060 and \u0060johnny_decimal_hint\u0060; \u0060discard\u0060 requires only \u0060rationale\u0060.",
+      "Unit-level tests cover schema validation for all three dispositions (well-formed and malformed)."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Define the \u0060archivist\u0060 agent and freeze its structured output schema: \u0060{disposition: keep|discard|expand, rationale, title?, johnny_decimal_hint?, refined_research_needs?}\u0060. The agent reads the synthesized findings document plus the scratch artefact path and returns exactly one decision. Schema must be stable \u2014 it is the contract consumed by task-3 (writer) and by sibling AB#3137\u0027s downstream validators. No workflow wiring in this task; agent \u002B schema \u002B unit-level prompt validation only.",
+    "pg": "pg-3",
+    "title": "\u0060archivist\u0060 agent definition \u002B decision schema",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "Every successful path through the research sub-workflow terminates in exactly one archivist invocation.",
+      "\u0060discard\u0060 exits cleanly with no writer invocation.",
+      "\u0060expand\u0060 re-enters the sub-workflow with the refined \u0060research_needs\u0060 payload; the re-entry honours a configurable expansion cap (default 1) to prevent runaway loops.",
+      "\u0060keep\u0060 hands off to the writer step (task-3) with the archivist\u0027s decision \u002B the findings document attached.",
+      "Harness scenario covers terminal disposition routing for all three branches (writer can be stubbed at this layer)."
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Append the archivist as the terminal stage of the research sub-workflow (built in AB#3133). Insertion is at the structurally terminal end of the YAML step list \u2014 disjoint from AB#3134\u0027s mid-loop escalation insertion. Add routing: \u0060discard\u0060 \u2192 terminal no-op; \u0060keep\u0060 \u2192 writer step (task-3); \u0060expand\u0060 \u2192 re-enter the sub-workflow with \u0060refined_research_needs\u0060 (subject to the same escalation cap policy from AB#3134, default 1 expansion per topic to mirror the deep-tier cap).",
+    "pg": "pg-3",
+    "title": "Wire \u0060archivist\u0060 as terminal step in research sub-workflow",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "Writer accepts an archivist \u0060keep\u0060 decision \u002B findings document and produces one article via the AB#3132 storage abstraction.",
+      "Path follows Johnny-Decimal convention deterministically given the same hint \u002B INDEX state.",
+      "Frontmatter contains \u0060title\u0060, \u0060captured_at\u0060 (ISO-8601), \u0060source_run\u0060, \u0060sources[]\u0060 (each entry includes URL \u002B capture date) \u2014 sufficient to pass AB#3144\u0027s validator without modification.",
+      "No new credential plumbing; auth flows through AB#3132\u0027s existing surface.",
+      "Tests cover deterministic path derivation, frontmatter shape, and storage-abstraction invocation against an in-memory backend."
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Implement the writer step invoked on \u0060keep\u0060. Produces exactly one article in the sibling research repo via the storage abstraction from AB#3132: Johnny-Decimal path (\u0060\u003Carea\u003E/\u003Ccategory\u003E/\u003Cid\u003E-\u003Cslug\u003E.md\u0060) derived from the archivist\u0027s \u0060johnny_decimal_hint\u0060 and the existing INDEX state, plus minimal frontmatter (\u0060title\u0060, \u0060captured_at\u0060, \u0060source_run\u0060, \u0060sources[]\u0060). Full frontmatter schema enforcement is AB#3144\u0027s job \u2014 this task emits a shape that AB#3144\u0027s validator will accept.",
+    "pg": "pg-3",
+    "title": "Sibling-repo writer over AB#3132 storage abstraction",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "A \u0060keep\u0060 decision results in both the article file AND an INDEX.md entry being written through the AB#3132 storage abstraction in the same logical write.",
+      "INDEX append is idempotent: re-running the same \u0060keep\u0060 for an already-indexed article does not duplicate the entry.",
+      "Harness scenario exercises all three dispositions end-to-end (in-memory storage backend) and asserts: article presence/absence, INDEX state, and expand re-entry payload.",
+      "Build passes with zero errors and warnings; all existing tests pass."
+    ],
+    "child_id": "task-4",
+    "depends_on": [
+      "task-2",
+      "task-3"
+    ],
+    "description": "Append the kept article to \u0060INDEX.md\u0060 as part of the same write transaction that creates the article (task-3). This is an append-only first-appearance update; the deterministic full regenerator lives in AB#3147. Add the harness scenario that drives the full research sub-workflow end-to-end and asserts all three dispositions behave correctly, including the article \u002B INDEX state after a \u0060keep\u0060.",
+    "pg": "pg-3",
+    "title": "\u0060INDEX.md\u0060 append-on-write \u002B end-to-end harness coverage",
+    "type": "Task"
+  }
+]
