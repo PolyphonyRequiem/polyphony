@@ -668,7 +668,7 @@ agents:
         $count = {{ context.history | select('eq', 'research_dispatch') | list | length }}
         $maxLoops = 3
         $capReached = $count -ge $maxLoops
-        $hasTopics = {{ (architect.output.research_needs.topics | default([]) | length > 0) | string | lower }}
+        $hasTopics = '{{ (architect.output.research_needs.topics | default([]) | length > 0) | string | lower }}' -eq 'true'
         @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached; has_topics = $hasTopics } | ConvertTo-Json
     routes:
       # No research requested (empty topics or no research_needs) — fall through.
@@ -699,17 +699,21 @@ agents:
     input_mapping:
       topics: "{{ architect.output.research_needs.topics }}"
       context_work_item_id: "{{ workflow.input.work_item_id }}"
-      plan_excerpt: "{{ architect.output.research_needs.context.plan_excerpt | default('') }}"
-      budget_hint: "{{ architect.output.research_needs.budget_hint | default('cheap') }}"
-      archive_scope_paths: "{{ architect.output.research_needs.archive_scope.paths | default([]) }}"
-      archive_scope_tags: "{{ architect.output.research_needs.archive_scope.tags | default([]) }}"
+      # AB#3156: use dict.get() rather than attribute access — under
+      # StrictUndefined, `dict.missing_attr` raises UndefinedError BEFORE
+      # the `default()` filter sees the value, so the filter never fires.
+      # `.get('key', fallback)` returns the fallback cleanly.
+      plan_excerpt: "{{ architect.output.research_needs.get('context', {}).get('plan_excerpt', '') }}"
+      budget_hint: "{{ architect.output.research_needs.get('budget_hint', 'cheap') }}"
+      archive_scope_paths: "{{ architect.output.research_needs.get('archive_scope', {}).get('paths', []) }}"
+      archive_scope_tags: "{{ architect.output.research_needs.get('archive_scope', {}).get('tags', []) }}"
       # AB#3134: deep_researcher escalation cap. The architect can request
       # a specific cap via research_needs.escalation_cap; otherwise we
       # default to 1 (single-shot escalation when researcher decides the
       # cheap-tier findings are insufficient). Profile-driven cap from
       # research.escalation_cap is a deferred follow-up — when it lands,
       # this default will be sourced from the resolved profile.
-      escalation_cap: "{{ architect.output.research_needs.escalation_cap | default(1) }}"
+      escalation_cap: "{{ architect.output.research_needs.get('escalation_cap', 1) }}"
     routes:
       - to: architect
 
