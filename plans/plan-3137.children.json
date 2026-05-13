@@ -1,0 +1,70 @@
+[
+  {
+    "acceptance_criteria": [
+      "Frontmatter schema is declared in a single source-of-truth file checked into the repo.",
+      "Validator loads each kept article\u0027s YAML frontmatter and reports per-article violations against the schema.",
+      "Validator exits non-zero on any violation and is wired into CI.",
+      "Validator consumes the sibling-repo path through the AB#3132 storage abstraction (no hard-coded paths).",
+      "New unit tests cover: valid article passes; missing required field fails; wrong-typed field fails; unknown extra field is handled per the chosen strictness policy (documented in the schema file).",
+      "Build passes with zero errors and warnings; all existing tests pass."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Declare the Obsidian-compatible YAML frontmatter schema for kept articles in the sibling research repo as a single source-of-truth file (location and format to be chosen by the implementer; the schema must be both human-readable and machine-loadable). Implement a validator that walks every kept article via the AB#3132 storage abstraction, parses its frontmatter, and checks the shape against the schema. Validator exits non-zero with a per-article report on violation. Wire the validator into CI so frontmatter drift fails the build.\n\nThe schema must accommodate the frontmatter fields AB#3135 already emits; if AB#3135\u0027s emitted shape disagrees with what this Task wants to declare, file a follow-up bug rather than silently widening the schema to accept both.",
+    "pg": "pg-1",
+    "title": "Frontmatter schema declaration \u002B validator for kept articles",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "Resolver parses \u0060[[target]]\u0060, \u0060[[target|alias]]\u0060, and \u0060[[target#heading]]\u0060 forms.",
+      "Resolver verifies each target maps to an existing kept article under the Johnny-Decimal layout used by AB#3135.",
+      "Dangling links produce a per-link report (article path \u002B link text) and a non-zero exit code.",
+      "Resolver consumes the sibling-repo path through the AB#3132 storage abstraction.",
+      "Resolver is wired into CI.",
+      "New unit tests cover: plain link resolves; aliased link resolves; heading link resolves; dangling link fails; case/spacing edge cases match the chosen Obsidian-compatible normalisation rule.",
+      "Build passes with zero errors and warnings; all existing tests pass."
+    ],
+    "child_id": "task-2",
+    "depends_on": [],
+    "description": "Implement a resolver that parses every \u0060[[target]]\u0060 reference in the body of every kept article and verifies the target resolves to an existing article in the sibling research repo. Must handle the Obsidian variants \u0060[[target]]\u0060, \u0060[[target|alias]]\u0060, and \u0060[[target#heading]]\u0060. Honour the Johnny-Decimal numbering layout adopted by AB#3135 so that linking by number-prefixed slug works as expected and renames-by-renumber are detected as breakages. Exits non-zero with a per-link report on dangling targets. Wire into CI so a broken \u0060[[link]]\u0060 fails the build.",
+    "pg": "pg-1",
+    "title": "Wiki-link resolver for kept articles (Obsidian-compatible)",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "Canonical citation representation is declared (location and shape) and documented alongside the frontmatter schema from task-1.",
+      "Validator detects every citation in a kept article and asserts URL and ISO-8601 capture date are present.",
+      "Missing-field violations produce a per-citation report (article path \u002B offending citation) and a non-zero exit code.",
+      "Validator consumes the sibling-repo path through the AB#3132 storage abstraction.",
+      "Validator is wired into CI.",
+      "New unit tests cover: valid citation passes; missing URL fails; missing/malformed capture date fails; date in non-ISO-8601 form fails.",
+      "Build passes with zero errors and warnings; all existing tests pass."
+    ],
+    "child_id": "task-3",
+    "depends_on": [],
+    "description": "Implement a validator that walks every kept article and asserts that each citation includes at minimum a source URL and a capture date in ISO-8601 form. Citation shape (frontmatter field, dedicated section, or inline pattern) is determined by what AB#3135 actually emits; this Task picks the canonical representation, declares it, and validates against it. Exits non-zero with a per-citation report on missing fields. Wire into CI.\n\nIf AB#3135\u0027s emitted citation shape lacks one of these required fields, file a follow-up bug rather than relaxing the rule here.",
+    "pg": "pg-1",
+    "title": "Citation rigor validator (URL \u002B capture-date minimum)",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060INDEX.md\u0060 regenerator walks kept articles deterministically (sorted by Johnny-Decimal number then slug; no reliance on filesystem enumeration order).",
+      "Output contains no run-time-varying content (no timestamps, no machine identifiers, no locale-sensitive formatting).",
+      "Re-running the regenerator on the same input set produces a byte-identical \u0060INDEX.md\u0060.",
+      "CI check asserts byte-identical regeneration (running the regenerator must leave the working tree clean).",
+      "Regenerator consumes the sibling-repo path through the AB#3132 storage abstraction.",
+      "If AB#3135 already provides an \u0060INDEX.md\u0060 writer, this Task refactors it in place rather than introducing a parallel one.",
+      "New unit tests cover: deterministic ordering across multiple inputs; byte-identical re-run; stable behaviour when articles are added/removed/renumbered.",
+      "Build passes with zero errors and warnings; all existing tests pass."
+    ],
+    "child_id": "task-4",
+    "depends_on": [],
+    "description": "Replace any nondeterministic behaviour in the kept-article \u0060INDEX.md\u0060 writer (filesystem-order traversal, locale-sensitive sort, timestamped headers, etc.) with a fully-ordered, stable serialisation: deterministic walk over kept articles via the AB#3132 storage abstraction, deterministic sort key (Johnny-Decimal number then slug), stable line endings, and no embedded run-time metadata. Provide a single entry-point regenerator command/function. Add a CI check that runs the regenerator twice and asserts the output is byte-identical, and that re-running it over an unchanged input set leaves \u0060INDEX.md\u0060 byte-identical to the committed file.\n\nIf AB#3135 already ships an \u0060INDEX.md\u0060 writer, refactor it in place rather than introducing a parallel one.",
+    "pg": "pg-1",
+    "title": "Deterministic \u0060INDEX.md\u0060 regenerator \u002B byte-stability check",
+    "type": "Task"
+  }
+]
