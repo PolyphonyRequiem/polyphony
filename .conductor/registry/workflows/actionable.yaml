@@ -235,6 +235,7 @@ agents:
     args:
       - "branch"
       - "ensure-evidence-branch"
+      - "--work-item-id"
       - "{{ workflow.input.work_item_id }}"
       - "--apex-id"
       - "{{ workflow.input.apex_id }}"
@@ -480,6 +481,7 @@ agents:
     args:
       - "pr"
       - "open-evidence-pr"
+      - "--work-item"
       - "{{ workflow.input.work_item_id }}"
       - "--apex-id"
       - "{{ workflow.input.apex_id }}"
