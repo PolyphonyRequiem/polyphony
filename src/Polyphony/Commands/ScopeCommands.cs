@@ -207,6 +207,7 @@ public sealed class ScopeCommands(
                     workItem,
                     new Dictionary<string, string> { ["System.Tags"] = after.Format() },
                     ct).ConfigureAwait(false);
+                await twig.SyncAsync(ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
