@@ -1,0 +1,68 @@
+# researcher (sufficiency judge) decision schema
+#
+# Stable contract between the researcher agent (producer) and the research
+# sub-workflow (consumer). Defined by AB#3134 (issue-3 of the research
+# subsystem epic).
+#
+# The researcher inspects the cheap-tier research_assistant's findings and
+# decides whether they sufficiently answer the architect's research_needs.
+# When findings are insufficient AND the per-call escalation cap allows,
+# the workflow routes to deep_researcher for a single live-tools pass.
+# Otherwise it routes straight to the archivist.
+
+type: object
+required: [sufficient, rationale]
+
+properties:
+  sufficient:
+    type: boolean
+    description: >-
+      True when the cheap-tier findings answer the topics adequately. False
+      when at least one topic requires escalation to the deep tier (subject
+      to the workflow's escalation_cap).
+
+  rationale:
+    type: string
+    description: >-
+      One-paragraph explanation of the sufficiency decision. When
+      sufficient=false, names the specific topics or gaps that motivated
+      escalation. When sufficient=true, names the topics whose evidence
+      the researcher considered conclusive.
+
+  gaps:
+    type: array
+    description: >-
+      Per-topic descriptions of what the cheap tier could not answer. Empty
+      when sufficient=true. Each entry should name the topic verbatim from
+      workflow.input.topics and describe what live-source evidence would be
+      needed (e.g. "current upstream API surface", "recent CVEs", "vendor
+      changelog since version X").
+    items:
+      type: object
+      required: [topic, missing]
+      properties:
+        topic:
+          type: string
+          description: The topic from workflow.input.topics that has a gap.
+        missing:
+          type: string
+          description: >-
+            What kind of evidence is missing from the archive that the deep
+            tier should look for.
+        suggested_sources:
+          type: array
+          description: >-
+            Optional hints to the deep researcher about where to look
+            (e.g. specific GitHub orgs, vendor docs, RFCs).
+          items:
+            type: string
+
+  escalation_topics:
+    type: array
+    description: >-
+      Subset of workflow.input.topics that the deep tier should focus on
+      during its single-shot pass. Empty when sufficient=true. Allows the
+      researcher to narrow scope rather than re-running the full topic list
+      through the expensive tier.
+    items:
+      type: string

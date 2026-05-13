@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Infrastructure.Research;
 using Polyphony.Postconditions;
 using Polyphony.Routing;
 using Twig.Infrastructure;
@@ -87,6 +88,29 @@ public static class PolyphonyServiceRegistration
         // null and `polyphony root declare` NREs at first call. Verified by
         // PolyphonyServiceRegistrationTests.Command_ResolvesCleanlyFromDI.
         services.AddSingleton<Commands.ScopeCommands>();
+
+        // Profile config (profile.yaml) — deferred load like ProcessConfig.
+        // Sits alongside process-config.yaml in .polyphony-config/.
+        var profilePath = Path.Combine(Path.GetDirectoryName(configPath) ?? ".", "profile.yaml");
+        services.AddSingleton(_ => ProfileConfigLoader.Load(profilePath));
+
+        // Research storage — backed by the GitHub Contents API when configured,
+        // otherwise a null implementation that degrades gracefully on reads
+        // and throws on writes (preventing silent data loss).
+        services.AddSingleton<IResearchStorage>(sp =>
+        {
+            var profile = sp.GetRequiredService<ProfileConfig>();
+            if (profile.Research is { Repository: { Length: > 0 } })
+            {
+                var runner = sp.GetRequiredService<IProcessRunner>();
+                return new GitHubResearchStorage(profile.Research, runner);
+            }
+            return new NullResearchStorage();
+        });
+
+        // Research article writer — writes archivist-curated articles to
+        // the sibling research repo with JD layout and INDEX.md maintenance.
+        services.AddSingleton<ResearchArticleWriter>();
 
         return services;
     }

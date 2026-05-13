@@ -1,0 +1,120 @@
+# research_happy_path — research sub-workflow end-to-end (cheap-tier path).
+#
+# Drives research.yaml with a representative research_needs payload and
+# scripted FakeProvider responses. Proves the workflow walks
+# guidance_loader → research_assistant → researcher → archivist →
+# article_writer to $end on the cheap-tier path (no deep_researcher
+# escalation). escalation_cap is the workflow default (1); the researcher
+# script returns sufficient=true to skip deep_researcher.
+
+workflow: .conductor/registry/workflows/research.yaml
+
+inputs:
+  topics:
+    - "What patterns do existing polyphony CLI commands follow for parameter validation and error handling?"
+    - "How does PolyphonyJsonContext register new serializable types?"
+  context_work_item_id: 3133
+  plan_excerpt: >-
+    Implement the research sub-workflow skeleton and the research-assistant
+    agent (archive-only, cheap tier).
+  budget_hint: cheap
+  archive_scope_paths:
+    - "src/Polyphony/Commands/"
+    - "tests/Polyphony.Tests/"
+  archive_scope_tags: []
+  escalation_cap: 1
+
+cli_scripts:
+  # guidance_loader (entry_point script node).
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: '{"type":"Issue","architect":{"role":"","type_refinement":""},"coder":{"role":"","type_refinement":""},"reviewer":{"role":"","type_refinement":""},"agents":{}}'
+    exit_code: 0
+
+  # article_writer terminal script node — archivist-curated articles.
+  - command: polyphony
+    args: [research, write-articles]
+    stdout: '{"total_kept":0,"articles_written":[],"index_updated":false}'
+    exit_code: 0
+
+agent_scripts:
+  research_assistant:
+    - content:
+        findings: |
+          # Findings
+
+          ## Topic 1: What patterns do existing polyphony CLI commands follow for parameter validation and error handling?
+
+          Polyphony CLI commands use the ConsoleAppFramework pattern with primary constructors for DI.
+          Commands validate parameters at entry, returning structured error results via the routing-style
+          envelope convention (always exit 0, surface errors in JSON fields like `error` and `error_code`).
+
+          Key patterns observed:
+          - Commands are in `src/Polyphony/Commands/` with one file per command group
+          - Parameter validation uses guard clauses at method entry
+          - All output goes through `PolyphonyJsonContext` for AOT-safe serialization
+          - Error results include `error` (message) and `error_code` (machine-readable) fields
+
+          ## Topic 2: How does PolyphonyJsonContext register new serializable types?
+
+          New types are registered by adding `[JsonSerializable(typeof(NewType))]` to the
+          `PolyphonyJsonContext` partial class in `src/Polyphony/PolyphonyJsonContext.cs`.
+          The context uses `JsonKnownNamingPolicy.SnakeCaseLower` and
+          `JsonIgnoreCondition.WhenWritingNull`.
+
+          ## Sources
+
+          - `src/Polyphony/Commands/ValidateCommand.cs` — canonical command pattern
+          - `src/Polyphony/PolyphonyJsonContext.cs` — JSON serialization registration
+          - `src/Polyphony/Models/ValidateResult.cs` — routing-style envelope example
+        sources:
+          - path: "src/Polyphony/Commands/ValidateCommand.cs"
+            lines: "1-50"
+            relevance: "Canonical CLI command pattern with parameter validation"
+          - path: "src/Polyphony/PolyphonyJsonContext.cs"
+            lines: "12-192"
+            relevance: "Source-generated JSON context with type registration"
+          - path: "src/Polyphony/Models/ValidateResult.cs"
+            lines: "1-30"
+            relevance: "Routing-style envelope convention for error handling"
+        summary: >-
+          Polyphony CLI commands follow a consistent pattern: ConsoleAppFramework with
+          primary-constructor DI, guard-clause validation, routing-style envelope
+          convention (exit 0 + JSON error fields), and AOT-safe serialization via
+          PolyphonyJsonContext. New types are registered with [JsonSerializable] attributes.
+
+  # researcher (sufficiency judge) — declares cheap tier sufficient, no escalation.
+  researcher:
+    - content:
+        sufficient: true
+        rationale: >-
+          The cheap-tier research_assistant produced citations covering both
+          topics from internal sources. No escalation needed.
+        gaps: []
+        escalation_topics: []
+
+  # archivist — curation pass; one keep, one discard.
+  archivist:
+    - content:
+        items:
+          - disposition: keep
+            rationale: "Lasting reference for CLI patterns."
+            source_refs:
+              - "src/Polyphony/Commands/ValidateCommand.cs"
+            article:
+              title: "Polyphony CLI command pattern"
+              body_markdown: "# Polyphony CLI command pattern\n\nConsoleAppFramework + primary-constructor DI."
+              category: "patterns"
+              topics: ["cli", "validation"]
+          - disposition: discard
+            rationale: "Trivial — already documented in PolyphonyJsonContext xmldoc."
+            source_refs:
+              - "src/Polyphony/PolyphonyJsonContext.cs"
+        summary: "1 keep, 1 discard."
+
+expected_trace:
+  agents_executed:
+    - research_assistant
+    - researcher
+    - archivist
+  reached_terminal: true

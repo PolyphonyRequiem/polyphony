@@ -1,0 +1,365 @@
+# research — Research sub-workflow with sufficiency check + escalation tier
+# + archivist curation.
+#
+# Accepts a research_needs payload (per .conductor/registry/schemas/
+# research-needs.schema.yaml) and returns synthesized findings plus
+# archivist curation results. Kept articles are written to the sibling
+# research repository via `polyphony research write-articles`.
+#
+# Three-tier agent pipeline (per plan-3131.md / AB#3134):
+#   1. research_assistant — archive-only search, cheap tier (AB#3133)
+#   2. researcher — sufficiency judge: are cheap findings enough, or escalate?
+#   3. deep_researcher — single-shot escalation tier with cross-repo gh API
+#      access (AB#3134, escalation_cap-gated)
+#   4. archivist — keep/discard/expand curation pass (AB#3135)
+#   5. article_writer — script node writing kept articles to sibling repo
+#
+# Escalation cap (default 1, configurable via research.escalation_cap in
+# profile.yaml): 0 disables deep_researcher entirely; 1 allows a single
+# escalation per research_needs call. The workflow currently clamps cap
+# values > 1 to 1 (escalation loop is future work).
+#
+# Invariants:
+#   Pre:  topics[] is non-empty; budget_hint is "cheap" or "extended".
+#   Post: output.findings contains Markdown (cheap + deep merged when
+#         escalated); output.sources lists cited files AND live sources
+#         when escalated; output.summary provides a one-paragraph synthesis;
+#         output.curation_summary describes archivist decisions;
+#         kept articles are written to sibling research repo with JD layout.
+
+workflow:
+  name: research
+  description: >-
+    Research sub-workflow with three-tier agent pattern. Accepts a
+    research_needs payload, runs research_assistant (archive-only, cheap),
+    then researcher (sufficiency judge) which routes to either archivist
+    directly (sufficient) or to deep_researcher (single-shot escalation
+    with live gh API tools) before archivist. Final step writes curated
+    articles to the sibling research repo.
+  version: "2.5.0"
+  entry_point: guidance_loader
+  metadata:
+    min_polyphony_version: "2.4.0"
+
+  limits:
+    max_iterations: 25
+
+  input:
+    topics:
+      type: array
+      required: true
+      description: >-
+        Research questions or areas the architect needs answered (non-empty).
+    context_work_item_id:
+      type: number
+      required: true
+      description: ADO work item ID that initiated the research request.
+    plan_excerpt:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        Relevant excerpt from the plan document that frames the research need.
+    budget_hint:
+      type: string
+      required: true
+      description: >-
+        Controls depth/cost. "cheap" = archive-only first pass, no escalation
+        regardless of researcher's verdict. "extended" = allow researcher to
+        escalate to deep_researcher (subject to escalation_cap).
+    archive_scope_paths:
+      type: array
+      required: false
+      default: []
+      description: File path prefixes to restrict the archive search.
+    archive_scope_tags:
+      type: array
+      required: false
+      default: []
+      description: ADO tags to filter related work items.
+    escalation_cap:
+      type: number
+      required: false
+      default: 1
+      description: >-
+        Max deep_researcher escalations allowed for this research_needs
+        call. 0 disables escalation entirely (cheap-only). 1 = single-shot
+        (the design default per plan-3131.md). Caller (e.g., plan-level.yaml's
+        research_dispatch) should plumb research.escalation_cap from
+        profile.yaml. Workflow honors only 0 or 1 today; values > 1 are
+        clamped to 1.
+
+tools:
+  - filesystem
+  - gh
+
+  # ── Workflow output ────────────────────────────────────────────────────
+  #
+  # When deep_researcher fires, its findings/sources are merged with the
+  # cheap-tier research_assistant output (deep-tier prepended for visibility,
+  # archivist sees both via archivist.md prompt). Backwards-compatible:
+  # callers that don't care about the tier just consume `findings`/`sources`.
+output:
+  findings: |-
+    {% if deep_researcher is defined and deep_researcher.output is defined and deep_researcher.output.findings %}
+    {{ deep_researcher.output.findings }}
+
+    ---
+
+    {% endif %}{{ research_assistant.output.findings }}
+  sources: "{{ ((deep_researcher.output.sources if (deep_researcher is defined and deep_researcher.output is defined) else []) + research_assistant.output.sources) | json }}"
+  summary: "{{ research_assistant.output.summary | default('') }}"
+  # New: curation results from the archivist pass.
+  curation_summary: "{{ archivist.output.summary | default('') }}"
+  articles_written: "{% if article_writer is defined %}{{ article_writer.output.total_kept | default(0) }}{% else %}0{% endif %}"
+  expand_flagged: "{% if archivist is defined %}{{ archivist.output.items | selectattr('disposition', 'equalto', 'expand') | list | length }}{% else %}0{% endif %}"
+  # New: escalation transparency.
+  escalated: "{% if deep_researcher is defined and deep_researcher.output is defined %}true{% else %}false{% endif %}"
+  researcher_decision: "{% if researcher is defined %}{{ researcher.output.sufficient | default(true) }}{% else %}true{% endif %}"
+
+agents:
+  # ── Guidance loader (script node) ──────────────────────────────────────
+  #
+  # Loads per-agent guidance markdown files from .polyphony-config/agent-guidance/.
+  # The downstream agent prompts (research_assistant, archivist) reference
+  # {{ guidance_loader.output.agents.<agent_name> }} via Jinja2 {% if defined %}
+  # blocks; without this step those references would not resolve.
+  #
+  # Mirrors the pattern in actionable.yaml / close-out.yaml / github-pr.yaml /
+  # implement-merge-group.yaml / plan-level.yaml.
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for research agent prompts
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.context_work_item_id }}"
+    routes:
+      - to: research_assistant
+
+  # ── Research assistant (archive-only, cheap tier) ──────────────────────
+  #
+  # Searches the repository archive to answer the architect's research
+  # questions. Sources are limited to the filesystem and gh tools — no
+  # live web, no MCP. Output is a structured findings document.
+  #
+  # Cheap tier: claude-sonnet-4.6 per profile.yaml + M5 model table.
+  - name: research_assistant
+    type: agent
+    model: claude-sonnet-4.6
+    description: >-
+      Archive-only research agent that synthesizes findings from the
+      repository to answer the architect's research questions.
+    tools:
+      - filesystem
+      - gh
+    output:
+      findings:
+        type: string
+        description: >-
+          Markdown document with per-topic findings sections and a sources
+          list. Starts with "# Findings".
+      sources:
+        type: array
+        description: List of source references cited in the findings.
+        items:
+          type: object
+          properties:
+            path:
+              type: string
+              description: File path relative to repo root.
+            lines:
+              type: string
+              description: Line range (e.g., "10-25") or empty string.
+            relevance:
+              type: string
+              description: Brief note on why this source is relevant.
+      summary:
+        type: string
+        description: One-paragraph synthesis of key findings.
+    prompt: !file ../prompts/research-assistant.md
+    routes:
+      - to: researcher
+
+  # ── Researcher (sufficiency judge) ─────────────────────────────────────
+  #
+  # Reads the cheap-tier research_assistant output and decides whether the
+  # findings are sufficient or whether deep_researcher escalation is
+  # warranted. Honors workflow.input.escalation_cap (0 = never escalate,
+  # forces sufficient=true). Lightweight LLM call; no tools needed (it
+  # reasons over the existing findings text).
+  - name: researcher
+    type: agent
+    model: claude-sonnet-4.6
+    description: >-
+      Sufficiency judge that reads cheap-tier research_assistant findings
+      and decides whether to escalate to deep_researcher (live external
+      sources) or accept the findings as-is.
+    output:
+      sufficient:
+        type: boolean
+        description: >-
+          true = cheap-tier findings answer the architect's questions well
+          enough; route directly to archivist. false = at least one topic
+          warrants deep_researcher escalation.
+      rationale:
+        type: string
+        description: One-paragraph reasoning explaining the decision.
+      gaps:
+        type: array
+        description: Per-topic gap analysis (only meaningful when sufficient=false).
+        items:
+          type: object
+          properties:
+            topic:
+              type: string
+            missing:
+              type: string
+            suggested_sources:
+              type: array
+              items:
+                type: string
+      escalation_topics:
+        type: array
+        description: >-
+          Subset of workflow.input.topics that need deep_researcher attention.
+          Empty when sufficient=true.
+        items:
+          type: string
+    prompt: !file ../prompts/researcher.md
+    routes:
+      # Escalate when researcher says insufficient AND escalation_cap > 0.
+      # Cap of 0 forces sufficient=true via the prompt, so this guard is
+      # belt-and-suspenders.
+      - to: deep_researcher
+        when: "{{ researcher.output.sufficient == false and workflow.input.escalation_cap > 0 }}"
+      - to: archivist
+
+  # ── Deep researcher (escalation tier) ──────────────────────────────────
+  #
+  # Single-shot escalation tier. Receives researcher.output.gaps and
+  # escalation_topics, plus the cheap-tier findings/sources to avoid
+  # re-research. Uses gh API (search/code, search/issues, graphql, repo
+  # contents) as the live-source pipe — conductor does not currently wire
+  # `web` or `mcp` MCPs to agent steps in this repo.
+  #
+  # Escalation cap > 1 is accepted by config but workflow honors only one
+  # pass today (no escalation loop). Routes unconditionally to archivist.
+  - name: deep_researcher
+    type: agent
+    model: claude-sonnet-4.6
+    description: >-
+      Single-shot escalation researcher that uses live external sources
+      (gh API: cross-repo code search, issue search, GraphQL) to fill the
+      gaps researcher identified. Findings are time-stamped (capture-date)
+      and merged with the cheap-tier output before archivist sees them.
+    tools:
+      - filesystem
+      - gh
+    output:
+      findings:
+        type: string
+        description: >-
+          Markdown document with deep-tier per-topic findings sections.
+          Will be prepended to the cheap-tier findings before archivist.
+      sources:
+        type: array
+        description: >-
+          Live external sources cited in the findings, with capture dates.
+        items:
+          type: object
+          properties:
+            url:
+              type: string
+              description: Live URL (vendor docs, GitHub blob, RFC, etc.).
+            captured:
+              type: string
+              description: ISO date (YYYY-MM-DD) — today's date.
+            summary:
+              type: string
+              description: Brief excerpt or summary of what the source says.
+            topic:
+              type: string
+              description: Which research topic this source addresses.
+      summary:
+        type: string
+        description: One-paragraph synthesis of what the deep tier added.
+    prompt: !file ../prompts/deep-researcher.md
+    routes:
+      - to: archivist
+
+  # ── Archivist (curation pass) ──────────────────────────────────────────
+  #
+  # Evaluates research findings and assigns keep/discard/expand dispositions.
+  # For kept items, synthesizes complete articles ready for writing to the
+  # sibling research repo. Added by AB#3135.
+  - name: archivist
+    type: agent
+    model: claude-sonnet-4.6
+    description: >-
+      Curation agent that evaluates research findings and decides which
+      are worth preserving as permanent articles in the research wiki.
+    output:
+      items:
+        type: array
+        description: >-
+          Per-finding curation decisions with disposition and optional article.
+        items:
+          type: object
+          properties:
+            disposition:
+              type: string
+              description: "keep | discard | expand"
+            rationale:
+              type: string
+            source_refs:
+              type: array
+              items:
+                type: string
+            article:
+              type: object
+              description: Present only for keep dispositions.
+              properties:
+                title:
+                  type: string
+                body_markdown:
+                  type: string
+                category:
+                  type: string
+                topics:
+                  type: array
+                  items:
+                    type: string
+      summary:
+        type: string
+        description: One-line summary of curation decisions.
+    prompt: !file ../prompts/archivist.md
+    routes:
+      - to: article_writer
+
+  # ── Article writer (script node) ───────────────────────────────────────
+  #
+  # Writes kept articles to the sibling research repo using the storage
+  # abstraction (IResearchStorage). Deterministically assigns JD numbers,
+  # generates frontmatter, and updates INDEX.md.
+  - name: article_writer
+    type: script
+    description: >-
+      Writes archivist-curated articles to the sibling research repository
+      with Johnny-Decimal layout, YAML frontmatter, and INDEX.md update.
+    command: polyphony
+    args:
+      - "research"
+      - "write-articles"
+      - "--work-item"
+      - "{{ workflow.input.context_work_item_id }}"
+      # Conductor's `type: script` schema rejects a `stdin:` field, so the
+      # archivist's curation output is templated inline as an arg. The verb
+      # accepts --input-json as a parallel of --input-file (see
+      # ResearchCommands.WriteArticles).
+      - "--input-json"
+      - "{{ archivist.output | tojson }}"
+    routes:
+      - to: $end

@@ -29,6 +29,7 @@ public static class PolicyResolver
             PolicyDomain.Approvals => config.Approvals,
             PolicyDomain.Pr => config.Pr,
             PolicyDomain.OpenQuestions => config.OpenQuestions,
+            PolicyDomain.Research => config.Research,
             _ => throw new ArgumentOutOfRangeException(nameof(domain)),
         };
 
@@ -73,6 +74,7 @@ public static class PolicyResolver
             MinSeverity = (specific?.MinSeverity ?? defaults.MinSeverity)?.ToString().ToLowerInvariant(),
             SeveritiesAtOrAbove = ComputeSeveritiesAtOrAbove(specific?.MinSeverity ?? defaults.MinSeverity),
             MaxQuestionLoops = specific?.MaxQuestionLoops ?? defaults.MaxQuestionLoops,
+            EscalationCap = specific?.EscalationCap ?? defaults.EscalationCap,
             QualityAvgScoreAtLeast = quality?.AvgScoreAtLeast,
             QualityBlockingCountAtMost = quality?.BlockingCountAtMost,
         };
@@ -156,6 +158,7 @@ public static class PolicyResolver
     private static string DomainToString(PolicyDomain domain) => domain switch
     {
         PolicyDomain.OpenQuestions => "open_questions",
+        PolicyDomain.Research => "research",
         _ => domain.ToString().ToLowerInvariant(),
     };
 }
@@ -186,6 +189,7 @@ public sealed record ResolvedRule
     public List<string>? SeveritiesAtOrAbove { get; init; }
 
     public int? MaxQuestionLoops { get; init; }
+    public int? EscalationCap { get; init; }
     public int? QualityAvgScoreAtLeast { get; init; }
     public int? QualityBlockingCountAtMost { get; init; }
 }

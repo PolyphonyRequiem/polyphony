@@ -62,6 +62,7 @@ public sealed class PolicyCommands
             RootFallback = SnapshotRootFallback(config.RootFallback!),
             Renegotiation = SnapshotRenegotiation(config.Renegotiation!),
             Unattended = SnapshotUnattended(config.Unattended!),
+            Research = SnapshotDomain(config.Research!),
         };
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PolicyLoadResult));
@@ -149,7 +150,7 @@ public sealed class PolicyCommands
 
         if (!TryParseDomain(domain, out var domainEnum))
         {
-            Console.WriteLine($$"""{"error":"Unknown domain '{{domain}}'. Expected 'approvals', 'pr', or 'open_questions'."}""");
+            Console.WriteLine($$"""{"error":"Unknown domain '{{domain}}'. Expected 'approvals', 'pr', 'open_questions', or 'research'."}""");
             return ExitCodes.ConfigError;
         }
 
@@ -194,6 +195,7 @@ public sealed class PolicyCommands
             DefaultsMaxRemediationCycles = defaults.MaxRemediationCycles,
             DefaultsMinSeverity = defaults.MinSeverity?.ToString().ToLowerInvariant(),
             DefaultsMaxQuestionLoops = defaults.MaxQuestionLoops,
+            DefaultsEscalationCap = defaults.EscalationCap,
             DefaultsQualityAvgScoreAtLeast = defaults.QualityThreshold?.AvgScoreAtLeast,
             DefaultsQualityBlockingCountAtMost = defaults.QualityThreshold?.BlockingCountAtMost,
             RootMode = domain.Root?.Mode?.ToString().ToLowerInvariant(),
@@ -252,12 +254,24 @@ public sealed class PolicyCommands
         if (config.Pr?.Defaults?.Mode is null)
             warnings.Add("pr.defaults.mode is not set; will fall back to 'warning' built-in default.");
 
+        if (config.Research?.Defaults?.Mode is null)
+            warnings.Add("research.defaults.mode is not set; will fall back to 'warning' built-in default.");
+
         // Caps must be positive.
         WarnIfNonPositive(config.Approvals?.Defaults?.MaxRevisionCycles, "approvals.defaults.max_revision_cycles", errors);
         WarnIfNonPositive(config.Pr?.Defaults?.MaxFixLoops, "pr.defaults.max_fix_loops", errors);
         WarnIfNonPositive(config.Pr?.Defaults?.MaxRemediationCycles, "pr.defaults.max_remediation_cycles", errors);
         WarnIfNonPositive(config.OpenQuestions?.Defaults?.MaxQuestionLoops, "open_questions.defaults.max_question_loops", errors);
         WarnIfNonPositive(config.Concurrency?.MaxConcurrentChildren, "concurrency.max_concurrent_children", errors);
+
+        // Research escalation caps (defaults, root, by_type).
+        WarnIfNonPositive(config.Research?.Defaults?.EscalationCap, "research.defaults.escalation_cap", errors);
+        WarnIfNonPositive(config.Research?.Root?.EscalationCap, "research.root.escalation_cap", errors);
+        if (config.Research?.ByType is not null)
+        {
+            foreach (var (typeName, rule) in config.Research.ByType)
+                WarnIfNonPositive(rule.EscalationCap, $"research.by_type.{typeName}.escalation_cap", errors);
+        }
 
         // Guidance: source must be one of the canonical strings (when set);
         // ado_field requires a non-empty ado_field_name.

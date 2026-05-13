@@ -30,6 +30,7 @@ public enum PolicyDomain
     Approvals,
     Pr,
     OpenQuestions,
+    Research,
 }
 
 /// <summary>

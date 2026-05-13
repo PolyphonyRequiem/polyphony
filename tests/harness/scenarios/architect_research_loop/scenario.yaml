@@ -1,0 +1,277 @@
+# architect_research_loop — plan-level architect → research → architect loop.
+#
+# Proves the full research loop integration in plan-level.yaml:
+#   1. Architect emits research_needs on first invocation.
+#   2. research_loop_counter routes to research_dispatch (under cap).
+#   3. research_dispatch invokes research.yaml sub-workflow.
+#   4. research_assistant returns findings.
+#   5. Architect is re-invoked with findings and produces a final plan.
+#   6. research_loop_counter sees no research_needs → falls through to
+#      open_questions_policy and the normal plan-write-PR-merge flow.
+#
+# The trace must show [architect, research_assistant, architect, plan_reviewer]
+# as an ordered subsequence — proving the research_assistant appears between
+# architect invocations (not plan_reviewer or open_questions_gate).
+#
+# Platform: github (simplifies the PR leg — no ADO org/project/repo needed).
+# All polyphony CLI calls are shimmed via cli_scripts; all agents are
+# scripted via agent_scripts.
+
+workflow: .conductor/registry/workflows/plan-level.yaml
+
+inputs:
+  work_item_id: 10000
+  depth: 0
+  max_depth: 6
+  platform: github
+  intent: resume
+  user_plan_path: ""
+  organization: ""
+  project: ""
+  repository: ""
+  child_scope_globs: ""
+
+cli_scripts:
+  # ── Pre-architect preamble ──────────────────────────────────────────
+  - command: polyphony
+    args: [plan, depth-guard]
+    stdout: '{"allowed": true}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {"type":"Issue","architect":{"role":"You are the architect for polyphony.","type_refinement":""},"coder":{"role":"","type_refinement":""},"reviewer":{"role":"","type_refinement":""},"agents":{}}
+    exit_code: 0
+
+  - command: polyphony
+    args: [root, resolve]
+    stdout: '{"resolved_root_id": 10000, "fallback_required": false}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, load-type]
+    stdout: |
+      {"type":"Issue","definition":"An Issue represents a feature or bug.","template":"# Plan\n\n## Summary\n\n## Proposed Approach\n\n## Acceptance Criteria","decomposition_guidance":"Break into Tasks. Each Task should be independently testable."}
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, derive-ancestor-chain]
+    stdout: '{"parent_item_id": 0, "ancestor_ids": [], "is_root_plan": true}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, detect-state]
+    stdout: '{"state": "not_started"}'
+    exit_code: 0
+
+  # ── Post-research-loop: open questions + plan write + PR ────────────
+  - command: polyphony
+    args: [policy, resolve]
+    stdout: '{"mode":"auto","min_severity":"critical","max_question_loops":3,"severities_at_or_above":["critical"]}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [branch, ensure-plan]
+    stdout: '{"branch":"plan/10000","created":true}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, write-plan]
+    stdout: '{"path":"plans/plan-10000.md","unchanged":false}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, commit-and-push]
+    stdout: '{"pushed":true,"sha":"abc123def","no_op_reason":""}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [pr, open-plan-pr]
+    stdout: '{"pr_url":"https://github.com/PolyphonyRequiem/polyphony/pull/999","pr_number":999,"created":true}'
+    exit_code: 0
+
+  # ── Poll + merge + post-merge ───────────────────────────────────────
+  - command: polyphony
+    args: [pr, poll-status]
+    stdout: '{"state":"approved","pr_number":999}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [pr, merge-plan-pr]
+    stdout: '{"merged":true,"sha":"merged123"}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, extract-renegotiation-flag]
+    stdout: '{"flag_present":false,"pr_number":999}'
+    exit_code: 0
+
+  # ── Cascade remedy sub-workflow (no stale descendants) ──────────────
+  - command: polyphony
+    args: [plan, classify-stale-descendants]
+    stdout: '{"total_stale":0,"total_descendants_scanned":0,"stale_descendants":[]}'
+    exit_code: 0
+
+  # ── Seeder + child router (indivisible — no children) ──────────────
+  - command: polyphony
+    args: [plan, seed-children]
+    stdout: '{"seeded":0,"skipped":0,"error_count":0,"errors":[],"tagged":true}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, next-child]
+    stdout: '{"has_plannable_children":false,"plannable_children":[]}'
+    exit_code: 0
+
+  # ── Research sub-workflow (article writer terminal script) ──────────
+  - command: polyphony
+    args: [research, write-articles]
+    stdout: '{"total_kept":0,"articles_written":[],"index_updated":false}'
+    exit_code: 0
+
+agent_scripts:
+  # ── Architect: 1st call — emits research_needs ──────────────────────
+  # The architect needs to understand existing patterns before planning.
+  architect:
+    - content:
+        plan: |
+          ---
+          apex_facets: [implementable]
+          ---
+
+          # Plan: Research-Driven Feature (Draft)
+
+          ## Summary
+
+          This is a draft plan pending research into existing codebase patterns.
+
+          ## Proposed Approach
+
+          Pending research findings.
+        children: []
+        open_questions: []
+        research_needs:
+          topics:
+            - "What patterns do existing polyphony CLI commands follow for parameter validation?"
+            - "How does PolyphonyJsonContext register new serializable types?"
+          context:
+            work_item_id: 10000
+            plan_excerpt: "Need to understand existing CLI patterns before planning the implementation."
+          budget_hint: cheap
+          archive_scope:
+            paths:
+              - "src/Polyphony/Commands/"
+            tags: []
+        summary: "Draft plan — requesting research into existing CLI command patterns before finalizing."
+
+    # ── Architect: 2nd call — incorporates findings, final plan ───────
+    - content:
+        plan: |
+          ---
+          apex_facets: [implementable]
+          ---
+
+          # Plan: Research-Driven Feature
+
+          ## Summary
+
+          Implementation plan informed by research findings on existing CLI patterns.
+
+          ## Proposed Approach
+
+          Per research: existing commands use ConsoleAppFramework with primary-constructor DI
+          and guard-clause validation. New types are registered via [JsonSerializable] attributes
+          on PolyphonyJsonContext.
+
+          ## Acceptance Criteria
+
+          - Build passes with zero errors and warnings
+          - All existing tests pass
+        children: []
+        open_questions: []
+        research_needs: {}
+        summary: "Final plan incorporating research findings on CLI command patterns."
+
+  # ── Research assistant: returns findings ─────────────────────────────
+  research_assistant:
+    - content:
+        findings: |
+          # Findings
+
+          ## Topic 1: What patterns do existing polyphony CLI commands follow for parameter validation?
+
+          Commands use ConsoleAppFramework with primary constructors for DI. Parameter validation
+          uses guard clauses at method entry, returning structured error results.
+
+          ## Topic 2: How does PolyphonyJsonContext register new serializable types?
+
+          Add [JsonSerializable(typeof(NewType))] to the PolyphonyJsonContext partial class.
+
+          ## Sources
+
+          - src/Polyphony/Commands/ValidateCommand.cs — canonical command pattern
+          - src/Polyphony/PolyphonyJsonContext.cs — JSON serialization registration
+        sources:
+          - path: "src/Polyphony/Commands/ValidateCommand.cs"
+            lines: "1-50"
+            relevance: "Canonical CLI command pattern"
+          - path: "src/Polyphony/PolyphonyJsonContext.cs"
+            lines: "12-192"
+            relevance: "Source-generated JSON context"
+        summary: "CLI commands follow ConsoleAppFramework + guard-clause + routing-style envelope pattern."
+
+  # ── Plan reviewer: advisory comment ─────────────────────────────────
+  plan_reviewer:
+    - content:
+        posted: true
+        pr_number: 999
+        summary: "Plan is well-structured and informed by research findings."
+        strengths:
+          - "Clear acceptance criteria"
+          - "Research-backed design decisions"
+        concerns: []
+        comment_body: |
+          ### 🤖 Polyphony plan reviewer (advisory)
+
+          **Summary:** Plan is well-structured and informed by research findings.
+
+          **Strengths**
+          - Clear acceptance criteria
+          - Research-backed design decisions
+
+          **Concerns**
+          - None
+
+          _This is an advisory comment from the polyphony plan_reviewer agent._
+
+  # ── Researcher (sufficiency judge in research sub-workflow) ──────────
+  # Declares cheap-tier findings sufficient — no deep_researcher escalation.
+  researcher:
+    - content:
+        sufficient: true
+        rationale: "Cheap-tier findings answer both topics from internal sources."
+        gaps: []
+        escalation_topics: []
+
+  # ── Archivist (curation pass in research sub-workflow) ──────────────
+  archivist:
+    - content:
+        items: []
+        summary: "No items kept (loop test focuses on routing, not curation)."
+
+expected_trace:
+  # Ordered subsequence: architect → research_assistant → researcher →
+  # archivist → architect → plan_reviewer.
+  # Proves the research sub-workflow now walks the full three-agent
+  # pipeline (research_assistant + researcher + archivist) before
+  # returning to architect, and plan_reviewer only appears AFTER the
+  # second architect (not during the research loop).
+  agents_executed:
+    - architect
+    - research_assistant
+    - researcher
+    - archivist
+    - architect
+    - plan_reviewer
+  reached_terminal: true

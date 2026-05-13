@@ -1,0 +1,73 @@
+# archivist curation output schema
+#
+# Stable contract between the archivist agent (producer) and the
+# `polyphony research write-articles` CLI verb (consumer).
+# Defined by AB#3135 (issue-4 of the research subsystem epic).
+#
+# The archivist evaluates each research finding and assigns a disposition:
+#   keep    — finding is valuable; article content provided for writing
+#   discard — finding is not worth persisting
+#   expand  — finding needs deeper research (terminal signal in this issue)
+
+type: object
+required: [items]
+
+properties:
+  items:
+    type: array
+    description: >-
+      Curation decisions, one per research finding evaluated by the archivist.
+    items:
+      type: object
+      required: [disposition, rationale, source_refs]
+      properties:
+        disposition:
+          type: string
+          description: >-
+            The archivist's verdict on this finding.
+          enum: [keep, discard, expand]
+
+        rationale:
+          type: string
+          description: >-
+            Brief explanation of why the archivist chose this disposition.
+
+        source_refs:
+          type: array
+          description: >-
+            Source references from the original research that this item covers.
+            Each entry is a file path or URL from the research findings.
+          items:
+            type: string
+
+        article:
+          type: object
+          description: >-
+            Present only when disposition is "keep". Contains the article
+            content to write to the sibling research repo. Frontmatter and
+            JD numbering are added by the writer at write time.
+          required: [title, body_markdown, category]
+          properties:
+            title:
+              type: string
+              description: Human-readable title for the article.
+            body_markdown:
+              type: string
+              description: >-
+                Markdown body of the article (without frontmatter — that is
+                generated deterministically by the writer).
+            category:
+              type: string
+              description: >-
+                Johnny-Decimal category hint (e.g. "10", "20"). The writer
+                uses this to place the article and allocate the next number.
+            topics:
+              type: array
+              description: Topic tags for the article frontmatter.
+              items:
+                type: string
+
+  summary:
+    type: string
+    description: >-
+      One-line summary of the curation pass for logging.

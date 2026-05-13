@@ -1,0 +1,68 @@
+# research-needs payload schema
+#
+# Stable contract between the architect (emitter) and the research
+# sub-workflow (consumer). Defined by AB#3133 / task AB#3141.
+# Issue AB#3136 binds to this shape — do not change field names or
+# remove fields without updating downstream consumers.
+#
+# Budget hints:
+#   cheap    — archive-only lookup, fast model (first pass)
+#   extended — live tools + deep-researcher escalation (future)
+
+type: object
+required: [topics, context, budget_hint]
+
+properties:
+  topics:
+    type: array
+    description: >-
+      Required questions or research areas the architect needs answered.
+      Each entry is a free-text string describing a single research topic.
+      Must be non-empty.
+    items:
+      type: string
+    minItems: 1
+
+  context:
+    type: object
+    description: >-
+      Originating context for the research request — the work item that
+      triggered the research and any relevant plan excerpt.
+    required: [work_item_id]
+    properties:
+      work_item_id:
+        type: integer
+        description: ADO work item ID that initiated the research request.
+      plan_excerpt:
+        type: string
+        description: >-
+          Relevant excerpt from the plan document that frames the research
+          need. May be empty if no plan exists yet.
+
+  budget_hint:
+    type: string
+    description: >-
+      Controls the depth/cost of the research pass. This issue only honors
+      "cheap" (archive-only, fast model). "extended" is reserved for future
+      deep-researcher escalation (AB#3134 / AB#3135).
+    enum: [cheap, extended]
+
+  archive_scope:
+    type: object
+    description: >-
+      Optional constraints narrowing the archive surface the research
+      assistant should search. When omitted, the assistant searches the
+      full repo archive.
+    properties:
+      paths:
+        type: array
+        description: >-
+          File path prefixes to restrict the search (e.g., ["src/Polyphony/Commands/", "docs/"]).
+        items:
+          type: string
+      tags:
+        type: array
+        description: >-
+          ADO tags to filter related work items (e.g., ["research", "architecture"]).
+        items:
+          type: string

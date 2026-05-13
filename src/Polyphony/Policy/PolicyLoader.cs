@@ -193,6 +193,11 @@ public static class PolicyLoader
         config.Unattended.CapMode ??= UnattendedCapMode.Manual;
 
         ValidateUnattended(config.Unattended);
+
+        config.Research ??= new DomainPolicy();
+        config.Research.Defaults ??= new ScopeRule();
+        config.Research.Defaults.Mode ??= PolicyMode.Warning;
+        config.Research.Defaults.EscalationCap ??= 1;
     }
 
     private static void ValidateGuidance(GuidancePolicy guidance)

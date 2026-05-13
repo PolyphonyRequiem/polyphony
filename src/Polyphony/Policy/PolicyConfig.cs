@@ -64,6 +64,29 @@ public sealed class PolicyConfig
     /// keep their current gating behaviour.
     /// </summary>
     public UnattendedPolicy? Unattended { get; set; }
+
+    /// <summary>
+    /// Research escalation policy (AB#3131 issue-3). Controls the
+    /// <c>researcher</c> sufficiency-judge → <c>deep-researcher</c>
+    /// escalation within the research sub-workflow. The escalation cap
+    /// (<see cref="ScopeRule.EscalationCap"/>) defaults to 1 per
+    /// <c>research_needs</c> topic — conservative to limit cost at the
+    /// deep tier (web/GitHub/MCP tools). Scope resolution is the same
+    /// most-specific-wins layering used by other domains.
+    ///
+    /// <para>Mode semantics for this domain:</para>
+    /// <list type="bullet">
+    ///   <item><see cref="PolicyMode.Auto"/> — auto-escalate when
+    ///         archive findings are insufficient, up to the cap.
+    ///         Never surfaces a human gate.</item>
+    ///   <item><see cref="PolicyMode.Warning"/> — auto-escalate, but
+    ///         surface a human gate when the escalation cap is reached
+    ///         without sufficient findings (default).</item>
+    ///   <item><see cref="PolicyMode.Manual"/> — always surface a
+    ///         human gate before escalating to the deep tier.</item>
+    /// </list>
+    /// </summary>
+    public DomainPolicy? Research { get; set; }
 }
 
 /// <summary>
@@ -345,6 +368,10 @@ public sealed class ScopeRule
 
     /// <summary>Maximum question loops before escalating. Used by open_questions domain.</summary>
     public int? MaxQuestionLoops { get; set; }
+
+    /// <summary>Deep-researcher escalation cap per research_needs topic. Used by research domain.
+    /// Defaults to 1 (conservative); overridable per scope.</summary>
+    public int? EscalationCap { get; set; }
 }
 
 /// <summary>Quality threshold for considering a review "clean" before mode-based routing.</summary>
