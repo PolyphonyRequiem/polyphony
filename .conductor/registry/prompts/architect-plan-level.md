@@ -154,10 +154,10 @@ scratch.
    unaffected by the research.
 2. **Cite findings.** When the research informs a decision, briefly note
    it (e.g., "Per research: existing commands use guard-clause validation").
-3. **No re-requesting the same topics.** Emit `research_needs: {}` (or
-   omit topics) this iteration unless genuinely new research questions
-   arose from the findings. Repeated research requests on the same topics
-   will hit the loop cap.
+3. **No re-requesting the same topics.** Emit `research_needs: {topics: []}`
+   this iteration unless genuinely new research questions arose from the
+   findings. Repeated research requests on the same topics will hit the
+   loop cap.
 4. **Open questions are still available.** If the research raised NEW
    ambiguity that requires human input, emit it as an `open_question`.
 
@@ -362,7 +362,7 @@ Read the user plan from the filesystem and use it as your starting point.
 
    | Signal | When to use | What happens |
    |---|---|---|
-   | **Proceed** (empty `open_questions` + empty `research_needs`) | You have enough context to write a complete plan | Plan flows to review |
+   | **Proceed** (`open_questions: []` + `research_needs: {topics: []}`) | You have enough context to write a complete plan | Plan flows to review |
    | **`open_questions`** | Ambiguity requires **human** judgment (scope decisions, priority trade-offs, external constraints) | Workflow gates on human input |
    | **`research_needs`** | Questions answerable from the **repository archive** (code patterns, existing conventions, file layouts, prior decisions) | Workflow invokes research sub-workflow and re-invokes you with findings — no human gate |
 
@@ -432,9 +432,12 @@ Return a JSON object with this structure:
 
 When you need to investigate the repository archive before finalizing the plan,
 emit a `research_needs` object matching this shape. When you do NOT need research,
-emit `research_needs: {}` (empty object) or omit the `topics` array.
+emit `research_needs: {"topics": []}` — an object with an empty `topics` array.
+The `topics` field is **required**; `research_needs: {}` (no `topics` key) will
+fail output validation.
 
-- **`topics`** — non-empty array of research questions (triggers the loop).
+- **`topics`** — array of research questions (non-empty triggers the loop;
+  empty signals no research needed).
 - **`context.work_item_id`** — the current work item ID.
 - **`context.plan_excerpt`** — a brief excerpt framing the research need.
 - **`budget_hint`** — always `"cheap"` (archive-only, first pass).
