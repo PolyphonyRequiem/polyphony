@@ -42,6 +42,30 @@ public sealed class ValidateConfigCommand
         var repoRoot = Path.GetFullPath(Path.Combine(config, ".."));
         var result = ConfigValidator.Validate(processConfig, repoRoot);
 
+        // Also validate profile.yaml (research block) when present.
+        var profilePath = Path.Combine(config, "profile.yaml");
+        ProfileConfig profileConfig;
+        try
+        {
+            profileConfig = ProfileConfigLoader.Load(profilePath);
+        }
+        catch (Exception)
+        {
+            // Profile load failure is non-fatal — report as a diagnostic.
+            profileConfig = new ProfileConfig();
+        }
+
+        var profileDiagnostics = ResearchConfigValidator.Validate(profileConfig);
+        if (profileDiagnostics.Count > 0)
+        {
+            result = new ConfigValidationResult
+            {
+                IsValid = result.IsValid && profileDiagnostics.Count == 0,
+                Errors = [.. result.Errors, .. profileDiagnostics],
+                Warnings = result.Warnings,
+            };
+        }
+
         if (isJson)
         {
             Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.ConfigValidationResult));

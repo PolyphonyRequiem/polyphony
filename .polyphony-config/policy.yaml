@@ -195,3 +195,30 @@ unattended:
   review_wait_mode: wait
   cap_mode: manual
 
+research:
+  # ACTIVE DEFAULTS: Warning mode for research escalation.
+  # — Researcher judges sufficiency of archive findings
+  # — If insufficient, escalates to deep-researcher (web/GitHub/MCP tools)
+  # — Escalation cap of 1 per research_needs topic (conservative to limit cost)
+  # — Gates only when cap is hit without sufficient findings (warning mode)
+  #
+  # Gate modes:
+  #   auto     — auto-escalate when archive findings are insufficient, up to cap.
+  #              Never surfaces a human gate.
+  #   warning  — auto-escalate, but surface a human gate when the escalation cap
+  #              is reached without sufficient findings (default).
+  #   manual   — always surface a human gate before escalating to the deep tier.
+  defaults:
+    mode: warning
+    escalation_cap: 1
+
+  # Per-scope overrides (uncomment to customise per item type or root).
+  # root:
+  #   mode: manual
+  #   escalation_cap: 2
+  # by_type:
+  #   Epic:
+  #     escalation_cap: 2    # Epics get more escalation budget
+  #   Task:
+  #     mode: auto           # Tasks auto-escalate without gating
+

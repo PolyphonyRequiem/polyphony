@@ -42,6 +42,10 @@ public sealed record PolicyLoadResult
     /// the deterministic Bucket-C human gates catalogued during the AB#3103
     /// audit (happy-path acceptance, PR-review-wait, cap/recovery).</summary>
     public required PolicyUnattendedSnapshot Unattended { get; init; }
+
+    /// <summary>Resolved research escalation policy (AB#3131 issue-3).
+    /// Mode + escalation cap for the researcher → deep-researcher tier.</summary>
+    public required PolicyDomainSnapshot Research { get; init; }
 }
 
 /// <summary>
@@ -56,6 +60,7 @@ public sealed record PolicyDomainSnapshot
     public int? DefaultsMaxRemediationCycles { get; init; }
     public string? DefaultsMinSeverity { get; init; }
     public int? DefaultsMaxQuestionLoops { get; init; }
+    public int? DefaultsEscalationCap { get; init; }
     public int? DefaultsQualityAvgScoreAtLeast { get; init; }
     public int? DefaultsQualityBlockingCountAtMost { get; init; }
     public string? RootMode { get; init; }
