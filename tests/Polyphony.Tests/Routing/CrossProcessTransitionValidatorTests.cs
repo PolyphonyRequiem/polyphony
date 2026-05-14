@@ -197,22 +197,30 @@ public sealed class CrossProcessTransitionValidatorTests
         valid.TargetState.ShouldBe(t.Transitions[t.MiddleType]["begin_planning"]);
     }
 
-    // ── begin_planning: precondition failure ─────────────────────────
+    // ── begin_planning: idempotency (no-op) ──────────────────────────
 
     [Theory]
     [MemberData(nameof(AllTemplateNames))]
-    public void BeginPlanning_WhenInProgress_ReturnsInvalid(string templateName)
+    public void BeginPlanning_WhenAlreadyInTargetState_ReturnsNoOp(string templateName)
     {
+        // AB#3170: begin_planning targets InProgressState in every template,
+        // so an item already in that state is the canonical idempotent
+        // re-fire. Pre-AB#3170 returned InvalidTransition with a precondition
+        // failure ("must be in Proposed, but is in InProgress"); now
+        // NoOpTransition short-circuits before the precondition check runs.
         var t = GetTemplate(templateName);
         var validator = CreateValidator(t);
         var item = new WorkItemBuilder().WithId(1).WithType(t.TopType).WithState(t.InProgressState).Build();
 
         var result = validator.Validate(item, "begin_planning", []);
 
-        var invalid = AssertInvalid(result);
-        invalid.Message.ShouldContain("begin_planning");
-        invalid.Message.ShouldContain("Proposed");
+        var noOp = AssertNoOp(result);
+        noOp.TargetState.ShouldBe(t.Transitions[t.TopType]["begin_planning"]);
     }
+
+    // (BeginPlanning_WhenCompleted_ReturnsInvalid lives further down — covers
+    // the canonical "wrong category" precondition path now that InProgress is
+    // a no-op.)
 
     // ── begin_implementation: happy path ─────────────────────────────
 
@@ -232,16 +240,19 @@ public sealed class CrossProcessTransitionValidatorTests
 
     [Theory]
     [MemberData(nameof(AllTemplateNames))]
-    public void BeginImplementation_Leaf_WhenInProgress_ReturnsValid(string templateName)
+    public void BeginImplementation_Leaf_WhenAlreadyInTargetState_ReturnsNoOp(string templateName)
     {
+        // AB#3170: target == InProgressState in every template, so this is
+        // the canonical idempotent re-fire. Pre-AB#3170 returned ValidTransition;
+        // now NoOpTransition.
         var t = GetTemplate(templateName);
         var validator = CreateValidator(t);
         var item = new WorkItemBuilder().WithId(10).WithType(t.LeafType).WithState(t.InProgressState).Build();
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        var valid = AssertValid(result);
-        valid.TargetState.ShouldBe(t.Transitions[t.LeafType]["begin_implementation"]);
+        var noOp = AssertNoOp(result);
+        noOp.TargetState.ShouldBe(t.Transitions[t.LeafType]["begin_implementation"]);
     }
 
     // ── begin_implementation: precondition failure ───────────────────
@@ -503,14 +514,16 @@ public sealed class CrossProcessTransitionValidatorTests
     [InlineData("In Progress")]
     public void ScrumBeginImplementation_Task_WhenInProgressVariant_ReturnsValid(string state)
     {
+        // AB#3170: "Committed" == begin_implementation target, so the at-target
+        // case returns NoOp; the other in-progress variants return Valid.
+        // Both are "accepted"; both carry target state "Committed".
         var t = GetTemplate("Scrum");
         var validator = CreateValidator(t);
         var item = new WorkItemBuilder().WithId(10).WithType("Task").WithState(state).Build();
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        var valid = AssertValid(result);
-        valid.TargetState.ShouldBe("Committed");
+        AssertAccepted(result).ShouldBe("Committed");
     }
 
     [Theory]
@@ -535,14 +548,14 @@ public sealed class CrossProcessTransitionValidatorTests
     [InlineData("In Progress")]
     public void ScrumBeginImplementation_PBI_WhenInProgressVariant_ReturnsValid(string state)
     {
+        // AB#3170: "Committed" == begin_implementation target → NoOp; others → Valid.
         var t = GetTemplate("Scrum");
         var validator = CreateValidator(t);
         var item = new WorkItemBuilder().WithId(2).WithType("Product Backlog Item").WithState(state).Build();
 
         var result = validator.Validate(item, "begin_implementation", []);
 
-        var valid = AssertValid(result);
-        valid.TargetState.ShouldBe("Committed");
+        AssertAccepted(result).ShouldBe("Committed");
     }
 
     [Theory]
@@ -646,5 +659,26 @@ public sealed class CrossProcessTransitionValidatorTests
 
     private static InvalidTransition AssertInvalid(TransitionOutcome outcome) =>
         ((IUnion)outcome).Value.ShouldBeOfType<InvalidTransition>();
+
+    private static NoOpTransition AssertNoOp(TransitionOutcome outcome) =>
+        ((IUnion)outcome).Value.ShouldBeOfType<NoOpTransition>();
+
+    /// <summary>
+    /// Asserts the transition was accepted (either ValidTransition or NoOpTransition,
+    /// AB#3170) and returns the target state. Used for theory tests where some data
+    /// rows produce a genuine transition and others are at-target idempotent re-fires.
+    /// </summary>
+    private static string AssertAccepted(TransitionOutcome outcome)
+    {
+        var inner = ((IUnion)outcome).Value;
+        return inner switch
+        {
+            ValidTransition v => v.TargetState,
+            NoOpTransition n => n.TargetState,
+            InvalidTransition iv => throw new Shouldly.ShouldAssertException(
+                $"Expected accepted transition (Valid or NoOp), got Invalid: {iv.Message}"),
+            _ => throw new InvalidOperationException($"Unexpected outcome type: {inner?.GetType().Name ?? "null"}"),
+        };
+    }
 }
 

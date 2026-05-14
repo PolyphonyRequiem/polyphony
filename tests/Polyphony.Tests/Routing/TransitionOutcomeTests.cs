@@ -38,6 +38,34 @@ public sealed class TransitionOutcomeTests
     }
 
     [Fact]
+    public void NoOpTransition_ConstructsWithAllProperties()
+    {
+        // AB#3170: NoOpTransition is the third union case — represents
+        // "already in target state" idempotent re-fire.
+        var noOp = new NoOpTransition(42, "item_satisfied", "Done", "Item is already in target state 'Done'; 'item_satisfied' is a no-op.");
+        noOp.WorkItemId.ShouldBe(42);
+        noOp.Event.ShouldBe("item_satisfied");
+        noOp.TargetState.ShouldBe("Done");
+        noOp.Message.ShouldContain("no-op");
+    }
+
+    [Fact]
+    public void CaseType_NoOpTransition_MatchesPattern()
+    {
+        TransitionOutcome outcome = new NoOpTransition(1, "e", "s", "m");
+        (outcome is NoOpTransition).ShouldBeTrue();
+        (outcome is ValidTransition).ShouldBeFalse();
+        (outcome is InvalidTransition).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void CaseType_ValidTransition_NotNoOp()
+    {
+        TransitionOutcome outcome = new ValidTransition(1, "e", "s", "m");
+        (outcome is NoOpTransition).ShouldBeFalse();
+    }
+
+    [Fact]
     public void CaseType_ValidTransition_MatchesPattern()
     {
         TransitionOutcome outcome = new ValidTransition(1, "e", "s", "m");
@@ -61,6 +89,7 @@ public sealed class TransitionOutcomeTests
         var matched = outcome switch
         {
             ValidTransition => "valid",
+            NoOpTransition => "no_op",
             InvalidTransition => "invalid",
         };
 
@@ -75,10 +104,26 @@ public sealed class TransitionOutcomeTests
         var matched = outcome switch
         {
             ValidTransition => "valid",
+            NoOpTransition => "no_op",
             InvalidTransition => "invalid",
         };
 
         matched.ShouldBe("invalid");
+    }
+
+    [Fact]
+    public void PatternMatch_NoOpCase_MatchesCorrectly()
+    {
+        TransitionOutcome outcome = new NoOpTransition(1, "item_satisfied", "Done", "no-op");
+
+        var matched = outcome switch
+        {
+            ValidTransition => "valid",
+            NoOpTransition => "no_op",
+            InvalidTransition => "invalid",
+        };
+
+        matched.ShouldBe("no_op");
     }
 
     [Theory]
@@ -88,6 +133,7 @@ public sealed class TransitionOutcomeTests
         var label = outcome switch
         {
             ValidTransition => "valid",
+            NoOpTransition => "no_op",
             InvalidTransition => "invalid",
             null => throw new ArgumentNullException(nameof(outcome)),
         };
@@ -98,6 +144,7 @@ public sealed class TransitionOutcomeTests
     public static TheoryData<TransitionOutcome, string> AllCasesWithExpectedLabel() => new()
     {
         { new ValidTransition(1, "e", "s", "m"), "valid" },
+        { new NoOpTransition(1, "e", "s", "no-op"), "no_op" },
         { new InvalidTransition(1, "e", null, "m"), "invalid" },
     };
 
@@ -160,6 +207,7 @@ public sealed class TransitionOutcomeTests
         var (id, evt, target, message) = outcome switch
         {
             ValidTransition v => (v.WorkItemId, v.Event, (string?)v.TargetState, v.Message),
+            NoOpTransition n => (n.WorkItemId, n.Event, (string?)n.TargetState, n.Message),
             InvalidTransition iv => (iv.WorkItemId, iv.Event, iv.TargetState, iv.Message),
             null => throw new ArgumentNullException(nameof(outcome)),
         };
@@ -173,6 +221,7 @@ public sealed class TransitionOutcomeTests
     public static TheoryData<TransitionOutcome, int, string, string?, string> AllCasesWithProperties() => new()
     {
         { new ValidTransition(42, "begin_planning", "Active", "valid msg"), 42, "begin_planning", "Active", "valid msg" },
+        { new NoOpTransition(42, "item_satisfied", "Done", "no-op msg"), 42, "item_satisfied", "Done", "no-op msg" },
         { new InvalidTransition(99, "unknown", null, "invalid msg"), 99, "unknown", null, "invalid msg" },
         { new InvalidTransition(7, "all_children_complete", "Closed", "precondition failed"), 7, "all_children_complete", "Closed", "precondition failed" },
     };

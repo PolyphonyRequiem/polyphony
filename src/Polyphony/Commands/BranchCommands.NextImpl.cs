@@ -137,6 +137,12 @@ public sealed partial class BranchCommands
                 case ValidTransition v:
                     targetState = v.TargetState;
                     break;
+                case NoOpTransition n:
+                    // Item already in target state — same downstream behavior
+                    // (SetState below is itself idempotent in twig); we just
+                    // record the target so the call site doesn't branch.
+                    targetState = n.TargetState;
+                    break;
                 case InvalidTransition iv:
                     throw new InvalidOperationException(
                         $"Cannot start item {next.Node.WorkItemId} (event=begin_implementation): {iv.Message}");

@@ -68,15 +68,18 @@ public sealed class TransitionValidatorTests
     }
 
     [Fact]
-    public void Validate_BeginImplementation_WhenInProgress_ReturnsValid()
+    public void Validate_BeginImplementation_WhenAlreadyInTargetState_ReturnsNoOp()
     {
+        // Issue maps begin_implementation→Doing; item is already in Doing.
+        // Pre-AB#3170 this returned ValidTransition; now it returns
+        // NoOpTransition so callers can short-circuit cleanly.
         var item = new WorkItemBuilder()
             .WithId(10).WithType("Issue").WithState("Doing").Build();
 
         var result = CreateValidator().Validate(item, "begin_implementation", []);
 
-        var valid = AssertValid(result);
-        valid.TargetState.ShouldBe("Doing");
+        var noOp = AssertNoOp(result);
+        noOp.TargetState.ShouldBe("Doing");
     }
 
     [Fact]
@@ -138,10 +141,27 @@ public sealed class TransitionValidatorTests
     // ── Precondition failure tests ───────────────────────────────────
 
     [Fact]
-    public void Validate_BeginPlanning_WhenInProgress_ReturnsInvalid()
+    public void Validate_BeginPlanning_WhenAlreadyInTargetState_ReturnsNoOp()
     {
+        // AB#3170: Epic@Doing + begin_planning (target Doing) is the canonical
+        // idempotent re-fire. Pre-AB#3170 returned Invalid (precondition
+        // failure: must be in Proposed); now NoOp.
         var item = new WorkItemBuilder()
             .WithId(1).WithType("Epic").WithState("Doing").Build();
+
+        var result = CreateValidator().Validate(item, "begin_planning", []);
+
+        var noOp = AssertNoOp(result);
+        noOp.TargetState.ShouldBe("Doing");
+    }
+
+    [Fact]
+    public void Validate_BeginPlanning_WhenCompleted_ReturnsInvalid()
+    {
+        // After AB#3170, hitting begin_planning's precondition requires a state
+        // that is NEITHER target (no-op) NOR Proposed (valid). Done covers it.
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Epic").WithState("Done").Build();
 
         var result = CreateValidator().Validate(item, "begin_planning", []);
 
@@ -226,9 +246,10 @@ public sealed class TransitionValidatorTests
 
     [Theory]
     [InlineData("To Do")]
-    [InlineData("Done")]
     public void Validate_ItemSatisfied_WhenNotInProgress_ReturnsInvalid(string state)
     {
+        // "Done" is no longer Invalid (it now returns NoOpTransition per AB#3170);
+        // see Validate_ItemSatisfied_WhenAlreadyDone_ReturnsNoOp below.
         var item = new WorkItemBuilder()
             .WithId(1).WithType("Task").WithState(state).Build();
 
@@ -237,6 +258,21 @@ public sealed class TransitionValidatorTests
         var invalid = AssertInvalid(result);
         invalid.Message.ShouldContain("item_satisfied");
         invalid.Message.ShouldContain("InProgress");
+    }
+
+    [Fact]
+    public void Validate_ItemSatisfied_WhenAlreadyDone_ReturnsNoOp()
+    {
+        // AB#3170: split out from the Theory above. Task in "Done" state
+        // firing item_satisfied (target "Done") is the canonical idempotent
+        // re-fire — the close_mark_satisfied site that surfaced this bug.
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Task").WithState("Done").Build();
+
+        var result = CreateValidator().Validate(item, "item_satisfied", []);
+
+        var noOp = AssertNoOp(result);
+        noOp.TargetState.ShouldBe("Done");
     }
 
     [Fact]
@@ -327,9 +363,74 @@ public sealed class TransitionValidatorTests
         invalid.Message.ShouldContain("child #10");
     }
 
+    // ── Idempotency (no-op) tests — AB#3170 ──────────────────────────
+
+    [Fact]
+    public void Validate_ItemSatisfied_WhenAlreadyInTargetState_ReturnsNoOp()
+    {
+        // Symptom from AB#3170: apex Issue had been transitioned to Done by
+        // a sibling code path; close_mark_satisfied later fired item_satisfied
+        // and used to error out with a precondition failure. Now it must
+        // recognize the no-op and exit cleanly.
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Issue").WithState("Done").Build();
+
+        var result = CreateValidator().Validate(item, "item_satisfied", []);
+
+        var noOp = AssertNoOp(result);
+        noOp.WorkItemId.ShouldBe(1);
+        noOp.Event.ShouldBe("item_satisfied");
+        noOp.TargetState.ShouldBe("Done");
+        noOp.Message.ShouldContain("no-op");
+    }
+
+    [Fact]
+    public void Validate_ImplementationComplete_WhenAlreadyInTargetState_ReturnsNoOp()
+    {
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Task").WithState("Done").Build();
+
+        var result = CreateValidator().Validate(item, "implementation_complete", []);
+
+        var noOp = AssertNoOp(result);
+        noOp.TargetState.ShouldBe("Done");
+    }
+
+    [Fact]
+    public void Validate_BeginImplementation_WhenAlreadyInDoing_ReturnsNoOp()
+    {
+        // Doing maps to begin_implementation's target Doing on Issue. Used to
+        // return ValidTransition; now NoOpTransition. SetState downstream is
+        // idempotent so the caller behavior is unchanged.
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Issue").WithState("Doing").Build();
+
+        var result = CreateValidator().Validate(item, "begin_implementation", []);
+
+        var noOp = AssertNoOp(result);
+        noOp.TargetState.ShouldBe("Doing");
+    }
+
+    [Fact]
+    public void Validate_NoOp_DoesNotInvokePreconditions()
+    {
+        // No-op short-circuit must run BEFORE precondition checks. Otherwise an
+        // already-Done Issue would trip CheckItemSatisfied (which requires
+        // InProgress category) and surface as InvalidTransition instead.
+        var item = new WorkItemBuilder()
+            .WithId(1).WithType("Issue").WithState("Done").Build();
+
+        var result = CreateValidator().Validate(item, "item_satisfied", []);
+
+        ((IUnion)result).Value.ShouldBeOfType<NoOpTransition>();
+    }
+
     private static ValidTransition AssertValid(TransitionOutcome outcome) =>
         ((IUnion)outcome).Value.ShouldBeOfType<ValidTransition>();
 
     private static InvalidTransition AssertInvalid(TransitionOutcome outcome) =>
         ((IUnion)outcome).Value.ShouldBeOfType<InvalidTransition>();
+
+    private static NoOpTransition AssertNoOp(TransitionOutcome outcome) =>
+        ((IUnion)outcome).Value.ShouldBeOfType<NoOpTransition>();
 }

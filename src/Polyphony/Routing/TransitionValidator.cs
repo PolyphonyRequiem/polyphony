@@ -42,14 +42,31 @@ public sealed class TransitionValidator(ProcessConfig processConfig)
                 $"Unknown event '{eventName}' for work item type '{typeName}'.");
         }
 
-        // Step 3: Check preconditions based on event name
+        // Step 3: Idempotency short-circuit (AB#3170). If the item is already
+        // in `targetState`, the event is a structural no-op — applying the
+        // transition again would be a write-write of the same value, and
+        // failing with a precondition error would force every terminal-event
+        // site (e.g. close_mark_satisfied) to wrap calls in try/catch instead
+        // of expressing "this is fine, we're already there" cleanly. Returning
+        // NoOpTransition lets the CLI exit 0 with `is_valid=true, no_op=true`
+        // and lets in-process consumers branch explicitly on the union case.
+        if (string.Equals(item.State, targetState, StringComparison.Ordinal))
+        {
+            return new NoOpTransition(
+                item.Id,
+                eventName,
+                targetState,
+                $"Item is already in target state '{targetState}'; '{eventName}' is a no-op.");
+        }
+
+        // Step 4: Check preconditions based on event name
         var preconditionFailure = CheckPrecondition(item.Id, eventName, targetState, item, children);
         if (preconditionFailure is not null)
         {
             return (TransitionOutcome)preconditionFailure;
         }
 
-        // Step 4: Valid transition
+        // Step 5: Valid transition
         return new ValidTransition(
             item.Id,
             eventName,

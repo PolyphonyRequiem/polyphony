@@ -49,6 +49,15 @@ public sealed class ValidateCommand(
                 TargetState = v.TargetState,
                 Message = v.Message,
             },
+            NoOpTransition n => new ValidateResult
+            {
+                WorkItemId = n.WorkItemId,
+                Event = n.Event,
+                IsValid = true,
+                NoOp = true,
+                TargetState = n.TargetState,
+                Message = n.Message,
+            },
             InvalidTransition iv => new ValidateResult
             {
                 WorkItemId = iv.WorkItemId,
