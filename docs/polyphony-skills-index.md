@@ -53,6 +53,9 @@ You are touching `src/Polyphony/Commands/`.
    doesn't already exist (the four current verbs cover most "obvious" needs).
 3. **`polyphony-architecture.md`** — confirm your new verb belongs in the
    polyphony layer, not in twig or in a helper script.
+4. **`polyphony-reset.md`** — if working on the `reset` verb or the
+   `PolyphonyTag` DU, this is the authoritative spec: scrub scope, flags,
+   UX, sidecar format, and the remediation pattern.
 
 ### 4 · Just understand what polyphony is
 You are not changing anything; you want the model.
@@ -80,7 +83,7 @@ You are not changing anything; you want the model.
 - **Per-repo agent guidance** (`agent-guidance/architect.md` etc.) — those
   are tuning files for downstream agents, not polyphony documentation.
 
-## All 9 docs at a glance
+## All 10 docs at a glance
 
 | Doc / skill                                  | Size | Audience                       | One-line purpose                                                       |
 |----------------------------------------------|-----:|--------------------------------|------------------------------------------------------------------------|
@@ -89,6 +92,7 @@ You are not changing anything; you want the model.
 | `polyphony-conductor-directory.md`           | ~15K | Repo onboarder / config author | Reference for every file inside `.polyphony-config/` other than the schema.   |
 | `polyphony-process-config-schema.md`         | ~17K | Config author                  | Full YAML schema, V-1..V-14, per-template worked examples.             |
 | `polyphony-cli-reference.md`                 | ~15K | Workflow author / CLI consumer | The four verbs, JSON shapes, exit codes, worked examples.              |
+| `polyphony-reset.md`                         | ~12K | Operator / CLI developer       | `polyphony reset` spec: scrub scope, flags, sidecar format, remediation pattern. |
 | `polyphony-architecture.md`                  | ~18K | Anyone changing layers         | Layering, platform abstraction, three-vocabulary contract, data flow.  |
 | `polyphony-workflow-author.skill.md`         | ~11K | Workflow / script author       | Shell-out idiom, decision matrix, canonical helpers, anti-patterns.    |
 | `polyphony-cli-developer.skill.md`           | ~13K | Polyphony CLI contributor      | How to add / modify a verb in `src/Polyphony/Commands/`.               |
