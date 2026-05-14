@@ -9,6 +9,10 @@
     <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.11" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.6" />
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+    <!-- Twig libraries (NuGet, since v0.77.4 — replaces sibling-twig ProjectReferences;
+         see AB#3167). Bump in lockstep with the twig CLI binary if behaviour changes. -->
+    <PackageVersion Include="PolyphonyRequiem.Twig.Domain" Version="0.77.4" />
+    <PackageVersion Include="PolyphonyRequiem.Twig.Infrastructure" Version="0.77.4" />
     <!-- Source generator (Roslyn). Generators target netstandard2.0; the
          host (csc / VS) loads them with the Roslyn version installed
          alongside it, so we pin to a conservative recent version. -->

@@ -10,12 +10,12 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Shouldly" />
     <PackageReference Include="NSubstitute" />
+    <PackageReference Include="PolyphonyRequiem.Twig.Domain" />
+    <PackageReference Include="PolyphonyRequiem.Twig.Infrastructure" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Polyphony\Polyphony.csproj" />
-    <ProjectReference Include="$(TwigSourceRoot)\src\Twig.Domain\Twig.Domain.csproj" />
-    <ProjectReference Include="$(TwigSourceRoot)\src\Twig.Infrastructure\Twig.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>

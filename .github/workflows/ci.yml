@@ -10,20 +10,6 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      # Polyphony depends on Twig.Domain and Twig.Infrastructure via
-      # ProjectReferences resolved through $(TwigSourceRoot) (set by
-      # Directory.Build.props). $(TwigSourceRoot) defaults to a sibling
-      # path (`$(MSBuildThisFileDirectory)..\twig2`), so we check out
-      # twig as a sibling here to satisfy that default. (See AB#3167 +
-      # the planned twig-on-NuGet move that will retire this.)
-      - name: Checkout twig (sibling dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: PolyphonyRequiem/twig
-          path: twig2
-          fetch-depth: 0
-          filter: tree:0
-
       - name: Checkout polyphony
         uses: actions/checkout@v4
         with:

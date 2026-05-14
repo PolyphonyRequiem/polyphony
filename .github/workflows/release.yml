@@ -11,15 +11,6 @@ name: Release
 # workflow.version equals the bare tag. This converts the lint from
 # advisory-at-PR-time to gating-at-release-time. If a tag is pushed where
 # the YAMLs disagree, the release fails fast before any binaries are built.
-#
-# KNOWN LIMITATION — non-reproducible twig dep:
-# Polyphony.csproj has ProjectReferences to a sibling `twig2` repo, which
-# we check out from PolyphonyRequiem/twig's default branch with no pin.
-# This means a re-run of the same vX.Y.Z release tag could pick up a
-# different twig revision. Pre-existing problem inherited from CI; the
-# fix (submodule, recorded SHA, or twig NuGet package) is tracked as a
-# separate Epic. For v1, treat the *first* successful release of a tag
-# as the canonical build; do not re-run.
 
 on:
   push:
@@ -84,18 +75,6 @@ jobs:
             ext: ''
     runs-on: ${{ matrix.runner }}
     steps:
-      # Mirror CI: twig2 sibling is required because Polyphony.csproj's
-      # ProjectReferences resolve through $(TwigSourceRoot), which defaults
-      # to `$(MSBuildThisFileDirectory)..\twig2`. See AB#3167 + the planned
-      # twig-on-NuGet move. KNOWN LIMITATION at top of file — twig is unpinned.
-      - name: Checkout twig (sibling dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: PolyphonyRequiem/twig
-          path: twig2
-          fetch-depth: 0
-          filter: tree:0
-
       - name: Checkout polyphony
         uses: actions/checkout@v4
         with:
