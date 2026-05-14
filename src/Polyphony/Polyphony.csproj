@@ -17,17 +17,14 @@
     <PackageReference Include="ConsoleAppFramework" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="PolyphonyRequiem.Twig.Domain" />
+    <PackageReference Include="PolyphonyRequiem.Twig.Infrastructure" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Polyphony.Tests" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="$(TwigSourceRoot)\src\Twig.Domain\Twig.Domain.csproj" />
-    <ProjectReference Include="$(TwigSourceRoot)\src\Twig.Infrastructure\Twig.Infrastructure.csproj" />
   </ItemGroup>
 
   <!--
