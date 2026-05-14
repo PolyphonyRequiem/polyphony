@@ -386,6 +386,30 @@ public sealed partial class BranchCommands(
     }
 
     /// <summary>
+    /// Compose the ADO web URL for a work item from the org/project workspace
+    /// string. Returns an empty string when either input is missing — the
+    /// caller treats that as "no inspect link", not as a fatal error.
+    /// AB#3191: included in error envelopes so operators can jump straight
+    /// from a workflow failure to the work item instead of reconstructing
+    /// the URL by hand.
+    /// </summary>
+    internal static string ComposeAdoWorkItemUrl(string workspace, int workItemId)
+    {
+        if (workItemId <= 0 || string.IsNullOrEmpty(workspace))
+        {
+            return "";
+        }
+        var slash = workspace.IndexOf('/');
+        if (slash <= 0 || slash == workspace.Length - 1)
+        {
+            return "";
+        }
+        var org = workspace[..slash];
+        var project = workspace[(slash + 1)..];
+        return $"https://dev.azure.com/{org}/{project}/_workitems/edit/{workItemId}";
+    }
+
+    /// <summary>
     /// Group-by-merge-group logic from <c>scripts/lib/pg-helpers.ps1</c>:
     ///   - Parse the work item's tags for the first <c>PG-N</c> entry
     ///     (legacy tag format — see <see cref="ExtractLegacyPgTag"/>).

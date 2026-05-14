@@ -164,6 +164,35 @@ public sealed partial class BranchCommands
             // staged-but-never-pushed by an earlier next-impl invocation.
             await twig.SyncAsync(ct).ConfigureAwait(false);
 
+            // AB#3189 / AB#3191 read-after-write defense. `twig state` and
+            // `twig sync` both exited 0, but apex 3165 dispatch_items[0] for
+            // AB#3172 showed that the post-sync cache can still report the
+            // pre-transition state — most likely an ADO eventual-consistency
+            // race where sync's pull-back overwrites the freshly-pushed
+            // value before ADO has settled. The 12-minute self-heal observed
+            // there (next-impl re-invoked at 09:36:55 finally saw Doing) was
+            // silent — primary_completer ran in between and refused
+            // implementation_complete with no diagnostic pointing at the
+            // boundary. Re-fetching from the cache (sqlite, freshly synced
+            // from ADO above) and asserting state == targetState surfaces
+            // the failure here, with task id, transition, and ADO URL, so
+            // the operator can act instead of waiting for the loop to heal.
+            var verified = await repository.GetByIdAsync(next.Node.WorkItemId, ct).ConfigureAwait(false);
+            if (verified is null
+                || !string.Equals(verified.State, targetState, StringComparison.Ordinal))
+            {
+                var actualState = verified?.State ?? "<missing-from-cache>";
+                var adoUrl = ComposeAdoWorkItemUrl(workspace, next.Node.WorkItemId);
+                var error =
+                    $"State assertion failed for #{next.Node.WorkItemId} after begin_implementation: " +
+                    $"expected '{targetState}', cache reports '{actualState}'. " +
+                    $"twig state + twig sync exited 0 but the transition did not persist — " +
+                    $"likely ADO eventual-consistency race or twig push regression. " +
+                    $"Inspect: {adoUrl}";
+                EmitNextImpl(EmptyNextImplResult(error, resolvedMergeGroup, workspace));
+                return ExitCodes.Success;
+            }
+
             // Walk up to find the nearest plannable ancestor (the container).
             var (containerId, containerTitle, containerType) = FindNearestPlannableAncestorWithType(next);
 
@@ -192,8 +221,22 @@ public sealed partial class BranchCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            result = EmptyNextImplResult($"Error routing next task: {ex.Message}",
-                resolvedMergeGroup, await TryResolveAdoWorkspaceAsync(ct).ConfigureAwait(false));
+            // AB#3191 diagnostic enrichment: include task id, transition,
+            // and ADO URL in the error envelope so the operator can jump
+            // straight to the work item from the workflow log instead of
+            // playing detective. The catch covers any failure in the
+            // pre-transition routing path (hierarchy walk, validator,
+            // SetActive/SetState/Sync exceptions); the read-after-write
+            // mismatch path emits its own already-enriched envelope and
+            // returns above before reaching here.
+            var workspace = await TryResolveAdoWorkspaceAsync(ct).ConfigureAwait(false);
+            var adoUrl = workItem != RequiredInput.MissingInt
+                ? ComposeAdoWorkItemUrl(workspace, workItem)
+                : "";
+            var inspectSuffix = adoUrl.Length > 0 ? $" Inspect: {adoUrl}" : "";
+            result = EmptyNextImplResult(
+                $"Error routing next task in {resolvedMergeGroup} (root #{workItem}, event=begin_implementation): {ex.Message}.{inspectSuffix}",
+                resolvedMergeGroup, workspace);
         }
 
         EmitNextImpl(result);
