@@ -198,6 +198,71 @@ public sealed class ScopeCommandsTests : CommandTestBase
         result.Error.ShouldContain("twig patch failed");
     }
 
+    [Fact]
+    public async Task Tag_NotPresent_FlushesStagedPatchAfterMutation()
+    {
+        // AB#3127 regression: `scope tag` (and `scope untag`) must call
+        // `twig sync` immediately after `twig patch` so the staged tag
+        // mutation is durable in ADO before the verb returns. Otherwise
+        // any subsequent process that reads ADO via IWorkItemRepository
+        // (e.g. `polyphony validate` in workflow scripts) sees stale
+        // state. Sister-bug to AB#3126/28/29 — same staged-but-never-
+        // pushed failure mode, mechanically caught codebase-wide by the
+        // `lint-sync-after-mutation` lint added in AB#3162. Pattern
+        // mirrors BranchCommandsNextImplTests.NextImpl_HappyPath_FlushesStagedTransitionAfterSetState.
+        await SeedAsync(new WorkItemBuilder().WithId(1).WithTags("twig").Build());
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        runner.WhenStartsWith("twig", ["patch", "--id", "1", "--json"], new ProcessResult(0, "{}", ""));
+
+        await CaptureConsoleAsync(() => cmd.Tag(workItem: 1));
+
+        var patchIdx = runner.Invocations.ToList().FindIndex(
+            i => i.Executable == "twig"
+                && i.Arguments.Count >= 1
+                && i.Arguments[0] == "patch");
+        patchIdx.ShouldBeGreaterThan(-1, "twig patch must have been invoked");
+
+        var postPatchSync = runner.Invocations
+            .Select((inv, idx) => (inv, idx))
+            .FirstOrDefault(x => x.idx > patchIdx
+                && x.inv.Executable == "twig"
+                && x.inv.Arguments.Count >= 1
+                && x.inv.Arguments[0] == "sync");
+
+        postPatchSync.inv.ShouldNotBeNull(
+            "scope tag must invoke `twig sync` after `twig patch` to flush the staged tag mutation (AB#3127)");
+    }
+
+    [Fact]
+    public async Task Untag_Present_FlushesStagedPatchAfterMutation()
+    {
+        // AB#3127 regression — companion to Tag_NotPresent_FlushesStagedPatchAfterMutation.
+        // Same flush invariant on the untag path.
+        await SeedAsync(new WorkItemBuilder().WithId(1).WithTags("polyphony; twig").Build());
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        runner.WhenStartsWith("twig", ["patch"], new ProcessResult(0, "{}", ""));
+
+        await CaptureConsoleAsync(() => cmd.Untag(workItem: 1));
+
+        var patchIdx = runner.Invocations.ToList().FindIndex(
+            i => i.Executable == "twig"
+                && i.Arguments.Count >= 1
+                && i.Arguments[0] == "patch");
+        patchIdx.ShouldBeGreaterThan(-1, "twig patch must have been invoked");
+
+        var postPatchSync = runner.Invocations
+            .Select((inv, idx) => (inv, idx))
+            .FirstOrDefault(x => x.idx > patchIdx
+                && x.inv.Executable == "twig"
+                && x.inv.Arguments.Count >= 1
+                && x.inv.Arguments[0] == "sync");
+
+        postPatchSync.inv.ShouldNotBeNull(
+            "scope untag must invoke `twig sync` after `twig patch` to flush the staged tag mutation (AB#3127)");
+    }
+
     // ─── untag ──────────────────────────────────────────────────────────────
 
     [Fact]
