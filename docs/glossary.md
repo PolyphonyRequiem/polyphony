@@ -192,6 +192,74 @@ Edges enter the dependency graph through three distinct sources. Each source has
 | **Multi-facet sequence** | The implicit ordering of an item's facets across waves: planning before action before implementation. Enforced by `polyphony state next-ready` requirement edges, NOT by any sequence inside one `apex-item-dispatch` invocation — a single dispatch handles one facet, and the next facet (if any) is picked up on the next worklist rebuild. |
 | **Fast-path completion** | The `apex-item-dispatch.yaml` terminal taken when the lifecycle router emits `route: fast-path` — typically because `polyphony state next-ready` reports the item as already satisfied or empty. The item exits without invoking any lifecycle sub-workflow; no state advance is needed because the item is already in a terminal disposition. |
 
+## Workflow node naming
+
+> **Status: descriptive, not prescriptive.** This section documents the
+> suffix/prefix patterns currently in use across `.conductor/registry/workflows/*.yaml`.
+> Multiple inconsistencies are under active discussion (see ABs linked
+> in each row). Cleanup epic deferred until each individual discussion
+> resolves and bug-squashing completes.
+
+### Role suffixes (the verb the node performs)
+
+| Suffix | Convention | Notes / open ABs |
+|---|---|---|
+| `_gate` | A `human_gate` node that prompts the operator. Always paired with a `_policy` consultant node when the gate has an auto-decide override. | Stable. |
+| `_router` | A decision step (script or `branch_on`) that picks one of N continuations. Typically classifies inputs into a closed set of route values. | Stable; relationship to `_dispatch` under discussion (AB#3204). |
+| `_dispatch` | A `type: workflow` node that invokes a sub-workflow. | Under discussion (AB#3204). |
+| `_policy` | A `script:` node that resolves a policy domain via `polyphony policy resolve` and emits an envelope consumed by the next `_gate`. | Stable. |
+| `_counter` | A `script:` node that increments a loop iteration counter. | 8 nodes; existence under discussion (AB#3208). |
+| `_counter_reset` / `_reset` | Resets a loop counter. Suffix inconsistent — see AB#3199. | Two suffixes (AB#3199); existence under discussion (AB#3208). |
+| `_reviewer` | An LLM agent role that reviews work product (`plan_reviewer`, `scope_reviewer`, etc.). | Stable; related to thing-doer rationalization AB#3207. |
+| `_loader` | A `script:` node that loads config/state into the workflow context. | Stable. |
+| `_creator` / `_updater` / `_merger` / `_completer` / `_resolver` / `_seeder` / `_fixer` / `_validator` / `_writer` / `_implementer` / `_planner` | Specialized thing-doer roles. Many are singletons. | Rationalization under discussion (AB#3207). |
+| `_emitter` | Used on exactly two nodes; meaning unclear. | AB#3205. |
+| `_poster_<platform>` | Stacked compound suffix; only place suffixes stack. | AB#3200. |
+| `_error_gate` (canonical) / `_failed_gate` / `_failure_gate` | A `human_gate` that fires on operation failure with retry/abort options. | Three suffixes for one role; aligning to `_error_gate` per AB#3194. |
+| `_policy_limit_gate` (canonical) / `_cap_gate` / `_loop_gate` / `_exhausted_gate` / `_exceeded_gate` | A `human_gate` that fires when a configured cap is reached. | Five suffixes for one role; aligning to `_policy_limit_gate` per AB#3195. |
+
+### Position-bearing prefixes
+
+| Prefix | Convention | Notes / open ABs |
+|---|---|---|
+| `terminal_` | Workflow end-state nodes with no outgoing routes. 18 occurrences — the largest prefix family. | Loaded word; rename under discussion (AB#3202). Two outliers don't fit the adjective convention (AB#3197). |
+| `ado_` / `github_` / `_ado` / `_github` | Platform-specific node, opposite the platform-agnostic version. Position varies (prefix vs middle vs suffix). | Position inconsistent (AB#3192). |
+| `pr_` | Operates on a PR (e.g. `pr_lifecycle_<platform>`, `pr_platform_router`). | Stable. |
+| `scope_` | Operates on PR file-scope review (`scope_reviewer`, `scope_revise`, `scope_violation_gate`, etc.). | Loaded word — collides with run-scope, scope-renegotiation, and external scope meanings (AB#3203). |
+| `open_` | Verb prefix on PR-creation nodes (`open_plan_pr`, `open_feature_pr`). | Verb+noun word order inconsistent across the workflows (AB#3196). |
+| `feature_` | Operates on the feature-PR flow (`feature_pr_creator`, `feature_pr_updater`, etc.). | Stable. |
+| `remediation_` | Operates within the remediation flow. | Stable. |
+| `apex_` | Operates on the apex driver (root) flow. 29 occurrences. | The glossary forbids `apex` ("use `root` everywhere") but workflows use it pervasively. Reconciliation under discussion (AB#3209). |
+| `ensure_` (prefix) vs `_ensure_` (middle) | Idempotent setup operation. Position inconsistent. | Aligning to prefix per AB#3193. |
+
+### Run-flow vocabulary (under discussion — AB#3209)
+
+These terms appear in node names but are not yet defined here. AB#3209
+will produce concise definitions; this row is a placeholder so readers
+know they're TBD and not omissions.
+
+| Term | First seen | Open question |
+|---|---|---|
+| **wave** | `apex-driver.yaml`, `apex-wave-dispatch.yaml` | What constitutes a wave boundary? Topological layer vs batch vs ??? |
+| **cascade** | `cascade-remedy.yaml`, `cascade_summary_gate` | Aquatic-themed sibling of "wave"? What does it cascade? |
+| **primary** | `primary_router`, `primary_completer`, `primary_reviewer` (in `implement-merge-group.yaml`) | Likely "the work item the MG is for", but not stated. Differs from apex/root how? |
+| **apex** vs **root** | `apex-driver.yaml` (apex); this glossary §"Work item — relational terms" (root) | Glossary says `apex` is forbidden; workflows use it everywhere. Pick one. |
+
+### Combined templates / patterns
+
+Recurring node *clusters* — recognizable shapes that appear together
+across the workflows. Naming a pattern is cheaper than re-explaining
+the cluster every time.
+
+| Pattern | Cluster | Where to find it |
+|---|---|---|
+| **Gate + policy consultant** | `<X>_policy` (script) → `<X>_gate` (human_gate). Policy resolves the auto-decide; gate fires only when policy returns `prompt`. | All policy-driven gates (e.g. `acceptance_policy` → `apex_completion_gate`). |
+| **Router + lifecycle dispatch** | `<X>_router` (script that emits `route:` envelope) → `branch_on:` over the route values, each landing on a `_dispatch` node that invokes a `type: workflow` sub-workflow. | `apex-item-dispatch.yaml` (lifecycle router → 4 lifecycle dispatches); `feature-pr.yaml`, `implement-merge-group.yaml` (platform router → per-platform PR lifecycle). |
+| **Loop counter + cap gate** | `<X>_counter` (increment script) → `<X>_policy` (resolves cap) → `<X>_policy_limit_gate` or equivalent (human_gate when cap hit). Often paired with `<X>_counter_reset` on the human-chooses-continue arm. | `revise_counter` / `remediation_counter` / `review_counter` etc. in plan-level.yaml + ado-pr.yaml. |
+| **Pending-poll loop with stuck-review escape** | `_counter` increments per poll → `_policy` resolves poll cap → `_stuck_review_gate` fires when cap hit → `_reset` on `continue_waiting`. | `pending_poll_counter` + `stuck_review_gate` in plan-level.yaml, with ADO mirror in ado-pr.yaml. |
+| **Per-platform PR lifecycle** | Parent invokes `pr_platform_router` → branches to `pr_lifecycle_<platform>` (`pr_lifecycle_github` or `pr_lifecycle_ado`) as a `type: workflow` node with `input_mapping`. Adding a platform = add a sub-workflow + add a route. | `feature-pr.yaml`, `implement-merge-group.yaml` (note: `pr_lifecycle_<platform>` is the ONLY platform-isolation pattern that has been driven home consistently — others still leak per-platform nodes through). |
+| **Bubble-up output** | A sub-workflow's top-level `output:` map exposes keys whose sole purpose is to communicate state to its caller. Distinct from `Promote` (workflow data flow vs git merge). | `plan-level.yaml` exports `renegotiation_pending`, `renegotiation_request`, `validate_scope_verdict`, `scope_violation_files` to its parent. |
+
 ## Open glossary questions
 
 _All initial questions resolved. New questions surfacing during plan drafting will land here._
