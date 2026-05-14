@@ -131,13 +131,15 @@ jobs:
         shell: pwsh
         working-directory: polyphony
         run: |
-          # Fast loop excludes Integration-tagged Pester tests (e.g. harness
-          # scenarios that boot real polyphony+conductor processes — see #287).
+          # Excludes only Slow-tagged Pester tests. Integration-tagged tests
+          # (the harness scenarios that boot real polyphony+conductor processes)
+          # run on every PR build — they're the path-coverage net that catches
+          # workflow-routing regressions before they ship (AB#3163).
           $config = New-PesterConfiguration
           $config.Run.Path = 'tests/'
           $config.Run.PassThru = $true
           $config.Output.Verbosity = 'Detailed'
-          $config.Filter.ExcludeTag = @('Integration', 'Slow')
+          $config.Filter.ExcludeTag = @('Slow')
           $result = Invoke-Pester -Configuration $config
           if ($result.FailedCount -gt 0) { exit 1 }
 

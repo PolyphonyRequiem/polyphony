@@ -16,15 +16,22 @@ how to add a new scenario.
 **Active on CI.** Every PR build installs Python 3.12 + conductor + the
 .NET SDK and runs all scenarios under `tests/harness/scenarios/`.
 
-Two scenarios shipping today:
+Scenarios shipping today:
 - `close_out_happy_path` runs `close-out.yaml` end-to-end with a single
   scripted agent and asserts the workflow reaches `workflow_completed`.
 - `cascade_remedy_no_stale` runs `cascade-remedy.yaml`'s no-stale path,
   exercising a `script:` node via the .NET shim binary — first scenario
   to drive both the agent-provider seam and the shim PATH seam together.
+- `research_happy_path` exercises the architect's research branch
+  end-to-end, asserting the workflow reaches `workflow_completed` after
+  a research round-trip.
+- `architect_research_loop` covers the architect → research → architect
+  re-entry path; this is the scenario that would have caught AB#3156
+  before PR #351 shipped, had the harness been on the CI gate at the
+  time (AB#3163).
 
-Future PRs add additional P0 scenarios and a custom gate handler for
-non-default gate selections.
+Future PRs add a custom gate handler for non-default gate selections
+and additional sub-workflow path coverage.
 
 See [`docs/decisions/harness-mvp.md`](../../docs/decisions/harness-mvp.md) —
 the design ADR — for the long-form rationale, and
