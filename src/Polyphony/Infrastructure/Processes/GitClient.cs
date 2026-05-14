@@ -93,6 +93,32 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
         return branches;
     }
 
+    public async Task<IReadOnlyList<string>> ListLocalBranchesAsync(CancellationToken ct = default)
+    {
+        var result = await runner.RunAsync(Exe, ["branch", "--list"], ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            return [];
+        }
+
+        var branches = new List<string>();
+        foreach (var raw in result.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            // git branch --list emits lines like "* main", "  feature/123".
+            // Strip leading "* " or "  " markers.
+            var name = raw.TrimStart('*').Trim();
+            if (name.Length > 0)
+                branches.Add(name);
+        }
+        return branches;
+    }
+
+    public Task<ProcessResult> DeleteLocalBranchAsync(string branch, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(branch);
+        return runner.RunAsync(Exe, ["branch", "-D", branch], ct);
+    }
+
     public async Task<IReadOnlyList<string>> LsRemoteHeadsAsync(string remote, string pattern, CancellationToken ct = default)
     {
         var result = await runner.RunAsync(Exe, ["ls-remote", "--heads", remote, pattern], ct).ConfigureAwait(false);

@@ -120,6 +120,8 @@ public sealed class PolyphonyStatePathsTests
         public Task<string?> GetCurrentBranchAsync(string workingDirectory, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<string?> GetRemoteUrlAsync(string remote = "origin", CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> ListRemoteBranchesAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<string>> ListLocalBranchesAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ProcessResult> DeleteLocalBranchAsync(string branch, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> LsRemoteHeadsAsync(string remote, string pattern, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<string?> RevParseLocalBranchAsync(string branch, CancellationToken ct = default) => throw new NotSupportedException();
         public Task CheckoutAsync(string branch, CancellationToken ct = default) => throw new NotSupportedException();
