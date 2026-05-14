@@ -633,19 +633,37 @@ agents:
   # and adds a summary note. Then routes back to primary_router to pick
   # up the next task.
   #
-  # Risk acknowledged (rubber-duck #7): tasks transition to Done before
-  # the MG PR merges. If the MG PR fails to merge afterwards, ADO will
-  # report tasks as Done while the feature branch lacks the work. The
-  # work IS physically present on the MG branch via the squash merge —
+  # Risk acknowledged (rubber-duck #7): child tasks transition to Done
+  # before the MG PR merges. If the MG PR fails to merge afterwards, ADO
+  # will report tasks as Done while the feature branch lacks the work.
+  # The work IS physically present on the MG branch via the squash merge —
   # only the feature-branch promotion is missing. Recovery: re-run this
   # workflow; the MG PR open + merge are idempotent.
   #
+  # AB#3169 carve-out (indivisible apex root): when `primary_id == root_id`
+  # the "task" being completed IS the apex root work item itself (an
+  # indivisible apex with zero ADO children — the lifecycle classifier
+  # dispatches the apex root through implement-merge-group as its own
+  # implementable). In that case, firing `implementation_complete` here
+  # transitions the apex root to its template's done state at MG → feature
+  # merge time — which is BEFORE feature → main has been promoted (see
+  # AB#3168 for the matching promotion-routing fix). The apex would then
+  # be reported done in ADO while `main` lacks any of its commits — a
+  # high-blast-radius lie that cascades to ancestor work items.
+  # Mitigation: skip the validate + state transition when this is the
+  # apex root. The apex's terminal state is fired by `close_mark_satisfied`
+  # in apex-driver.yaml AFTER `promote_feature_to_main` succeeds (and
+  # therefore AFTER feature → main is merged).
+  #
   # Invariants:
   #   Pre:  Impl PR is merged into MG branch.
-  #   Post: Item is transitioned to its template's done state in ADO; note added. # type is runtime-injected; do not hardcode type names
+  #   Post: For child tasks, item is transitioned to its template's done
+  #         state in ADO and a note added.
+  #         For an indivisible apex root, only a note is added; terminal
+  #         state is deferred to apex-driver close-out (AB#3169). # type is runtime-injected; do not hardcode type names
   - name: primary_completer
     type: script
-    description: Transition completed task to its template's done state and route to next
+    description: "Transition completed child task to its template's done state (apex root: defer to close_mark_satisfied per AB#3169) and route to next"
     command: pwsh
     args:
       - "-NoProfile"
@@ -654,14 +672,22 @@ agents:
         $ErrorActionPreference = 'Stop';
         $PSNativeCommandUseErrorActionPreference = $true;
         $taskId = [int]'{{ primary_router.output.primary_id }}';
+        $rootId = [int]'{{ workflow.input.root_id }}';
+        $isApexRoot = ($taskId -eq $rootId);
         twig set $taskId;
-        twig note --text 'Item implementation merged into MG branch via impl PR';
-        twig sync;
-        $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
-        if (-not $validate.is_valid) { throw "Cannot transition task $($taskId): $($validate.message)" };
-        twig state $validate.target_state;
-        twig sync;
-        @{ child_id = $taskId; completed = $true; target_state = $validate.target_state } | ConvertTo-Json
+        if ($isApexRoot) {
+          twig note --text 'Apex root implementation merged into MG branch via impl PR; deferring terminal state transition to close_mark_satisfied after feature-to-main promotion (AB#3169).';
+          twig sync;
+          @{ child_id = $taskId; completed = $true; target_state = $null; deferred_apex_root = $true } | ConvertTo-Json
+        } else {
+          twig note --text 'Item implementation merged into MG branch via impl PR';
+          twig sync;
+          $validate = polyphony validate --work-item $taskId --event implementation_complete | ConvertFrom-Json;
+          if (-not $validate.is_valid) { throw "Cannot transition task $($taskId): $($validate.message)" };
+          twig state $validate.target_state;
+          twig sync;
+          @{ child_id = $taskId; completed = $true; target_state = $validate.target_state; deferred_apex_root = $false } | ConvertTo-Json
+        }
     routes:
       - to: primary_router
 
