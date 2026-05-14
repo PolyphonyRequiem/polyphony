@@ -46,10 +46,20 @@
       PackageReference and this property block can be deleted.
       Tracked: AB#3167.
     -->
-    <_TwigProbeSentinel>twig2\src\Twig.Domain\Twig.Domain.csproj</_TwigProbeSentinel>
+    <_TwigProbeSentinel>twig2/src/Twig.Domain/Twig.Domain.csproj</_TwigProbeSentinel>
     <_TwigProbeRoot Condition="'$(TwigSourceRoot)' == ''">$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), $(_TwigProbeSentinel)))</_TwigProbeRoot>
     <TwigSourceRoot Condition="'$(TwigSourceRoot)' == '' AND '$(_TwigProbeRoot)' != ''">$([System.IO.Path]::Combine('$(_TwigProbeRoot)', 'twig2'))</TwigSourceRoot>
   </PropertyGroup>
+
+  <!--
+    Fail fast with a clear message if the probe didn't find twig2 — much
+    easier to diagnose than a cascade of 92 'type Twig could not be found'
+    errors. Surfaces a single actionable message instead.
+  -->
+  <Target Name="_AssertTwigSourceRootResolved" BeforeTargets="ResolveProjectReferences"
+          Condition="'$(TwigSourceRoot)' == '' OR !Exists('$(TwigSourceRoot)/src/Twig.Domain/Twig.Domain.csproj')">
+    <Error Text="TwigSourceRoot did not resolve to a valid twig2 checkout. Probe started at '$(MSBuildThisFileDirectory)' looking for 'twig2/src/Twig.Domain/Twig.Domain.csproj' in any ancestor; nothing found. Check out twig as a sibling of the polyphony repo root, or set the TwigSourceRoot env var to an absolute path. (AB#3167; sunsets when twig ships NuGet.)" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="MinVer" PrivateAssets="All" />
