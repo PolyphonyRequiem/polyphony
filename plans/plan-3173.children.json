@@ -1,0 +1,68 @@
+[
+  {
+    "acceptance_criteria": [
+      "\u0060PolyphonyTag\u0060 DU exists with \u0060State\u0060, \u0060Intent\u0060, \u0060Facet\u0060 variants and a \u0060TryParse\u0060 entry point",
+      "\u0060AllOwned(TagSet)\u0060 enumerates every polyphony-owned tag present on a tag set",
+      "Existing \u0060PolyphonyTags\u0060 string constants are the single source of raw values consumed by the DU (no duplication)",
+      "Unit tests cover round-trip parse, unknown-tag handling, and \u0060AllOwned\u0060 enumeration",
+      "Build passes with zero errors and warnings; all existing tests pass"
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Add a typed \u0060PolyphonyTag\u0060 discriminated union under \u0060src/Polyphony/Tagging/\u0060 with three minimal variants \u2014 \u0060State\u0060 (e.g. \u0060Planned\u0060), \u0060Intent\u0060 (\u0060Root\u0060, \u0060InScope\u0060), \u0060Facet\u0060 (\u0060polyphony:facets=\u003Ccsv\u003E\u0060 parsed via the existing \u0060FacetTagParser\u0060). Provide \u0060TryParse(string raw)\u0060 and an \u0060AllOwned(TagSet)\u0060 enumerator that yields every polyphony-owned tag present on a tag set. The existing string constants in [src/Polyphony/Tagging/PolyphonyTags.cs](src/Polyphony/Tagging/PolyphonyTags.cs) remain the canonical raw values; the DU consumes them \u2014 do NOT duplicate the strings. Keep variants minimal: exactly what\u0027s stamped today, no speculative taxonomy.\n\nUnit tests cover round-trip parse, unknown-tag rejection, and \u0060AllOwned\u0060 enumeration over a mixed tag set.",
+    "pg": "pg-1",
+    "title": "Introduce typed PolyphonyTag DU; migrate existing constants behind it",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060ResetPlan\u0060 record enumerates: matching tags, polyphony-authored comments, state dir, local \u002B remote branches matching all five patterns, and worktrees",
+      "Planner performs zero mutation (read-only)",
+      "\u0060ResetPlan\u0060 serializes via \u0060PolyphonyJsonContext\u0060 (AOT-safe)",
+      "Unit tests cover each artifact category with stubbed ADO/git boundaries",
+      "Build passes with zero errors and warnings; all existing tests pass"
+    ],
+    "child_id": "task-2",
+    "depends_on": [
+      "task-1"
+    ],
+    "description": "Add \u0060src/Polyphony/Reset/ResetPlanner.cs\u0060 (and a \u0060ResetPlan\u0060 record) that, given a \u0060--root-id N\u0060, enumerates every artifact reset would touch WITHOUT performing any mutation:\n- ADO tags currently set on the work item that match \u0060PolyphonyTag.AllOwned\u0060 (from task-1)\n- Polyphony-authored ADO comments (filter by author/marker consistent with how polyphony posts comments today \u2014 confirm marker by reading \u0060PrCommands.PostCommentAdo.cs\u0060)\n- Per-root state dir \u0060/polyphony/N/\u0060\n- Branches local \u002B remote matching \u0060feature/N\u0060, \u0060plan/N*\u0060, \u0060impl/N-*\u0060, \u0060mg/N_*\u0060, \u0060sdlc/apex/N\u0060\n- Worktrees under \u0060polyphony-runs/apex-N/\u0060\n\nThe \u0060ResetPlan\u0060 record serializes via \u0060PolyphonyJsonContext\u0060 and is the JSON contract the verb emits in \u0060--dry-run\u0060 mode. Unit tests stub \u0060IAdoClient\u0060 and the git/worktree probes; verify enumeration is complete and deterministic.",
+    "pg": "pg-2",
+    "title": "Implement reset planner: enumerate artifacts and emit dry-run JSON",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060polyphony reset --root-id N\u0060 exists as a CAF verb following the existing patterns",
+      "\u0060--dry-run\u0060 emits the \u0060ResetPlan\u0060 JSON and performs no mutation",
+      "Default invocation prompts for confirmation; \u0060--force\u0060 skips the prompt",
+      "Comments are archived to a sidecar JSON BEFORE being cleared (verified by test)",
+      "Executor performs tag strip, comment clear, state-dir delete, branch delete (local \u002B remote), and worktree remove",
+      "JSON output contract test added under \u0060tests/\u0060 consistent with existing verbs",
+      "Build passes with zero errors and warnings; all existing tests pass"
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-2"
+    ],
+    "description": "Add \u0060src/Polyphony/Commands/ResetCommand.cs\u0060 following the ConsoleAppFramework \u002B \u0060[VerbGroup]\u0060 / \u0060[VerbResult]\u0060 / \u0060PolyphonyJsonContext\u0060 pattern from [HealthCommand](src/Polyphony/Commands/HealthCommand.cs). Flags:\n- \u0060--root-id N\u0060 (required)\n- \u0060--dry-run\u0060 (planner-only; emit \u0060ResetPlan\u0060 JSON, no mutation)\n- \u0060--force\u0060 (skip confirmation)\n\nDefault behaviour: run the planner, render the plan to STDERR (human-friendly), prompt for confirmation on STDIN; on confirmation, execute. The executor MUST archive polyphony-authored comments to a sidecar JSON BEFORE clearing them \u2014 sidecar location is the per-root state dir if it exists, else a sibling \u0060polyphony-archive/N-\u003Cutc\u003E.json\u0060. Then perform: tag strip \u2192 comment clear \u2192 state-dir delete \u2192 branch delete (local then remote) \u2192 worktree remove. Emit a final JSON result describing what was actually mutated.\n\nAdd a JSON output contract test under \u0060tests/\u0060 consistent with the existing \u0060JsonOutputContractTests\u0060. Add executor tests that verify the archive-before-clear ordering and that \u0060--force\u0060 bypasses the prompt.",
+    "pg": "pg-3",
+    "title": "Implement reset executor \u002B CLI verb (confirm/--force/--dry-run \u002B archive sidecar)",
+    "type": "Task"
+  },
+  {
+    "acceptance_criteria": [
+      "Verb is documented with scrub scope, flags, UX, and archive sidecar location",
+      "Documentation explicitly describes the remediation pattern that the Issue 1 refusal message will point at",
+      "Cross-references existing tag/branch docs where relevant"
+    ],
+    "child_id": "task-4",
+    "depends_on": [
+      "task-3"
+    ],
+    "description": "Document the new verb in \u0060README.md\u0060 (and/or a new doc under \u0060docs/\u0060): scrub scope, flags, confirmation/\u0060--force\u0060/\u0060--dry-run\u0060 UX, the comment-archive sidecar location and format, and the remediation pattern that the Issue 1 (#3165) refusal message will reference. Cross-link from the polyphony-cli-developer / polyphony-branch-model skill index if appropriate.",
+    "pg": "pg-4",
+    "title": "Document polyphony reset and the remediation pattern",
+    "type": "Task"
+  }
+]
