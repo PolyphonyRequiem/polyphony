@@ -70,12 +70,13 @@
     operators have migrated.
 
 .PARAMETER SkipStateCheck
-    ESCAPE HATCH for the AB#3165 Item 2 terminal-state pre-flight refusal.
-    Skips the `twig show $ApexId` call that refuses to dispatch when the
-    work item is in a terminal state (Done, Closed, Removed, Resolved).
-    Use only when intentionally re-running an already-completed item with
-    full understanding that the empty-MG / scope-revise-cap loop is the
-    expected outcome. The check is also bypassed by -Intent resume / replan.
+    ESCAPE HATCH for the AB#3165 re-run pollution pre-flight checks.
+    Skips both the terminal-state refusal (Done, Closed, Removed, Resolved)
+    AND the polyphony-tag refusal (AB#3174 — previously-processed work items
+    carrying polyphony:planned, polyphony:root, etc.). Use only when
+    intentionally re-running with full understanding of the re-run
+    idempotency implications. The checks are also bypassed by
+    -Intent resume / replan.
 
 .PARAMETER PolicyPath
     Optional path to an alternate policy YAML. Exported as
@@ -256,6 +257,51 @@ To bypass this gate (NOT recommended, transition period only):
 #   * -SkipStateCheck          (escape hatch for transition / debug scenarios)
 $script:TerminalStates = @('Done', 'Closed', 'Removed', 'Resolved')
 
+# ─── Phase 2.75 constants: polyphony state-tag detection (AB#3174) ───────────
+#
+# Known polyphony state tags — mirrors src/Polyphony/Tagging/PolyphonyTags.cs.
+# Exact-match tags (case-insensitive, matching ADO / TagSet behaviour):
+$script:PolyphonyStateTags = @(
+    'polyphony'             # PolyphonyTags.InScope
+    'polyphony:root'        # PolyphonyTags.Root
+    'polyphony:planned'     # PolyphonyTags.Planned
+)
+# Prefix-match tags (e.g. polyphony:facets=implementable,decomposable):
+$script:PolyphonyStateTagPrefixes = @(
+    'polyphony:facets='     # PolyphonyTags.FacetsPrefix + "="
+)
+
+function Get-PolyphonyStateTags {
+    <#
+    .SYNOPSIS
+        Parses a semicolon-delimited ADO tag string and returns any tags that
+        belong to the polyphony state-tag namespace. Uses the typed constants
+        above (mirroring PolyphonyTags.cs) — no ad-hoc polyphony:* globbing.
+    #>
+    param([string]$TagString)
+    if ([string]::IsNullOrWhiteSpace($TagString)) { return @() }
+
+    $matched = @()
+    $parts = $TagString -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+    foreach ($tag in $parts) {
+        # Exact match (case-insensitive)
+        foreach ($known in $script:PolyphonyStateTags) {
+            if ([string]::Equals($tag, $known, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $matched += $tag
+                continue
+            }
+        }
+        # Prefix match (case-insensitive)
+        foreach ($prefix in $script:PolyphonyStateTagPrefixes) {
+            if ($tag.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $matched += $tag
+                continue
+            }
+        }
+    }
+    return $matched
+}
+
 if (-not $SkipStateCheck -and $Intent -eq 'new') {
     $twigCmd = Get-Command twig -ErrorAction SilentlyContinue
     if (-not $twigCmd) {
@@ -299,6 +345,40 @@ Or, to start fresh (clean worktree + reset tags):
     polyphony reset --root-id $ApexId
 
 Or, if you intentionally want to re-attach to an existing run:
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -Intent resume
+
+To bypass this gate (NOT recommended):
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -SkipStateCheck
+"@
+    }
+
+    # ─── Phase 2.75: polyphony-tag pre-flight refusal (AB#3174) ───────────
+    #
+    # When intent=new, refuse dispatch if the work item already carries
+    # polyphony state tags (polyphony, polyphony:root, polyphony:planned,
+    # polyphony:facets=*). These tags indicate a prior SDLC run has already
+    # processed this item. Re-dispatching with intent=new would silently
+    # re-plan on top of stale state.
+    #
+    # Detection uses the typed tag constants mirrored from
+    # src/Polyphony/Tagging/PolyphonyTags.cs — no ad-hoc polyphony:* globbing.
+    $tagString = "$($wi.tags)"
+    $polyTags = Get-PolyphonyStateTags -TagString $tagString
+    if ($polyTags.Count -gt 0) {
+        $tagList = ($polyTags | ForEach-Object { "  - $_" }) -join "`n"
+        throw @"
+[polyphony-sdlc] Pre-flight refusal: AB#$ApexId carries polyphony state tags.
+The following tags indicate a prior SDLC run has already processed this item:
+$tagList
+
+Re-dispatching with -Intent new would silently re-plan on top of stale state,
+producing tag collisions and scope-reviewer false positives (AB#3165).
+
+To start fresh (strip prior state and re-dispatch cleanly):
+    polyphony reset --root-id $ApexId
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId
+
+Or, if you intentionally want to resume the existing run:
     ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -Intent resume
 
 To bypass this gate (NOT recommended):
