@@ -80,10 +80,16 @@ BeforeAll {
         New-Item -ItemType Directory -Path $bin -Force | Out-Null
         $shim = @'
 @echo off
-if defined TWIG_FAKE_STATE (
-  echo {"state": "%TWIG_FAKE_STATE%"}
+setlocal
+if defined TWIG_FAKE_TAGS (
+  set "TAGS_VALUE=%TWIG_FAKE_TAGS%"
 ) else (
-  echo {"state": "To Do"}
+  set "TAGS_VALUE="
+)
+if defined TWIG_FAKE_STATE (
+  echo {"state": "%TWIG_FAKE_STATE%", "tags": "%TAGS_VALUE%"}
+) else (
+  echo {"state": "To Do", "tags": "%TAGS_VALUE%"}
 )
 '@
         Set-Content -Path (Join-Path $bin 'twig.cmd') -Value $shim -Encoding ASCII
@@ -107,6 +113,7 @@ if defined TWIG_FAKE_STATE (
             $env:PATH = $Fixture.OrigPath
         }
         $env:TWIG_FAKE_STATE = $null
+        $env:TWIG_FAKE_TAGS = $null
         if (Test-Path $Fixture.Root) {
             Remove-Item -Path $Fixture.Root -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -599,6 +606,15 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         } finally { Pop-Location }
     }
 
+    It 'Refusal message points to polyphony reset --root-id remediation' {
+        $env:TWIG_FAKE_STATE = 'Done'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage "*polyphony reset --root-id 9999*"
+        } finally { Pop-Location }
+    }
+
     It 'Refusal message points to AB#3165 epic' {
         $env:TWIG_FAKE_STATE = 'Done'
         Push-Location $script:fx.Main
@@ -632,6 +648,140 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         try {
             $r = & $script:ScriptPath -ApexId 9999 -SkipStateCheck -DryRun | ConvertFrom-Json
             $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# Phase 2.75: polyphony-tag pre-flight refusal (AB#3174)
+# ════════════════════════════════════════════════════════════════════════════
+
+Describe 'Invoke-PolyphonySdlc — polyphony-tag pre-flight (AB#3174)' {
+
+    BeforeEach {
+        $script:fx = New-BareRepoFixture
+        $env:TWIG_FAKE_STATE = $null
+        $env:TWIG_FAKE_TAGS = $null
+    }
+    AfterEach {
+        $env:TWIG_FAKE_STATE = $null
+        $env:TWIG_FAKE_TAGS = $null
+        Remove-BareRepoFixture $script:fx
+    }
+
+    It 'Refuses intent=new when work item carries polyphony:planned tag' {
+        $env:TWIG_FAKE_TAGS = 'polyphony:planned; twig'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage '*polyphony state tags*'
+        } finally { Pop-Location }
+    }
+
+    It 'Refuses intent=new when work item carries polyphony:root tag' {
+        $env:TWIG_FAKE_TAGS = 'polyphony:root'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage '*polyphony state tags*'
+        } finally { Pop-Location }
+    }
+
+    It 'Refuses intent=new when work item carries polyphony (bare scope) tag' {
+        $env:TWIG_FAKE_TAGS = 'polyphony'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage '*polyphony state tags*'
+        } finally { Pop-Location }
+    }
+
+    It 'Refuses intent=new when work item carries polyphony:facets= prefix tag' {
+        $env:TWIG_FAKE_TAGS = 'polyphony:facets=implementable; twig'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage '*polyphony state tags*'
+        } finally { Pop-Location }
+    }
+
+    It 'Allows intent=new when work item has no polyphony tags' {
+        $env:TWIG_FAKE_TAGS = 'twig; some-other-tag'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+
+    It 'Allows intent=new when work item has no tags at all' {
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+
+    It 'Allows intent=resume when work item carries polyphony state tags' {
+        $env:TWIG_FAKE_TAGS = 'polyphony:planned; polyphony:root'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -Intent resume -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+
+    It 'Allows intent=replan when work item carries polyphony state tags' {
+        $env:TWIG_FAKE_TAGS = 'polyphony:planned; polyphony:root'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -Intent replan -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+
+    It '-SkipStateCheck bypasses the polyphony-tag check' {
+        $env:TWIG_FAKE_TAGS = 'polyphony:planned; polyphony:root'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -SkipStateCheck -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+
+    It 'Refusal message lists the matched polyphony tags' {
+        $env:TWIG_FAKE_TAGS = 'polyphony:planned; twig'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage '*polyphony:planned*'
+        } finally { Pop-Location }
+    }
+
+    It 'Refusal message points to polyphony reset --root-id remediation' {
+        $env:TWIG_FAKE_TAGS = 'polyphony:planned'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage '*polyphony reset --root-id 9999*'
+        } finally { Pop-Location }
+    }
+
+    It 'Refusal message suggests -Intent resume as alternative' {
+        $env:TWIG_FAKE_TAGS = 'polyphony:planned'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage '*-Intent resume*'
+        } finally { Pop-Location }
+    }
+
+    It 'Detects polyphony tags case-insensitively' {
+        $env:TWIG_FAKE_TAGS = 'Polyphony:Planned; twig'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage '*polyphony state tags*'
         } finally { Pop-Location }
     }
 }
