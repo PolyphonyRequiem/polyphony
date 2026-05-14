@@ -148,9 +148,10 @@ and per-leg replay) see [`workflows/README.md`](../workflows/README.md), the
 | `branch` | `check-deps` | Check ADO predecessor links for blocking dependencies | twig | — |
 | `branch` | `close-scope` | Close all non-terminal items in a PG scope to their target state | twig cache | twig (state) |
 | `pr` | `create-feature-pr` | Create the feature PR; reuse existing open PR for same head/base | git, gh | gh (PR create) |
+| top-level | `reset` | Scrub all polyphony-authored state for a root (tags, comments, branches, state dir, worktrees) | twig cache, git, fs | twig (tags), git (branches), fs (delete) |
 
 Three of these verbs (`plan seed-children`, `branch next-impl`, `branch close-scope`,
-`branch ensure-feature`, `pr create-feature-pr`) write through subordinate
+`branch ensure-feature`, `pr create-feature-pr`, `reset`) write through subordinate
 CLIs (twig, git, gh). The pure read+decision verbs are everything else.
 
 ### Exit code conventions
@@ -871,7 +872,50 @@ dependencies surface here cleanly.
 
 ---
 
-## 12 · How much value is the CLI actually adding?
+## 12 · Reset — "scrub polyphony state for a root"
+
+### `polyphony reset`
+
+```text
+polyphony reset --root-id <N> [--force] [--dry-run]
+```
+
+Scrubs all polyphony-authored state for root `N` so the operator can
+re-dispatch the pipeline with a clean slate. This is the primary
+remediation path when the launcher's terminal-state pre-flight refusal
+fires (AB#3165 Item 2).
+
+**Scrub scope:**
+
+| Artifact | What is removed |
+|---|---|
+| ADO tags | All tags matching the `PolyphonyTag` DU (`polyphony:root`, `polyphony:planned`, `polyphony:facets=*`, bare `polyphony`) — from root and in-scope descendants. |
+| ADO comments | Polyphony-authored comments are archived to `<git-common-dir>/polyphony/<root_id>/comment-archive.json`, then deleted from ADO. |
+| State directory | `<git-common-dir>/polyphony/<root_id>/` (run manifest, run lock, archive sidecar). |
+| Branches | `feature/<N>`, `plan/<N>*`, `impl/<N>-*`, `mg/<N>_*`, `sdlc/apex/<N>` — local and remote. |
+| Worktrees | `<runs-root>/apex-<N>/` and all child worktrees. |
+
+**Flags:**
+
+- `--dry-run` — enumerate artifacts without mutating; emits the plan as JSON.
+- `--force` — skip the interactive confirmation gate.
+
+Without either flag, the verb prints a summary and prompts `[y/N]`.
+
+**Exit codes:** `0` success, `1` runtime failure, `3` work item not found.
+
+**Full specification:** [`docs/polyphony-reset.md`](polyphony-reset.md) —
+scrub scope details, JSON output contract, comment-archive sidecar format,
+the `PolyphonyTag` DU, and the remediation pattern.
+
+**Use when:** The launcher refuses with the terminal-state pre-flight
+message, and you want to start fresh rather than resume. See
+`docs/polyphony-reset.md` § "The remediation pattern" for the full
+three-step workflow (reset → reopen → re-launch).
+
+---
+
+## 13 · How much value is the CLI actually adding?
 
 Honest answer: **enough to justify existing, but not uniformly.**
 
@@ -954,6 +998,53 @@ Before adding a fifth verb to a command group, ask:
 
 If the answer to (1)–(3) is "yes" and (4) is "no", the CLI is the right
 home. Otherwise, the script registry is where it belongs.
+
+---
+
+## Reset — state scrub for re-dispatch
+
+### `polyphony reset run`
+
+Scrubs all polyphony-authored state for a single root so the work item can
+be re-dispatched cleanly. This is the **remediation pattern** referenced by
+workflow refusal messages — when a run fails irrecoverably, `reset run`
+puts the root back into a pristine state.
+
+**Synopsis:**
+```
+polyphony reset run --root-id <N> [--dry-run] [--force]
+```
+
+**Flags:**
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--root-id` | required | ADO work item ID of the root to reset. |
+| `--dry-run` | `false` | Enumerate artifacts without performing any mutation. |
+| `--force` | `false` | Skip the confirmation gate and execute immediately. |
+
+**What it scrubs:**
+1. **ADO tags** — all `polyphony:*` tags on the root and every in-scope
+   descendant (`polyphony`, `polyphony:root`, `polyphony:planned`,
+   `polyphony:facets=…`).
+2. **Per-root state directory** — `<git-common-dir>/polyphony/<N>/`
+   (run manifest, locks).
+3. **Git branches** (local + remote) — `feature/<N>`, `plan/<N>*`,
+   `impl/<N>-*`, `mg/<N>_*`, `evidence/<N>-*` — classified via
+   `BranchNameParser`.
+
+**Actions emitted (JSON `action` field):**
+| Action | When |
+|--------|------|
+| `planned` | `--dry-run` — enumerates artifacts, no mutations. |
+| `needs_confirmation` | Neither `--dry-run` nor `--force` — caller must confirm. |
+| `executed` | `--force` — all mutations performed. |
+
+**Exit codes:** `0` on success/routing; `3` when root work item not found.
+
+**Deferred scope (not yet implemented):**
+- Archival of polyphony-authored ADO comments (requires comment
+  identification mechanism).
+- Worktree cleanup (`polyphony-runs/apex-<N>/`).
 
 ---
 

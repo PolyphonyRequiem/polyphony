@@ -191,6 +191,11 @@ namespace Polyphony;
 [JsonSerializable(typeof(ArchivistOutput))]
 [JsonSerializable(typeof(ResearchWriteArticlesResult))]
 [JsonSerializable(typeof(WrittenArticle))]
+[JsonSerializable(typeof(ResetResult))]
+[JsonSerializable(typeof(ResetCommentArchive))]
+[JsonSerializable(typeof(ArchivedWorkItemComments))]
+[JsonSerializable(typeof(ArchivedComment))]
+[JsonSerializable(typeof(AdoWorkItemCommentListResponse))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
