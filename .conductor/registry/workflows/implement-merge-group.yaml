@@ -302,7 +302,114 @@ agents:
       - "--work-item"
       - "{{ primary_router.output.primary_id }}"
     routes:
+      - to: branch_assert_on_impl_pre_coder
+
+  # ── Pre-coder branch assertion (AB#3210) ──────────────────────────────
+  #
+  # Defends against silent commit misroute. `branch ensure-impl` (above)
+  # checks out `impl/{root}-{primary_id}`, but the worktree may already
+  # have HEAD on a sibling impl branch from a prior task in the same
+  # wave; if `ensure-impl` returned `action="checked_out"` based on a
+  # branch existence check while a separate cwd state is what the agent
+  # actually sees, the coder commits land on the wrong branch.
+  #
+  # In apex run 3165 (run_id 9c857363, 2026-05-14), this exact failure
+  # mode put the AB#3175 verb commit on `impl/3165-3176` (sibling task's
+  # branch) instead of `impl/3165-3175`, and AB#3175 reached the scope
+  # reviewer as an "empty MG" — a misleading symptom several stages
+  # downstream of the root cause.
+  #
+  # The verb is read-only: it inspects HEAD via `git branch
+  # --show-current` and emits action="ok" when HEAD matches the
+  # expected branch, action="mismatch" otherwise. On mismatch we route
+  # to a human gate (no automated recovery — operator must reconcile).
+  #
+  # Invariants:
+  #   Pre:  branch ensure-impl succeeded; HEAD should be on
+  #         impl/{root_id}-{primary_id}.
+  #   Post: output.action is "ok" (continue), "mismatch" (gate), or
+  #         "error" (gate; treat like mismatch so operator sees it).
+  - name: branch_assert_on_impl_pre_coder
+    type: script
+    description: Assert HEAD is on impl/{root}-{primary_id} before dispatching the coder agent (AB#3210)
+    command: polyphony
+    args:
+      - "branch"
+      - "assert-on-impl"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--item-id"
+      - "{{ primary_router.output.primary_id }}"
+    routes:
       - to: coder
+        when: "{{ branch_assert_on_impl_pre_coder.output.action == 'ok' }}"
+      - to: pre_coder_branch_mismatch_gate
+        when: "{{ branch_assert_on_impl_pre_coder.output.action == 'mismatch' }}"
+      - to: pre_coder_branch_mismatch_gate
+        when: "{{ branch_assert_on_impl_pre_coder.output.action == 'error' }}"
+      # Catch-all per M4: any unknown action routes to the gate so a
+      # human reconciles rather than raising "No matching route found".
+      - to: pre_coder_branch_mismatch_gate
+
+  # ── Pre-coder branch mismatch gate (AB#3210) ──────────────────────────
+  #
+  # Fires when the pre-coder assertion observed HEAD on a branch other
+  # than `impl/{root}-{primary_id}`. The recovery path is operator-only:
+  # the workflow has no safe automated way to reconcile a divergent
+  # cwd/branch state (the wrong branch may already carry uncommitted
+  # work, the right branch may be checked out elsewhere, etc.).
+  #
+  # Operator options:
+  #   - Retry: re-run the assertion (use after manually `git checkout`
+  #            to the expected branch).
+  #   - Abort: end the workflow. The MG remains in its current state.
+  - name: pre_coder_branch_mismatch_gate
+    type: human_gate
+    description: HEAD is not on the expected impl branch — operator decides retry or abort
+    prompt: |
+      ## ⚠️ Branch mismatch BEFORE coder dispatch — task `{{ primary_router.output.primary_id }}`
+
+      `polyphony branch assert-on-impl` observed that git HEAD is **not** on
+      the expected per-item impl branch. Dispatching the coder agent now
+      would route its commits onto the wrong branch (the AB#3210 failure
+      mode that struck apex run 3165).
+
+      | Field | Value |
+      |---|---|
+      | Expected branch | `{{ branch_assert_on_impl_pre_coder.output.expected_branch }}` |
+      | Actual branch | `{{ branch_assert_on_impl_pre_coder.output.actual_branch | default('(detached or unknown)') }}` |
+      | Task | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
+      | MG branch | `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` |
+      {% if branch_assert_on_impl_pre_coder.output.error is defined and branch_assert_on_impl_pre_coder.output.error %}
+      | Error | `{{ branch_assert_on_impl_pre_coder.output.error | default('') }}` |
+      {% endif %}
+
+      ### Recovery
+
+      In another terminal, in the run worktree, switch to the expected
+      branch:
+
+      ```
+      git checkout {{ branch_assert_on_impl_pre_coder.output.expected_branch }}
+      ```
+
+      Then choose **Retry** to re-run the assertion. If the actual
+      branch carries unintended uncommitted work, stash or commit it
+      first per the worktree's policy.
+
+      Choose an action:
+
+      - **Retry** — re-run `branch assert-on-impl`. Use after
+        `git checkout` to the expected branch.
+      - **Abort** — end the workflow. The MG state is unchanged; a
+        later workflow re-entry resumes from `primary_router`.
+    options:
+      - label: "🔄 Retry assertion"
+        value: retry
+        route: branch_assert_on_impl_pre_coder
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
 
   # ── Coder agent ───────────────────────────────────────────────────────
   #
@@ -403,7 +510,121 @@ agents:
       {{ guidance_loader.output.coder.type_refinement }}
       {% endif %}
     routes:
+      - to: branch_assert_on_impl_post_coder
+
+  # ── Post-coder branch assertion (AB#3210) ─────────────────────────────
+  #
+  # Defense-in-depth pair to `branch_assert_on_impl_pre_coder`. The
+  # pre-coder check confirms HEAD was correct when the agent was
+  # dispatched; this post-coder check confirms HEAD is STILL correct
+  # after the agent's session — catching the case where the agent ran
+  # `git checkout` on its own (intentionally or otherwise) and committed
+  # to a different branch than the one the executor staged.
+  #
+  # Without this check the workflow would silently advance to
+  # `impl_pr_open`, which opens a PR for an impl branch that may have
+  # received zero of the agent's commits. The downstream squash-coverage
+  # check (AB#3211) would catch the symptom, but only after a wasted PR
+  # round-trip. Catching it here is cheaper.
+  #
+  # Invariants:
+  #   Pre:  Coder agent has run; HEAD should still be on
+  #         impl/{root_id}-{primary_id}.
+  #   Post: output.action is "ok" (continue), "mismatch" (gate), or
+  #         "error" (gate).
+  - name: branch_assert_on_impl_post_coder
+    type: script
+    description: Assert HEAD is still on impl/{root}-{primary_id} after the coder agent ran (AB#3210)
+    command: polyphony
+    args:
+      - "branch"
+      - "assert-on-impl"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--item-id"
+      - "{{ primary_router.output.primary_id }}"
+    routes:
       - to: fetch_for_primary_review
+        when: "{{ branch_assert_on_impl_post_coder.output.action == 'ok' }}"
+      - to: post_coder_branch_mismatch_gate
+        when: "{{ branch_assert_on_impl_post_coder.output.action == 'mismatch' }}"
+      - to: post_coder_branch_mismatch_gate
+        when: "{{ branch_assert_on_impl_post_coder.output.action == 'error' }}"
+      # Catch-all per M4: any unknown action routes to the gate.
+      - to: post_coder_branch_mismatch_gate
+
+  # ── Post-coder branch mismatch gate (AB#3210) ─────────────────────────
+  #
+  # Fires when the post-coder assertion observed HEAD on a branch other
+  # than `impl/{root}-{primary_id}`. Worse than the pre-coder gate: the
+  # agent has already committed somewhere. The commits may be on the
+  # wrong branch (same data-loss shape as AB#3175) and need manual
+  # cherry-pick recovery before the workflow can safely advance.
+  #
+  # Operator options:
+  #   - Retry: re-run the assertion (use after manually moving commits
+  #            and `git checkout` back to the expected branch).
+  #   - Abort: end the workflow. The MG remains in its current state;
+  #            operator must reconcile out-of-band before re-entering.
+  - name: post_coder_branch_mismatch_gate
+    type: human_gate
+    description: HEAD is not on the expected impl branch after coder ran — operator decides retry or abort
+    prompt: |
+      ## ⚠️ Branch mismatch AFTER coder dispatch — task `{{ primary_router.output.primary_id }}`
+
+      `polyphony branch assert-on-impl` observed that git HEAD moved off
+      the expected per-item impl branch during the coder agent's
+      session. The agent's commits may be stranded on the wrong branch
+      (the AB#3210 failure mode — see AB#3175 for the live reproducer
+      where this exact pattern caused a recovery PR to be required).
+
+      | Field | Value |
+      |---|---|
+      | Expected branch | `{{ branch_assert_on_impl_post_coder.output.expected_branch }}` |
+      | Actual branch | `{{ branch_assert_on_impl_post_coder.output.actual_branch | default('(detached or unknown)') }}` |
+      | Task | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
+      | MG branch | `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` |
+      {% if branch_assert_on_impl_post_coder.output.error is defined and branch_assert_on_impl_post_coder.output.error %}
+      | Error | `{{ branch_assert_on_impl_post_coder.output.error | default('') }}` |
+      {% endif %}
+
+      ### Recovery
+
+      In another terminal, in the run worktree:
+
+      1. Inspect the actual branch's recent commits:
+
+         ```
+         git log --oneline {{ branch_assert_on_impl_post_coder.output.actual_branch }} -10
+         ```
+
+      2. If the agent's commits ended up there, cherry-pick them onto
+         the expected branch:
+
+         ```
+         git checkout {{ branch_assert_on_impl_post_coder.output.expected_branch }}
+         git cherry-pick <sha1> [<sha2> ...]
+         git push
+         ```
+
+      3. (Optional) Reset the wrong branch to drop the misrouted
+         commits if no other work depends on them.
+
+      4. Return to the expected branch and choose **Retry**.
+
+      Choose an action:
+
+      - **Retry** — re-run `branch assert-on-impl`. Use after
+        recovering the commits and checking out the expected branch.
+      - **Abort** — end the workflow. The MG state is unchanged; a
+        later workflow re-entry resumes from `primary_router`.
+    options:
+      - label: "🔄 Retry assertion"
+        value: retry
+        route: branch_assert_on_impl_post_coder
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
 
   # ── Fetch for primary review (AB#3157 / AB#3161) ──────────────────────
   #
