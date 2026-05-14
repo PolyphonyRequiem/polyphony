@@ -665,7 +665,7 @@ agents:
       - "-NoProfile"
       - "-Command"
       - |
-        $count = {{ context.history | select('eq', 'research_dispatch') | list | length }}
+        $count = [int]'{{ context.history | select('eq', 'research_dispatch') | list | length }}'
         $maxLoops = 3
         $capReached = $count -ge $maxLoops
         $hasTopics = '{{ (architect.output.research_needs.topics | default([]) | length > 0) | string | lower }}' -eq 'true'
@@ -784,8 +784,8 @@ agents:
       - "-NoProfile"
       - "-Command"
       - |
-        $count = {{ context.history | select('eq', 'open_questions_gate') | list | length }}
-        $maxLoops = {{ open_questions_policy.output.max_question_loops }}
+        $count = [int]'{{ context.history | select('eq', 'open_questions_gate') | list | length }}'
+        $maxLoops = [int]'{{ open_questions_policy.output.max_question_loops }}'
         $capReached = $count -ge $maxLoops
         @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
     routes:
@@ -1494,7 +1494,7 @@ agents:
       - "-Command"
       - |
         $ErrorActionPreference = 'Stop'
-        $prNumber = {{ poll_status.output.pr_number }}
+        $prNumber = [int]'{{ poll_status.output.pr_number }}'
         $headSha  = '{{ poll_status.output.head_sha }}'
         $repoSlug = '{{ poll_status.output.repo_slug }}'
         $body     = "polyphony:approve $headSha"
