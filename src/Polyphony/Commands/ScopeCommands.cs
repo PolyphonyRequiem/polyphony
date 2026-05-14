@@ -207,6 +207,16 @@ public sealed class ScopeCommands(
                     workItem,
                     new Dictionary<string, string> { ["System.Tags"] = after.Format() },
                     ct).ConfigureAwait(false);
+
+                // Flush the staged tag patch to ADO before returning.
+                // `twig patch` only mutates the local cache + pending
+                // queue; without this push the tag change is invisible
+                // to any subsequent process (e.g. `polyphony validate`)
+                // that reads cache directly without first calling sync.
+                // AB#3127: same staged-but-never-pushed failure mode as
+                // AB#3126/28/29, surfaced now by the lint added in
+                // AB#3162.
+                await twig.SyncAsync(ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
