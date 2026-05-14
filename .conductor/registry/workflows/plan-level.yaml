@@ -668,7 +668,7 @@ agents:
         $count = {{ context.history | select('eq', 'research_dispatch') | list | length }}
         $maxLoops = 3
         $capReached = $count -ge $maxLoops
-        $hasTopics = '{{ (architect.output.research_needs.topics | default([]) | length > 0) | string | lower }}' -eq 'true'
+        $hasTopics = '{{ (architect.output.research_needs.get('topics', []) | length > 0) | string | lower }}' -eq 'true'
         @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached; has_topics = $hasTopics } | ConvertTo-Json
     routes:
       # No research requested (empty topics or no research_needs) — fall through.

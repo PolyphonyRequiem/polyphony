@@ -178,6 +178,177 @@ workflow:
         }
     }
 
+    Context 'ATTR_DEFAULT pattern detection (AB#3160)' {
+
+        It 'Flags <id>.output.X.Y | default(literal) — the AB#3156 Bug 2 pattern' {
+            $wfd = New-TempWorkflowsDir
+            try {
+                $yaml = @'
+workflow:
+  name: example
+agents:
+  - name: research_dispatch
+    type: workflow
+    input_mapping:
+      escalation_cap: "{{ architect.output.research_needs.escalation_cap | default(1) }}"
+'@
+                Set-Content (Join-Path $wfd 'plan.yaml') $yaml
+                $r = Invoke-Lint -LintPath $script:LintScriptPath -WorkflowsDir $wfd
+                $r.ExitCode | Should -Be 1
+                $r.Output | Should -Match 'ATTR_DEFAULT'
+                $r.Output | Should -Match 'architect\.output\.research_needs\.escalation_cap'
+                $r.Output | Should -Match "\.get\('B', x\)"
+            } finally {
+                Remove-Item (Split-Path $wfd -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Flags <id>.output.X.Y | default(string)' {
+            $wfd = New-TempWorkflowsDir
+            try {
+                $yaml = @'
+workflow:
+  output:
+    budget: "{{ planner.output.scope.budget | default('low') }}"
+'@
+                Set-Content (Join-Path $wfd 'sc.yaml') $yaml
+                $r = Invoke-Lint -LintPath $script:LintScriptPath -WorkflowsDir $wfd
+                $r.ExitCode | Should -Be 1
+                $r.Output | Should -Match 'planner\.output\.scope\.budget'
+            } finally {
+                Remove-Item (Split-Path $wfd -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "Passes when the optional access uses .get('key', default) — the canonical fix" {
+            $wfd = New-TempWorkflowsDir
+            try {
+                $yaml = @'
+workflow:
+  name: example
+agents:
+  - name: research_dispatch
+    type: workflow
+    input_mapping:
+      escalation_cap: "{{ architect.output.research_needs.get('escalation_cap', 1) }}"
+'@
+                Set-Content (Join-Path $wfd 'plan.yaml') $yaml
+                $r = Invoke-Lint -LintPath $script:LintScriptPath -WorkflowsDir $wfd
+                $r.ExitCode | Should -Be 0
+                $r.Output | Should -Match '\[OK\]'
+            } finally {
+                Remove-Item (Split-Path $wfd -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "Passes when default() filters a top-level workflow.input field" {
+            $wfd = New-TempWorkflowsDir
+            try {
+                $yaml = @'
+workflow:
+  output:
+    foo: "{{ workflow.input.foo | default('bar') }}"
+'@
+                Set-Content (Join-Path $wfd 'wi.yaml') $yaml
+                $r = Invoke-Lint -LintPath $script:LintScriptPath -WorkflowsDir $wfd
+                $r.ExitCode | Should -Be 0
+            } finally {
+                Remove-Item (Split-Path $wfd -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It "Passes when .get(...) result feeds a downstream filter chain (no default trap)" {
+            $wfd = New-TempWorkflowsDir
+            try {
+                $yaml = @'
+workflow:
+  output:
+    nonempty: "{{ architect.output.research_needs.get('topics', []) | length > 0 }}"
+'@
+                Set-Content (Join-Path $wfd 'topics.yaml') $yaml
+                $r = Invoke-Lint -LintPath $script:LintScriptPath -WorkflowsDir $wfd
+                $r.ExitCode | Should -Be 0
+            } finally {
+                Remove-Item (Split-Path $wfd -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Passes single-level <id>.output.field | default(literal) — top-level required field' {
+            $wfd = New-TempWorkflowsDir
+            try {
+                $yaml = @'
+workflow:
+  output:
+    merged: "{{ pr_lifecycle.output.merged | default(false) }}"
+    branch: "{{ ensure_feature_branch.output.branch | default('main') }}"
+'@
+                Set-Content (Join-Path $wfd 'tl.yaml') $yaml
+                $r = Invoke-Lint -LintPath $script:LintScriptPath -WorkflowsDir $wfd
+                $r.ExitCode | Should -Be 0
+            } finally {
+                Remove-Item (Split-Path $wfd -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Honors the {# strict-undefined-ok: <reason> #} whitelist marker on the same line' {
+            $wfd = New-TempWorkflowsDir
+            try {
+                $yaml = @'
+workflow:
+  output:
+    cap: "{{ architect.output.research_needs.escalation_cap | default(1) }}"  {# strict-undefined-ok: schema guarantees research_needs.escalation_cap is set #}
+'@
+                Set-Content (Join-Path $wfd 'wl.yaml') $yaml
+                $r = Invoke-Lint -LintPath $script:LintScriptPath -WorkflowsDir $wfd
+                $r.ExitCode | Should -Be 0
+            } finally {
+                Remove-Item (Split-Path $wfd -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Reports both AGENT_VAR_DEFAULT and ATTR_DEFAULT violations on the same file' {
+            $wfd = New-TempWorkflowsDir
+            try {
+                $yaml = @'
+workflow:
+  output:
+    a: "{{ planner.output.scope.budget | default('low') }}"
+    b: "{{ x.output.y | default(z.output.w) }}"
+'@
+                Set-Content (Join-Path $wfd 'mix.yaml') $yaml
+                $r = Invoke-Lint -LintPath $script:LintScriptPath -WorkflowsDir $wfd
+                $r.ExitCode | Should -Be 1
+                $r.Output | Should -Match 'ATTR_DEFAULT'
+                $r.Output | Should -Match 'AGENT_VAR_DEFAULT'
+                $r.Output | Should -Match '2 violations'
+            } finally {
+                Remove-Item (Split-Path $wfd -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Flags ATTR_DEFAULT inside script: command blocks (YAML literal)' {
+            $wfd = New-TempWorkflowsDir
+            try {
+                $yaml = @'
+workflow:
+  steps:
+    - name: gate
+      command: pwsh
+      args:
+        - "-Command"
+        - |
+          $hasTopics = '{{ (architect.output.research_needs.topics | default([]) | length > 0) | string | lower }}' -eq 'true'
+'@
+                Set-Content (Join-Path $wfd 'script.yaml') $yaml
+                $r = Invoke-Lint -LintPath $script:LintScriptPath -WorkflowsDir $wfd
+                $r.ExitCode | Should -Be 1
+                $r.Output | Should -Match 'research_needs\.topics'
+            } finally {
+                Remove-Item (Split-Path $wfd -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     Context 'Edge cases' {
 
         It 'Skips gracefully when workflows directory is missing' {
