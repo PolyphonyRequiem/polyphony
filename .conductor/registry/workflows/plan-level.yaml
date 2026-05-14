@@ -594,61 +594,73 @@ agents:
       summary:
         type: string
         description: Brief one-paragraph summary of the plan
-      research_needs:
+      research_request_kind:
+        type: string
+        description: >-
+          Discriminant for the research payload. Required and ALWAYS
+          present. One of:
+            - "none"     — no archive research needed; plan flows to
+                           open_questions / review.
+            - "request"  — architect needs archive research before
+                           finalizing; the workflow routes to the
+                           research sub-workflow and re-invokes the
+                           architect with findings.
+          Routing is a string compare on this field — no nested-optional
+          dict access required.
+      research_topics:
+        type: array
+        description: >-
+          Research questions the architect needs answered. Always emitted;
+          MUST be a (possibly empty) array. Non-empty when
+          research_request_kind == "request"; emit [] when "none".
+        items:
+          type: string
+      research_context:
         type: object
         description: >-
-          Research payload the architect emits when it needs archive/codebase
-          investigation before finalizing the plan. Matches the
-          research-needs.schema.yaml contract. When non-empty (topics has
-          items), the workflow routes to the research sub-workflow before
-          proceeding. When absent or topics is empty, the workflow proceeds
-          to the open_questions gate as before.
-        properties:
-          topics:
-            type: array
-            description: >-
-              Research questions the architect needs answered (non-empty
-              triggers the research loop).
-            items:
-              type: string
-          context:
-            type: object
-            description: Originating context for the research request.
-            properties:
-              work_item_id:
-                type: number
-                description: ADO work item ID that initiated the research request.
-              plan_excerpt:
-                type: string
-                description: Relevant excerpt framing the research need.
-          budget_hint:
-            type: string
-            description: >-
-              Controls depth/cost. "cheap" = archive-only (first pass).
-          archive_scope:
-            type: object
-            description: Optional constraints narrowing the archive search surface.
-            properties:
-              paths:
-                type: array
-                items:
-                  type: string
-                description: File path prefixes to narrow the search.
-              tags:
-                type: array
-                items:
-                  type: string
-                description: ADO tags to filter related work items.
+          Originating context for the research request. Always emitted;
+          shape is opaque at the schema level (consumers read via
+          `.get('plan_excerpt', '')` etc.). When request_kind=="request",
+          should contain {work_item_id: number, plan_excerpt: string};
+          when "none", emit {}.
+      research_budget_hint:
+        type: string
+        description: >-
+          Controls research depth/cost. "cheap" = archive-only (first
+          pass). Always emitted; emit "" when research_request_kind ==
+          "none".
+      research_archive_scope:
+        type: object
+        description: >-
+          Optional constraints narrowing the archive search surface.
+          Always emitted; shape is opaque at the schema level (consumers
+          read via `.get('paths', [])` / `.get('tags', [])`). When
+          request_kind=="request", should contain {paths: [string], tags:
+          [string]}; when "none", emit {}.
+      research_escalation_cap:
+        type: number
+        description: >-
+          AB#3134: max deep_researcher escalations allowed for this
+          research request. Always emitted; defaults to 1 (single-shot
+          escalation). Meaningful only when research_request_kind ==
+          "request" but always present so the input_mapping below can
+          read it directly without optional-dict gymnastics.
     routes:
       - to: research_loop_counter
 
   # ── Research loop counter ───────────────────────────────────────────────
   #
   # Counts the number of research_dispatch invocations in this run's
-  # history. When the architect emits research_needs.topics (non-empty)
+  # history. When the architect emits research_request_kind == "request"
   # and the cap has not been reached, routes to research_dispatch. When
-  # the cap is reached or no research is requested, falls through to
+  # the cap is reached or kind == "none", falls through to
   # open_questions_policy.
+  #
+  # AB#3164: routing is now a string-compare on the always-present
+  # research_request_kind discriminant. No optional-dict access — the
+  # nested-optional `research_needs` shape that gave us the AB#3156
+  # StrictUndefined trap has been replaced by a flat discriminated union
+  # at the architect's output schema.
   #
   # Hard cap: 3 research loops per plan invocation (MVP). The cap
   # prevents infinite loops when the architect repeatedly requests
@@ -668,12 +680,11 @@ agents:
         $count = [int]'{{ context.history | select('eq', 'research_dispatch') | list | length }}'
         $maxLoops = 3
         $capReached = $count -ge $maxLoops
-        $hasTopics = '{{ (architect.output.research_needs.get('topics', []) | length > 0) | string | lower }}' -eq 'true'
-        @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached; has_topics = $hasTopics } | ConvertTo-Json
+        @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
     routes:
-      # No research requested (empty topics or no research_needs) — fall through.
+      # No research requested — fall through.
       - to: open_questions_policy
-        when: "{{ research_loop_counter.output.has_topics == false }}"
+        when: "{{ architect.output.research_request_kind == 'none' }}"
       # Cap reached — surface to human or fall through.
       - to: research_cap_gate
         when: "{{ research_loop_counter.output.cap_reached == true }}"
@@ -683,13 +694,19 @@ agents:
   # ── Research dispatch ──────────────────────────────────────────────────
   #
   # Invokes the research sub-workflow (research.yaml) with the architect's
-  # research_needs payload mapped to the sub-workflow's input schema. After
+  # research payload mapped to the sub-workflow's input schema. After
   # the sub-workflow returns, routes directly back to architect — bypassing
   # open_questions_policy, ensure_plan_branch, write_plan, commit_and_push,
   # open_plan_pr, and plan_reviewer entirely.
   #
+  # AB#3164: input_mapping reads flat top-level fields on architect.output
+  # (research_topics, research_context, research_budget_hint,
+  # research_archive_scope, research_escalation_cap). Every field is
+  # always emitted by the architect, so direct attribute access is safe
+  # under StrictUndefined — no `.get(key, default)` chains required.
+  #
   # Invariants:
-  #   Pre:  architect.output.research_needs.topics is non-empty.
+  #   Pre:  architect.output.research_request_kind == "request".
   #   Post: research_dispatch.output.findings contains the synthesized
   #         Markdown document; routes back to architect for incorporation.
   - name: research_dispatch
@@ -697,23 +714,17 @@ agents:
     description: Invoke archive-only research sub-workflow to answer architect's research questions.
     workflow: ./research.yaml
     input_mapping:
-      topics: "{{ architect.output.research_needs.topics }}"
+      topics: "{{ architect.output.research_topics }}"
       context_work_item_id: "{{ workflow.input.work_item_id }}"
-      # AB#3156: use dict.get() rather than attribute access — under
-      # StrictUndefined, `dict.missing_attr` raises UndefinedError BEFORE
-      # the `default()` filter sees the value, so the filter never fires.
-      # `.get('key', fallback)` returns the fallback cleanly.
-      plan_excerpt: "{{ architect.output.research_needs.get('context', {}).get('plan_excerpt', '') }}"
-      budget_hint: "{{ architect.output.research_needs.get('budget_hint', 'cheap') }}"
-      archive_scope_paths: "{{ architect.output.research_needs.get('archive_scope', {}).get('paths', []) }}"
-      archive_scope_tags: "{{ architect.output.research_needs.get('archive_scope', {}).get('tags', []) }}"
-      # AB#3134: deep_researcher escalation cap. The architect can request
-      # a specific cap via research_needs.escalation_cap; otherwise we
-      # default to 1 (single-shot escalation when researcher decides the
-      # cheap-tier findings are insufficient). Profile-driven cap from
+      plan_excerpt: "{{ architect.output.research_context.get('plan_excerpt', '') }}"
+      budget_hint: "{{ architect.output.research_budget_hint }}"
+      archive_scope_paths: "{{ architect.output.research_archive_scope.get('paths', []) }}"
+      archive_scope_tags: "{{ architect.output.research_archive_scope.get('tags', []) }}"
+      # AB#3134: deep_researcher escalation cap. Always-present at the
+      # architect's output (default 1). Profile-driven cap from
       # research.escalation_cap is a deferred follow-up — when it lands,
       # this default will be sourced from the resolved profile.
-      escalation_cap: "{{ architect.output.research_needs.get('escalation_cap', 1) }}"
+      escalation_cap: "{{ architect.output.research_escalation_cap }}"
     routes:
       - to: architect
 

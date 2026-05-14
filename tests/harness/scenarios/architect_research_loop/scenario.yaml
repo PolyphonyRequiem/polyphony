@@ -1,12 +1,12 @@
 # architect_research_loop — plan-level architect → research → architect loop.
 #
 # Proves the full research loop integration in plan-level.yaml:
-#   1. Architect emits research_needs on first invocation.
+#   1. Architect emits research_request_kind="request" on first invocation.
 #   2. research_loop_counter routes to research_dispatch (under cap).
 #   3. research_dispatch invokes research.yaml sub-workflow.
 #   4. research_assistant returns findings.
 #   5. Architect is re-invoked with findings and produces a final plan.
-#   6. research_loop_counter sees no research_needs → falls through to
+#   6. research_loop_counter sees research_request_kind="none" → falls through to
 #      open_questions_policy and the normal plan-write-PR-merge flow.
 #
 # The trace must show [architect, research_assistant, architect, plan_reviewer]
@@ -131,7 +131,7 @@ cli_scripts:
     exit_code: 0
 
 agent_scripts:
-  # ── Architect: 1st call — emits research_needs ──────────────────────
+  # ── Architect: 1st call — emits research_request_kind="request" ─────
   # The architect needs to understand existing patterns before planning.
   architect:
     - content:
@@ -151,18 +151,19 @@ agent_scripts:
           Pending research findings.
         children: []
         open_questions: []
-        research_needs:
-          topics:
-            - "What patterns do existing polyphony CLI commands follow for parameter validation?"
-            - "How does PolyphonyJsonContext register new serializable types?"
-          context:
-            work_item_id: 10000
-            plan_excerpt: "Need to understand existing CLI patterns before planning the implementation."
-          budget_hint: cheap
-          archive_scope:
-            paths:
-              - "src/Polyphony/Commands/"
-            tags: []
+        research_request_kind: "request"
+        research_topics:
+          - "What patterns do existing polyphony CLI commands follow for parameter validation?"
+          - "How does PolyphonyJsonContext register new serializable types?"
+        research_context:
+          work_item_id: 10000
+          plan_excerpt: "Need to understand existing CLI patterns before planning the implementation."
+        research_budget_hint: cheap
+        research_archive_scope:
+          paths:
+            - "src/Polyphony/Commands/"
+          tags: []
+        research_escalation_cap: 1
         summary: "Draft plan — requesting research into existing CLI command patterns before finalizing."
 
     # ── Architect: 2nd call — incorporates findings, final plan ───────
@@ -190,15 +191,12 @@ agent_scripts:
           - All existing tests pass
         children: []
         open_questions: []
-        research_needs:
-          topics: []
-          context:
-            work_item_id: 10000
-            plan_excerpt: ""
-          budget_hint: "cheap"
-          archive_scope:
-            paths: []
-            tags: []
+        research_request_kind: "none"
+        research_topics: []
+        research_context: {}
+        research_budget_hint: ""
+        research_archive_scope: {}
+        research_escalation_cap: 1
         summary: "Final plan incorporating research findings on CLI command patterns."
 
   # ── Research assistant: returns findings ─────────────────────────────
