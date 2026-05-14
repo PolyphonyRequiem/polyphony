@@ -84,9 +84,10 @@ jobs:
             ext: ''
     runs-on: ${{ matrix.runner }}
     steps:
-      # Mirror CI: twig2 sibling is required because Polyphony.csproj has
-      # ProjectReferences to ..\..\..\twig2\src\Twig.Domain etc. See KNOWN
-      # LIMITATION at top of file — twig is unpinned.
+      # Mirror CI: twig2 sibling is required because Polyphony.csproj's
+      # ProjectReferences resolve through $(TwigSourceRoot), which defaults
+      # to `$(MSBuildThisFileDirectory)..\twig2`. See AB#3167 + the planned
+      # twig-on-NuGet move. KNOWN LIMITATION at top of file — twig is unpinned.
       - name: Checkout twig (sibling dependency)
         uses: actions/checkout@v4
         with:

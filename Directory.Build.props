@@ -20,6 +20,35 @@
     -->
     <MinVerTagPrefix>v</MinVerTagPrefix>
     <MinVerMinimumMajorMinor>1.0</MinVerMinimumMajorMinor>
+
+    <!--
+      Resolve $(TwigSourceRoot) to a depth-independent absolute path so
+      Polyphony.csproj's ProjectReferences to Twig.Domain / Twig.Infrastructure
+      work from any worktree depth. Today they live at `..\..\..\twig2`
+      relative to Polyphony.csproj — that breaks for AB#3085 per-run
+      worktrees nested at `polyphony-runs/apex-{id}/feature-{id}/` because
+      the relative path resolves to a non-existent
+      `polyphony-runs/apex-{id}/twig2`.
+
+      Walk up from this Directory.Build.props location looking for an
+      ancestor that has `twig2/src/Twig.Domain/Twig.Domain.csproj` as a
+      child. The first ancestor that does is the projects-root directory,
+      and `<root>/twig2` is then the source root. Works from any worktree
+      depth as long as twig2 lives in some shared ancestor (which is
+      always true under the canonical `~/projects/polyphony*` + `~/projects/twig2`
+      layout AND under CI's sibling-checkout layout).
+
+      Override via the `TwigSourceRoot` env var when twig lives elsewhere
+      (rare; mostly an escape hatch).
+
+      Sunset: this stops being needed when twig publishes NuGet packages.
+      At that point Polyphony.csproj swaps ProjectReference for
+      PackageReference and this property block can be deleted.
+      Tracked: AB#3167.
+    -->
+    <_TwigProbeSentinel>twig2\src\Twig.Domain\Twig.Domain.csproj</_TwigProbeSentinel>
+    <_TwigProbeRoot Condition="'$(TwigSourceRoot)' == ''">$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), $(_TwigProbeSentinel)))</_TwigProbeRoot>
+    <TwigSourceRoot Condition="'$(TwigSourceRoot)' == '' AND '$(_TwigProbeRoot)' != ''">$([System.IO.Path]::Combine('$(_TwigProbeRoot)', 'twig2'))</TwigSourceRoot>
   </PropertyGroup>
 
   <ItemGroup>

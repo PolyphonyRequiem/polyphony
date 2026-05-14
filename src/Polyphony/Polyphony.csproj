@@ -26,8 +26,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\twig2\src\Twig.Domain\Twig.Domain.csproj" />
-    <ProjectReference Include="..\..\..\twig2\src\Twig.Infrastructure\Twig.Infrastructure.csproj" />
+    <ProjectReference Include="$(TwigSourceRoot)\src\Twig.Domain\Twig.Domain.csproj" />
+    <ProjectReference Include="$(TwigSourceRoot)\src\Twig.Infrastructure\Twig.Infrastructure.csproj" />
   </ItemGroup>
 
   <!--
