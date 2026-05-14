@@ -1,0 +1,83 @@
+[
+  {
+    "acceptance_criteria": [
+      "\u0060Invoke-PolyphonySdlc.ps1 -ApexId N -Intent new\u0060 against a work item in state \u0060Done\u0060, \u0060Closed\u0060, or \u0060Removed\u0060 exits non-zero before any conductor invocation.",
+      "The refusal message names the state and points to both \u0060reopen\u0060 and \u0060polyphony reset --root-id N\u0060 as remediation paths.",
+      "A Pester test in \u0060scripts/\u0060 covers each terminal state (\u0060Done\u0060, \u0060Closed\u0060, \u0060Removed\u0060) and one non-terminal control case (e.g. \u0060Active\u0060).",
+      "Behaviour is unchanged for non-terminal states \u2014 no regression to the happy path."
+    ],
+    "child_id": "task-1",
+    "depends_on": [],
+    "description": "Make \u0060Invoke-PolyphonySdlc.ps1\u0060 refuse to dispatch when the target work item is in a terminal state (\u0060Done\u0060, \u0060Closed\u0060, \u0060Removed\u0060). Surface a clear remediation message: \u0022AB#N is in state Done. Reopen or run \u0060polyphony reset --root-id N\u0060 to start fresh.\u0022 Highest-leverage item in the Epic \u2014 ~30 lines in [scripts/Invoke-PolyphonySdlc.ps1](scripts/Invoke-PolyphonySdlc.ps1) plus a Pester test. Mirrors AB#3085\u0027s launcher-rework pattern. Ship as a hand-built PR before the rest of the fleet so re-dispatch on a closed item stops being an immediate footgun.\n\nThe refusal must be explicit and operator-visible \u2014 not a silent reject. The remediation message is the contract: it must mention both \u0060reopen\u0060 and \u0060polyphony reset --root-id N\u0060 so the operator has a clear next step regardless of intent.",
+    "pg": "pg-1",
+    "title": "Apex-driver pre-flight refusal on terminal work-item state",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "\u0060polyphony reset --root-id N\u0060 strips ADO tags matching the \u0060PolyphonyTag\u0060 DU, archives \u002B clears polyphony-authored comments, deletes per-root state dir, deletes per-root branches local \u002B remote, and removes per-run worktrees.",
+      "A typed \u0060PolyphonyTag\u0060 discriminated union exists with state, intent, and facet variants and is the sole source of truth for which tags the reset verb recognizes.",
+      "\u0060--dry-run\u0060 enumerates every artifact that would be touched without performing any mutation.",
+      "Confirmation gate prompts before any destructive action by default; \u0060--force\u0060 skips the prompt.",
+      "Verb has a JSON output contract test under \u0060tests/\u0060 consistent with existing verbs.",
+      "Verb is documented (README or \u0060docs/\u0060) including the remediation pattern referenced by the Issue 1 refusal message."
+    ],
+    "child_id": "task-2",
+    "depends_on": [],
+    "description": "Add a new CLI verb \u0060polyphony reset --root-id N\u0060 that scrubs all polyphony-authored state for a single root, so the operator has a one-shot path to put a work item back into a re-dispatchable shape.\n\nScope of scrub:\n- ADO tags matching the \u0060PolyphonyTag\u0060 DU below (strip from the work item).\n- Polyphony-authored ADO comments (archive to a sidecar artifact, then clear).\n- Per-root state dir at \u0060\u003Cgit-common-dir\u003E/polyphony/N/\u0060.\n- Per-root branches both local and remote: \u0060feature/N\u0060, \u0060plan/N*\u0060, \u0060impl/N-*\u0060, \u0060mg/N_*\u0060, \u0060sdlc/apex/N\u0060.\n- Per-run worktrees under \u0060polyphony-runs/apex-N/\u0060.\n\nIntroduce a typed \u0060PolyphonyTag\u0060 discriminated union (state vs intent vs facet variants) as the source of truth for which tags polyphony owns. The reset verb consumes it; downstream items (Issue 3 in particular) consume it too. Keep the DU minimal \u2014 exactly the variants needed today; do not pre-expand into a full tag taxonomy.\n\nUX: confirmation gate by default; \u0060--force\u0060 to skip; clear \u0060--dry-run\u0060 output enumerating every artifact that would be touched. Follow existing Polyphony CLI verb conventions (see \u0060polyphony-cli-developer\u0060 skill for ConsoleAppFramework \u002B AOT JSON serialization patterns in \u0060src/Polyphony/Commands/\u0060).",
+    "pg": "pg-2",
+    "title": "polyphony reset --root-id verb with typed PolyphonyTag DU",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "A second \u0060Invoke-PolyphonySdlc.ps1 -ApexId N -Intent new\u0060 invocation against a work item carrying any \u0060polyphony:*\u0060 state tag does not silently re-plan; it gates or auto-routes per the documented rule.",
+      "Tag detection consumes the \u0060PolyphonyTag\u0060 DU from Issue 2; no ad-hoc string matching of \u0060polyphony:*\u0060 exists in the driver.",
+      "Pester coverage for: tagged work item with \u0060intent=new\u0060, tagged work item with \u0060intent=resume\u0060, untagged work item with \u0060intent=new\u0060.",
+      "Warning/refusal message points to \u0060polyphony reset --root-id N\u0060 as the path to a clean re-dispatch."
+    ],
+    "child_id": "task-3",
+    "depends_on": [
+      "task-1",
+      "task-2"
+    ],
+    "description": "Extend the apex-driver pre-flight (built in Issue 1) so that when the target work item carries any \u0060polyphony:*\u0060 state tag \u2014 recognized via the \u0060PolyphonyTag\u0060 DU from Issue 2 \u2014 the driver either:\n\n- Surfaces a \u0022previously processed\u0022 warning \u002B decision gate to the operator, OR\n- Auto-routes to \u0060intent=resume\u0060 semantics when \u0060intent=new\u0060 was passed.\n\nPick the routing rule based on which intent was supplied; document the chosen behaviour in the refusal/warning message. The check must use the typed \u0060PolyphonyTag\u0060 DU rather than ad-hoc string matching, so the set of \u0022polyphony-owned\u0022 tags has exactly one definition shared with the reset verb.",
+    "pg": "pg-3",
+    "title": "Apex-driver pre-flight tag check for previously-processed work items",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "Apex dispatch computes the zero-diff condition against the configured base before invoking any planner/impl/MG sub-workflow.",
+      "When the condition holds and requirements are satisfied, dispatch routes to a process-config-defined terminal state with operator-visible signal \u2014 never silently succeeds.",
+      "No state name is hard-coded; the terminal state is sourced from \u0060.polyphony-config/process-config.yaml\u0060 (P5).",
+      "AB#3127\u0027s reproducer (re-dispatch on a root whose \u0060feature/N\u0060 already contains the merged fix) terminates cleanly and does not reach the scope reviewer.",
+      "Harness coverage under \u0060tests/harness/scenarios/\u0060 exercises the zero-diff branch."
+    ],
+    "child_id": "task-4",
+    "depends_on": [],
+    "description": "At apex dispatch time \u2014 before any plan/impl/MG work \u2014 compute \u0060git rev-list --count {base}..feature/{root}\u0060 against the configured base (typically \u0060main\u0060). If the count is zero AND the work item is non-terminal AND its requirements are otherwise satisfied, route directly to \u0060terminal_apex_already_satisfied\u0060 (or the equivalent existing terminal state per \u0060.polyphony-config/process-config.yaml\u0060 \u2014 do NOT hard-code state names; respect P5).\n\nThis closes the AB#3127 reproducer at the apex level: an empty MG never reaches the reviewer, so the false-positive \u0060empty_merge_group_structural_violation\u0060 at \u0060scope_revise_cap_gate\u0060 cannot fire from this cause.\n\nThe short-circuit must emit a distinct, operator-visible terminal state \u2014 not a silent success \u2014 so a future regression that produces a no-op impl is observable rather than masked.",
+    "pg": "pg-3",
+    "title": "Branch-tip zero-diff short-circuit at apex dispatch",
+    "type": "Issue"
+  },
+  {
+    "acceptance_criteria": [
+      "Scenario double-dispatches on the same root using the harness \u0060FakeProvider\u0060.",
+      "Scenario asserts the second run terminates in a known-good state \u2014 either the zero-diff short-circuit terminal state from Issue 4 or an artifact set identical to run 1.",
+      "Scenario fails loudly if the second run reaches \u0060scope_revise_cap_gate\u0060 (the AB#3127 failure mode).",
+      "Scenario follows existing layout/conventions under \u0060tests/harness/scenarios/\u0060."
+    ],
+    "child_id": "task-5",
+    "depends_on": [
+      "task-1",
+      "task-2",
+      "task-3",
+      "task-4"
+    ],
+    "description": "Add a \u0060tests/harness/\u0060 scenario that runs the apex driver twice on the same root and asserts the second run either short-circuits cleanly (per Issue 4) or produces an identical artifact set to the first. Worthwhile as a regression-prevention net but lower-leverage than Issues 1\u20134; sequence after they land.\n\nSee the \u0060polyphony-harness\u0060 skill for scenario-authoring conventions (FakeProvider scripted LLM boundary, .NET shim for \u0060script:\u0060 nodes, scenario layout under \u0060tests/harness/scenarios/\u0060).",
+    "pg": "pg-4",
+    "title": "Idempotency invariant harness scenario (deferred)",
+    "type": "Issue"
+  }
+]
