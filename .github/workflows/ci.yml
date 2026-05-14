@@ -109,6 +109,23 @@ jobs:
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-sync-after-mutation.ps1 -Format github
 
+      - name: Lint (bare cross-branch git refs)
+        # Catches the AB#3157 stale-local-ref bug class: in the bare-repo
+        # + per-run worktree model (AB#3085), all worktrees share
+        # `.git/refs`. `gh pr merge` updates `refs/remotes/origin/...`
+        # only; local `refs/heads/...` stays at the SHA the worktree was
+        # created with — forever. Any agent prompt or workflow script
+        # that issues `git log {{ feature }}..mg/{{ root_id }}_{{ mg }}`
+        # then resolves both names against the stale local store and
+        # observes stale state. PR #358 patched the two AB#3127 dogfood
+        # reproducer sites; this lint catches the whole class
+        # mechanically across `.conductor/registry/{workflows,prompts}/`
+        # so new sites can't regress in. AB#3161.
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-bare-cross-branch-refs.ps1 -Format github
+
       - name: Install Pester
         shell: pwsh
         run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser

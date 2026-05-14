@@ -523,6 +523,51 @@ agents:
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
+      - to: fetch_for_remediation
+
+  # ── Fetch for remediation (AB#3157 / AB#3161) ─────────────────────────
+  #
+  # Pre-fetch the target + feature branches from origin so the
+  # remediation_planner's `git diff` example reads fresh state. The
+  # remediation worktree is checked out on `feature_branch`, so HEAD is
+  # fresh, but `target_branch` (e.g. `main`) and even `feature_branch`'s
+  # remote tip can drift between worktree creation and the planner's
+  # invocation — particularly across long remediation cycles. The bug
+  # class is the same as AB#3157 (stale local refs in the bare-repo +
+  # per-run worktree model). Hardened by the bare-ref lint added in
+  # AB#3161.
+  #
+  # Invariants:
+  #   Pre:  feature_branch + target_branch exist on origin.
+  #   Post: `origin/{target,feature}_branch` reflect remote; local heads
+  #         are fast-forwarded when safe.
+  - name: fetch_for_remediation
+    type: script
+    description: Pre-fetch origin refs so remediation_planner sees fresh state (AB#3157 / AB#3161)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $target = '{{ workflow.input.target_branch }}'
+        $feature = '{{ workflow.input.feature_branch }}'
+        git fetch --quiet origin $target $feature
+        if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $target, $feature" }
+        foreach ($branch in @($target, $feature)) {
+            $remoteRef = "refs/remotes/origin/$branch"
+            $localRef = "refs/heads/$branch"
+            $localExists = (git rev-parse --verify --quiet $localRef 2>$null) -ne $null
+            if ($localExists) {
+                & git merge-base --is-ancestor $localRef $remoteRef
+                if ($LASTEXITCODE -eq 0) {
+                    git update-ref $localRef $remoteRef
+                } else {
+                    Write-Host "::warning:: local $branch has commits not on origin; not fast-forwarding"
+                }
+            }
+        }
+        @{ ok = $true } | ConvertTo-Json -Compress
+    routes:
       - to: remediation_planner
 
   - name: remediation_planner
@@ -563,7 +608,10 @@ agents:
          - The original plan at `{{ workflow.input.plan_path }}` and any
            prior addenda under `docs/projects/{{ workflow.input.work_item_id }}-addendum-*.plan.md`.
          - The diff on the feature branch (`git diff
-           {{ workflow.input.target_branch }}..{{ workflow.input.feature_branch }}`).
+           origin/{{ workflow.input.target_branch }}..origin/{{ workflow.input.feature_branch }}`)
+           — refs were freshly fetched immediately upstream; compare
+           against `origin/...` to avoid stale-cache false positives
+           (see AB#3157).
          - The PR URL above — operators may also have left context in
            the work-item discussion (use `twig show {{ workflow.input.work_item_id }}`).
          Be HONEST about the limit: if you cannot infer specific issues

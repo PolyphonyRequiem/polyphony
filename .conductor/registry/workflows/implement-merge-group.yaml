@@ -403,6 +403,49 @@ agents:
       {{ guidance_loader.output.coder.type_refinement }}
       {% endif %}
     routes:
+      - to: fetch_for_primary_review
+
+  # ── Fetch for primary review (AB#3157 / AB#3161) ──────────────────────
+  #
+  # Mirror of `fetch_for_scope_review` placed before `primary_reviewer`.
+  # The reviewer prompt compares against `origin/mg/...` to avoid the
+  # stale-local-ref bug class (PR #358 audit candidate, hardened by the
+  # bare-ref lint added in AB#3161). Even though the impl branch is
+  # freshly forked from `mg/...` via `polyphony branch ensure-impl`, the
+  # local `mg/...` head can drift behind `origin/mg/...` once a sibling
+  # impl PR merges in the same MG run — that's the same pattern as
+  # AB#3157, narrower window but identical shape. Pre-fetching keeps
+  # the reviewer honest.
+  #
+  # Invariants:
+  #   Pre:  MG branch exists on origin (mg push happens upstream of any
+  #         impl branch).
+  #   Post: `origin/mg/...` reflects remote; local `refs/heads/mg/...`
+  #         has been fast-forwarded when safe.
+  - name: fetch_for_primary_review
+    type: script
+    description: Pre-fetch origin MG ref so primary_reviewer sees fresh state (AB#3157 / AB#3161)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $mg = 'mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}'
+        git fetch --quiet origin $mg
+        if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $mg" }
+        $remoteRef = "refs/remotes/origin/$mg"
+        $localRef = "refs/heads/$mg"
+        $localExists = (git rev-parse --verify --quiet $localRef 2>$null) -ne $null
+        if ($localExists) {
+            & git merge-base --is-ancestor $localRef $remoteRef
+            if ($LASTEXITCODE -eq 0) {
+                git update-ref $localRef $remoteRef
+            } else {
+                Write-Host "::warning:: local $mg has commits not on origin; not fast-forwarding"
+            }
+        }
+        @{ ok = $true } | ConvertTo-Json -Compress
+    routes:
       - to: primary_reviewer
 
   # ── Primary reviewer ──────────────────────────────────────────────────
@@ -476,9 +519,13 @@ agents:
 
       1. Read the item description from ADO: `twig show {{ primary_router.output.primary_id }}`.
       2. Inspect the latest commits on the impl branch — start with
-         `git log --oneline mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}..HEAD`
-         and `git diff mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}...HEAD`
+         `git log --oneline origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}..HEAD`
+         and `git diff origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}...HEAD`
          to see what the coder added on this impl branch.
+
+         > Refs were freshly fetched from origin immediately upstream;
+         > compare against `origin/...` refs to avoid stale-cache false
+         > positives. (See AB#3157.)
       3. Read the modified source and test files in full as needed.
       4. Verify:
          - Requirements are met
