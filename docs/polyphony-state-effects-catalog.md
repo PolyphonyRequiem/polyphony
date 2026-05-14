@@ -321,6 +321,28 @@ introduce new dependencies.
 - **`apex-wave-dispatch.yaml` and per-lifecycle sub-workflows**: not
   yet cataloged. Add as we exercise them.
 
+### `polyphony reset --root-id <N> [--force] [--dry-run]`
+- **Purpose**: scrub all polyphony-authored state for a root so the operator
+  can re-dispatch with a clean slate.
+- **Pre**: twig cache populated for root `N`; git repo writeable; remote
+  reachable; per-root state dir may or may not exist.
+- **Post**: ADO tags matching `PolyphonyTag` DU stripped from root + descendants;
+  polyphony-authored comments archived to sidecar then deleted; per-root state
+  dir deleted; per-root branches (local + remote) deleted; per-apex worktrees
+  removed.
+- **ADO writes**: tag removal via twig; comment deletion via twig.
+- **Git writes**: branch deletion (local + remote); worktree removal.
+- **FS writes**: comment-archive sidecar at
+  `<git-common-dir>/polyphony/<root_id>/comment-archive.json` (written before
+  state dir deletion); state dir deletion.
+- **Exit semantics**: exit 0 on success (or dry-run); exit 1 on runtime failure;
+  exit 3 on work item not found.
+- **Idempotent**: yes — re-running reset on an already-reset root is a no-op
+  (no tags to strip, no branches to delete, no state dir to remove).
+- **Gotcha**: does NOT transition the ADO work item state. The operator must
+  separately `twig state 'To Do'` before re-launching the pipeline.
+- **Full specification**: `docs/polyphony-reset.md`.
+
 ## Future work tracked separately
 
 - Strategy 2 — runtime trace mode for polyphony CLI (per-verb
