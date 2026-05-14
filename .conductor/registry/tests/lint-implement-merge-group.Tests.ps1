@@ -14,6 +14,58 @@ Describe 'lint-implement-merge-group.ps1' {
         }
     }
 
+    # AB#3169 — primary_completer must skip implementation_complete event
+    # when primary_id == root_id (indivisible apex root case). Otherwise the
+    # apex Issue is marked Done at MG → feature merge time, before
+    # feature → main has been promoted.
+    Context 'primary_completer apex-root carve-out (AB#3169)' {
+
+        BeforeAll {
+            $script:ImplementMgYamlText = Get-Content $script:ImplementMgYaml -Raw
+        }
+
+        It 'Captures the rootId from workflow.input.root_id alongside the taskId' {
+            $script:ImplementMgYamlText | Should -Match '\$rootId\s*=\s*\[int\]''\{\{\s*workflow\.input\.root_id\s*\}\}'''
+        }
+
+        It 'Computes $isApexRoot = $taskId -eq $rootId discriminator' {
+            $script:ImplementMgYamlText | Should -Match '\$isApexRoot\s*=\s*\(\$taskId\s*-eq\s*\$rootId\)'
+        }
+
+        It 'Branches on $isApexRoot so the implementation_complete event is only fired in the else (non-apex-root) arm' {
+            $primary = [regex]::Match($script:ImplementMgYamlText, '(?s)- name: primary_completer.*?routes:')
+            $primary.Success | Should -BeTrue
+            $body = $primary.Value
+            # Split the inner if-arm from the else-arm at the literal `} else {`
+            # introduced by the AB#3169 carve-out. This avoids fragile balanced-brace
+            # regex parsing when the inner `if (-not $validate.is_valid) { throw ... }`
+            # block confuses non-greedy matchers.
+            $body | Should -Match '\}\s*else\s*\{'
+            $split = $body -split '\}\s*else\s*\{', 2
+            $split.Count | Should -Be 2
+            $ifSide   = $split[0]
+            $elseSide = $split[1]
+            # Trim the if-side back to start at `if ($isApexRoot) {` so we don't
+            # confuse pre-if setup lines with the apex-root body.
+            $ifSplit = $ifSide -split 'if\s*\(\$isApexRoot\)\s*\{', 2
+            $ifSplit.Count | Should -Be 2
+            $ifBody = $ifSplit[1]
+            $ifBody   | Should -Not -Match 'polyphony validate.*--event implementation_complete' -Because 'AB#3169 — apex root MUST skip implementation_complete; close_mark_satisfied fires the terminal item_satisfied event AFTER feature → main promotion'
+            $ifBody   | Should -Not -Match 'twig state'                                          -Because 'AB#3169 — apex root MUST NOT change ADO state here'
+            $elseSide | Should -Match 'polyphony validate.*--event implementation_complete'      -Because 'Child tasks still get their normal implementation_complete transition'
+            $elseSide | Should -Match 'twig state \$validate\.target_state'                      -Because 'Child tasks still transition via twig state'
+        }
+
+        It 'Emits a deferred_apex_root flag on the JSON output so callers / dashboards can distinguish the two arms' {
+            $script:ImplementMgYamlText | Should -Match 'deferred_apex_root\s*=\s*\$true'
+            $script:ImplementMgYamlText | Should -Match 'deferred_apex_root\s*=\s*\$false'
+        }
+
+        It 'Apex-root note text references AB#3169 so the audit trail in twig comments points to the rationale' {
+            $script:ImplementMgYamlText | Should -Match 'twig note --text ''Apex root implementation merged into MG branch.*AB#3169'
+        }
+    }
+
     Context 'Structural requirements' {
 
         BeforeAll {
