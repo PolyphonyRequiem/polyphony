@@ -1083,7 +1083,7 @@ agents:
       - "policy"
       - "load"
     routes:
-      - to: close_mark_satisfied
+      - to: promote_feature_to_main
         when: "{{ apex_completion_gate_policy_router.output.unattended.acceptance_mode == 'auto' }}"
       # Default + 'manual' + any unknown → surface the human gate.
       - to: apex_completion_gate
@@ -1130,7 +1130,7 @@ agents:
     options:
       - label: "✅ Confirm — mark apex satisfied"
         value: confirm
-        route: close_mark_satisfied
+        route: promote_feature_to_main
       - label: "🛑 Abandon"
         value: abandon
         route: terminal_apex_abandoned
@@ -1138,6 +1138,96 @@ agents:
   # ─────────────────────────────────────────────────────────────────────────
   # SECTION 4 — Close
   # ─────────────────────────────────────────────────────────────────────────
+
+  # ── Promote feature → target (AB#3168) ───────────────────────────────────
+  #
+  # Indivisible apex roots (those whose `lifecycle_router` only ever
+  # classifies their own work, never decomposing into ADO children) never
+  # had `feature_pr` invoked under their item-dispatch lifecycle path.
+  # Instead, the classifier flips through `implement-merge-group` for the
+  # MG → impl-PR cascade, then `ObserveImplementationMergedAsync` marks
+  # `implementation_merged` Satisfied as soon as the impl PR merges into
+  # `mg/{root}` (which itself merges into `feature/{root}`). The work is
+  # ON `feature/{root}` but never reaches `main`, and `close_mark_satisfied`
+  # used to fire while the apex's own feature branch was still ahead of
+  # main — leaving a satisfied work item with un-promoted commits.
+  #
+  # This pair of nodes (script gate + workflow dispatch) inserts a
+  # promotion check between every path into `close_mark_satisfied` and
+  # `close_mark_satisfied` itself. When `feature/{apex_id}` is ahead of
+  # the target branch, we hand off to `feature-pr.yaml` (the same
+  # lifecycle the per-item dispatch uses for decomposed apexes) to open
+  # the PR, drive review/CI, and merge to `main`. When already in sync
+  # (e.g. fast-pathed apex, or the human chose `confirm` after a manual
+  # promotion), we fall straight through to `close_mark_satisfied`.
+  #
+  # `target_branch` is hard-coded to `main`, matching the existing
+  # `feature_pr_dispatch` invocation in apex-item-dispatch.yaml. If we
+  # ever support per-apex target branches, this is the second of two
+  # sites to update.
+  - name: promote_feature_to_main
+    type: script
+    description: Check whether feature/{apex_id} is ahead of main; route to feature-pr.yaml when promotion is needed
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $ErrorActionPreference = 'Stop';
+        $PSNativeCommandUseErrorActionPreference = $true;
+        $apexId = '{{ workflow.input.apex_id }}';
+        $featureBranch = "feature/$apexId";
+        $targetBranch = 'main';
+        $needsPromotion = $false;
+        $featureMissing = $false;
+        try {
+          git fetch --quiet origin $targetBranch $featureBranch 2>$null;
+          # bare-ref-ok: $targetBranch and $featureBranch are PowerShell variables interpolated with origin/ prefix; the lint tokenizer cannot see through the dollar-sigil.
+          $countRaw = git rev-list --count "origin/$targetBranch..origin/$featureBranch" 2>$null;
+          if ($LASTEXITCODE -eq 0 -and $countRaw) {
+            $needsPromotion = ([int]$countRaw) -gt 0;
+          } else {
+            $featureMissing = $true;
+          }
+        } catch {
+          $featureMissing = $true;
+        }
+        [ordered]@{
+          apex_id          = [int]$apexId;
+          feature_branch   = $featureBranch;
+          target_branch    = $targetBranch;
+          needs_promotion  = $needsPromotion;
+          feature_missing  = $featureMissing;
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: promote_feature_pr_dispatch
+        when: "{{ promote_feature_to_main.output.needs_promotion }}"
+      # No promotion needed (already in sync, or no feature branch to promote).
+      - to: close_mark_satisfied
+
+  # ── Promote feature → target via feature-pr.yaml ─────────────────────────
+  #
+  # Same lifecycle the per-item dispatch uses for decomposed apexes. Runs
+  # the platform-specific PR creator (github-pr.yaml | ado-pr.yaml),
+  # review/remediation cycle, and merge. When this returns we proceed to
+  # `close_mark_satisfied` regardless of inner outcome — feature-pr.yaml
+  # has its own escalation gates for non-merge outcomes (it surfaces a
+  # human gate after the remediation cap), so a quiet fall-through here
+  # is safe.
+  - name: promote_feature_pr_dispatch
+    type: workflow
+    description: Open and merge feature/{apex_id} → main via feature-pr.yaml (AB#3168)
+    workflow: ./feature-pr.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.apex_id }}"
+      feature_branch: "{{ promote_feature_to_main.output.feature_branch }}"
+      target_branch: "{{ promote_feature_to_main.output.target_branch }}"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: close_mark_satisfied
 
   # ── Close: mark apex satisfied ───────────────────────────────────────────
   #

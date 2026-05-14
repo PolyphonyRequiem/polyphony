@@ -387,18 +387,74 @@ Describe 'apex-driver e2e — outer loop reachability' {
         $byValue['abort']       | Should -Be 'terminal_apex_abandoned'
     }
 
-    It 'apex_completion_gate exposes confirm/abandon with the documented routes' {
+    It 'apex_completion_gate exposes confirm/abandon with the documented routes (AB#3168 routes confirm via promote_feature_to_main)' {
         $opts = @($script:ApexAgents['apex_completion_gate'].options)
         $opts.Count | Should -Be 2
         $byValue = @{}
         foreach ($o in $opts) { $byValue[$o.value] = $o.route }
-        $byValue['confirm'] | Should -Be 'close_mark_satisfied'
+        $byValue['confirm'] | Should -Be 'promote_feature_to_main'
         $byValue['abandon'] | Should -Be 'terminal_apex_abandoned'
     }
 
     It 'close_mark_satisfied routes to terminal_apex_satisfied' {
         $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'close_mark_satisfied')
         $routes.Target | Should -Contain 'terminal_apex_satisfied'
+    }
+
+    # ── AB#3168 — feature → main promotion before close ──────────────────────
+    #
+    # Indivisible apex roots (no ADO children) only go through the
+    # implement-merge-group lifecycle, never feature-pr. The `promote_*`
+    # pair inserts a fetch+rev-list check between every path into
+    # close_mark_satisfied and close_mark_satisfied itself, dispatching
+    # feature-pr.yaml when the apex feature branch is ahead of main.
+
+    It 'promote_feature_to_main is a script that runs git rev-list --count origin/main..origin/feature/{apex_id}' {
+        $node = $script:ApexAgents['promote_feature_to_main']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'workflow\.input\.apex_id'
+        $argLine | Should -Match 'git fetch'
+        $argLine | Should -Match 'git rev-list --count "origin/\$targetBranch\.\.origin/\$featureBranch"'
+        $argLine | Should -Match 'needs_promotion'
+    }
+
+    It 'promote_feature_to_main routes to feature-pr dispatch when needed, else close_mark_satisfied' {
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'promote_feature_to_main')
+        $routes.Count | Should -Be 2
+        $routes[0].Target | Should -Be 'promote_feature_pr_dispatch'
+        $routes[0].When   | Should -Match 'needs_promotion'
+        $routes[1].Target | Should -Be 'close_mark_satisfied'
+    }
+
+    It 'promote_feature_pr_dispatch invokes feature-pr.yaml with the apex root inputs' {
+        $node = $script:ApexAgents['promote_feature_pr_dispatch']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type     | Should -Be 'workflow'
+        $node.workflow | Should -Be './feature-pr.yaml'
+        $node.input_mapping.work_item_id   | Should -Match 'workflow\.input\.apex_id'
+        $node.input_mapping.feature_branch | Should -Match 'feature_branch'
+        $node.input_mapping.target_branch  | Should -Match 'target_branch'
+        $node.input_mapping.platform       | Should -Match 'workflow\.input\.platform'
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'promote_feature_pr_dispatch')
+        $routes.Count | Should -Be 1
+        $routes[0].Target | Should -Be 'close_mark_satisfied'
+    }
+
+    It 'Both upstream paths into close_mark_satisfied funnel through promote_feature_to_main (auto-acceptance and human-gate confirm)' {
+        # Auto-acceptance path: apex_completion_gate_policy_router
+        $autoRoutes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'apex_completion_gate_policy_router')
+        $autoTargets = $autoRoutes.Target | Sort-Object -Unique
+        $autoTargets | Should -Contain 'promote_feature_to_main'
+        $autoTargets | Should -Not -Contain 'close_mark_satisfied' -Because 'AB#3168 — every path to close_mark_satisfied must funnel through promote_feature_to_main'
+
+        # Human-gate confirm path: apex_completion_gate
+        $opts = @($script:ApexAgents['apex_completion_gate'].options)
+        $byValue = @{}
+        foreach ($o in $opts) { $byValue[$o.value] = $o.route }
+        $byValue['confirm'] | Should -Be 'promote_feature_to_main' -Because 'AB#3168 — confirm must route via promotion check, not directly to close'
     }
 
     # ── Fail-fast across waves (PR: feat/wave-dispatch-fail-fast-on-failure) ──
@@ -459,6 +515,8 @@ Describe 'apex-driver e2e — outer loop reachability' {
             'renegotiation_summary',
             'outer_loop_evaluator',
             'apex_completion_gate',
+            'promote_feature_to_main',
+            'promote_feature_pr_dispatch',
             'close_mark_satisfied',
             'terminal_apex_satisfied'
         )
