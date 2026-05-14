@@ -115,12 +115,15 @@ public sealed class ValidateCommandTests : CommandTestBase
     [Fact]
     public async Task Validate_InvalidPrecondition_ReturnsRoutingFailureExitCode()
     {
-        // Epic in "Doing" (InProgress) — begin_planning requires Proposed
+        // AB#3170: Use "Done" (Completed) — a state that is NEITHER the
+        // begin_planning target ("Doing", which would short-circuit to NoOp)
+        // NOR a Proposed-category state (which would be valid). This forces
+        // the precondition check to fire.
         var epic = new WorkItemBuilder()
             .WithId(101)
             .WithType("Epic")
-            .WithTitle("In Progress Epic")
-            .WithState("Doing")
+            .WithTitle("Completed Epic")
+            .WithState("Done")
             .Build();
         await SeedAsync(epic);
 
@@ -136,8 +139,8 @@ public sealed class ValidateCommandTests : CommandTestBase
         var epic = new WorkItemBuilder()
             .WithId(101)
             .WithType("Epic")
-            .WithTitle("In Progress Epic")
-            .WithState("Doing")
+            .WithTitle("Completed Epic")
+            .WithState("Done")
             .Build();
         await SeedAsync(epic);
 
@@ -226,5 +229,74 @@ public sealed class ValidateCommandTests : CommandTestBase
         result.ShouldNotBeNull();
         result.IsValid.ShouldBeTrue();
         result.TargetState.ShouldBe("Done");
+    }
+
+    // ── Idempotency (no-op) tests — AB#3170 ──────────────────────────
+
+    [Fact]
+    public async Task Validate_AlreadyInTargetState_ReturnsSuccessExitCode()
+    {
+        // AB#3170 reproducer: apex root work item is already in Done; the
+        // terminal-completion site fires `implementation_complete` (target
+        // Done). Pre-AB#3170 this exited 1 with "precondition failed: must
+        // be in InProgress, but is in Completed". Post-AB#3170 the validator
+        // short-circuits to NoOpTransition and the command exits 0.
+        var issue = new WorkItemBuilder()
+            .WithId(700).WithType("Issue").WithTitle("Already Done").WithState("Done").Build();
+        await SeedAsync(issue);
+
+        var cmd = CreateCommand();
+        var (exitCode, _) = await CaptureConsoleAsync(() => cmd.Validate(700, "implementation_complete"));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+    }
+
+    [Fact]
+    public async Task Validate_AlreadyInTargetState_OutputsNoOpTrue()
+    {
+        var issue = new WorkItemBuilder()
+            .WithId(701).WithType("Issue").WithTitle("Already Done").WithState("Done").Build();
+        await SeedAsync(issue);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Validate(701, "implementation_complete"));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ValidateResult);
+        result.ShouldNotBeNull();
+        result.IsValid.ShouldBeTrue();
+        result.NoOp.ShouldBe(true);
+        result.TargetState.ShouldBe("Done");
+        result.Message.ShouldNotBeNullOrEmpty();
+        result.Message!.ShouldContain("no-op");
+    }
+
+    [Fact]
+    public async Task Validate_AlreadyInTargetState_JsonIncludesNoOpField()
+    {
+        var issue = new WorkItemBuilder()
+            .WithId(702).WithType("Issue").WithTitle("Already Done").WithState("Done").Build();
+        await SeedAsync(issue);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Validate(702, "implementation_complete"));
+
+        output.ShouldContain("\"no_op\":true");
+        output.ShouldContain("\"target_state\":\"Done\"");
+    }
+
+    [Fact]
+    public async Task Validate_GenuineTransition_OmitsNoOpField()
+    {
+        // NoOp uses JsonIgnoreCondition.WhenWritingNull (via PolyphonyJsonContext
+        // defaults). For genuine transitions the field must NOT appear in output —
+        // otherwise consumers can't reliably distinguish no-op from applied.
+        var task = new WorkItemBuilder()
+            .WithId(703).WithType("Task").WithTitle("Will transition").WithState("To Do").Build();
+        await SeedAsync(task);
+
+        var cmd = CreateCommand();
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Validate(703, "begin_implementation"));
+
+        output.ShouldNotContain("\"no_op\"");
     }
 }

@@ -88,18 +88,22 @@ public sealed class CrossProcessValidateCommandTests : CommandTestBase
         result.TargetState.ShouldBe(t.BeginPlanningTarget);
     }
 
-    // --- Scenario 2: Illegal transition — begin_planning on InProgress item → is_valid: false ---
+    // --- Scenario 2: Illegal transition — begin_planning on Completed item → is_valid: false ---
 
     [Theory]
     [MemberData(nameof(AllTemplateNames))]
     public async Task Validate_IllegalTransition_ReturnsRoutingFailureWithIsValidFalse(string templateName)
     {
+        // AB#3170: Use CompletedState (not InProgressState) so we hit the
+        // genuine precondition failure path. With InProgressState, item.State
+        // == BeginPlanningTarget in every template → the validator's no-op
+        // short-circuit fires first and returns NoOpTransition (exit 0).
         var t = GetTemplate(templateName);
         var epic = new WorkItemBuilder()
             .WithId(1100)
             .WithType(t.TopType)
-            .WithTitle($"{templateName} Epic InProgress")
-            .WithState(t.InProgressState)
+            .WithTitle($"{templateName} Epic Completed")
+            .WithState(t.CompletedState)
             .Build();
         await SeedAsync(epic);
 

@@ -366,6 +366,7 @@ public sealed partial class BranchCommands(
         return outcome switch
         {
             ValidTransition v => (true, v.TargetState, v.Message),
+            NoOpTransition n => (true, n.TargetState, n.Message),
             InvalidTransition iv => (false, iv.TargetState, iv.Message),
             _ => (false, null, "Validator returned null"),
         };
