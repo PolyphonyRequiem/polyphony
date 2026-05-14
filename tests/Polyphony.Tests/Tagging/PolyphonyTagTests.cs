@@ -71,13 +71,13 @@ public sealed class PolyphonyTagTests
         PolyphonyTag.ToTagString(tag).ShouldBe("polyphony:facets=actionable,plannable");
     }
 
-    // ─── ParseAll ────────────────────────────────────────────────────────
+    // ─── AllOwned ────────────────────────────────────────────────────────
 
     [Fact]
-    public void ParseAll_MixedTags_ReturnsOnlyPolyphonyOwned()
+    public void AllOwned_MixedTags_ReturnsOnlyPolyphonyOwned()
     {
         var tagSet = TagSet.Parse("polyphony; polyphony:root; twig; polyphony:planned");
-        var parsed = PolyphonyTag.ParseAll(tagSet);
+        var parsed = PolyphonyTag.AllOwned(tagSet);
 
         parsed.Count.ShouldBe(3);
         parsed[0].ShouldBeOfType<PolyphonyTag.InScope>();
@@ -86,9 +86,9 @@ public sealed class PolyphonyTagTests
     }
 
     [Fact]
-    public void ParseAll_EmptyTagSet_ReturnsEmpty()
+    public void AllOwned_EmptyTagSet_ReturnsEmpty()
     {
-        var parsed = PolyphonyTag.ParseAll(TagSet.Empty);
+        var parsed = PolyphonyTag.AllOwned(TagSet.Empty);
         parsed.ShouldBeEmpty();
     }
 

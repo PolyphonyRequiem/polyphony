@@ -94,10 +94,10 @@ public abstract record PolyphonyTag
     }
 
     /// <summary>
-    /// Parses all polyphony-owned tags from a <see cref="TagSet"/>.
+    /// Enumerates every polyphony-owned tag present in a <see cref="TagSet"/>.
     /// Tags outside the polyphony namespace are silently skipped.
     /// </summary>
-    public static IReadOnlyList<PolyphonyTag> ParseAll(TagSet tags)
+    public static IReadOnlyList<PolyphonyTag> AllOwned(TagSet tags)
     {
         var result = new List<PolyphonyTag>();
         foreach (var raw in tags)
