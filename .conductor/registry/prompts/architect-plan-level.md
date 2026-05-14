@@ -154,7 +154,7 @@ scratch.
    unaffected by the research.
 2. **Cite findings.** When the research informs a decision, briefly note
    it (e.g., "Per research: existing commands use guard-clause validation").
-3. **No re-requesting the same topics.** Emit `research_needs: {topics: []}`
+3. **No re-requesting the same topics.** Emit `research_request_kind: "none"`
    this iteration unless genuinely new research questions arose from the
    findings. Repeated research requests on the same topics will hit the
    loop cap.
@@ -357,19 +357,20 @@ Read the user plan from the filesystem and use it as your starting point.
 
 5. **Identify research needs** — If you encounter questions that could be
    answered by searching the repository archive (codebase patterns,
-   existing conventions, prior decisions, file structures), emit them as
-   `research_needs` instead of open questions. The three-way choice:
+   existing conventions, prior decisions, file structures), emit them via
+   the `research_request_kind` discriminant instead of open questions.
+   The three-way choice:
 
    | Signal | When to use | What happens |
    |---|---|---|
-   | **Proceed** (`open_questions: []` + `research_needs: {topics: []}`) | You have enough context to write a complete plan | Plan flows to review |
+   | **Proceed** (`open_questions: []` + `research_request_kind: "none"`) | You have enough context to write a complete plan | Plan flows to review |
    | **`open_questions`** | Ambiguity requires **human** judgment (scope decisions, priority trade-offs, external constraints) | Workflow gates on human input |
-   | **`research_needs`** | Questions answerable from the **repository archive** (code patterns, existing conventions, file layouts, prior decisions) | Workflow invokes research sub-workflow and re-invokes you with findings — no human gate |
+   | **`research_request_kind: "request"`** | Questions answerable from the **repository archive** (code patterns, existing conventions, file layouts, prior decisions) | Workflow invokes research sub-workflow and re-invokes you with findings — no human gate |
 
-   When emitting `research_needs`, set `open_questions: []` — research and
-   open questions should not be emitted in the same pass. If you have BOTH
-   research needs and human questions, prefer research first (the human
-   questions may resolve once you have the findings).
+   When emitting `research_request_kind: "request"`, set `open_questions: []` —
+   research and open questions should not be emitted in the same pass. If you
+   have BOTH research needs and human questions, prefer research first (the
+   human questions may resolve once you have the findings).
 
    | Severity | Meaning | Action |
    |---|---|---|
@@ -412,40 +413,81 @@ Return a JSON object with this structure:
       "severity": "moderate"
     }
   ],
-  "research_needs": {
-    "topics": ["What patterns do existing CLI commands follow?"],
-    "context": {
-      "work_item_id": 12345,
-      "plan_excerpt": "Relevant excerpt framing the research need"
-    },
-    "budget_hint": "cheap",
-    "archive_scope": {
-      "paths": ["src/"],
-      "tags": []
-    }
+  "research_request_kind": "request",
+  "research_topics": ["What patterns do existing CLI commands follow?"],
+  "research_context": {
+    "work_item_id": 12345,
+    "plan_excerpt": "Relevant excerpt framing the research need"
   },
+  "research_budget_hint": "cheap",
+  "research_archive_scope": {
+    "paths": ["src/"],
+    "tags": []
+  },
+  "research_escalation_cap": 1,
   "summary": "Brief one-paragraph summary of the plan"
 }
 ```
 
-### `research_needs` field
+### `research_request_kind` and `research_*` fields
 
-When you need to investigate the repository archive before finalizing the plan,
-emit a `research_needs` object matching this shape. When you do NOT need research,
-emit `research_needs: {"topics": []}` — an object with an empty `topics` array.
-The `topics` field is **required**; `research_needs: {}` (no `topics` key) will
-fail output validation.
+The research payload uses a **flat discriminated-union shape**: a required
+`research_request_kind` discriminant plus sibling `research_*` fields that
+are ALWAYS emitted (with empty/zero values when no research is needed).
+Every field is required on every invocation — there are no optional keys.
 
-- **`topics`** — array of research questions (non-empty triggers the loop;
-  empty signals no research needed).
-- **`context.work_item_id`** — the current work item ID.
-- **`context.plan_excerpt`** — a brief excerpt framing the research need.
-- **`budget_hint`** — always `"cheap"` (archive-only, first pass).
-- **`archive_scope.paths`** — optional file prefixes to narrow the search.
-- **`archive_scope.tags`** — optional ADO tags to filter related work items.
+- **`research_request_kind`** — REQUIRED. One of:
+  - `"none"` — you have enough context; no archive research needed.
+  - `"request"` — you need archive research before finalizing the plan.
+- **`research_topics`** — array of research questions. Non-empty when
+  `kind="request"`; emit `[]` when `kind="none"`.
+- **`research_context.work_item_id`** — the current work item ID.
+- **`research_context.plan_excerpt`** — a brief excerpt framing the research
+  need. Emit `""` when `kind="none"`; the whole `research_context` may be
+  `{}` when `kind="none"`.
+- **`research_budget_hint`** — `"cheap"` (archive-only, first pass) when
+  `kind="request"`; emit `""` when `kind="none"`.
+- **`research_archive_scope.paths`** — optional file prefixes to narrow the
+  search. Emit `{"paths": [], "tags": []}` (or `{}`) when `kind="none"`.
+- **`research_archive_scope.tags`** — optional ADO tags to filter related
+  work items.
+- **`research_escalation_cap`** — max deep-researcher escalations (default
+  `1`). Emit `1` when `kind="none"`.
 
-When emitting `research_needs` with topics, emit `open_questions: []` — the
-workflow processes research before open questions.
+#### Example — no research needed (`kind="none"`)
+
+```json
+{
+  "research_request_kind": "none",
+  "research_topics": [],
+  "research_context": {},
+  "research_budget_hint": "",
+  "research_archive_scope": {},
+  "research_escalation_cap": 1
+}
+```
+
+#### Example — research requested (`kind="request"`)
+
+```json
+{
+  "research_request_kind": "request",
+  "research_topics": ["What patterns do existing CLI commands follow?"],
+  "research_context": {
+    "work_item_id": 12345,
+    "plan_excerpt": "Relevant excerpt framing the research need"
+  },
+  "research_budget_hint": "cheap",
+  "research_archive_scope": {
+    "paths": ["src/"],
+    "tags": []
+  },
+  "research_escalation_cap": 1
+}
+```
+
+When emitting `research_request_kind: "request"` with topics, emit
+`open_questions: []` — the workflow processes research before open questions.
 
 ### `children` field — read this carefully
 
