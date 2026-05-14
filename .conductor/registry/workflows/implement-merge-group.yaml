@@ -871,7 +871,181 @@ agents:
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
+      - to: scope_empty_mg_triage
+
+  # ── Scope empty-MG triage (AB#3166) ──────────────────────────────────
+  #
+  # Deterministic pre-check that disambiguates three distinct zero-commit
+  # MG cases before the scope_reviewer LLM fires:
+  #
+  #   Case A  Genuinely empty MG — structural violation (bug upstream).
+  #   Case B  Nothing-to-do MG — impl agents completed but produced no
+  #           code changes (e.g. spec-only work, sibling MG covered it).
+  #   Case C  Already-merged-forward — the fix landed on main via a
+  #           different PR, so feature/ already contains it.
+  #
+  # Previously all three collapsed to `changes_requested` →
+  # scope_revise_counter → cap gate, with no convergence path.
+  #
+  # Case C is deterministically detectable (main is ancestor of feature)
+  # and is auto-approved here. Cases A and B are deferred to
+  # scope_reviewer with enriched context so the LLM can distinguish
+  # them using ADO work item state and notes.
+  #
+  # Invariants:
+  #   Pre:  origin refs freshly fetched by fetch_for_scope_review.
+  #   Post: output.disposition is one of: has_commits,
+  #         already_satisfied, zero_commits_unresolved,
+  #         structural_violation.
+  - name: scope_empty_mg_triage
+    type: script
+    description: Deterministic zero-commit MG triage — disambiguates Case A/B/C before scope_reviewer (AB#3166)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $feature = '{{ workflow.input.feature_branch }}'
+        $mg = 'mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}'
+        $taskCount = {{ workflow.input.work_item_ids | length }}
+
+        # Structural check (a): MG branch must exist on origin
+        git rev-parse --verify --quiet "origin/$mg" 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            @{
+                disposition = 'structural_violation'
+                detail = "MG branch origin/$mg does not exist"
+                mg_commit_count = 0
+                feature_contains_main = $false
+            } | ConvertTo-Json -Compress
+            exit 0
+        }
+
+        # Structural check (d): MG must have been dispatched with tasks
+        if ($taskCount -eq 0) {
+            @{
+                disposition = 'structural_violation'
+                detail = "MG was dispatched with zero tasks (work_item_ids is empty)"
+                mg_commit_count = 0
+                feature_contains_main = $false
+            } | ConvertTo-Json -Compress
+            exit 0
+        }
+
+        # Count commits on MG ahead of feature
+        $mgCommitStr = git rev-list --count "origin/$feature..origin/$mg" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            @{
+                disposition = 'has_commits'
+                detail = "git rev-list failed ($mgCommitStr); deferring to scope_reviewer"
+                mg_commit_count = -1
+                feature_contains_main = $false
+            } | ConvertTo-Json -Compress
+            exit 0
+        }
+        $mgCommitCount = [int]$mgCommitStr
+
+        if ($mgCommitCount -gt 0) {
+            @{
+                disposition = 'has_commits'
+                detail = "MG has $mgCommitCount commit(s) ahead of feature branch"
+                mg_commit_count = $mgCommitCount
+                feature_contains_main = $false
+            } | ConvertTo-Json -Compress
+            exit 0
+        }
+
+        # ── Zero commits on MG — triage Case C vs deferred ──────────
+        # Fetch origin/main so the ancestry check is fresh
+        # (fetch_for_scope_review only fetches feature + MG).
+        git fetch --quiet origin main 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            @{
+                disposition = 'zero_commits_unresolved'
+                detail = "Could not fetch origin/main; deferring zero-commit triage to scope_reviewer"
+                mg_commit_count = 0
+                feature_contains_main = $false
+            } | ConvertTo-Json -Compress
+            exit 0
+        }
+
+        # Case C: is origin/main an ancestor of origin/{feature}?
+        # If yes, feature contains everything in main — any fix that
+        # landed on main is already present on feature, so a zero-commit
+        # MG means the work was already done.
+        git merge-base --is-ancestor "origin/main" "origin/$feature" 2>$null
+        $mainIsAncestor = ($LASTEXITCODE -eq 0)
+
+        if ($mainIsAncestor) {
+            @{
+                disposition = 'already_satisfied'
+                detail = "Feature branch '$feature' contains current origin/main (main is ancestor of feature). MG produced zero commits because the intended changes are already present — likely merged via a different PR."
+                mg_commit_count = 0
+                feature_contains_main = $true
+            } | ConvertTo-Json -Compress
+            exit 0
+        }
+
+        # Zero commits, feature does not fully contain main.
+        # Could be Case B (legitimate no-op) or Case A (upstream bug).
+        # Defer to scope_reviewer with enriched context.
+        @{
+            disposition = 'zero_commits_unresolved'
+            detail = "MG has zero commits ahead of feature and feature does not fully contain origin/main. Could be a legitimate no-op (Case B) or a structural issue (Case A) — scope_reviewer will evaluate with ADO context."
+            mg_commit_count = 0
+            feature_contains_main = $false
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: scope_auto_approve
+        when: "{{ scope_empty_mg_triage.output.disposition == 'already_satisfied' }}"
       - to: scope_reviewer
+        when: "{{ scope_empty_mg_triage.output.disposition == 'has_commits' }}"
+      - to: scope_reviewer
+        when: "{{ scope_empty_mg_triage.output.disposition == 'structural_violation' }}"
+      - to: scope_reviewer
+        when: "{{ scope_empty_mg_triage.output.disposition == 'zero_commits_unresolved' }}"
+      # Catch-all per M4: unknown disposition routes to scope_reviewer
+      # so a human-quality review still happens.
+      - to: scope_reviewer
+
+  # ── Scope auto-approve (AB#3166) ─────────────────────────────────────
+  #
+  # Deterministic approval for zero-commit MGs that the triage node
+  # identified as Case C (already_satisfied). Emits the same output
+  # schema as scope_reviewer (verdict, feedback, issues) so downstream
+  # templates can consume either interchangeably.
+  #
+  # Invariants:
+  #   Pre:  scope_empty_mg_triage.output.disposition == 'already_satisfied'.
+  #   Post: verdict is 'approved'; routes to user_acceptance_policy_router.
+  - name: scope_auto_approve
+    type: script
+    description: Auto-approve zero-commit MG identified as already_satisfied by triage (AB#3166)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $disposition = '{{ scope_empty_mg_triage.output.disposition }}'
+        $detail = '{{ scope_empty_mg_triage.output.detail }}'
+
+        $feedback = @"
+        **Auto-approved ($disposition):** $detail
+
+        This merge group produced zero commits ahead of the feature branch,
+        but the upstream triage determined this is expected — the intended
+        changes are already present on the feature branch (merged via a
+        different code path). No scope-level concerns.
+        "@.Trim()
+
+        @{
+            verdict = 'approved'
+            feedback = $feedback
+            issues = @()
+            auto_disposition = $disposition
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: user_acceptance_policy_router
 
   - name: scope_reviewer
     type: agent
@@ -912,6 +1086,24 @@ agents:
       - **Tasks in this MG:** {{ workflow.input.work_item_ids | length }}
         ({{ workflow.input.work_item_ids | join(', ') }})
 
+      {% if scope_empty_mg_triage is defined %}
+      ## Upstream Triage Result (AB#3166)
+
+      The deterministic triage node ran before you and produced:
+
+      - **Disposition:** `{{ scope_empty_mg_triage.output.disposition }}`
+      - **Detail:** {{ scope_empty_mg_triage.output.detail }}
+      - **MG commit count:** {{ scope_empty_mg_triage.output.mg_commit_count }}
+      - **Feature contains main:** {{ scope_empty_mg_triage.output.feature_contains_main }}
+
+      Use this data to inform your review. If disposition is
+      `structural_violation`, the triage already confirmed the MG is
+      structurally broken — verify and issue `changes_requested`. If
+      disposition is `zero_commits_unresolved`, you must distinguish
+      between a legitimate no-op (Case B) and a genuine upstream bug
+      (Case A) — see the zero-commit disambiguation section below.
+      {% endif %}
+
       ## Instructions
 
       1. Read the parent work item description: `twig show {{ workflow.input.work_item_id }}`.
@@ -928,19 +1120,14 @@ agents:
          compare against `origin/...` refs to avoid stale-cache false
          positives. (See AB#3157.)
 
-         An MG that satisfies *any* of the following is structurally
-         broken and MUST receive `verdict: "changes_requested"`:
+         a. If the branch `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
+            does not exist (`git rev-parse --verify origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` fails),
+            that is a structural violation → `changes_requested`.
+         b. If `{{ workflow.input.work_item_ids | length }}` is zero (the MG was
+            dispatched with no tasks), that is a structural violation →
+            `changes_requested`.
 
-         a. The branch `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
-            does not exist (`git rev-parse --verify origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` fails).
-         b. `git log --oneline origin/{{ workflow.input.feature_branch }}..origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
-            returns zero commits.
-         c. `git diff origin/{{ workflow.input.feature_branch }}...origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat`
-            shows zero files changed.
-         d. `{{ workflow.input.work_item_ids | length }}` is zero (the MG was
-            dispatched with no tasks).
-
-         When ANY of (a)-(d) holds, return immediately with:
+         When (a) or (b) holds, return immediately with:
 
              verdict: "changes_requested"
              issues: ["empty_merge_group_structural_violation: <which check failed and why>"]
@@ -952,18 +1139,45 @@ agents:
                        it was dispatched with; an empty MG is a bug somewhere
                        upstream and approving it green-washes that bug.
 
-         This rule supersedes any other reasoning: if the MG is empty,
-         the verdict is `changes_requested`. The user_acceptance gate is
-         not the right place to confirm "did the apex get done somewhere
-         else?" — that check happens at the apex level, not inside the
-         MG reviewer.
+         The user_acceptance gate is not the right place to confirm
+         "did the apex get done somewhere else?" — that check happens
+         at the apex level, not inside the MG reviewer.
 
-      4. Verify (only when the MG has actual content):
+      4. **Zero-commit disambiguation** (AB#3166 — direction-asymmetry fix):
+
+         If the MG has zero commits ahead of the feature branch (the
+         upstream triage reports `mg_commit_count == 0`), do NOT
+         automatically declare a structural violation. There are two
+         remaining legitimate cases after Case C (already_satisfied)
+         has been handled by the upstream triage:
+
+         **Case B — Nothing-to-do MG (no_op):** The impl agents
+         correctly determined no code change was needed. To confirm
+         this, check the ADO work items for each task in the MG:
+         - Run `twig show <task_id>` for each task.
+         - Look for impl agent notes indicating "no change needed",
+           "already implemented", or similar.
+         - If ALL tasks show evidence of intentional no-op completion,
+           this is Case B → `verdict: "approved"` with feedback
+           explaining the no_op rationale.
+
+         **Case A — Genuinely empty MG (structural violation):** If
+         the tasks do NOT show evidence of intentional no-op, then
+         zero commits represents a genuine upstream bug →
+         `verdict: "changes_requested"` with the
+         `empty_merge_group_structural_violation` issue tag.
+
+         The key distinction: Case B is "the agents ran, evaluated the
+         work, and correctly concluded nothing needed changing." Case A
+         is "something went wrong upstream and no work was routed into
+         this MG despite the dispatch."
+
+      5. Verify (only when the MG has actual content):
          - All acceptance criteria from the parent work item are met
          - Tasks work together cohesively
          - No integration issues between tasks
          - Test coverage is adequate at the integration level
-      5. Return your verdict.
+      6. Return your verdict.
 
          The `feedback` field will be rendered to the human in the
          user_acceptance gate that follows — write a self-contained
@@ -1245,7 +1459,7 @@ agents:
 
       ### Reviewer Summary
 
-      {{ scope_reviewer.output.feedback }}
+      {% if scope_reviewer is defined %}{{ scope_reviewer.output.feedback }}{% elif scope_auto_approve is defined %}{{ scope_auto_approve.output.feedback }}{% else %}(No reviewer feedback available){% endif %}
 
       ### Inspect the MG branch
 
