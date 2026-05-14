@@ -1,0 +1,55 @@
+# idempotent_rerun_short_circuit — apex-driver second-run idempotency.
+#
+# Simulates the second dispatch of apex-driver on an already-satisfied
+# apex. This is the idempotency invariant: re-running the driver on a
+# completed root must short-circuit cleanly instead of entering the
+# dispatch loop and reaching scope_revise_cap_gate (the AB#3127 failure
+# mode).
+#
+# Path exercised:
+#   1. preflight_sync       — twig sync (shimmed, routes unconditionally)
+#   2. preflight_apex_state  — polyphony state next-ready returns
+#                              status=satisfied (shimmed)
+#   3. terminal_apex_satisfied — pwsh produces the terminal envelope
+#   4. $end
+#
+# Because only two CLI scripts are shimmed (twig sync and polyphony
+# state next-ready), any attempt to enter the dispatch loop (worklist
+# build, edges check, etc.) would hit an unmatched script call and
+# fail the scenario. This gives us an implicit negative assertion that
+# the dispatch loop — and therefore scope_revise_cap_gate — is never
+# reached.
+
+workflow: .conductor/registry/workflows/apex-driver.yaml
+
+inputs:
+  apex_id: 42
+  intent: resume
+  platform: ado
+  organization: TestOrg
+  project: TestProject
+  repository: TestRepo
+
+cli_scripts:
+  # ── preflight_sync: twig sync ───────────────────────────────────────
+  # The first preflight step syncs the ADO cache. Routes unconditionally
+  # to preflight_apex_state regardless of output.
+  - command: twig
+    args: [sync]
+    stdout: '{}'
+    exit_code: 0
+
+  # ── preflight_apex_state: polyphony state next-ready ────────────────
+  # Returns status=satisfied — the apex tree is already complete. This
+  # is what the second run sees after a successful first run.
+  - command: polyphony
+    args: [state, next-ready]
+    stdout: '{"status":"satisfied","item_satisfied":"Satisfied","work_item_id":42}'
+    exit_code: 0
+
+expected_trace:
+  # No LLM agents are invoked on the preflight short-circuit path.
+  agents_executed: []
+  reached_terminal: true
+  output_contains:
+    satisfied: "true"

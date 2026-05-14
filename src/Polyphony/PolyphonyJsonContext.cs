@@ -54,6 +54,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(BranchEnsureImplResult))]
 [JsonSerializable(typeof(BranchEnsureEvidenceResult))]
 [JsonSerializable(typeof(BranchCheckDepsResult))]
+[JsonSerializable(typeof(BranchCheckZeroDiffResult))]
 [JsonSerializable(typeof(BlockingItem))]
 [JsonSerializable(typeof(BranchCloseScopeResult))]
 [JsonSerializable(typeof(ClosedItem))]

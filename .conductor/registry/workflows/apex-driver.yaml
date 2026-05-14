@@ -193,6 +193,10 @@ output:
   apex_id: "{{ workflow.input.apex_id }}"
   satisfied: >-
     {%- if terminal_apex_satisfied is defined -%}true
+    {%- elif terminal_apex_already_satisfied is defined -%}true
+    {%- else -%}false{%- endif -%}
+  already_satisfied: >-
+    {%- if terminal_apex_already_satisfied is defined -%}true
     {%- else -%}false{%- endif -%}
   abandoned: >-
     {%- if terminal_apex_abandoned is defined -%}true
@@ -325,11 +329,58 @@ agents:
       - "--branch"
       - "feature/{{ workflow.input.apex_id }}"
     routes:
-      - to: init_manifest
+      - to: preflight_zero_diff_check
         when: "{{ preflight_ensure_branch.output.error is not defined or preflight_ensure_branch.output.error == '' }}"
       - to: preflight_failure_gate
       # M4 catch-all
       - to: preflight_failure_gate
+
+  # ── Preflight: branch-tip zero-diff short-circuit (AB#3175) ────────────
+  #
+  # Before any plan/impl/MG work, detect whether the feature branch has
+  # zero commits ahead of the configured target (branch_strategy.target,
+  # typically `main`).  When the feature branch was NOT freshly created
+  # (remote_existed=true) and the apex is not dispatchable (i.e. no items
+  # actively need dispatching), this means a prior run's changes have
+  # already been merged to the target.  Proceeding would create empty
+  # merge groups → false-positive structural violations at
+  # scope_revise_cap_gate (AB#3127).
+  #
+  # The check deliberately does NOT fire when:
+  #   * The branch was just created (action=created) — trivially zero-diff.
+  #   * The apex status is 'dispatchable' — there are items to dispatch;
+  #     even with zero-diff, the dispatch loop should run.
+  #
+  # P5 compliance: the target branch name is read from process-config.yaml
+  # by the CLI verb, not hard-coded in the workflow.
+  #
+  # Invariants:
+  #   Pre:  feature branch ensured; preflight_apex_state computed.
+  #   Post: zero_diff bool + target_branch in output envelope.
+  - name: preflight_zero_diff_check
+    type: script
+    description: Check whether feature branch has zero commits ahead of target (AB#3175)
+    command: polyphony
+    args:
+      - "branch"
+      - "check-zero-diff"
+      - "--feature"
+      - "feature/{{ workflow.input.apex_id }}"
+    routes:
+      # Error from the zero-diff probe → surface via preflight gate.
+      - to: preflight_failure_gate
+        when: "{{ preflight_zero_diff_check.output.error is defined and preflight_zero_diff_check.output.error != '' }}"
+      # Short-circuit: zero-diff AND branch existed on remote (not freshly
+      # created) AND apex is not dispatchable (no items waiting for work).
+      - to: terminal_apex_already_satisfied
+        when: >-
+          {{
+            preflight_zero_diff_check.output.zero_diff | string | lower == 'true'
+            and preflight_ensure_branch.output.remote_existed | string | lower == 'true'
+            and preflight_apex_state.output.status != 'dispatchable'
+          }}
+      # Non-zero diff or dispatchable — proceed normally.
+      - to: init_manifest
 
   # ── Preflight: initialize run manifest ───────────────────────────────────
   #
@@ -1285,6 +1336,37 @@ agents:
       - "-Command"
       - >-
         @{ apex_id = {{ workflow.input.apex_id }}; satisfied = $true } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: apex already satisfied (zero-diff short-circuit, AB#3175) ──
+  #
+  # Fires when the feature branch has zero commits ahead of the configured
+  # target AND the branch was pre-existing on the remote AND the apex is
+  # not dispatchable (monitoring/blocked).  This means a prior run's
+  # changes have already been merged to the target; re-entering the
+  # dispatch loop would produce empty merge groups.
+  #
+  # Distinct from terminal_apex_satisfied: that terminal fires when the
+  # SDLC requirement set (via next-ready) says "satisfied".  This terminal
+  # fires when the GIT state says "nothing to do" — the operator-visible
+  # `already_satisfied` flag makes the difference observable.
+  - name: terminal_apex_already_satisfied
+    type: script
+    description: Terminal — zero-diff short-circuit; feature branch already at target (AB#3175)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        [ordered]@{
+          apex_id = {{ workflow.input.apex_id }};
+          satisfied = $true;
+          already_satisfied = $true;
+          zero_diff = $true;
+          target_branch = '{{ preflight_zero_diff_check.output.target_branch | default('') }}';
+          feature_branch = '{{ preflight_zero_diff_check.output.feature_branch | default('') }}';
+        } | ConvertTo-Json -Compress
     routes:
       - to: $end
 
