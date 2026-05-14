@@ -128,7 +128,7 @@ agents:
     routes:
       - to: dependency_gate
         when: "{{ dependency_check.output.status == 'blocked' }}"
-      - to: scope_reviewer
+      - to: scope_empty_mg_triage
         when: "{{ dependency_check.output.status == 'not_blocked' }}"
   - name: dependency_gate
     type: human_gate
@@ -139,10 +139,32 @@ agents:
         route: dependency_check
       - label: "Override"
         value: override
-        route: scope_reviewer
+        route: scope_empty_mg_triage
       - label: "Reassign"
         value: reassign
         route: $end
+  - name: scope_guidance_loader
+    type: script
+    command: pwsh
+    args: ["-Command", "@{} | ConvertTo-Json"]
+    routes:
+      - to: scope_empty_mg_triage
+  - name: scope_empty_mg_triage
+    type: script
+    command: pwsh
+    args: ["-Command", "@{ disposition = 'has_commits' } | ConvertTo-Json"]
+    routes:
+      - to: scope_auto_approve
+        when: "{{ scope_empty_mg_triage.output.disposition == 'already_satisfied' }}"
+      - to: scope_reviewer
+        when: "{{ scope_empty_mg_triage.output.disposition == 'has_commits' }}"
+      - to: scope_reviewer
+  - name: scope_auto_approve
+    type: script
+    command: pwsh
+    args: ["-Command", "@{ verdict = 'approved'; feedback = 'auto'; issues = @() } | ConvertTo-Json"]
+    routes:
+      - to: user_acceptance
   - name: scope_reviewer
     type: agent
     model: claude-opus-4.7
