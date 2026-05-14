@@ -907,7 +907,7 @@ agents:
       - |
         $feature = '{{ workflow.input.feature_branch }}'
         $mg = 'mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}'
-        $taskCount = {{ workflow.input.work_item_ids | length }}
+        $taskCount = [int]'{{ workflow.input.work_item_ids | length }}'
 
         # Structural check (a): MG branch must exist on origin
         git rev-parse --verify --quiet "origin/$mg" 2>$null | Out-Null
@@ -933,6 +933,7 @@ agents:
         }
 
         # Count commits on MG ahead of feature
+        # bare-ref-ok: $feature and $mg are PowerShell variables interpolated with origin/ prefix; lint tokenizer cannot see through the dollar-sigil into the resolved ref name.
         $mgCommitStr = git rev-list --count "origin/$feature..origin/$mg" 2>&1
         if ($LASTEXITCODE -ne 0) {
             @{
@@ -1094,7 +1095,7 @@ agents:
       - **Disposition:** `{{ scope_empty_mg_triage.output.disposition }}`
       - **Detail:** {{ scope_empty_mg_triage.output.detail }}
       - **MG commit count:** {{ scope_empty_mg_triage.output.mg_commit_count }}
-      - **Feature contains main:** {{ scope_empty_mg_triage.output.feature_contains_main }}
+      - **Trunk contains main:** {{ scope_empty_mg_triage.output.feature_contains_main }}
 
       Use this data to inform your review. If disposition is
       `structural_violation`, the triage already confirmed the MG is
