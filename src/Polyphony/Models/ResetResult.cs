@@ -19,7 +19,10 @@ public sealed record ResetResult
     public int[]? ItemsPatched { get; init; }
     public string[]? LocalBranchesDeleted { get; init; }
     public string[]? RemoteBranchesDeleted { get; init; }
+    public string[]? WorktreesRemoved { get; init; }
     public string? StateDir { get; init; }
     public bool? StateDirDeleted { get; init; }
+    public int? CommentsArchived { get; init; }
+    public string? ArchivePath { get; init; }
     public string? Error { get; init; }
 }
