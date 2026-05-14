@@ -597,6 +597,60 @@ Agent guidance files live in `.polyphony-config/agent-guidance/` and provide pro
 instructions for each AI agent role. These are injected into agent prompts via Jinja2
 templating during workflow execution.
 
+> See also: [`.polyphony-config/agent-guidance/README.md`](../.polyphony-config/agent-guidance/README.md) for the directory layout, lookup contract, and authoring rules in one place.
+
+### Two surfaces for guidance: per-role vs all-agents
+
+There are two distinct mechanisms for getting context into agent prompts.
+They are complementary, not parallel — pick by **scope**:
+
+| | Per-role (`.polyphony-config/agent-guidance/`) | All-agents (conductor convention) |
+|---|---|---|
+| **Source** | `<role>.md` in this directory | `.github/instructions/<name>.instructions.md` (with `applyTo: "**"` frontmatter), or root-level `AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` |
+| **Loaded by** | `polyphony plan load-agent-guidance` at workflow runtime | conductor's workspace preamble (every agent invocation) |
+| **Authoring rule** | "the architect / coder / reviewer specifically needs this" | "every agent that runs anywhere in this repo needs this" |
+| **Examples** | architect: "don't decompose typed-only items into children"; coder: "rebase before push, don't merge"; reviewer: "the three zero-commit-MG cases" | "use the typed `KyberTag` DU"; "spell out `KyberPrimitive` in code, not `Kp`"; "no underscore prefix on members" |
+| **Filter** | role + work-item-type + optional agent-name lookup | conductor applies the `applyTo: "**"` predicate; scoped Copilot instructions (`applyTo: "src/**"`) are not loaded |
+
+**Rule of thumb.** Start in this directory (per-role). Promote a rule to
+`.github/instructions/` only when you observe the *same* rule is needed
+for two or more roles, OR the rule is genuinely about the codebase itself
+(style, naming, cross-cutting invariants) rather than about how a
+particular role does its job.
+
+The all-agents surface arrived in conductor via
+[microsoft/conductor#169](https://github.com/microsoft/conductor/pull/169)
+(May 2026), which refactored `CONVENTION_FILES` into a polymorphic
+`Convention = ConventionFile | ConventionDirectory` discriminated union
+and added auto-discovery for `.github/instructions/**/*.instructions.md`
+with `applyTo` filtering. Files with `applyTo: "**"` are loaded into
+every agent's preamble; scoped files (`applyTo: "src/**/*.ts"`) and files
+without `applyTo` are skipped — that's the right default until conductor
+learns to evaluate the glob against the agent's working set.
+
+#### Authoring an all-agents instruction file
+
+Create `.github/instructions/<name>.instructions.md` (any filename ending
+in `.instructions.md`) with YAML frontmatter:
+
+```markdown
+---
+applyTo: "**"
+---
+
+# Polyphony — naming and types
+
+- Use the typed `PolyphonyTag` discriminated union for all polyphony-emitted
+  ADO tags. Never construct raw `polyphony:*` strings outside the DU.
+- Spell out abbreviations in C# type and member names: `MergeGroup` not
+  `Mg`, `PullRequest` not `Pr`. Serialized identifiers (branch prefixes
+  like `mg/`, JSON keys like `merge_group_id`) keep the short form.
+- No underscore prefix on members. Use `this.field` with camelCase.
+```
+
+That's it — no polyphony-side wiring needed. Conductor picks it up
+automatically the next time any workflow runs.
+
 ### Available Roles
 
 The bootstrap generates guidance files for three roles. Polyphony only checks

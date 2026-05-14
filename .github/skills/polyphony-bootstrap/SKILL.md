@@ -294,3 +294,41 @@ polyphony worktree gc --commit
 
 Run it monthly (or whenever your runs root looks crowded). The verb is idempotent — re-running on a clean tree is a no-op.
 
+---
+
+## 8 · Guidance authoring: where does this rule live?
+
+There are **two** surfaces for getting guidance into agent prompts. They
+are complementary, not parallel — pick by **scope**:
+
+| | Per-role (polyphony) | All-agents (conductor) |
+|---|---|---|
+| **Source** | `.polyphony-config/agent-guidance/<role>.md` (+ optional `<role>/<typeslug>.md` refinement and `agents/<name>.md` override) | `.github/instructions/<name>.instructions.md` with frontmatter `applyTo: "**"`, or root-level `AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` |
+| **Loaded by** | `polyphony plan load-agent-guidance` at workflow runtime | conductor's workspace preamble (every agent invocation, since [microsoft/conductor#169](https://github.com/microsoft/conductor/pull/169)) |
+| **Rule shape** | "the architect / coder / reviewer specifically needs this" | "every agent that runs anywhere in this repo needs this" |
+
+**Default home: per-role.** Start in `.polyphony-config/agent-guidance/`.
+Promote a rule to `.github/instructions/` only when (a) the same rule is
+needed for two or more roles, OR (b) the rule is genuinely about the
+codebase itself (style, naming, cross-cutting invariants) rather than
+about how a role does its job.
+
+**Quick recipe — all-agents instruction file:**
+
+```markdown
+---
+applyTo: "**"
+---
+
+# <repo> — <topic>
+
+- One bullet per always-on rule.
+- No frontmatter `applyTo` value other than `"**"` will be loaded —
+  scoped Copilot instructions intentionally skipped.
+```
+
+No polyphony-side wiring. Conductor auto-discovers on the next workflow run.
+
+Long-form discussion + examples: `docs/onboarding-guide.md` § 7. Per-role
+contract: `.polyphony-config/agent-guidance/README.md`.
+
