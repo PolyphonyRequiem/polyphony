@@ -52,4 +52,4 @@ expected_trace:
   agents_executed: []
   reached_terminal: true
   output_contains:
-    satisfied: true
+    satisfied: "true"
