@@ -827,14 +827,21 @@ agents:
   # Merges the per-item impl PR into the MG branch. Default method is
   # squash (per the ADR — impl PRs carry micro-history we do not want
   # to pollute the MG branch with). Idempotent — recognises an already
-  # merged PR. Deletes the head branch on success.
+  # merged PR.
+  #
+  # AB#3211 carve-out: passes `--delete-branch false` so the impl branch
+  # survives long enough for `assert_impl_pr_coverage` (next step) to
+  # diff the cumulative impl-branch state against the squash commit on
+  # the MG branch. Deletion is deferred to `delete_impl_branch` after
+  # the assertion passes.
   #
   # Invariants:
   #   Pre:  Impl PR is open and approved.
-  #   Post: Impl PR is merged; head impl branch deleted.
+  #   Post: Impl PR is merged; impl branch INTENTIONALLY left in place
+  #         for the coverage assertion that follows.
   - name: impl_pr_merge
     type: script
-    description: Squash-merge the per-item impl PR into the MG branch
+    description: Squash-merge the per-item impl PR into the MG branch (defers branch deletion for AB#3211 coverage assertion)
     command: polyphony
     args:
       - "pr"
@@ -845,6 +852,226 @@ agents:
       - "{{ primary_router.output.primary_id }}"
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
+      - "--delete-branch"
+      - "false"
+    routes:
+      - to: fetch_for_coverage_assertion
+
+  # ── Fetch latest MG ref (AB#3211 defense pre-step) ────────────────────
+  #
+  # `merge-impl-pr` advances `mg/{root}_{path}` on the remote via the
+  # GitHub API but does NOT update local remote-tracking refs. The
+  # coverage assertion that follows compares `origin/mg/{root}_{path}^`
+  # (pre-squash MG tip) against `origin/mg/{root}_{path}` (post-squash
+  # MG tip), so the local ref MUST be refreshed to point at the new
+  # squash commit before the diff runs.
+  #
+  # We fetch ONLY the mg branch — fetching all refs would include
+  # `--prune` semantics on `impl/{root}-{item}`, which gh just deleted
+  # on the server. The impl ref must remain locally cached so the
+  # assertion's `git diff base..origin/impl/{root}-{item}` sees the
+  # commits the squash was supposed to carry.
+  #
+  # Invariants:
+  #   Pre:  impl_pr_merge completed; remote `mg/{root}_{path}` advanced
+  #         by exactly one squash commit.
+  #   Post: local `origin/mg/{root}_{path}` matches remote tip; local
+  #         `origin/impl/{root}-{item}` is unchanged (still at impl
+  #         tip pre-deletion).
+  - name: fetch_for_coverage_assertion
+    type: script
+    description: Refresh local origin/mg ref so coverage assertion sees post-squash state
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $ErrorActionPreference = 'Stop';
+        $PSNativeCommandUseErrorActionPreference = $true;
+        $rootId = '{{ workflow.input.root_id }}';
+        $mgPath = '{{ workflow.input.mg_path }}';
+        $branch = "mg/$rootId" + "_" + "$mgPath";
+        git fetch origin "+refs/heads/$branch`:refs/remotes/origin/$branch" 2>&1 | Out-String | Write-Host;
+        @{ branch = $branch; fetched = $true } | ConvertTo-Json
+    routes:
+      - to: assert_impl_pr_coverage
+
+  # ── Coverage assertion (AB#3211 defense) ──────────────────────────────
+  #
+  # Verifies that the squash commit on `mg/{root}_{path}` carries the
+  # full cumulative diff of `impl/{root}-{item}`. Defends against the
+  # AB#3211 failure mode that struck apex run 3165 (mg/3165_pg-3175):
+  # gh's squash-merge silently dropped commits that referenced foreign
+  # task IDs, leaving the MG branch missing the work the impl branch
+  # had produced.
+  #
+  # Routing contract (DU `action` field):
+  #   - 'ok'       → impl branch can be safely deleted; route to
+  #                  delete_impl_branch.
+  #   - 'mismatch' → squash dropped commits; surface the impl-branch
+  #                  commit list to an operator via
+  #                  squash_coverage_mismatch_gate.
+  #   - 'error'    → verb itself failed (git invocation, ref resolution);
+  #                  surface to squash_coverage_error_gate for retry/abort.
+  #
+  # Invariants:
+  #   Pre:  Squash committed to `origin/mg/{root}_{path}`; local ref
+  #         refreshed; impl branch still present locally.
+  #   Post: action ∈ {ok, mismatch, error} with diff hashes + commit
+  #         enumeration in output.
+  - name: assert_impl_pr_coverage
+    type: script
+    description: Verify squash on MG branch carries cumulative impl-branch diff (AB#3211 defense)
+    command: polyphony
+    args:
+      - "pr"
+      - "assert-impl-pr-coverage"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
+      - "--item-id"
+      - "{{ primary_router.output.primary_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
+    routes:
+      - when: "{{ assert_impl_pr_coverage.output.action == 'ok' }}"
+        to: delete_impl_branch
+      - when: "{{ assert_impl_pr_coverage.output.action == 'mismatch' }}"
+        to: squash_coverage_mismatch_gate
+      - to: squash_coverage_error_gate
+
+  # ── Coverage mismatch gate (AB#3211) ──────────────────────────────────
+  #
+  # Surfaces a dropped-commit incident to the operator. Two responses:
+  #
+  #   - abort         → leave the impl branch present so the operator can
+  #                     inspect / cherry-pick / re-PR the dropped commits.
+  #                     The MG state remains green-washed in ADO until
+  #                     manually reconciled. Workflow ends.
+  #   - force_accept  → operator has inspected and acknowledges the loss
+  #                     (e.g., the dropped commits were genuinely no-ops
+  #                     or routed elsewhere). Proceed to delete the impl
+  #                     branch and continue the workflow as normal.
+  - name: squash_coverage_mismatch_gate
+    type: human_gate
+    description: Squash merge dropped commits — operator decides abort or force-accept
+    prompt: |
+      ## ❌ Squash-merge coverage mismatch — task `{{ primary_router.output.primary_id }}` (AB#3211)
+
+      `polyphony pr assert-impl-pr-coverage` reports the squash commit on
+      `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` does
+      **not** carry the cumulative diff of
+      `impl/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`.
+      Commits the impl branch produced were silently dropped during the
+      squash — the apex 3165 / pg-3175 incident.
+
+      | Field | Value |
+      |---|---|
+      | Task | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
+      | Impl ref | `{{ assert_impl_pr_coverage.output.impl_ref }}` |
+      | MG ref | `{{ assert_impl_pr_coverage.output.mg_ref }}` |
+      | Comparison base | `{{ assert_impl_pr_coverage.output.comparison_base }}` |
+      | Expected diff hash | `{{ assert_impl_pr_coverage.output.expected_diff_hash }}` ({{ assert_impl_pr_coverage.output.expected_diff_bytes | default(0) }} bytes) |
+      | Actual diff hash | `{{ assert_impl_pr_coverage.output.actual_diff_hash }}` ({{ assert_impl_pr_coverage.output.actual_diff_bytes | default(0) }} bytes) |
+
+      ### Inspect
+
+      ```
+      git log --oneline {{ assert_impl_pr_coverage.output.comparison_base }}..{{ assert_impl_pr_coverage.output.impl_ref }}
+      git diff {{ assert_impl_pr_coverage.output.comparison_base }}..{{ assert_impl_pr_coverage.output.impl_ref }}
+      git diff {{ assert_impl_pr_coverage.output.comparison_base }}..{{ assert_impl_pr_coverage.output.mg_ref }}
+      ```
+
+      ### Recovery options
+
+      - **Abort** — END this workflow. The impl branch
+        (`impl/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`)
+        is left intact so you can cherry-pick or re-PR the dropped commits.
+        The MG state remains as-is in ADO — reconcile out-of-band before
+        re-entering.
+      - **Force-accept** — acknowledge the loss (commits were no-ops or
+        intentionally routed elsewhere). Delete the impl branch and
+        continue. Recommended only after manual `git diff` inspection.
+    options:
+      - label: "🛑 Abort (preserve impl branch for inspection)"
+        value: abort
+        route: $end
+      - label: "⚡ Force-accept (acknowledge loss, proceed to delete branch)"
+        value: force_accept
+        route: delete_impl_branch
+
+  # ── Coverage assertion error gate (AB#3211) ───────────────────────────
+  #
+  # Fires when `assert-impl-pr-coverage` itself returns action='error'
+  # (typically a git invocation failure: missing ref, transient network).
+  # Distinct from the mismatch gate — this is a tool failure, not a
+  # data-loss incident.
+  - name: squash_coverage_error_gate
+    type: human_gate
+    description: assert-impl-pr-coverage tool error — operator decides retry or abort
+    prompt: |
+      ## ⚠️ Coverage assertion failed to run — task `{{ primary_router.output.primary_id }}`
+
+      `polyphony pr assert-impl-pr-coverage` returned an error envelope
+      (the verb itself could not complete; this is a tool failure, not
+      a coverage mismatch).
+
+      **Detail:** {{ assert_impl_pr_coverage.output.error | default('(no error message)') }}
+
+      | Field | Value |
+      |---|---|
+      | Impl ref | `{{ assert_impl_pr_coverage.output.impl_ref | default('(unresolved)') }}` |
+      | MG ref | `{{ assert_impl_pr_coverage.output.mg_ref | default('(unresolved)') }}` |
+
+      Common causes: stale local refs (re-fetch may help), missing
+      `origin/impl/{root}-{item}` (impl branch deleted prematurely),
+      transient git failure.
+
+      Choose an action:
+
+      - **Retry** — re-run the fetch + assertion. Use after manual
+        recovery (e.g. `git fetch origin`).
+      - **Abort** — END this workflow without deleting the impl branch.
+    options:
+      - label: "🔄 Retry (re-fetch + re-assert)"
+        value: retry
+        route: fetch_for_coverage_assertion
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Delete impl branch (deferred from impl_pr_merge per AB#3211) ──────
+  #
+  # Performs the branch deletion that `merge-impl-pr` would normally do
+  # via `gh pr merge --delete-branch`. Idempotent — a missing branch is
+  # not an error (the operator may have already deleted it manually
+  # while inspecting an aborted run, or a previous workflow re-entry
+  # may have already pruned it).
+  #
+  # Invariants:
+  #   Pre:  Coverage assertion passed (or operator force-accepted a
+  #         mismatch).
+  #   Post: Remote `impl/{root}-{item}` is gone (or was already gone).
+  - name: delete_impl_branch
+    type: script
+    description: Delete impl branch on remote (deferred from impl_pr_merge per AB#3211; idempotent)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $ErrorActionPreference = 'Continue';
+        $rootId = '{{ workflow.input.root_id }}';
+        $itemId = '{{ primary_router.output.primary_id }}';
+        $branch = "impl/$rootId-$itemId";
+        $output = git push origin --delete $branch 2>&1 | Out-String;
+        Write-Host $output;
+        $exit = $LASTEXITCODE;
+        $alreadyGone = ($output -match 'remote ref does not exist' -or $output -match 'unable to delete.*remote ref does not exist');
+        if ($exit -ne 0 -and -not $alreadyGone) {
+          @{ branch = $branch; deleted = $false; already_gone = $false; error = $output.Trim() } | ConvertTo-Json
+          exit 0
+        }
+        @{ branch = $branch; deleted = ($exit -eq 0); already_gone = $alreadyGone } | ConvertTo-Json
     routes:
       - to: primary_completer
 

@@ -348,4 +348,32 @@ public interface IGitClient
         string branch,
         string expectedRemoteSha,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git diff [--no-color] {fromRef}{sep}{toRef}</c> where <paramref name="threeDot"/>
+    /// selects the merge-base separator (<c>...</c>) vs the direct
+    /// separator (<c>..</c>). Returns the raw patch text (stdout). Throws
+    /// <see cref="ExternalToolException"/> on non-zero exit.
+    /// <para>Used by <c>polyphony pr assert-impl-pr-coverage</c>
+    /// (AB#3211) to compare the cumulative diff of an impl branch
+    /// against the diff actually carried by its squash commit on the
+    /// MG branch.</para>
+    /// </summary>
+    Task<string> DiffAsync(
+        string fromRef,
+        string toRef,
+        bool threeDot,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git rev-list {range} --reverse --format=%H%x09%s</c>. Returns
+    /// one entry per commit in the range, oldest first, as
+    /// <c>(sha, subject)</c> pairs. Throws <see cref="ExternalToolException"/>
+    /// on non-zero exit. Used by <c>polyphony pr assert-impl-pr-coverage</c>
+    /// to enumerate the impl-branch commits the operator may need to
+    /// inspect when coverage assertion fails.
+    /// </summary>
+    Task<IReadOnlyList<(string Sha, string Subject)>> RevListWithSubjectsAsync(
+        string range,
+        CancellationToken ct = default);
 }

@@ -143,5 +143,7 @@ public sealed class PolyphonyStatePathsTests
         public Task<string?> MergeBaseAsync(string a, string b, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<bool> IsAncestorAsync(string maybeAncestor, string descendant, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<ProcessResult> PushHeadWithLeaseAsync(string remote, string branch, string expectedRemoteSha, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<string> DiffAsync(string fromRef, string toRef, bool threeDot, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<(string Sha, string Subject)>> RevListWithSubjectsAsync(string range, CancellationToken ct = default) => throw new NotSupportedException();
     }
 }

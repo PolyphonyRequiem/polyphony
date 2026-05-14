@@ -458,4 +458,54 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
         var trimmed = raw.Trim();
         return string.IsNullOrEmpty(trimmed) ? null : trimmed;
     }
+
+    public async Task<string> DiffAsync(
+        string fromRef,
+        string toRef,
+        bool threeDot,
+        CancellationToken ct = default)
+    {
+        var sep = threeDot ? "..." : "..";
+        string[] args = ["diff", "--no-color", $"{fromRef}{sep}{toRef}"];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
+        }
+        return result.Stdout;
+    }
+
+    public async Task<IReadOnlyList<(string Sha, string Subject)>> RevListWithSubjectsAsync(
+        string range,
+        CancellationToken ct = default)
+    {
+        // --reverse so callers see oldest commit first (matches the reading
+        // order of `git log feature/X..impl/X-Y`); --pretty=tformat uses a
+        // tab as field separator + a trailing newline per record so we can
+        // split cleanly.
+        string[] args = ["rev-list", "--reverse", "--pretty=tformat:%H%x09%s", range];
+        var result = await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            throw new ExternalToolException(Exe, args, result.ExitCode, result.Stdout, result.Stderr);
+        }
+
+        var commits = new List<(string Sha, string Subject)>();
+        foreach (var rawLine in result.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim('\r');
+            // `git rev-list --pretty=tformat:...` interleaves a bare SHA
+            // line ahead of the formatted line for each commit. Skip the
+            // bare lines (no tab) and only consume formatted records.
+            var tab = line.IndexOf('\t');
+            if (tab <= 0)
+            {
+                continue;
+            }
+            var sha = line[..tab];
+            var subject = line[(tab + 1)..];
+            commits.Add((sha, subject));
+        }
+        return commits;
+    }
 }
