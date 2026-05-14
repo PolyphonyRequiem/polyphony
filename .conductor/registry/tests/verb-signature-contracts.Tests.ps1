@@ -115,10 +115,32 @@ Describe 'apex-driver.yaml :: init_manifest agent exists and runs before build_w
         # At least one explicit failure-side route + the M4 catch-all.
         @($failureTargets).Count | Should -BeGreaterOrEqual 1
     }
-    It 'preflight_ensure_branch routes to init_manifest on success (init_manifest is reachable)' {
+    It 'preflight_ensure_branch routes to preflight_zero_diff_check on success (AB#3175 zero-diff gate)' {
         $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'preflight_ensure_branch' }
+        $successRoute = $agent.routes | Where-Object { $_.to -eq 'preflight_zero_diff_check' }
+        $successRoute | Should -Not -BeNullOrEmpty
+    }
+    It 'preflight_zero_diff_check is present and invokes branch check-zero-diff' {
+        $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'preflight_zero_diff_check' }
+        $agent | Should -Not -BeNullOrEmpty
+        (Get-AgentCommand $script:ApexYaml 'preflight_zero_diff_check') | Should -Be 'polyphony'
+        $args = Get-AgentArgs $script:ApexYaml 'preflight_zero_diff_check'
+        ($args -join ' ') | Should -Match '^branch check-zero-diff'
+    }
+    It 'preflight_zero_diff_check routes to init_manifest on non-zero diff (init_manifest is reachable)' {
+        $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'preflight_zero_diff_check' }
         $successRoute = $agent.routes | Where-Object { $_.to -eq 'init_manifest' }
         $successRoute | Should -Not -BeNullOrEmpty
+    }
+    It 'preflight_zero_diff_check routes to terminal_apex_already_satisfied on zero diff' {
+        $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'preflight_zero_diff_check' }
+        $zeroDiffRoute = $agent.routes | Where-Object { $_.to -eq 'terminal_apex_already_satisfied' }
+        $zeroDiffRoute | Should -Not -BeNullOrEmpty
+    }
+    It 'preflight_zero_diff_check routes to preflight_failure_gate on error' {
+        $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'preflight_zero_diff_check' }
+        $errorRoute = $agent.routes | Where-Object { $_.to -eq 'preflight_failure_gate' }
+        $errorRoute | Should -Not -BeNullOrEmpty
     }
     It 'manifest-bootstrap.ps1 helper script exists on disk' {
         Test-Path (Join-Path $script:ScriptsDir 'manifest-bootstrap.ps1') | Should -BeTrue

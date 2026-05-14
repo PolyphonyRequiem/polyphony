@@ -1,0 +1,68 @@
+# apex_zero_diff_short_circuit — AB#3175
+#
+# Drives apex-driver.yaml through the zero-diff preflight short-circuit
+# path.  Proves that when the feature branch has zero commits ahead of
+# the target AND it already existed on the remote AND the apex status
+# is not 'dispatchable', the workflow terminates at
+# terminal_apex_already_satisfied WITHOUT entering the dispatch loop.
+#
+# Scripted CLI responses:
+#   1. twig sync                 → success (preflight cache refresh)
+#   2. polyphony state next-ready → status=monitoring (not dispatchable)
+#   3. polyphony branch ensure-feature → action=checked_out, remote_existed=true
+#   4. polyphony branch check-zero-diff → zero_diff=true
+#
+# After step 4, the routing condition
+#   zero_diff=true AND remote_existed=true AND status!='dispatchable'
+# fires and the workflow routes to terminal_apex_already_satisfied,
+# which emits a distinct envelope with already_satisfied=true.
+
+workflow: .conductor/registry/workflows/apex-driver.yaml
+
+inputs:
+  apex_id: 3165
+  intent: resume
+  platform: ado
+  organization: test-org
+  project: test-project
+  repository: test-repo
+
+cli_scripts:
+  # 1. preflight_sync — twig sync
+  - command: twig
+    args: [sync]
+    stdout: '{}'
+    exit_code: 0
+
+  # 2. preflight_apex_state — polyphony state next-ready
+  #    Returns monitoring: the apex has in-flight requirements but nothing
+  #    to dispatch (children are done, apex item_satisfied pending).
+  - command: polyphony
+    args: [state, next-ready]
+    stdout: '{"status":"monitoring","work_item_id":3165,"ready":[],"fulfilling":[],"message":"monitoring in-flight requirements"}'
+    exit_code: 0
+
+  # 3. preflight_ensure_branch — polyphony branch ensure-feature
+  #    The branch already existed on the remote (prior run).
+  - command: polyphony
+    args: [branch, ensure-feature]
+    stdout: '{"branch":"feature/3165","action":"checked_out","remote_existed":true,"pushed":false}'
+    exit_code: 0
+
+  # 4. preflight_zero_diff_check — polyphony branch check-zero-diff
+  #    Feature branch has zero commits ahead of target.
+  - command: polyphony
+    args: [branch, check-zero-diff]
+    stdout: '{"zero_diff":true,"feature_branch":"feature/3165","target_branch":"main"}'
+    exit_code: 0
+
+agent_scripts: {}
+
+expected_trace:
+  # No agents should execute — the short-circuit happens entirely in
+  # script nodes before any agent-backed dispatch.
+  agents_executed: []
+  reached_terminal: true
+  output_contains:
+    satisfied: "true"
+    already_satisfied: "true"
