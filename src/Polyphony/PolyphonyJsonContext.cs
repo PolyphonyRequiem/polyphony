@@ -5,6 +5,7 @@ using Polyphony.Manifest;
 using Polyphony.Locking;
 using Polyphony.Models;
 using Polyphony.Policy;
+using Polyphony.Reset;
 using Polyphony.Sdlc;
 
 namespace Polyphony;
@@ -192,6 +193,9 @@ namespace Polyphony;
 [JsonSerializable(typeof(ResearchWriteArticlesResult))]
 [JsonSerializable(typeof(WrittenArticle))]
 [JsonSerializable(typeof(ResetResult))]
+[JsonSerializable(typeof(ResetPlan))]
+[JsonSerializable(typeof(ResetPlanTagRemoval))]
+[JsonSerializable(typeof(ResetPlanComment))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
