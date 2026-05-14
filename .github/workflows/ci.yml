@@ -91,6 +91,24 @@ jobs:
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-no-tracked-polyphony-state.ps1
 
+      - name: Lint (sync-after-mutation in command verbs)
+        # Asserts every C# method body under src/Polyphony/Commands/
+        # that calls SetStateAsync / PatchFieldsAsync also flushes via
+        # SyncAsync(ct) before returning. twig's mutation methods only
+        # stage the change in twig's local cache + pending queue — they
+        # do NOT push to ADO. A separate process (e.g. polyphony
+        # validate) reading via IWorkItemRepository.GetByIdAsync sees
+        # the OLD state, and the workflow stalls or routes wrong.
+        # AB#3126/27/28/29 family — PRs #339/340/341/356 patched the
+        # four known sites individually; this lint is the standing
+        # gate that catches the next instance at PR-author time.
+        # Convention is documented at
+        # `.github/skills/polyphony-cli-developer/SKILL.md` § "State-
+        # mutation durability".
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-sync-after-mutation.ps1 -Format github
+
       - name: Install Pester
         shell: pwsh
         run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
