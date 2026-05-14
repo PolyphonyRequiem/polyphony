@@ -191,6 +191,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(ArchivistOutput))]
 [JsonSerializable(typeof(ResearchWriteArticlesResult))]
 [JsonSerializable(typeof(WrittenArticle))]
+[JsonSerializable(typeof(ResetResult))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

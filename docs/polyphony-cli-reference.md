@@ -957,6 +957,53 @@ home. Otherwise, the script registry is where it belongs.
 
 ---
 
+## Reset — state scrub for re-dispatch
+
+### `polyphony reset run`
+
+Scrubs all polyphony-authored state for a single root so the work item can
+be re-dispatched cleanly. This is the **remediation pattern** referenced by
+workflow refusal messages — when a run fails irrecoverably, `reset run`
+puts the root back into a pristine state.
+
+**Synopsis:**
+```
+polyphony reset run --root-id <N> [--dry-run] [--force]
+```
+
+**Flags:**
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--root-id` | required | ADO work item ID of the root to reset. |
+| `--dry-run` | `false` | Enumerate artifacts without performing any mutation. |
+| `--force` | `false` | Skip the confirmation gate and execute immediately. |
+
+**What it scrubs:**
+1. **ADO tags** — all `polyphony:*` tags on the root and every in-scope
+   descendant (`polyphony`, `polyphony:root`, `polyphony:planned`,
+   `polyphony:facets=…`).
+2. **Per-root state directory** — `<git-common-dir>/polyphony/<N>/`
+   (run manifest, locks).
+3. **Git branches** (local + remote) — `feature/<N>`, `plan/<N>*`,
+   `impl/<N>-*`, `mg/<N>_*`, `evidence/<N>-*` — classified via
+   `BranchNameParser`.
+
+**Actions emitted (JSON `action` field):**
+| Action | When |
+|--------|------|
+| `planned` | `--dry-run` — enumerates artifacts, no mutations. |
+| `needs_confirmation` | Neither `--dry-run` nor `--force` — caller must confirm. |
+| `executed` | `--force` — all mutations performed. |
+
+**Exit codes:** `0` on success/routing; `3` when root work item not found.
+
+**Deferred scope (not yet implemented):**
+- Archival of polyphony-authored ADO comments (requires comment
+  identification mechanism).
+- Worktree cleanup (`polyphony-runs/apex-<N>/`).
+
+---
+
 ## Cross-references
 
 - **Workflow suite documentation:** `.github/skills/polyphony-sdlc/SKILL.md`

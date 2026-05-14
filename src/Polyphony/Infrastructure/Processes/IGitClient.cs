@@ -92,6 +92,21 @@ public interface IGitClient
     Task<IReadOnlyList<string>> ListRemoteBranchesAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// <c>git branch --list</c>. Returns the list of local branch names
+    /// (trimmed, without the <c>*</c> current-branch marker). Empty when
+    /// no local branches exist.
+    /// </summary>
+    Task<IReadOnlyList<string>> ListLocalBranchesAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git branch -D {branch}</c>. Force-deletes a local branch.
+    /// Returns the raw <see cref="ProcessResult"/> so callers can route
+    /// on success/failure without exceptions — branch may not exist or
+    /// may be currently checked out.
+    /// </summary>
+    Task<ProcessResult> DeleteLocalBranchAsync(string branch, CancellationToken ct = default);
+
+    /// <summary>
     /// <c>git ls-remote --heads {remote} {pattern}</c>. Returns the lines
     /// reported by ls-remote (each "{sha}\trefs/heads/{name}") — callers
     /// usually only care whether the list is non-empty.

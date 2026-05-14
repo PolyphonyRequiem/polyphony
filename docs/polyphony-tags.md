@@ -29,10 +29,17 @@ This document specifies the **`polyphony:*` namespace** — the tags polyphony s
 
 | Tag | Set by | Read by | Meaning |
 |---|---|---|---|
-| `polyphony` | `polyphony scope tag` (and indirectly by the planner when seeding children) | `polyphony scope check`, `polyphony scope list` | **Scope-ownership marker.** This descendant of a root is in-scope for the polyphony pipeline. |
-| `polyphony:root` | `polyphony root declare` | `polyphony root resolve` | This item is the root of a polyphony run. Implies in-scope. |
-| `polyphony:planned` | The planner agent on plan-completion (existing behaviour, preserved as-is) | The plan-level workflow's resume-detection gate | The planner has produced and committed a plan artifact for this item. Status sub-state. |
+| `polyphony` | `polyphony scope tag` (and indirectly by the planner when seeding children) | `polyphony scope check`, `polyphony scope list`, `polyphony reset run` | **Scope-ownership marker.** This descendant of a root is in-scope for the polyphony pipeline. |
+| `polyphony:root` | `polyphony root declare` | `polyphony root resolve`, `polyphony reset run` | This item is the root of a polyphony run. Implies in-scope. |
+| `polyphony:planned` | The planner agent on plan-completion (existing behaviour, preserved as-is) | The plan-level workflow's resume-detection gate, `polyphony reset run` | The planner has produced and committed a plan artifact for this item. Status sub-state. |
+| `polyphony:facets=<csv>` | `polyphony plan seed-children` | `RequirementInputResolver`, `polyphony reset run` | Per-item facet override for indivisible apex items. |
 | `polyphony:run-{root_id}` | *(reserved — not stamped in Phase 1)* | *(reserved)* | OPTIONAL run-association marker for future multi-run concurrency. Slot reserved; no Phase 1 verb writes it. |
+
+> **Typed source of truth:** The `PolyphonyTag` discriminated union in
+> `src/Polyphony/Tagging/PolyphonyTag.cs` is the authoritative enum of
+> all tags polyphony owns. The `IsPolyphonyOwned(string)` helper matches
+> any tag in the `polyphony:*` namespace (including future variants).
+> `polyphony reset run` consumes this helper to strip all owned tags.
 
 ### In-scope semantics
 
