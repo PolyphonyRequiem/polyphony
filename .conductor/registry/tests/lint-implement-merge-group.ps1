@@ -395,6 +395,39 @@ if ($scopeReviewerBlock -and $scopeReviewerBlock -notmatch 'to:\s*scope_revise_c
     }
 }
 
+# ── Check 19: Scope empty-MG triage + auto-approve (AB#3166) ─────────────
+# The zero-commit MG direction-asymmetry fix requires:
+#   1. scope_empty_mg_triage script node (deterministic triage)
+#   2. scope_auto_approve script node (deterministic approval for Case C)
+#   3. scope_guidance_loader routes to scope_empty_mg_triage (not directly
+#      to scope_reviewer)
+$triageNodes = @('scope_empty_mg_triage', 'scope_auto_approve')
+foreach ($node in $triageNodes) {
+    if ($content -notmatch "name:\s*$node\b") {
+        $violations += [PSCustomObject]@{
+            Rule   = 'missing-scope-triage-node'
+            Detail = "Missing $node — required to disambiguate zero-commit MGs (AB#3166)"
+        }
+    }
+}
+
+# scope_guidance_loader must route to scope_empty_mg_triage (not scope_reviewer)
+$guidanceLoaderBlock = ''
+$inLoader = $false
+foreach ($line in $lines) {
+    if ($line -match 'name:\s*scope_guidance_loader\s*$') { $inLoader = $true; continue }
+    if ($inLoader) {
+        if ($line -match '^\s*-\s*name:') { break }
+        $guidanceLoaderBlock += $line + "`n"
+    }
+}
+if ($guidanceLoaderBlock -and $guidanceLoaderBlock -notmatch 'to:\s*scope_empty_mg_triage') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'scope-guidance-loader-bypasses-triage'
+        Detail = "scope_guidance_loader must route to scope_empty_mg_triage, not directly to scope_reviewer (AB#3166)"
+    }
+}
+
 # ── Report ────────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "FAIL: $($violations.Count) implement-merge-group.yaml violation(s)" -ForegroundColor Red
@@ -405,5 +438,5 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: implement-merge-group.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, $($primaryLoopAgents.Count) primary-loop agents, scope review, dependency gate, MG PR open+merge, Rev 4 grammar verbs)" -ForegroundColor Green
+Write-Host "PASS: implement-merge-group.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, $($primaryLoopAgents.Count) primary-loop agents, scope review, dependency gate, MG PR open+merge, Rev 4 grammar verbs, AB#3166 triage)" -ForegroundColor Green
 exit 0
