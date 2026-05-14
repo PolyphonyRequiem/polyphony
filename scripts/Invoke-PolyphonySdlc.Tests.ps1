@@ -599,6 +599,15 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         } finally { Pop-Location }
     }
 
+    It 'Refusal message points to polyphony reset --root-id remediation' {
+        $env:TWIG_FAKE_STATE = 'Done'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage "*polyphony reset --root-id 9999*"
+        } finally { Pop-Location }
+    }
+
     It 'Refusal message points to AB#3165 epic' {
         $env:TWIG_FAKE_STATE = 'Done'
         Push-Location $script:fx.Main
