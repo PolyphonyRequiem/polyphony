@@ -591,6 +591,11 @@ agents:
             severity:
               type: string
               description: One of critical, major, moderate, low. Policy route filters determine which severities gate — the architect should emit all relevant questions.
+            relevant_files:
+              type: array
+              description: Repo-relative file paths the operator should consult to answer this question (e.g. existing implementations, configs, ADRs, prior plans). Empty array if none. Surfaced verbatim in the open-questions gate so the operator can jump straight to the right context without grepping.
+              items:
+                type: string
       summary:
         type: string
         description: Brief one-paragraph summary of the plan
@@ -836,6 +841,13 @@ agents:
 
       {{ question.detail }}
 
+      {% if question.relevant_files is defined and question.relevant_files | length > 0 %}
+      **Relevant files:**
+      {% for path in question.relevant_files %}
+      - `{{ path }}`
+      {% endfor %}
+
+      {% endif %}
       {% endfor %}
 
       ---
