@@ -295,6 +295,9 @@ To proceed:
     twig state $ApexId 'To Do'                                # reopen the work item
     ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId
 
+Or, to start fresh (clean worktree + reset tags):
+    polyphony reset --root-id $ApexId
+
 Or, if you intentionally want to re-attach to an existing run:
     ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -Intent resume
 
