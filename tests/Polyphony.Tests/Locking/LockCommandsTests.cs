@@ -342,5 +342,8 @@ public sealed class LockCommandsTests : IDisposable
         public Task<bool> IsAncestorAsync(string maybeAncestor, string descendant, CancellationToken ct = default) => Task.FromResult(false);
         public Task<ProcessResult> PushHeadWithLeaseAsync(string remote, string branch, string expectedRemoteSha, CancellationToken ct = default)
             => Task.FromResult(new ProcessResult(0, string.Empty, string.Empty));
+        public Task<string> DiffAsync(string fromRef, string toRef, bool threeDot, CancellationToken ct = default) => Task.FromResult(string.Empty);
+        public Task<IReadOnlyList<(string Sha, string Subject)>> RevListWithSubjectsAsync(string range, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<(string Sha, string Subject)>>([]);
     }
 }
