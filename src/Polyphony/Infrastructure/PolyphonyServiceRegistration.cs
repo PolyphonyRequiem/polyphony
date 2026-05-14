@@ -72,6 +72,9 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<AdoTokenResolver>();
         services.AddSingleton<IAdoClient, AdoClient>();
 
+        // Work item comment client — used by reset to archive/clear comments.
+        services.AddSingleton<IWorkItemCommentClient, WorkItemCommentClient>();
+
         // Run lock infrastructure (Phase 4b PR D1b).
         services.AddSingleton<Polyphony.Locking.RunLockStore>();
         services.AddSingleton<Polyphony.Locking.RunLockPathResolver>();
