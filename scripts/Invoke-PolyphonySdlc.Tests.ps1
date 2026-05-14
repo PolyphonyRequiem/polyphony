@@ -70,17 +70,43 @@ BeforeAll {
         # 6. Empty runs root.
         New-Item -ItemType Directory -Path $runs -Force | Out-Null
 
+        # 7. Twig shim (AB#3165 Item 2). The launcher's Phase 2.5 calls
+        #    `twig show $ApexId --output json` and refuses on terminal state.
+        #    Real twig requires ADO connectivity that the test fixture has
+        #    no business needing, so we shim it here. Default state is
+        #    "To Do" (non-terminal) so existing tests pass transparently;
+        #    set $env:TWIG_FAKE_STATE before the launcher call to override.
+        $bin = Join-Path $root 'bin'
+        New-Item -ItemType Directory -Path $bin -Force | Out-Null
+        $shim = @'
+@echo off
+if defined TWIG_FAKE_STATE (
+  echo {"state": "%TWIG_FAKE_STATE%"}
+) else (
+  echo {"state": "To Do"}
+)
+'@
+        Set-Content -Path (Join-Path $bin 'twig.cmd') -Value $shim -Encoding ASCII
+        $origPath = $env:PATH
+        $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$origPath"
+
         return [pscustomobject]@{
-            Root      = $root
-            Bare      = $bare
-            Main      = $main
-            Runs      = $runs
+            Root       = $root
+            Bare       = $bare
+            Main       = $main
+            Runs       = $runs
             SeedRemote = $seedRemote
+            Bin        = $bin
+            OrigPath   = $origPath
         }
     }
 
     function Remove-BareRepoFixture {
         param([Parameter(Mandatory)][pscustomobject]$Fixture)
+        if ($Fixture.OrigPath) {
+            $env:PATH = $Fixture.OrigPath
+        }
+        $env:TWIG_FAKE_STATE = $null
         if (Test-Path $Fixture.Root) {
             Remove-Item -Path $Fixture.Root -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -491,6 +517,121 @@ Describe 'Invoke-PolyphonySdlc — .twig/ propagation from main' {
         try {
             { & $script:ScriptPath -ApexId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage "*missing 'organization'*"
+        } finally { Pop-Location }
+    }
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# Phase 2.5: terminal-state pre-flight refusal (AB#3165 Item 2)
+# ════════════════════════════════════════════════════════════════════════════
+
+Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
+
+    BeforeEach {
+        $script:fx = New-BareRepoFixture
+        $env:TWIG_FAKE_STATE = $null
+    }
+    AfterEach {
+        $env:TWIG_FAKE_STATE = $null
+        Remove-BareRepoFixture $script:fx
+    }
+
+    It 'Refuses to dispatch when work item is in Done state' {
+        $env:TWIG_FAKE_STATE = 'Done'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage "*terminal state 'Done'*"
+        } finally { Pop-Location }
+    }
+
+    It 'Refuses to dispatch when work item is Closed' {
+        $env:TWIG_FAKE_STATE = 'Closed'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage "*terminal state 'Closed'*"
+        } finally { Pop-Location }
+    }
+
+    It 'Refuses to dispatch when work item is Removed' {
+        $env:TWIG_FAKE_STATE = 'Removed'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage "*terminal state 'Removed'*"
+        } finally { Pop-Location }
+    }
+
+    It 'Refuses to dispatch when work item is Resolved' {
+        $env:TWIG_FAKE_STATE = 'Resolved'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage "*terminal state 'Resolved'*"
+        } finally { Pop-Location }
+    }
+
+    It 'Allows dispatch when work item is in non-terminal state (To Do)' {
+        $env:TWIG_FAKE_STATE = 'To Do'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+
+    It 'Allows dispatch when work item is Active' {
+        $env:TWIG_FAKE_STATE = 'Active'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+
+    It 'Refusal message points to twig state remediation' {
+        $env:TWIG_FAKE_STATE = 'Done'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage "*twig state 9999 'To Do'*"
+        } finally { Pop-Location }
+    }
+
+    It 'Refusal message points to AB#3165 epic' {
+        $env:TWIG_FAKE_STATE = 'Done'
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+                Should -Throw -ExpectedMessage '*AB#3165*'
+        } finally { Pop-Location }
+    }
+
+    It '-Intent resume bypasses the terminal-state check' {
+        $env:TWIG_FAKE_STATE = 'Done'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -Intent resume -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+
+    It '-Intent replan bypasses the terminal-state check' {
+        $env:TWIG_FAKE_STATE = 'Done'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -Intent replan -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+
+    It '-SkipStateCheck bypasses the terminal-state check' {
+        $env:TWIG_FAKE_STATE = 'Done'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -SkipStateCheck -DryRun | ConvertFrom-Json
+            $r.dry_run | Should -BeTrue
         } finally { Pop-Location }
     }
 }

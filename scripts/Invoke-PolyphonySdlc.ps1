@@ -69,6 +69,14 @@
     not yet run scripts/Migrate-ToBareRepo.ps1. Will be removed once all
     operators have migrated.
 
+.PARAMETER SkipStateCheck
+    ESCAPE HATCH for the AB#3165 Item 2 terminal-state pre-flight refusal.
+    Skips the `twig show $ApexId` call that refuses to dispatch when the
+    work item is in a terminal state (Done, Closed, Removed, Resolved).
+    Use only when intentionally re-running an already-completed item with
+    full understanding that the empty-MG / scope-revise-cap loop is the
+    expected outcome. The check is also bypassed by -Intent resume / replan.
+
 .PARAMETER PolicyPath
     Optional path to an alternate policy YAML. Exported as
     `POLYPHONY_POLICY_PATH` to the conductor child process so every nested
@@ -119,6 +127,8 @@ param(
     [switch]$DryRun,
 
     [switch]$SkipLayoutCheck,
+
+    [switch]$SkipStateCheck,
 
     [string]$PolicyPath
 )
@@ -227,6 +237,69 @@ For background, see $script:LayoutDoc.
 
 To bypass this gate (NOT recommended, transition period only):
     ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -SkipLayoutCheck
+"@
+    }
+}
+
+# ─── Phase 2.5: terminal-state pre-flight refusal (AB#3165 Item 2) ───────────
+
+# Refuse to dispatch when the target work item is in a terminal state. Outputs
+# of run N pollute inputs of run N+1: planned/root/implementable tags get
+# re-read, the architect treats the prior plan as authoritative, and an empty
+# MG (because all the work is already on main) sends the scope reviewer into a
+# 12-cycle false-positive loop that wastes 15+ min before hitting
+# scope_revise_cap_gate. Refusing here eliminates that failure mode by
+# construction. See docs/per-run-worktree-layout.md and the AB#3165 Epic.
+#
+# Bypassed by:
+#   * -Intent resume / replan  (operator is intentionally rejoining)
+#   * -SkipStateCheck          (escape hatch for transition / debug scenarios)
+$script:TerminalStates = @('Done', 'Closed', 'Removed', 'Resolved')
+
+if (-not $SkipStateCheck -and $Intent -eq 'new') {
+    $twigCmd = Get-Command twig -ErrorAction SilentlyContinue
+    if (-not $twigCmd) {
+        throw @"
+[polyphony-sdlc] twig is not on PATH; cannot run terminal-state pre-flight.
+Install twig (per docs/onboarding-guide.md) or pass -SkipStateCheck to bypass.
+"@
+    }
+    $twigStdout = & twig show $ApexId --output json 2>&1
+    $twigExit = $LASTEXITCODE
+    $global:LASTEXITCODE = 0
+    if ($twigExit -ne 0) {
+        throw @"
+[polyphony-sdlc] twig show $ApexId failed (exit $twigExit). Cannot pre-flight work-item state.
+Output: $twigStdout
+
+Run 'twig set $ApexId' to fetch the item, or pass -SkipStateCheck to bypass.
+"@
+    }
+    $wi = $null
+    try {
+        $wi = ($twigStdout -join "`n") | ConvertFrom-Json
+    } catch {
+        throw "[polyphony-sdlc] twig show $ApexId emitted unparseable JSON: $($_.Exception.Message)`nOutput: $twigStdout"
+    }
+    $state = "$($wi.state)".Trim()
+    if ($script:TerminalStates -contains $state) {
+        throw @"
+[polyphony-sdlc] Pre-flight refusal: AB#$ApexId is in terminal state '$state'.
+Re-running the apex driver against a completed work item produces a
+false-positive empty_merge_group_structural_violation at scope_revise_cap_gate
+(AB#3165 — re-run idempotency). The work this item describes is already on
+main; the implementer agent has nothing to do; the scope reviewer mistakes
+the empty MG for an upstream classifier failure.
+
+To proceed:
+    twig state $ApexId 'To Do'                                # reopen the work item
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId
+
+Or, if you intentionally want to re-attach to an existing run:
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -Intent resume
+
+To bypass this gate (NOT recommended):
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -SkipStateCheck
 "@
     }
 }
