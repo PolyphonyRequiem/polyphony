@@ -222,6 +222,9 @@ it from scratch:
 ### Questions you previously raised (now considered answered)
 {% for q in architect.output.open_questions %}
 - **{{ q.topic }}**: {{ q.detail }}
+{% if q.relevant_files is defined and q.relevant_files | length > 0 %}
+  - Relevant files: {% for path in q.relevant_files %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
 {% endfor %}
 {% endif %}
 
@@ -410,7 +413,11 @@ Return a JSON object with this structure:
     {
       "topic": "Brief topic title",
       "detail": "Full description of the question and why it matters",
-      "severity": "moderate"
+      "severity": "moderate",
+      "relevant_files": [
+        "src/Polyphony/Commands/ValidateCommand.cs",
+        "docs/decisions/validate-idempotency.md"
+      ]
     }
   ],
   "research_request_kind": "request",
@@ -541,6 +548,13 @@ contract.
 `severity` must be one of: `critical`, `major`, `moderate`, `low`. Emit
 questions at any severity level — the workflow's policy-driven route filters
 determine which questions actually gate for user input.
+
+For each question, also emit `relevant_files`: repo-relative paths to the
+files the operator should look at to answer it (existing implementations,
+configs, ADRs, prior plans, related tests). Omit or pass `[]` when the
+question is genuinely file-free (e.g. a pure scope/priority decision). The
+gate renders these inline under each question so the operator doesn't have
+to grep — every path you list is one less round-trip.
 
 If there are no open questions, return an empty array: `"open_questions": []`
 
