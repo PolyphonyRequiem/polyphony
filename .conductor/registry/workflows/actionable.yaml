@@ -783,7 +783,7 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        $prNumber = {{ open_evidence_pr.output.pr_number }};
+        $prNumber = [int]'{{ open_evidence_pr.output.pr_number }}';
         $prUrl = '{{ open_evidence_pr.output.pr_url }}';
         try {
             gh pr merge $prNumber --squash --auto --delete-branch 2>&1 | Out-Null;

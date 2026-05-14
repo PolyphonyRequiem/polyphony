@@ -608,8 +608,8 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        $failed = {{ wave_dispatch_loop.errors | length }};
-        $total  = {{ wave_dispatch_loop.count }};
+        $failed = [int]'{{ wave_dispatch_loop.errors | length }}';
+        $total  = [int]'{{ wave_dispatch_loop.count }}';
         [ordered]@{
           total_waves   = $total;
           failed_waves  = $failed;

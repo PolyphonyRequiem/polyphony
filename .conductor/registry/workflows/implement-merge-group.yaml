@@ -606,7 +606,7 @@ agents:
       - >-
         $ErrorActionPreference = 'Stop';
         $PSNativeCommandUseErrorActionPreference = $true;
-        $taskId = {{ primary_router.output.primary_id }};
+        $taskId = [int]'{{ primary_router.output.primary_id }}';
         twig set $taskId;
         twig note --text 'Item implementation merged into MG branch via impl PR';
         twig sync;

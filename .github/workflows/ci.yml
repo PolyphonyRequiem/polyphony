@@ -168,6 +168,23 @@ jobs:
           $result = Invoke-Pester -Path .conductor/registry/tests/lint-strict-undefined.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
 
+      - name: Lint workflow YAMLs (PowerShell + Jinja bareword booleans)
+        # Catches the AB#3156 Bug 1 class: a `command: pwsh` script body
+        # that assigns a Jinja render unquoted (`$x = {{ … }}`). When
+        # Jinja emits `true` / `false` (Python bool → lowercase string),
+        # PowerShell parses the bareword as a cmdlet name, errors silently,
+        # and leaves `$x = $null` — which downstream Jinja then treats as
+        # `null != false`, routing to the wrong branch (killed an AB#3127
+        # dogfood relaunch). PR #354 fixed plan-level.yaml; this lint stops
+        # the pattern from coming back across every workflow YAML. Required
+        # form: `$x = '{{ … }}' -eq 'true'` (or, for a numeric render,
+        # `[int]'{{ … }}'`). Sequenced after `Install powershell-yaml` so
+        # the YAML parser is available.
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-pwsh-jinja-bareword.ps1 -Format github
+
       - name: Lint workflow YAMLs (Jinja2 resolver)
         # Resolves every `{{ <step>.output.<path> }}` reference in workflow
         # YAMLs against the verb-output schema registry (#173 / PR #184).
