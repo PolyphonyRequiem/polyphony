@@ -2692,14 +2692,17 @@ agents:
   # only plan-level; the parent (apex-item-dispatch / apex-wave-dispatch /
   # apex-driver) then proceeds to teardown_worktree → next item → next
   # wave, producing confusing downstream errors. This agent invokes
-  # abort-run.ps1, which walks the parent process chain and Stop-Processes
-  # the conductor host. Conductor's children (python workers) cascade-die.
+  # abort-run.ps1, which POSTs to conductor's /api/stop endpoint. The
+  # engine raises InterruptError at every nested between-agent check
+  # (workflow.py:_check_interrupt at workflow.py:2309), unwinding the
+  # entire run cleanly — no process-kill, no zombies, no inflight
+  # PR/branch corruption.
   #
   # New error gates that surface a "halt everything" outcome should route
   # their Abort option here too.
   - name: terminal_abort_run
     type: script
-    description: Operator-initiated full-run abort — kills the conductor process tree
+    description: Operator-initiated full-run abort — POSTs /api/stop to halt the run cleanly
     command: pwsh
     args:
       - "-NoProfile"

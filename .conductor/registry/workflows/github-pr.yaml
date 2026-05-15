@@ -497,11 +497,12 @@ agents:
   # ── Terminal abort (operator chose Abort on an error gate) ────────────
   #
   # Identical to plan-level.yaml's terminal_abort_run. Invokes
-  # abort-run.ps1, which walks the parent process chain and Stop-Processes
-  # the conductor host. Conductor's children (python workers) cascade-die.
+  # abort-run.ps1, which POSTs to conductor's /api/stop endpoint. The
+  # engine raises InterruptError at every nested between-agent check,
+  # unwinding the entire run cleanly (no process-kill, no zombies).
   - name: terminal_abort_run
     type: script
-    description: Operator-initiated full-run abort — kills the conductor process tree
+    description: Operator-initiated full-run abort — POSTs /api/stop to halt the run cleanly
     command: pwsh
     args:
       - "-NoProfile"
