@@ -136,6 +136,22 @@ jobs:
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-bare-cross-branch-refs.ps1 -Format github
 
+      - name: Lint (primary_completer trust chain — AB#3214)
+        # Encodes the AB#3214 contract: primary_completer in
+        # implement-merge-group.yaml must be reachable ONLY via the
+        # squash-coverage trust chain (assert_impl_pr_coverage →
+        # delete_impl_branch → primary_completer, with
+        # squash_coverage_mismatch_gate's force_accept option as the
+        # only operator-override path). Together with PR #401 (AB#3210)
+        # and PR #402 (AB#3211), this makes the AB#3175 premature-Done
+        # green-wash structurally impossible. If anyone adds a new
+        # predecessor to primary_completer or delete_impl_branch that
+        # bypasses the coverage assertion, this lint fails.
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-primary-completer-trust-chain.ps1 -Format github
+
       - name: Setup Python (for harness scenarios)
         # The polyphony workflow harness (tests/harness/) drives the real
         # conductor engine in-process from Python with a FakeProvider for
