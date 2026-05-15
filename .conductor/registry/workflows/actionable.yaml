@@ -113,34 +113,32 @@ workflow:
       default: ado
       description: >-
         PR platform for the evidence PR — `ado` (default — matches the
-        Phase 5 work-item source convention) or `github`. THIS PR LEAVES
-        THIS INPUT UNROUTED on the polyphony leg: the underlying evidence
-        verbs (`branch ensure-evidence-branch`, `pr open-evidence-pr`,
-        `gh pr merge`) are GH-only today, mirroring the wave-0 pattern in
-        feature-pr.yaml. Threading a platform router that short-circuits
-        the ADO branch is a follow-up PR once the ADO sibling verbs ship.
+        Phase 5 work-item source convention) or `github`. The merge step
+        (`pr merge-evidence-pr`) is now platform-aware and dispatches to
+        the appropriate per-platform implementation. The earlier evidence
+        verbs (`branch ensure-evidence-branch`, `pr open-evidence-pr`)
+        remain GitHub-only on the polyphony leg today; ADO branches still
+        require workflows that route those steps to their `*Ado` siblings
+        via a platform router (deferred to a follow-up).
     organization:
       type: string
       required: false
       default: ""
       description: >-
-        ADO organization name. Reserved for the deferred ADO sibling of
-        the evidence verbs; ignored on the GH-only polyphony leg in this
-        PR. Threaded through verbatim so callers don't have to special-case
-        this workflow once ADO support lands.
+        ADO organization name. Forwarded to `pr merge-evidence-pr` so its
+        ADO branch can hit the right project; ignored on the GitHub leg.
     project:
       type: string
       required: false
       default: ""
       description: >-
-        ADO project name. Reserved — see `organization`.
+        ADO project name. See `organization`.
     repository:
       type: string
       required: false
       default: ""
       description: >-
-        ADO repository identifier (GUID or name). Reserved — see
-        `organization`.
+        ADO repository identifier (GUID or name). See `organization`.
     from_ref:
       type: string
       required: false
@@ -777,38 +775,37 @@ agents:
 
   # ── Evidence PR merge (polyphony leg) ───────────────────────────────────
   #
-  # Squash-merges the evidence PR via `gh`. There is no
-  # `polyphony pr merge-evidence-pr` verb today — the analogue of
-  # `pr merge-impl-pr` for the evidence branch is a wave-2 follow-up.
-  # `gh pr merge --squash --auto` matches the head-deletion behavior
-  # we want for evidence (the branch is per-item and short-lived).
+  # ── Squash-merge the evidence PR (platform-aware) ────────────────────────
   #
-  # GH-only by construction; the platform input is unrouted on this
-  # leg in this PR (see workflow header note + `platform` input
-  # description).
+  # Replaces the prior bare `gh pr merge` shell-out with the unified
+  # `polyphony pr merge-evidence-pr` verb, which dispatches to either
+  # `gh pr merge --squash --auto --delete-branch` (GitHub) or
+  # `IAdoClient.CompletePullRequestAsync(Squash, deleteSourceBranch=true)`
+  # (ADO) based on the workflow's `platform` input + origin-URL fallback.
   #
   # Invariants:
   #   Pre:  evidence_reviewer.output.decision == 'approve'.
-  #   Post: Evidence PR merged (or queued via --auto when CI is
-  #         pending); output.merged set on the script's envelope.
+  #   Post: Evidence PR merged (or queued via `--auto` on GitHub when CI is
+  #         pending); output.merged set on the verb envelope.
   - name: merge_evidence_pr
     type: script
-    description: Squash-merge the evidence PR via gh (GH-only — see header note)
-    command: pwsh
+    description: Squash-merge the evidence PR via polyphony pr merge-evidence-pr (platform-aware)
+    command: polyphony
     args:
-      - "-NoProfile"
-      - "-Command"
-      - >-
-        $prNumber = [int]'{{ open_evidence_pr.output.pr_number }}';
-        $prUrl = '{{ open_evidence_pr.output.pr_url }}';
-        try {
-            gh pr merge $prNumber --squash --auto --delete-branch 2>&1 | Out-Null;
-            $exit = $LASTEXITCODE;
-            [ordered]@{ pr_number = $prNumber; pr_url = $prUrl; merged = ($exit -eq 0); exit_code = $exit } | ConvertTo-Json -Compress;
-            if ($exit -ne 0) { exit 0 }
-        } catch {
-            [ordered]@{ pr_number = $prNumber; pr_url = $prUrl; merged = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress;
-        }
+      - "pr"
+      - "merge-evidence-pr"
+      - "--pr-number"
+      - "{{ open_evidence_pr.output.pr_number }}"
+      - "--pr-url"
+      - "{{ open_evidence_pr.output.pr_url }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: workflow_completed
         when: "{{ merge_evidence_pr.output.merged == true }}"
@@ -903,7 +900,7 @@ agents:
       **Detail:** {{ evidence_reviewer.output.comment }}
       {%- elif merge_evidence_pr is defined -%}
       **Stage:** merge_evidence_pr
-      **Detail:** {% if merge_evidence_pr.output.error is defined %}{{ merge_evidence_pr.output.error }}{% else %}gh pr merge exited with code {{ merge_evidence_pr.output.exit_code | default('?') }}{% endif %}
+      **Detail:** {% if merge_evidence_pr.output.error is defined %}{{ merge_evidence_pr.output.error }}{% else %}polyphony pr merge-evidence-pr reported merged=false (no error message){% endif %}
       {%- else -%}
       **Stage:** unknown
       **Detail:** Routed to error gate without an explicit error envelope.

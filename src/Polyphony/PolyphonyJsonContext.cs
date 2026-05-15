@@ -87,6 +87,8 @@ namespace Polyphony;
 [JsonSerializable(typeof(PrCheckEvidenceFloorResult))]
 [JsonSerializable(typeof(PrMergeImplResult))]
 [JsonSerializable(typeof(PrMergeImplAdoResult))]
+[JsonSerializable(typeof(PrMergeEvidenceResult))]
+[JsonSerializable(typeof(PrMergeEvidenceAdoResult))]
 [JsonSerializable(typeof(PrAssertImplPrCoverageResult))]
 [JsonSerializable(typeof(PrAssertImplPrCoverageCommit))]
 [JsonSerializable(typeof(PrMergeMergeGroupResult))]

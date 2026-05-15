@@ -89,6 +89,7 @@ public interface IGhClient
     /// <param name="admin">Pass <c>--admin</c> to bypass branch-protection requirements.</param>
     /// <param name="deleteBranch">Pass <c>--delete-branch</c> to delete the head branch after merging.</param>
     /// <param name="matchHeadCommit">When set, pass <c>--match-head-commit {sha}</c> so gh refuses to merge if the head moved.</param>
+    /// <param name="auto">When true, pass <c>--auto</c> to queue the merge for after policy/check completion (rather than refusing if checks are pending). Returns success once the merge is queued — the actual merge SHA is not available synchronously.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<GhMergeResult> MergePullRequestAsync(
         string repoSlug,
@@ -97,6 +98,7 @@ public interface IGhClient
         bool admin = false,
         bool deleteBranch = false,
         string? matchHeadCommit = null,
+        bool auto = false,
         CancellationToken ct = default);
 
     /// <summary>

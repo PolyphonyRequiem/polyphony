@@ -147,7 +147,7 @@ public sealed partial class PrCommands
             var openPr = resolution.OpenPr!;
             var mergeMatch = string.IsNullOrEmpty(matchHeadCommit) ? null : matchHeadCommit;
             var result = await gh.MergePullRequestAsync(
-                slug, openPr.Number, mergeMethod, admin, deleteBranch, mergeMatch, ct).ConfigureAwait(false);
+                slug, openPr.Number, mergeMethod, admin, deleteBranch, mergeMatch, ct: ct).ConfigureAwait(false);
 
             EmitMergeImpl(new PrMergeImplResult
             {
