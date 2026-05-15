@@ -45,6 +45,27 @@ Is `.polyphony-config/` in the repo root?
 
 ---
 
+## Prerequisites
+
+Polyphony has three runtime dependencies that must be on PATH before the
+launcher will work:
+
+| Dep | Purpose | Install |
+|---|---|---|
+| `git` | All branch/worktree operations | OS package manager |
+| `pwsh` (PowerShell 7+) | Required by the launcher (cross-platform PowerShell, even on Linux/macOS) | https://github.com/PowerShell/PowerShell |
+| `conductor` | Multi-agent workflow orchestrator that runs polyphony's YAML workflow suite | `pip install "git+https://github.com/microsoft/conductor.git@main"` |
+
+`conductor` is **not** on PyPI yet; install from the GitHub source. Verify
+with `conductor --version`.
+
+`twig` (the polyphony write-side companion for ADO operations) is required
+when the SDLC drives an ADO-tracked work item. Install separately from
+[`PolyphonyRequiem/twig`](https://github.com/PolyphonyRequiem/twig); it
+shares the same `~/.twig/bin/` location as polyphony.
+
+---
+
 ## Install
 
 Polyphony ships as **self-contained single-file binaries** via GitHub Releases.
@@ -183,6 +204,35 @@ pwsh ./publish-local.ps1
 
 Requires .NET 11 SDK (per `Directory.Build.props`). `publish-local.ps1` handles
 the publish + install + staleness verification.
+
+---
+
+## Register the workflow suite with conductor
+
+The launcher invokes `apex-driver@polyphony` — a workflow ID conductor only
+resolves if polyphony is registered as a workflow source. **One-time
+per-machine setup** after installing conductor:
+
+```bash
+# Point conductor at the polyphony github repo (registry source = main HEAD)
+conductor registry add polyphony PolyphonyRequiem/polyphony
+
+# Verify registration
+conductor registry list polyphony
+# Expected: a list of workflows including apex-driver, plan-level,
+# implement-merge-group, feature-pr, ado-pr, github-pr, ...
+```
+
+Without registration, `conductor run apex-driver@polyphony` fails fast with
+`workflow not found` and the launcher's preflight surfaces the same error
+before any worktree is created. Registration is **per-machine, not
+per-repo** — register once, reuse across every onboarded repo on this box.
+
+To pull updated workflows after the upstream repo changes:
+
+```bash
+conductor registry update polyphony
+```
 
 ---
 

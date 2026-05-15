@@ -36,7 +36,7 @@ workflow:
     directly (sufficient) or to deep_researcher (single-shot escalation
     with live gh API tools) before archivist. Final step writes curated
     articles to the sibling research repo.
-  version: "2.5.0"
+  version: "2.4.0"
   entry_point: guidance_loader
   metadata:
     min_polyphony_version: "2.4.0"

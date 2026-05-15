@@ -34,6 +34,23 @@ ln -s <somewhere>/polyphony/.github/skills/polyphony-runtime ~/.copilot/skills/p
 
 ---
 
+## Prerequisites
+
+Before installing polyphony, the operator's box needs:
+
+| Dep | Install |
+|---|---|
+| `git` | OS package manager |
+| `pwsh` (PowerShell 7+) | https://github.com/PowerShell/PowerShell |
+| `conductor` | `pip install "git+https://github.com/microsoft/conductor.git@main"` |
+
+Verify with `git --version`, `pwsh --version`, `conductor --version`.
+
+`twig` (ADO writes) is required for ADO-tracked SDLC; install separately
+from [`PolyphonyRequiem/twig`](https://github.com/PolyphonyRequiem/twig).
+
+---
+
 ## Inline install (no upstream skill needed)
 
 Polyphony ships as self-contained single-file binaries via GitHub Releases.
@@ -98,6 +115,22 @@ done
 ```
 
 Make sure `~/.twig/bin` (or `$env:USERPROFILE\.twig\bin` on Windows) is on PATH.
+
+---
+
+## Register polyphony with conductor (one-time per machine)
+
+The launcher invokes `apex-driver@polyphony` — conductor only resolves
+that workflow ID if polyphony is registered as a workflow source:
+
+```bash
+conductor registry add polyphony PolyphonyRequiem/polyphony
+conductor registry list polyphony   # verify
+```
+
+Without this, `conductor run apex-driver@polyphony` fails with `workflow
+not found`. Register once per machine, reuse across every onboarded repo.
+To pull updated workflows: `conductor registry update polyphony`.
 
 ---
 
