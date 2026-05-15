@@ -3,7 +3,7 @@ Tests for scripts/Invoke-PolyphonySdlc.ps1 — the AB#3085 launcher rework.
 
 Strategy: real bare repo + real worktree fixture per test. No conductor or
 init-apex mocking — we run the actual polyphony binary published locally
-(~/.twig/bin/polyphony.exe). All tests use -DryRun so no conductor process
+(~/.polyphony/bin/polyphony.exe). All tests use -DryRun so no conductor process
 is ever spawned.
 
 The fixture creates:

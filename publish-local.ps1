@@ -4,14 +4,16 @@
     Build polyphony and install the binary so PATH-resolution lands on the just-built artifact.
 
 .DESCRIPTION
-    Publishes polyphony to ~/.twig/bin (the canonical install location) and additionally
+    Publishes polyphony to ~/.polyphony/bin (the canonical install location) and additionally
     copies to wherever `polyphony` currently resolves on PATH if that location differs.
     Verifies post-install that `(Get-Command polyphony).Source` points at a binary whose
     timestamp matches the just-built artifact; fails loudly otherwise.
 
-    Closes AB#3012 — silent stale-binary symptom: publishing to .twig\bin alone does not
-    update an earlier-PATH binary at .local\bin (or wherever the user installed previously),
-    so subsequent `polyphony` invocations continue running the stale build.
+    Closes AB#3012 — silent stale-binary symptom: publishing to the canonical bin alone
+    does not update an earlier-PATH binary at .twig\bin / .local\bin (or wherever the
+    user installed previously), so subsequent `polyphony` invocations continue running
+    the stale build. The mirror-to-PATH loop below also covers the legacy ~/.twig/bin
+    install path during the migration to ~/.polyphony/bin.
 
 .PARAMETER Configuration
     dotnet build configuration. Default: Release.
@@ -27,8 +29,19 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $projectPath  = Join-Path $PSScriptRoot "src/Polyphony/Polyphony.csproj"
-$primaryDest  = Join-Path $env:USERPROFILE ".twig/bin"
+$primaryDest  = Join-Path $env:USERPROFILE ".polyphony/bin"
 $primaryExe   = Join-Path $primaryDest 'polyphony.exe'
+
+# Migration warning: the canonical location moved from ~/.twig/bin to
+# ~/.polyphony/bin. If the legacy install is still present on disk, point
+# it out so the operator can clean it up. The mirror-to-PATH loop below
+# will copy the freshly-built binary on top of the legacy copy as long as
+# the legacy bin is on PATH, so PATH resolution stays correct in the
+# meantime.
+$legacyDest = Join-Path $env:USERPROFILE ".twig/bin/polyphony.exe"
+if (Test-Path $legacyDest) {
+    Write-Warning "Legacy install detected at $legacyDest. The canonical location is now ~/.polyphony/bin/. Remove the .twig/bin copy after confirming PATH resolves to the new location."
+}
 
 if (-not (Test-Path $primaryDest)) {
     New-Item -ItemType Directory -Path $primaryDest -Force | Out-Null
@@ -44,7 +57,7 @@ Write-Host "Published to: $primaryDest" -ForegroundColor Green
 $builtMtime = (Get-Item $primaryExe).LastWriteTimeUtc
 
 # Mirror the operator-facing launcher scripts alongside the binary so the
-# canonical install layout is always: ~/.twig/bin/{polyphony.exe,
+# canonical install layout is always: ~/.polyphony/bin/{polyphony.exe,
 # Invoke-PolyphonySdlc.ps1, Resolve-GhIdentity.ps1, Migrate-ToBareRepo.ps1}.
 # Matches what release.yml ships as release assets — operators following
 # the polyphony-runtime skill see the same layout regardless of install

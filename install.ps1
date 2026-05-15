@@ -5,7 +5,7 @@
 .DESCRIPTION
     Downloads the latest polyphony binary release, the launcher scripts, and
     the polyphony-runtime + polyphony-bootstrap copilot CLI skills. Installs
-    the binary + launcher into ~/.twig/bin/ and the skills into
+    the binary + launcher into ~/.polyphony/bin/ and the skills into
     ~/.copilot/skills/ as user-globals so any future copilot session — in
     any cwd, on any repo — auto-discovers them.
 
@@ -69,8 +69,22 @@ Write-Host "    using release: $tag" -ForegroundColor Gray
 $rid = 'win-x64'
 $asset = "polyphony-$ver-$rid.exe"
 $base = "https://github.com/PolyphonyRequiem/polyphony/releases/download/$tag"
-$installDir = Join-Path $env:USERPROFILE '.twig\bin'
+$installDir = Join-Path $env:USERPROFILE '.polyphony\bin'
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+
+# Migration warning: the canonical location moved from ~/.twig/bin to
+# ~/.polyphony/bin. If a legacy install is still present, surface it so the
+# operator can clean up after PATH is updated.
+$legacyInstall = Join-Path $env:USERPROFILE '.twig\bin\polyphony.exe'
+if (Test-Path $legacyInstall) {
+    Write-Host ""
+    Write-Host "==> NOTE: legacy install found at $legacyInstall" -ForegroundColor Yellow
+    Write-Host "    The canonical install location is now ~/.polyphony/bin/." -ForegroundColor Yellow
+    Write-Host "    After this install, verify ``Get-Command polyphony`` resolves to" -ForegroundColor Yellow
+    Write-Host "    the new location, then remove the legacy copy:" -ForegroundColor Yellow
+    Write-Host "      Remove-Item '$legacyInstall'" -ForegroundColor Yellow
+    Write-Host ""
+}
 
 $tempBin = Join-Path ([IO.Path]::GetTempPath()) $asset
 $tempSha = "$tempBin.sha256"
@@ -120,7 +134,7 @@ if ($missingLaunchers) {
     throw "launcher download incomplete: missing/truncated $($missingLaunchers -join ', ') under $installDir. Refusing to leave a half-installed environment."
 }
 
-# ── Ensure ~/.twig/bin on PATH ──────────────────────────────────────────────
+# ── Ensure ~/.polyphony/bin on PATH ─────────────────────────────────────────
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -notlike "*$installDir*") {
     Write-Host "==> adding $installDir to User PATH..." -ForegroundColor Cyan

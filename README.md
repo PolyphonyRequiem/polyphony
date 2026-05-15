@@ -100,7 +100,7 @@ You will need:
 - **PowerShell 7+** — workflow scripts are PowerShell.
 - **`twig` CLI** — Polyphony's write-side companion. Install from
   [`PolyphonyRequiem/twig`](https://github.com/PolyphonyRequiem/twig) and put
-  it on PATH (typically at `~/.twig/bin/twig`).
+  it on PATH (typically at `~/.polyphony/bin/twig`).
 - **`conductor` CLI** — multi-agent workflow orchestrator. Required only if
   you want to *run* the workflow suite, not if you only want to use the CLI.
 - **`gh` CLI** — used by the GitHub PR sub-workflow.
@@ -124,7 +124,7 @@ curl -fsSL https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/ins
 
 Both scripts download the latest release binary, the launcher trio, and
 both copilot skills (`polyphony-runtime`, `polyphony-bootstrap`) into
-`~/.twig/bin/` and `~/.copilot/skills/` respectively. Idempotent — re-run
+`~/.polyphony/bin/` and `~/.copilot/skills/` respectively. Idempotent — re-run
 to upgrade. Pin a specific version with `install.ps1 -Version v2.4.0` /
 `install.sh v2.4.0`. Prereqs (git, pwsh, conductor) are *not* auto-installed
 — the script warns if any are missing and prints the install command.
@@ -139,12 +139,12 @@ work item N"* (runtime).
 git clone https://github.com/PolyphonyRequiem/polyphony.git
 cd polyphony
 dotnet restore
-./publish-local.ps1     # publishes to ~/.twig/bin/polyphony(.exe)
+./publish-local.ps1     # publishes to ~/.polyphony/bin/polyphony(.exe)
 polyphony --version
 polyphony health        # Validates env + config; should show all green
 ```
 
-`publish-local.ps1` deploys to `~/.twig/bin/` so the same install location
+`publish-local.ps1` deploys to `~/.polyphony/bin/` so the same install location
 serves both `twig` and `polyphony`.
 
 ### Register the workflow suite with conductor
@@ -414,7 +414,7 @@ Agent skills (loaded by Copilot CLI and Claude Code when in this repo):
 dotnet restore
 dotnet build
 dotnet test
-./publish-local.ps1     # publish to ~/.twig/bin/
+./publish-local.ps1     # publish to ~/.polyphony/bin/
 ```
 
 `publish-local.ps1 -Configuration Debug` builds the debug variant for faster
