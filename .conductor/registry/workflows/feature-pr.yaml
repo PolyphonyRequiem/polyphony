@@ -331,11 +331,11 @@ agents:
     routes:
       - to: $end
         when: "{{ pr_lifecycle_github.output.merged == true }}"
-      - to: remediation_counter
+      - to: pr_remediation_policy
         when: "{{ pr_lifecycle_github.output.merged == false }}"
       # Catch-all: undefined/missing 'merged' -> remediation cycle
       # (treats ambiguous outcomes as 'not merged') per M4.
-      - to: remediation_counter
+      - to: pr_remediation_policy
 
   # ── ADO PR lifecycle sub-workflow ────────────────────────────────────────
   #
@@ -370,20 +370,48 @@ agents:
     routes:
       - to: $end
         when: "{{ pr_lifecycle_ado.output.merged == true }}"
-      - to: remediation_counter
+      - to: pr_remediation_policy
         when: "{{ pr_lifecycle_ado.output.merged == false }}"
       # Catch-all per M4: undefined/missing 'merged' -> remediation cycle
       # (treats ambiguous outcomes as 'not merged') so the operator gets
       # a remediation gate path rather than silent termination.
+      - to: pr_remediation_policy
+
+  # ── PR remediation policy resolver (AB#3181 partial wiring) ────────────
+  #
+  # Resolves the `pr` policy domain so remediation_counter can drive its
+  # cap from policy.pr.max_remediation_cycles instead of a hardcoded
+  # literal. Pre-AB#3181 this domain was dead at workflow runtime.
+  #
+  # Scoped to `default` because feature-pr.yaml runs once per work item
+  # and isn't tied to a single child task type. The cap is feature-PR-wide.
+  #
+  # Currently consumed: max_remediation_cycles only. The mode (auto/warning/
+  # manual) and max_fix_loops fields remain unwired; tracked as follow-up
+  # under AB#3181.
+  - name: pr_remediation_policy
+    type: script
+    description: Resolve PR policy for remediation cap (AB#3181)
+    command: polyphony
+    args:
+      - "policy"
+      - "resolve"
+      - "--domain"
+      - "pr"
+      - "--scope"
+      - "default"
+    routes:
       - to: remediation_counter
 
   # ── Remediation cycle counter ───────────────────────────────────────────
   #
   # Tracks the number of remediation cycles (review → plan → implement →
   # re-review). Uses a counter file scoped to the work item ID. Increments
-  # after each cycle. Enforces the max 3 remediation cycle cap. Routes to
-  # remediation_cap_gate if cap is reached AND review returned
-  # changes_requested, or to remediation_planner if under the cap.
+  # after each cycle. Enforces the cap from policy.pr.max_remediation_cycles
+  # (AB#3181 wiring via pr_remediation_policy above; falls back to 3 if
+  # the policy returned no value, preserving pre-AB#3181 behavior). Routes
+  # to remediation_cap_gate if cap is reached AND review returned
+  # changes_requested, or to remediation_guidance_loader if under the cap.
   #
   # Invariants:
   #   Pre:  PR sub-workflow returned merged=false.
@@ -391,7 +419,7 @@ agents:
   #         output.under_limit indicates whether remediation may continue.
   - name: remediation_counter
     type: script
-    description: Track remediation cycle count (max 3 cycles)
+    description: Track remediation cycle count (cap from policy.pr.max_remediation_cycles)
     command: pwsh
     args:
       - "-NoProfile"
@@ -404,7 +432,13 @@ agents:
             $count = 1
         }
         Set-Content $counterFile $count
-        @{ iteration = $count; under_limit = ($count -lt 3) } | ConvertTo-Json
+        $policyMax = '{{ pr_remediation_policy.output.max_remediation_cycles }}'
+        if ([string]::IsNullOrWhiteSpace($policyMax) -or $policyMax -eq 'None' -or $policyMax -eq '0') {
+            $maxCycles = 3
+        } else {
+            $maxCycles = [int]$policyMax
+        }
+        @{ iteration = $count; max_cycles = $maxCycles; under_limit = ($count -lt $maxCycles) } | ConvertTo-Json
     routes:
       - to: remediation_guidance_loader
         when: "{{ remediation_counter.output.under_limit == true }}"
