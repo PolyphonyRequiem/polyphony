@@ -3,6 +3,7 @@ using Polyphony.Commands;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 using Polyphony.Tests.Infrastructure.Processes;
+using Polyphony.Tests.Stubs;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
@@ -1307,7 +1308,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var config = CreateConfigBuilder().Build();
         var twig = new TwigClient(new FakeProcessRunner());
         var git = new GitClient(new FakeProcessRunner());
-        return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config, twig, git, new GhClient(new FakeProcessRunner()), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git));
+        return new PlanCommands(new HierarchyWalker(config, Repository), Repository, config, twig, git, new GhClient(new FakeProcessRunner()), new ThrowingAdoClient(), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git));
     }
 
     private ValidateCommand CreateValidateCommand()
@@ -1337,7 +1338,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        var planObserver = new Polyphony.Sdlc.Observers.PlanObserver(git, gh, twig);
+        var planObserver = new Polyphony.Sdlc.Observers.PlanObserver(git, gh, new ThrowingAdoClient(), twig, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git));
         return new StateCommands(twig, git, gh, runner, Repository, config, planObserver);
     }
 

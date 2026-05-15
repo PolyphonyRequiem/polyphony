@@ -231,6 +231,7 @@ public sealed class AdoClient : IAdoClient
         string project,
         string repository,
         AdoPullRequestStatus status = AdoPullRequestStatus.Active,
+        string? sourceBranch = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(organization);
@@ -240,7 +241,16 @@ public sealed class AdoClient : IAdoClient
         var pat = ResolvePatOrThrow();
         var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                   $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullrequests" +
-                  $"?searchCriteria.status={StatusToQueryValue(status)}&api-version=7.1";
+                  $"?searchCriteria.status={StatusToQueryValue(status)}";
+        if (!string.IsNullOrEmpty(sourceBranch))
+        {
+            // ADO requires the full ref form (refs/heads/...) on the
+            // sourceRefName filter — short branch names silently match
+            // nothing.
+            var sourceRef = NormalizeBranchRef(sourceBranch);
+            url += $"&searchCriteria.sourceRefName={Uri.EscapeDataString(sourceRef)}";
+        }
+        url += "&api-version=7.1";
 
         using var response = await SendWithRetryAsync(() =>
         {

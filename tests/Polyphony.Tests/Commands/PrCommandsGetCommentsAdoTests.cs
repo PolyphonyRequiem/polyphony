@@ -638,6 +638,7 @@ public sealed class PrCommandsGetCommentsAdoTests : CommandTestBase
         public Task<IReadOnlyList<AdoPullRequest>?> ListPullRequestsAsync(
             string organization, string project, string repository,
             AdoPullRequestStatus status = AdoPullRequestStatus.Active,
+            string? sourceBranch = null,
             CancellationToken ct = default)
             => throw new NotImplementedException();
 

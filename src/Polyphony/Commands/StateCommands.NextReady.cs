@@ -26,12 +26,29 @@ public sealed partial class StateCommands
     /// discovery before <see cref="PlanObserver"/> took over the
     /// plan_authored signal. Accepted for backward-compatibility with
     /// existing workflow callers; ignored by the verb.</param>
+    /// <param name="platform">Optional override that pins the host platform
+    /// (<c>github</c> | <c>ado</c>). When supplied, the corresponding
+    /// <c>--organization/--project/--repository</c> fields must be
+    /// non-empty (per <see cref="RepoIdentityResolver"/>'s contract). When
+    /// empty, the active <see cref="RepoIdentity"/> is parsed from
+    /// <c>git remote get-url origin</c>.</param>
+    /// <param name="organization">ADO organization (override path).
+    /// Ignored on <c>platform=github</c>.</param>
+    /// <param name="project">ADO project (override path). Ignored on
+    /// <c>platform=github</c>.</param>
+    /// <param name="repository">Repository name. For <c>platform=github</c>
+    /// this is the gh-CLI <c>owner/repo</c> slug; for <c>platform=ado</c>
+    /// it is the bare repository name.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("next-ready")]
     [VerbResult(typeof(StateNextReadyResult))]
     public async Task<int> NextReady(
         int workItem = RequiredInput.MissingInt,
         string planRoot = "docs/projects",
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repository = "",
         CancellationToken ct = default)
     {
         _ = planRoot;
@@ -39,6 +56,38 @@ public sealed partial class StateCommands
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
+        // #417 — top-level try/catch so unexpected exceptions (e.g. the
+        // WorkspaceNotFoundException that wedged dispatch in cloudvault's
+        // first run) surface as routable JSON with status:"error" instead
+        // of a non-zero exit + stderr that the conductor gate cannot
+        // route on. The verb is routing-style: every reachable path must
+        // exit 0 with a structured envelope.
+        try
+        {
+            return await NextReadyCore(
+                workItem, platform, organization, project, repositoryOverride: repository, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation must surface verbatim — the host driver
+            // cancels next-ready when the parent driver shuts down.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            EmitNextReadyError(workItem, workItemType: "", $"{ex.GetType().Name}: {ex.Message}");
+            return ExitCodes.Success;
+        }
+    }
+
+    private async Task<int> NextReadyCore(
+        int workItem,
+        string platform,
+        string organization,
+        string project,
+        string repositoryOverride,
+        CancellationToken ct)
+    {
         var item = await repository.GetByIdAsync(workItem, ct).ConfigureAwait(false);
         if (item is null)
         {
@@ -53,6 +102,13 @@ public sealed partial class StateCommands
             EmitNextReadyError(workItem, workItemType, $"Type '{workItemType}' not found in process config.");
             return ExitCodes.ConfigError;
         }
+
+        // Resolve the active RepoIdentity ONCE, with operator overrides
+        // honoured first. Pass to ComputeObservedAsync so the rollup over
+        // children reuses it (every sibling shares the same git repo).
+        var identity = await planObserver
+            .TryResolveRepoIdentityAsync(platform, organization, project, repositoryOverride, ct)
+            .ConfigureAwait(false);
 
         var children = await repository.GetChildrenAsync(workItem, ct).ConfigureAwait(false);
 
@@ -105,7 +161,7 @@ public sealed partial class StateCommands
         // rollup over direct children inside ComputeObservedAsync (and a
         // post-reduce demotion of item_satisfied below) — both reasons
         // are surfaced via the same per-kind reasons dictionary.
-        var (observed, reasons, scope) = await ComputeObservedAsync(workItem, item, children, ct).ConfigureAwait(false);
+        var (observed, reasons, scope) = await ComputeObservedAsync(workItem, item, children, identity, ct).ConfigureAwait(false);
         var reduced = RequirementSetReducer.Apply(derived, observed);
 
         // PR #5 cross-item rollup for item_satisfied: the within-item
@@ -223,6 +279,7 @@ public sealed partial class StateCommands
         int workItem,
         Twig.Domain.Aggregates.WorkItem item,
         IReadOnlyList<Twig.Domain.Aggregates.WorkItem> children,
+        Polyphony.Sdlc.Observers.RepoIdentity? identity,
         CancellationToken ct)
     {
         var reasons = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -236,7 +293,7 @@ public sealed partial class StateCommands
         // contract. PR #5 cross-item rollup follows a slightly different
         // recipe (recursive call into THIS method for each child) — see
         // BuildChildRollupSnapshotsAsync below.
-        var scope = await BuildObservationScopeAsync(workItem, item, ct).ConfigureAwait(false);
+        var scope = await BuildObservationScopeAsync(workItem, item, identity, ct).ConfigureAwait(false);
 
         // PR #5: fetch direct-child reduced dispositions for the kinds
         // that roll up (item_satisfied, implementation_merged). Top-level
@@ -295,6 +352,7 @@ public sealed partial class StateCommands
     private async Task<NextReadyObservationScope> BuildObservationScopeAsync(
         int workItem,
         Twig.Domain.Aggregates.WorkItem item,
+        Polyphony.Sdlc.Observers.RepoIdentity? identity,
         CancellationToken ct)
     {
         var rootId = await ResolveRootIdAsync(item, ct).ConfigureAwait(false);
@@ -307,32 +365,21 @@ public sealed partial class StateCommands
             RootId = rootId,
             PlanBranch = planBranch,
             ImplBranch = implBranch,
+            Identity = identity,
         };
 
         // PR #3: children_seeded depends only on the polyphony:planned tag
-        // on the item itself — independent of plan branch / slug / PR
+        // on the item itself — independent of plan branch / identity / PR
         // state. Fetch up-front so every early-return path below still
         // surfaces an observed children_seeded signal.
         await FetchPlannedTagAsync(scope, ct).ConfigureAwait(false);
 
-        // PlanObserver.TryResolveSlugAsync swallows internally, but defend
-        // again here so a future tightening of the observer does not break
-        // the verb's "always exit 0" contract.
-        try
-        {
-            scope.Slug = await planObserver.TryResolveSlugAsync(ct).ConfigureAwait(false);
-        }
-        catch
-        {
-            scope.Slug = string.Empty;
-        }
-
         // PR #4: implementation_merged is independent of plan branch /
         // plan PR existence — fetch the impl signal up-front, before the
-        // plan-branch / slug early returns below. The impl PR query
-        // itself still requires the slug, so it sits AFTER slug
+        // plan-branch / identity early returns below. The impl PR query
+        // itself still requires the identity, so it sits AFTER identity
         // resolution but BEFORE any plan-related early returns. Empty
-        // implBranch (non-positive ids) and empty slug both degrade to
+        // implBranch (non-positive ids) and null identity both degrade to
         // structured "could not observe" reasons inside FetchImplPrAsync.
         await FetchImplPrAsync(scope, ct).ConfigureAwait(false);
 
@@ -353,51 +400,51 @@ public sealed partial class StateCommands
             scope.BranchExistsOnOrigin = false;
         }
 
-        if (string.IsNullOrEmpty(scope.Slug))
+        if (scope.Identity is null)
         {
-            // Without a slug we cannot list PRs; record the gap as a
+            // Without an identity we cannot list PRs; record the gap as a
             // structured fetch error so plan composers say "could not
-            // resolve repo slug" rather than "no PR opened".
-            scope.PlanPrFetchError = "could not resolve repo slug from origin remote";
+            // resolve repo identity" rather than "no PR opened".
+            scope.PlanPrFetchError = "could not resolve repo identity from origin remote";
             return scope;
         }
 
         try
         {
-            scope.LatestPlanPr = await planObserver.GetLatestPlanPrAsync(scope.Slug, planBranch, ct)
+            scope.LatestPlanPr = await planObserver.GetLatestPlanPrAsync(scope.Identity, planBranch, ct)
                 .ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
         {
-            scope.PlanPrFetchError = ex.FormatErrorMessage("gh pr list");
+            scope.PlanPrFetchError = ex.FormatErrorMessage("pr list");
         }
         catch (ExternalToolException ex)
         {
-            scope.PlanPrFetchError = $"gh pr list failed: {ex.Message}";
+            scope.PlanPrFetchError = $"pr list failed: {ex.Message}";
         }
         catch (Exception ex)
         {
-            scope.PlanPrFetchError = $"gh pr list failed: {ex.Message}";
+            scope.PlanPrFetchError = $"pr list failed: {ex.Message}";
         }
 
         if (scope.LatestPlanPr is null) return scope;
 
         try
         {
-            scope.PlanPrPoll = await planObserver.GetPlanPrPollAsync(scope.Slug, scope.LatestPlanPr.Number, ct)
+            scope.PlanPrPoll = await planObserver.GetPlanPrPollAsync(scope.Identity, scope.LatestPlanPr.Number, ct)
                 .ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
         {
-            scope.PlanPrPollError = ex.FormatErrorMessage("gh pr view");
+            scope.PlanPrPollError = ex.FormatErrorMessage("pr view");
         }
         catch (ExternalToolException ex)
         {
-            scope.PlanPrPollError = $"gh pr view failed: {ex.Message}";
+            scope.PlanPrPollError = $"pr view failed: {ex.Message}";
         }
         catch (Exception ex)
         {
-            scope.PlanPrPollError = $"gh pr view failed: {ex.Message}";
+            scope.PlanPrPollError = $"pr view failed: {ex.Message}";
         }
 
         return scope;
@@ -460,34 +507,34 @@ public sealed partial class StateCommands
             return;
         }
 
-        if (string.IsNullOrEmpty(scope.Slug))
+        if (scope.Identity is null)
         {
-            // Without a slug we cannot list PRs — record the gap as a
+            // Without an identity we cannot list PRs — record the gap as a
             // structured fetch error so the composer says "could not
-            // resolve repo slug" rather than "no impl PR opened".
-            scope.ImplPrFetchError = "could not resolve repo slug from origin remote";
+            // resolve repo identity" rather than "no impl PR opened".
+            scope.ImplPrFetchError = "could not resolve repo identity from origin remote";
             return;
         }
 
         try
         {
             scope.LatestImplPr = await planObserver
-                .GetLatestImplPrAsync(scope.Slug, scope.ImplBranch, ct)
+                .GetLatestImplPrAsync(scope.Identity, scope.ImplBranch, ct)
                 .ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
         {
-            scope.ImplPrFetchError = ex.FormatErrorMessage("gh pr list");
+            scope.ImplPrFetchError = ex.FormatErrorMessage("pr list");
             return;
         }
         catch (ExternalToolException ex)
         {
-            scope.ImplPrFetchError = $"gh pr list failed: {ex.Message}";
+            scope.ImplPrFetchError = $"pr list failed: {ex.Message}";
             return;
         }
         catch (Exception ex)
         {
-            scope.ImplPrFetchError = $"gh pr list failed: {ex.Message}";
+            scope.ImplPrFetchError = $"pr list failed: {ex.Message}";
             return;
         }
 
@@ -496,20 +543,20 @@ public sealed partial class StateCommands
         try
         {
             scope.ImplPrPoll = await planObserver
-                .GetPlanPrPollAsync(scope.Slug, scope.LatestImplPr.Number, ct)
+                .GetPlanPrPollAsync(scope.Identity, scope.LatestImplPr.Number, ct)
                 .ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
         {
-            scope.ImplPrPollError = ex.FormatErrorMessage("gh pr view");
+            scope.ImplPrPollError = ex.FormatErrorMessage("pr view");
         }
         catch (ExternalToolException ex)
         {
-            scope.ImplPrPollError = $"gh pr view failed: {ex.Message}";
+            scope.ImplPrPollError = $"pr view failed: {ex.Message}";
         }
         catch (Exception ex)
         {
-            scope.ImplPrPollError = $"gh pr view failed: {ex.Message}";
+            scope.ImplPrPollError = $"pr view failed: {ex.Message}";
         }
     }
 
@@ -867,7 +914,7 @@ public sealed partial class StateCommands
 
         var ordered = children.OrderBy(c => c.Id).ToArray();
         var tasks = ordered
-            .Select(child => ComputeChildSnapshotAsync(child, ct, depthRemaining, ancestors))
+            .Select(child => ComputeChildSnapshotAsync(child, parentScope.Identity, ct, depthRemaining, ancestors))
             .ToArray();
 
         ChildRollupSnapshot[] snapshots;
@@ -887,6 +934,7 @@ public sealed partial class StateCommands
 
     private async Task<ChildRollupSnapshot> ComputeChildSnapshotAsync(
         Twig.Domain.Aggregates.WorkItem child,
+        Polyphony.Sdlc.Observers.RepoIdentity? identity,
         CancellationToken ct,
         int depthRemaining,
         IReadOnlySet<int> ancestors)
@@ -975,7 +1023,7 @@ public sealed partial class StateCommands
 
             // Recurse: build child observation, including grandchild
             // rollup if depth permits.
-            var childScope = await BuildObservationScopeAsync(child.Id, child, ct).ConfigureAwait(false);
+            var childScope = await BuildObservationScopeAsync(child.Id, child, identity, ct).ConfigureAwait(false);
             var nextAncestors = new HashSet<int>(ancestors) { child.Id };
             await BuildChildRollupSnapshotsAsync(
                 childScope, grandchildren, ct,

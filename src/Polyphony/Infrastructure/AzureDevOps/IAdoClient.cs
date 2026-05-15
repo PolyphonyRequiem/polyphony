@@ -77,6 +77,7 @@ public interface IAdoClient
         string project,
         string repository,
         AdoPullRequestStatus status = AdoPullRequestStatus.Active,
+        string? sourceBranch = null,
         CancellationToken ct = default);
 
     /// <summary>

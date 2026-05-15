@@ -32,7 +32,7 @@ public sealed partial class PlanCommands
         new(@"github\.com[:/]([^/]+/[^/.]+?)(?:\.git)?/?$",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    private readonly PlanObserver observer = new(git, gh, twig);
+    private readonly PlanObserver observer = new(git, gh, ado, twig, repoIdentityResolver);
 
     /// <summary>
     /// Detect the current plan-workflow state for a work item.

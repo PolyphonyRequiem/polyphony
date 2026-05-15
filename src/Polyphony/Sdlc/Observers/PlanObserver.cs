@@ -1,5 +1,5 @@
-using System.Text.RegularExpressions;
 using Polyphony.Branching;
+using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
 
 namespace Polyphony.Sdlc.Observers;
@@ -26,20 +26,33 @@ namespace Polyphony.Sdlc.Observers;
 /// <see cref="ObservedRequirementState"/>'s contract).
 /// </para>
 /// <para>
-/// All four observation methods perform their own slug + PR list
-/// resolution. Callers that need multiple observations for the same item
-/// should be aware that each call re-issues the underlying
-/// <c>git remote get-url</c> + <c>gh pr list</c> + <c>gh pr view</c> chain;
-/// for the verb's composite path see
+/// All four observation methods perform their own <see cref="RepoIdentity"/>
+/// + PR list resolution. Callers that need multiple observations for the
+/// same item should be aware that each call re-issues the underlying
+/// <c>git remote get-url</c> + PR list + PR view chain; for the verb's
+/// composite path see
 /// <see cref="Polyphony.Commands.PlanCommands"/>'s detect-state
 /// implementation, which uses the lower-level primitives below to fetch
 /// each signal exactly once.
 /// </para>
+/// <para>
+/// <b>Platform handling:</b> every observation method internally branches
+/// on the resolved <see cref="RepoIdentity"/> variant — calls flow through
+/// <see cref="IGhClient"/> for <see cref="RepoIdentity.GitHubRepo"/> and
+/// through <see cref="IAdoClient"/> for <see cref="RepoIdentity.AdoRepo"/>.
+/// Verbs that have already resolved an identity (with the platform-override
+/// flags consumed by <see cref="RepoIdentityResolver"/>) should call the
+/// <see cref="RepoIdentity"/>-overload variants directly to avoid a
+/// redundant origin-URL probe.
+/// </para>
 /// </remarks>
-public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
+public sealed class PlanObserver(
+    IGitClient git,
+    IGhClient gh,
+    IAdoClient ado,
+    ITwigClient twig,
+    RepoIdentityResolver resolver)
 {
-    private static readonly Regex GitHubSlugRegex =
-        new(@"github\.com[:/]([^/]+/[^/.]+?)(?:\.git)?/?$", RegexOptions.Compiled);
 
     // ── Per-kind observation API (consumed by next-ready) ─────────────────
 
@@ -47,19 +60,30 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
     /// Observe the <c>plan_authored</c> requirement: does a plan branch
     /// exist on origin and has a PR been opened against it?
     /// </summary>
-    public async Task<PlanAuthoredObservation> ObservePlanAuthoredAsync(
+    public Task<PlanAuthoredObservation> ObservePlanAuthoredAsync(
         int rootId, int itemId, CancellationToken ct = default)
+        => ObservePlanAuthoredAsync(rootId, itemId, identity: null, ct);
+
+    /// <summary>
+    /// Identity-aware overload: when <paramref name="identity"/> is supplied
+    /// (typically by a verb that has already consumed
+    /// <c>--platform/--organization/--project/--repository</c> overrides
+    /// via <see cref="RepoIdentityResolver"/>), the origin-URL probe is
+    /// skipped. When null, the resolver is invoked with no overrides.
+    /// </summary>
+    public async Task<PlanAuthoredObservation> ObservePlanAuthoredAsync(
+        int rootId, int itemId, RepoIdentity? identity, CancellationToken ct = default)
     {
         var planBranch = ResolvePlanBranch(rootId, itemId);
 
-        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
+        identity ??= await TryResolveRepoIdentityAsync(null, null, null, null, ct).ConfigureAwait(false);
         var branchExists = await CheckPlanBranchExistsAsync(planBranch, ct).ConfigureAwait(false);
 
-        if (string.IsNullOrEmpty(slug))
+        if (identity is null)
         {
             return new PlanAuthoredObservation(
                 Disposition: Disposition.Needed,
-                Reason: "could not resolve repo slug from origin remote",
+                Reason: "could not resolve repo identity from origin remote",
                 PlanBranch: planBranch,
                 BranchExistsOnOrigin: branchExists,
                 PrNumber: null,
@@ -67,7 +91,7 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
                 PrState: null);
         }
 
-        var latestPr = await GetLatestPlanPrAsync(slug, planBranch, ct).ConfigureAwait(false);
+        var latestPr = await GetLatestPlanPrAsync(identity, planBranch, ct).ConfigureAwait(false);
         if (latestPr is null)
         {
             return new PlanAuthoredObservation(
@@ -82,7 +106,7 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
                 PrState: null);
         }
 
-        var poll = await GetPlanPrPollAsync(slug, latestPr.Number, ct).ConfigureAwait(false);
+        var poll = await GetPlanPrPollAsync(identity, latestPr.Number, ct).ConfigureAwait(false);
         var prState = poll?.State?.ToUpperInvariant();
         return MapPlanAuthored(planBranch, branchExists, latestPr, prState);
     }
@@ -91,24 +115,33 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
     /// Observe the <c>plan_reviewed</c> requirement: has the plan PR been
     /// approved?
     /// </summary>
-    public async Task<PlanReviewedObservation> ObservePlanReviewedAsync(
+    public Task<PlanReviewedObservation> ObservePlanReviewedAsync(
         int rootId, int itemId, CancellationToken ct = default)
+        => ObservePlanReviewedAsync(rootId, itemId, identity: null, ct);
+
+    /// <summary>
+    /// Identity-aware overload: see
+    /// <see cref="ObservePlanAuthoredAsync(int, int, RepoIdentity?, CancellationToken)"/>
+    /// for the contract.
+    /// </summary>
+    public async Task<PlanReviewedObservation> ObservePlanReviewedAsync(
+        int rootId, int itemId, RepoIdentity? identity, CancellationToken ct = default)
     {
         var planBranch = ResolvePlanBranch(rootId, itemId);
 
-        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(slug))
+        identity ??= await TryResolveRepoIdentityAsync(null, null, null, null, ct).ConfigureAwait(false);
+        if (identity is null)
         {
             return new PlanReviewedObservation(
                 Disposition: Disposition.Needed,
-                Reason: "could not resolve repo slug from origin remote",
+                Reason: "could not resolve repo identity from origin remote",
                 PrNumber: null,
                 PrUrl: null,
                 PrState: null,
                 ReviewDecision: null);
         }
 
-        var latestPr = await GetLatestPlanPrAsync(slug, planBranch, ct).ConfigureAwait(false);
+        var latestPr = await GetLatestPlanPrAsync(identity, planBranch, ct).ConfigureAwait(false);
         if (latestPr is null)
         {
             return new PlanReviewedObservation(
@@ -120,7 +153,7 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
                 ReviewDecision: null);
         }
 
-        var poll = await GetPlanPrPollAsync(slug, latestPr.Number, ct).ConfigureAwait(false);
+        var poll = await GetPlanPrPollAsync(identity, latestPr.Number, ct).ConfigureAwait(false);
         return MapPlanReviewed(latestPr, poll);
     }
 
@@ -128,23 +161,32 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
     /// Observe the <c>plan_promoted</c> requirement: has the plan PR been
     /// merged?
     /// </summary>
-    public async Task<PlanPromotedObservation> ObservePlanPromotedAsync(
+    public Task<PlanPromotedObservation> ObservePlanPromotedAsync(
         int rootId, int itemId, CancellationToken ct = default)
+        => ObservePlanPromotedAsync(rootId, itemId, identity: null, ct);
+
+    /// <summary>
+    /// Identity-aware overload: see
+    /// <see cref="ObservePlanAuthoredAsync(int, int, RepoIdentity?, CancellationToken)"/>
+    /// for the contract.
+    /// </summary>
+    public async Task<PlanPromotedObservation> ObservePlanPromotedAsync(
+        int rootId, int itemId, RepoIdentity? identity, CancellationToken ct = default)
     {
         var planBranch = ResolvePlanBranch(rootId, itemId);
 
-        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(slug))
+        identity ??= await TryResolveRepoIdentityAsync(null, null, null, null, ct).ConfigureAwait(false);
+        if (identity is null)
         {
             return new PlanPromotedObservation(
                 Disposition: Disposition.Needed,
-                Reason: "could not resolve repo slug from origin remote",
+                Reason: "could not resolve repo identity from origin remote",
                 PrNumber: null,
                 PrUrl: null,
                 PrState: null);
         }
 
-        var latestPr = await GetLatestPlanPrAsync(slug, planBranch, ct).ConfigureAwait(false);
+        var latestPr = await GetLatestPlanPrAsync(identity, planBranch, ct).ConfigureAwait(false);
         if (latestPr is null)
         {
             return new PlanPromotedObservation(
@@ -155,7 +197,7 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
                 PrState: null);
         }
 
-        var poll = await GetPlanPrPollAsync(slug, latestPr.Number, ct).ConfigureAwait(false);
+        var poll = await GetPlanPrPollAsync(identity, latestPr.Number, ct).ConfigureAwait(false);
         var prState = poll?.State?.ToUpperInvariant();
         return MapPlanPromoted(latestPr, prState);
     }
@@ -186,17 +228,26 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
     /// <see cref="ImplementationMergedObservation"/> for the deferral
     /// rationale.
     /// </remarks>
-    public async Task<ImplementationMergedObservation> ObserveImplementationMergedAsync(
+    public Task<ImplementationMergedObservation> ObserveImplementationMergedAsync(
         int rootId, int itemId, CancellationToken ct = default)
+        => ObserveImplementationMergedAsync(rootId, itemId, identity: null, ct);
+
+    /// <summary>
+    /// Identity-aware overload: see
+    /// <see cref="ObservePlanAuthoredAsync(int, int, RepoIdentity?, CancellationToken)"/>
+    /// for the contract.
+    /// </summary>
+    public async Task<ImplementationMergedObservation> ObserveImplementationMergedAsync(
+        int rootId, int itemId, RepoIdentity? identity, CancellationToken ct = default)
     {
         var implBranch = ResolveImplBranch(rootId, itemId);
 
-        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(slug))
+        identity ??= await TryResolveRepoIdentityAsync(null, null, null, null, ct).ConfigureAwait(false);
+        if (identity is null)
         {
             return new ImplementationMergedObservation(
                 Disposition: Disposition.Needed,
-                Reason: "could not resolve repo slug from origin remote",
+                Reason: "could not resolve repo identity from origin remote",
                 ImplBranch: implBranch,
                 PrNumber: null,
                 PrUrl: null,
@@ -214,13 +265,13 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
                 PrState: null);
         }
 
-        var latestPr = await GetLatestImplPrAsync(slug, implBranch, ct).ConfigureAwait(false);
+        var latestPr = await GetLatestImplPrAsync(identity, implBranch, ct).ConfigureAwait(false);
         if (latestPr is null)
         {
             return MapImplementationMerged(implBranch, latestPr: null, prState: null);
         }
 
-        var poll = await GetPlanPrPollAsync(slug, latestPr.Number, ct).ConfigureAwait(false);
+        var poll = await GetPlanPrPollAsync(identity, latestPr.Number, ct).ConfigureAwait(false);
         var prState = poll?.State?.ToUpperInvariant();
         return MapImplementationMerged(implBranch, latestPr, prState);
     }
@@ -486,18 +537,48 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
     /// <c>git remote get-url origin</c>. Returns the empty string on any
     /// failure.
     /// </summary>
+    /// <remarks>
+    /// Legacy GitHub-only API. New code should call
+    /// <see cref="TryResolveRepoIdentityAsync"/> which understands ADO
+    /// origin URLs and per-verb override flags. Retained because the
+    /// <c>plan detect-state</c> verb path still consumes it directly while
+    /// the ADO refactor lands one phase at a time.
+    /// </remarks>
     public async Task<string> TryResolveSlugAsync(CancellationToken ct = default)
+    {
+        var identity = await TryResolveRepoIdentityAsync(null, null, null, null, ct).ConfigureAwait(false);
+        return identity is RepoIdentity.GitHubRepo gh ? gh.Slug : string.Empty;
+    }
+
+    /// <summary>
+    /// Resolve the active <see cref="RepoIdentity"/>, honouring optional
+    /// <c>--platform/--organization/--project/--repository</c> overrides
+    /// before falling back to <c>git remote get-url origin</c> URL parsing.
+    /// Returns null when neither overrides nor the origin URL produce a
+    /// recognised identity (matches the old slug API's "empty string"
+    /// failure shape).
+    /// </summary>
+    public async Task<RepoIdentity?> TryResolveRepoIdentityAsync(
+        string? overridePlatform,
+        string? overrideOrganization,
+        string? overrideProject,
+        string? overrideRepository,
+        CancellationToken ct = default)
     {
         try
         {
-            var url = await git.GetRemoteUrlAsync("origin", ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(url)) return string.Empty;
-            var match = GitHubSlugRegex.Match(url);
-            return match.Success ? match.Groups[1].Value : string.Empty;
+            var resolved = await resolver.ResolveAsync(
+                overridePlatform ?? string.Empty,
+                overrideOrganization ?? string.Empty,
+                overrideProject ?? string.Empty,
+                overrideRepository ?? string.Empty,
+                ct)
+                .ConfigureAwait(false);
+            return resolved.Identity;
         }
         catch
         {
-            return string.Empty;
+            return null;
         }
     }
 
@@ -543,6 +624,11 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
     /// <see cref="ExternalToolTimeoutException"/> when precise error
     /// reporting is required.
     /// </summary>
+    /// <remarks>
+    /// GitHub-only legacy overload. Prefer
+    /// <see cref="GetLatestPlanPrAsync(RepoIdentity, string, CancellationToken)"/>
+    /// for new code so the call routes correctly on ADO.
+    /// </remarks>
     public async Task<PullRequestSummary?> GetLatestPlanPrAsync(
         string slug, string planBranch, CancellationToken ct = default)
     {
@@ -554,20 +640,67 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
     }
 
     /// <summary>
+    /// <see cref="RepoIdentity"/>-aware overload that branches to
+    /// <see cref="IGhClient"/> for GitHub repos and to
+    /// <see cref="IAdoClient"/> for ADO repos. Both paths return the
+    /// platform-neutral <see cref="PullRequestSummary"/> shape.
+    /// </summary>
+    public async Task<PullRequestSummary?> GetLatestPlanPrAsync(
+        RepoIdentity identity, string planBranch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        return identity switch
+        {
+            RepoIdentity.GitHubRepo gh => await GetLatestPlanPrAsync(gh.Slug, planBranch, ct).ConfigureAwait(false),
+            RepoIdentity.AdoRepo ado => await GetLatestPrFromAdoAsync(ado, planBranch, ct).ConfigureAwait(false),
+            _ => throw new InvalidOperationException($"Unhandled RepoIdentity variant: {identity.GetType().Name}"),
+        };
+    }
+
+    /// <summary>
     /// Fetch the rich poll-data snapshot for a single PR via
     /// <c>gh pr view --json</c>. Returns null when the PR has disappeared
     /// between list and view.
     /// </summary>
+    /// <remarks>
+    /// GitHub-only legacy overload. Prefer
+    /// <see cref="GetPlanPrPollAsync(RepoIdentity, int, CancellationToken)"/>
+    /// for new code.
+    /// </remarks>
     public Task<GhPullRequestPollData?> GetPlanPrPollAsync(
         string slug, int prNumber, CancellationToken ct = default)
         => gh.GetPullRequestPollDataAsync(slug, prNumber, ct);
 
     /// <summary>
+    /// <see cref="RepoIdentity"/>-aware overload. ADO snapshots are
+    /// converted to <see cref="GhPullRequestPollData"/> via
+    /// <see cref="GhPullRequestPollAdapter"/> so downstream mappers stay
+    /// platform-neutral.
+    /// </summary>
+    public async Task<GhPullRequestPollData?> GetPlanPrPollAsync(
+        RepoIdentity identity, int prNumber, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        switch (identity)
+        {
+            case RepoIdentity.GitHubRepo ghIdent:
+                return await gh.GetPullRequestPollDataAsync(ghIdent.Slug, prNumber, ct).ConfigureAwait(false);
+            case RepoIdentity.AdoRepo adoIdent:
+                var poll = await ado.GetPullRequestPollDataAsync(
+                    adoIdent.Organization, adoIdent.Project, adoIdent.Repository, prNumber, ct)
+                    .ConfigureAwait(false);
+                return poll is null ? null : GhPullRequestPollAdapter.FromAdo(poll);
+            default:
+                throw new InvalidOperationException($"Unhandled RepoIdentity variant: {identity.GetType().Name}");
+        }
+    }
+
+    /// <summary>
     /// Return the highest-numbered PR (open, closed, or merged) for the
     /// impl branch <paramref name="implBranch"/>, or null when none exist.
-    /// Same shape as <see cref="GetLatestPlanPrAsync"/> — the branch name
-    /// is the only difference. Caller is responsible for handling
-    /// <see cref="ExternalToolException"/> /
+    /// Same shape as <see cref="GetLatestPlanPrAsync(string, string, CancellationToken)"/>
+    /// — the branch name is the only difference. Caller is responsible
+    /// for handling <see cref="ExternalToolException"/> /
     /// <see cref="ExternalToolTimeoutException"/> when precise error
     /// reporting is required.
     /// </summary>
@@ -579,6 +712,53 @@ public sealed class PlanObserver(IGitClient git, IGhClient gh, ITwigClient twig)
             new PrListFilters(Head: implBranch, State: "all", Limit: 50),
             ct).ConfigureAwait(false);
         return prs.OrderByDescending(p => p.Number).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// <see cref="RepoIdentity"/>-aware overload. See
+    /// <see cref="GetLatestPlanPrAsync(RepoIdentity, string, CancellationToken)"/>
+    /// for the contract.
+    /// </summary>
+    public async Task<PullRequestSummary?> GetLatestImplPrAsync(
+        RepoIdentity identity, string implBranch, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        return identity switch
+        {
+            RepoIdentity.GitHubRepo gh => await GetLatestImplPrAsync(gh.Slug, implBranch, ct).ConfigureAwait(false),
+            RepoIdentity.AdoRepo ado => await GetLatestPrFromAdoAsync(ado, implBranch, ct).ConfigureAwait(false),
+            _ => throw new InvalidOperationException($"Unhandled RepoIdentity variant: {identity.GetType().Name}"),
+        };
+    }
+
+    private async Task<PullRequestSummary?> GetLatestPrFromAdoAsync(
+        RepoIdentity.AdoRepo identity, string sourceBranch, CancellationToken ct)
+    {
+        var prs = await ado.ListPullRequestsAsync(
+            identity.Organization, identity.Project, identity.Repository,
+            AdoPullRequestStatus.All, sourceBranch, ct).ConfigureAwait(false);
+        if (prs is null || prs.Count == 0) return null;
+
+        var latest = prs.OrderByDescending(p => p.PullRequestId).FirstOrDefault();
+        if (latest is null) return null;
+
+        // ADO doesn't expose merge timestamp on the list endpoint; the
+        // poll-data fetch is where MergedAt lands. Returning null here
+        // matches the GH list-vs-view shape (gh pr list also omits
+        // mergedAt; the field is filled in by the subsequent view).
+        return new PullRequestSummary(
+            Number: latest.PullRequestId,
+            HeadRefName: StripRefsHeadsPrefix(latest.SourceRefName),
+            Url: latest.Url,
+            MergedAt: null);
+    }
+
+    private static string StripRefsHeadsPrefix(string refName)
+    {
+        const string prefix = "refs/heads/";
+        return refName.StartsWith(prefix, StringComparison.Ordinal)
+            ? refName.Substring(prefix.Length)
+            : refName;
     }
 
     /// <summary>

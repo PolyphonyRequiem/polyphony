@@ -3,6 +3,7 @@ using Polyphony.Commands;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
 using Polyphony.Tests.Infrastructure.Processes;
+using Polyphony.Tests.Stubs;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
@@ -47,7 +48,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
         var git = new GitClient(runner);
-        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git)), runner);
+        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), new ThrowingAdoClient(), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git)), runner);
     }
 
     private static PlanDetectStateResult Parse(string output) =>

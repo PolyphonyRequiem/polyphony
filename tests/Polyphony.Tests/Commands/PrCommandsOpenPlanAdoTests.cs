@@ -502,6 +502,7 @@ public sealed class PrCommandsOpenPlanAdoTests : CommandTestBase
         public Task<IReadOnlyList<AdoPullRequest>?> ListPullRequestsAsync(
             string organization, string project, string repository,
             AdoPullRequestStatus status = AdoPullRequestStatus.Active,
+            string? sourceBranch = null,
             CancellationToken ct = default)
         {
             if (ThrowOnList is not null) throw ThrowOnList;

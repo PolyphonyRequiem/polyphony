@@ -5,6 +5,7 @@ using Polyphony.Infrastructure.Processes;
 using Polyphony.Sdlc;
 using Polyphony.Sdlc.Observers;
 using Polyphony.Tests.Infrastructure.Processes;
+using Polyphony.Tests.Stubs;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
@@ -43,7 +44,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        var planObserver = new PlanObserver(git, gh, twig);
+        var planObserver = new PlanObserver(git, gh, new ThrowingAdoClient(), twig, new RepoIdentityResolver(git));
         return new StateCommands(twig, git, gh, runner, Repository, config, planObserver);
     }
 
@@ -239,15 +240,15 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         result.ObservationReasons![RequirementKind.PlanAuthored].ShouldNotBeNullOrWhiteSpace();
     }
 
-    // ─── Failure handling: missing origin → all plan kinds Needed (slug gap) ─
+    // ─── Failure handling: missing origin → all plan kinds Needed (identity gap) ─
 
     [Fact]
     public async Task NextReady_NoOriginRemote_PlanKindsNeeded_WithSlugReason()
     {
         await SeedApexAsync();
-        // Simulate no origin remote; PlanObserver.TryResolveSlugAsync
-        // returns "" and our scope captures the slug gap in
-        // PlanPrFetchError so composers say "could not resolve repo slug"
+        // Simulate no origin remote; PlanObserver.TryResolveRepoIdentityAsync
+        // returns null and our scope captures the identity gap in
+        // PlanPrFetchError so composers say "could not resolve repo identity"
         // rather than "no PR opened".
         var runner = new FakeProcessRunner();
         runner.WhenExact("git", ["remote", "get-url", "origin"],
@@ -259,7 +260,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
-        // Slug-resolution failure surfaces via PlanPrFetchError → all plan
+        // Identity-resolution failure surfaces via PlanPrFetchError → all plan
         // composers return Needed with the captured reason. plan_authored
         // is promoted to Ready (Next) by the reducer.
         result.Next.ShouldContain(RequirementKind.PlanAuthored);
@@ -267,7 +268,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         result.Needed.ShouldContain(RequirementKind.PlanPromoted);
 
         result.ObservationReasons.ShouldNotBeNull();
-        result.ObservationReasons![RequirementKind.PlanAuthored].ShouldContain("slug");
+        result.ObservationReasons![RequirementKind.PlanAuthored].ShouldContain("repo identity");
     }
 
     // ─── Closed-unmerged plan PR → all three Needed (replan posture) ────
