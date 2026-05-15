@@ -819,6 +819,14 @@ agents:
       - "{{ primary_router.output.primary_id }}"
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: impl_pr_merge
 
@@ -854,6 +862,14 @@ agents:
       - "{{ workflow.input.mg_path }}"
       - "--delete-branch"
       - "false"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: fetch_for_coverage_assertion
 

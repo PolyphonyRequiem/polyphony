@@ -35,6 +35,10 @@ public sealed partial class PrCommands
     /// <param name="baseBranch">Optional base branch override. Defaults to <c>feature/&lt;apex&gt;</c>, or <c>main</c> in the orphan case.</param>
     /// <param name="title">Optional PR title; deterministic fallback derived from the work item's twig title when empty.</param>
     /// <param name="body">Optional PR body; minimal placeholder stub used when empty.</param>
+    /// <param name="platform">Platform override (<c>github</c>|<c>ado</c>). Empty for origin-URL auto-detect.</param>
+    /// <param name="organization">ADO organization. Required when platform=ado.</param>
+    /// <param name="project">ADO project. Required when platform=ado.</param>
+    /// <param name="repository">For ADO: repository name/GUID. For GitHub: <c>owner/name</c> slug. Required when <paramref name="platform"/> is non-empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-evidence-pr")]
     [VerbResult(typeof(PrOpenEvidenceResult))]
@@ -45,6 +49,10 @@ public sealed partial class PrCommands
         string baseBranch = "",
         string title = "",
         string body = "",
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repository = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("pr open-evidence-pr",
@@ -79,6 +87,42 @@ public sealed partial class PrCommands
         var resolvedBase = string.IsNullOrWhiteSpace(baseBranch)
             ? (isOrphan ? "main" : $"feature/{effectiveApex}")
             : baseBranch;
+
+        // ── Platform-aware identity resolution ───────────────────────────
+        // Resolve once. ADO branch dispatches to the shared *Ado helper;
+        // GitHub branch (or fall-through when resolver returns no identity)
+        // takes the existing gh-CLI path.
+        var resolved = await repoIdentityResolver
+            .ResolveAsync(platform, organization, project, repository, ct)
+            .ConfigureAwait(false);
+
+        if (resolved.Identity is Polyphony.Sdlc.Observers.RepoIdentity.AdoRepo adoRepo)
+        {
+            var slug = BuildAdoSlug(adoRepo.Organization, adoRepo.Project, adoRepo.Repository);
+            var outcome = await OpenEvidenceAdoCoreAsync(
+                adoRepo.Organization, adoRepo.Project, adoRepo.Repository, slug,
+                workItem, effectiveApex,
+                headBranch, resolvedBase,
+                title, body, ct).ConfigureAwait(false);
+
+            EmitEvidence(new PrOpenEvidenceResult
+            {
+                PrNumber = outcome.PrNumber,
+                PrUrl = outcome.PrUrl,
+                Title = outcome.Title,
+                HeadBranch = outcome.HeadBranch,
+                BaseBranch = outcome.BaseBranch,
+                WorkItemId = workItem,
+                ApexId = effectiveApex,
+                Created = outcome.Created,
+                Organization = adoRepo.Organization,
+                Project = adoRepo.Project,
+                Repository = adoRepo.Repository,
+                RepoSlug = slug,
+                Error = outcome.Error,
+            });
+            return outcome.Error is null ? ExitCodes.Success : ExitCodes.RoutingFailure;
+        }
 
         try
         {

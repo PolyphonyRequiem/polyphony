@@ -80,40 +80,79 @@ public sealed partial class PrCommands
         var headBranch = BranchNameBuilder.Impl(root, item).Value;
         var baseBranch = BranchNameBuilder.MergeGroup(root, path).Value;
 
+        var outcome = await OpenImplAdoCoreAsync(
+            organization, project, repository, slug,
+            rootId, itemId, path,
+            headBranch, baseBranch,
+            title, body, ct).ConfigureAwait(false);
+
+        EmitOpenImplAdo(new PrOpenImplAdoResult
+        {
+            RootId = rootId,
+            ItemId = itemId,
+            MgPath = path.Canonical,
+            HeadBranch = outcome.HeadBranch,
+            BaseBranch = outcome.BaseBranch,
+            Organization = organization,
+            Project = project,
+            Repository = repository,
+            RepoSlug = slug,
+            PrNumber = outcome.PrNumber,
+            PrUrl = outcome.PrUrl,
+            Title = outcome.Title,
+            Created = outcome.Created,
+            ErrorCode = outcome.ErrorCode,
+            Error = outcome.Error,
+        });
+        return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Shared ADO logic for opening an impl PR. Used by
+    /// <see cref="OpenImplAdo"/> (legacy ADO-only envelope) and by
+    /// <see cref="OpenImplPr"/>'s ADO branch (unified envelope).
+    /// </summary>
+    internal async Task<ImplAdoOutcome> OpenImplAdoCoreAsync(
+        string organization,
+        string project,
+        string repository,
+        string slug,
+        int rootId,
+        int itemId,
+        MergeGroupPath path,
+        string headBranch,
+        string baseBranch,
+        string title,
+        string body,
+        CancellationToken ct)
+    {
         if (ado is null)
         {
-            EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
-                "ado_failed", "IAdoClient is not configured", headBranch, baseBranch);
-            return ExitCodes.Success;
+            return ImplAdoOutcome.Failure(headBranch, baseBranch,
+                "ado_failed", "IAdoClient is not configured");
         }
 
-        // ── 2. Validate head + base exist on the remote. ───────────────────
         try
         {
             var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", ct).ConfigureAwait(false);
             if (headRefs.Count == 0)
             {
-                EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
-                    "missing_head_branch", $"head branch '{headBranch}' does not exist on remote",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
+                return ImplAdoOutcome.Failure(headBranch, baseBranch,
+                    "missing_head_branch", $"head branch '{headBranch}' does not exist on remote");
             }
 
             var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{baseBranch}", ct).ConfigureAwait(false);
             if (baseRefs.Count == 0)
             {
-                EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
-                    "missing_base_branch", $"base branch '{baseBranch}' does not exist on remote",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
+                return ImplAdoOutcome.Failure(headBranch, baseBranch,
+                    "missing_base_branch", $"base branch '{baseBranch}' does not exist on remote");
             }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
-                "ado_failed", $"git ls-remote failed: {ex.Message}", headBranch, baseBranch);
-            return ExitCodes.Success;
+            return ImplAdoOutcome.Failure(headBranch, baseBranch,
+                "ado_failed", $"git ls-remote failed: {ex.Message}");
         }
 
         var prTitle = string.IsNullOrWhiteSpace(title)
@@ -125,18 +164,15 @@ public sealed partial class PrCommands
 
         try
         {
-            // ── 3. Reuse check: ADO list filtered by source ref. ──────────
             var activePrs = await ado.ListPullRequestsAsync(
                 organization, project, repository,
                 AdoPullRequestStatus.Active, sourceBranch: headBranch, ct).ConfigureAwait(false);
 
             if (activePrs is null)
             {
-                EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
+                return ImplAdoOutcome.Failure(headBranch, baseBranch,
                     "pr_not_found",
-                    $"Repository '{repository}' not found in {organization}/{project}.",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
+                    $"Repository '{repository}' not found in {organization}/{project}.");
             }
 
             var expectedTargetRef = "refs/heads/" + baseBranch;
@@ -152,29 +188,19 @@ public sealed partial class PrCommands
 
             if (existing is not null)
             {
-                EmitOpenImplAdo(new PrOpenImplAdoResult
-                {
-                    RootId = rootId,
-                    ItemId = itemId,
-                    MgPath = path.Canonical,
-                    HeadBranch = headBranch,
-                    BaseBranch = baseBranch,
-                    Organization = organization,
-                    Project = project,
-                    Repository = repository,
-                    RepoSlug = slug,
-                    PrNumber = existing.PullRequestId,
-                    PrUrl = !string.IsNullOrEmpty(existing.Url)
+                return new ImplAdoOutcome(
+                    PrNumber: existing.PullRequestId,
+                    PrUrl: !string.IsNullOrEmpty(existing.Url)
                         ? existing.Url
                         : BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
-                    Title = prTitle,
-                    Created = false,
-                    ErrorCode = "",
-                });
-                return ExitCodes.Success;
+                    Title: prTitle,
+                    HeadBranch: headBranch,
+                    BaseBranch: baseBranch,
+                    Created: false,
+                    ErrorCode: "",
+                    Error: null);
             }
 
-            // ── 4. Create the PR. ─────────────────────────────────────────
             var created = await ado.CreatePullRequestAsync(
                 organization, project, repository,
                 sourceBranch: headBranch,
@@ -185,62 +211,70 @@ public sealed partial class PrCommands
 
             if (created is null)
             {
-                EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
+                return ImplAdoOutcome.Failure(headBranch, baseBranch,
                     "pr_not_found",
-                    $"Repository '{repository}' not found in {organization}/{project}.",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
+                    $"Repository '{repository}' not found in {organization}/{project}.");
             }
 
-            EmitOpenImplAdo(new PrOpenImplAdoResult
-            {
-                RootId = rootId,
-                ItemId = itemId,
-                MgPath = path.Canonical,
-                HeadBranch = headBranch,
-                BaseBranch = baseBranch,
-                Organization = organization,
-                Project = project,
-                Repository = repository,
-                RepoSlug = slug,
-                PrNumber = created.PullRequestId,
-                PrUrl = !string.IsNullOrEmpty(created.Url)
+            return new ImplAdoOutcome(
+                PrNumber: created.PullRequestId,
+                PrUrl: !string.IsNullOrEmpty(created.Url)
                     ? created.Url
                     : BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
-                Title = prTitle,
-                Created = true,
-                ErrorCode = "",
-            });
-            return ExitCodes.Success;
+                Title: prTitle,
+                HeadBranch: headBranch,
+                BaseBranch: baseBranch,
+                Created: true,
+                ErrorCode: "",
+                Error: null);
         }
         catch (OperationCanceledException) { throw; }
         catch (InvalidOperationException ex)
         {
-            EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
-                "no_pat", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
+            return ImplAdoOutcome.Failure(headBranch, baseBranch, "no_pat", ex.Message);
         }
         catch (TimeoutException ex)
         {
-            EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
-                "ado_timeout", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
+            return ImplAdoOutcome.Failure(headBranch, baseBranch, "ado_timeout", ex.Message);
         }
         catch (HttpRequestException ex)
         {
             var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
                 ? "no_pat"
                 : "ado_failed";
-            EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
-                code, ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
+            return ImplAdoOutcome.Failure(headBranch, baseBranch, code, ex.Message);
         }
         catch (Exception ex)
         {
-            EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
-                "ado_failed", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
+            return ImplAdoOutcome.Failure(headBranch, baseBranch, "ado_failed", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Internal carrier for the platform-neutral fields produced by
+    /// <see cref="OpenImplAdoCoreAsync"/>.
+    /// </summary>
+    internal readonly record struct ImplAdoOutcome(
+        int PrNumber,
+        string PrUrl,
+        string Title,
+        string HeadBranch,
+        string BaseBranch,
+        bool Created,
+        string ErrorCode,
+        string? Error)
+    {
+        public static ImplAdoOutcome Failure(
+            string headBranch, string baseBranch, string errorCode, string message)
+            => new(
+                PrNumber: 0,
+                PrUrl: string.Empty,
+                Title: string.Empty,
+                HeadBranch: headBranch,
+                BaseBranch: baseBranch,
+                Created: false,
+                ErrorCode: errorCode,
+                Error: message);
     }
 
     private static void EmitOpenImplAdo(PrOpenImplAdoResult result)

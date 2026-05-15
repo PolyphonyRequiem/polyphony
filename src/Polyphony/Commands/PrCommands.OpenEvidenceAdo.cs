@@ -81,11 +81,56 @@ public sealed partial class PrCommands
             ? (isOrphan ? "main" : $"feature/{effectiveApex}")
             : baseBranch;
 
+        var outcome = await OpenEvidenceAdoCoreAsync(
+            organization, project, repository, slug,
+            workItem, effectiveApex,
+            headBranch, resolvedBase,
+            title, body, ct).ConfigureAwait(false);
+
+        EmitOpenEvidenceAdo(new PrOpenEvidenceAdoResult
+        {
+            WorkItemId = workItem,
+            ApexId = effectiveApex,
+            HeadBranch = outcome.HeadBranch,
+            BaseBranch = outcome.BaseBranch,
+            Organization = organization,
+            Project = project,
+            Repository = repository,
+            RepoSlug = slug,
+            PrNumber = outcome.PrNumber,
+            PrUrl = outcome.PrUrl,
+            Title = outcome.Title,
+            Created = outcome.Created,
+            ErrorCode = outcome.ErrorCode,
+            Error = outcome.Error,
+        });
+        return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Shared ADO logic for opening an evidence PR. Used by
+    /// <see cref="OpenEvidenceAdo"/> (which wraps it with the legacy
+    /// <see cref="PrOpenEvidenceAdoResult"/> envelope) and by
+    /// <see cref="OpenEvidencePr"/>'s ADO branch (which wraps it with the
+    /// unified <see cref="PrOpenEvidenceResult"/> envelope).
+    /// </summary>
+    internal async Task<EvidenceAdoOutcome> OpenEvidenceAdoCoreAsync(
+        string organization,
+        string project,
+        string repository,
+        string slug,
+        int workItem,
+        int effectiveApex,
+        string headBranch,
+        string resolvedBase,
+        string title,
+        string body,
+        CancellationToken ct)
+    {
         if (ado is null)
         {
-            EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
-                "ado_failed", "IAdoClient is not configured", headBranch, resolvedBase);
-            return ExitCodes.Success;
+            return EvidenceAdoOutcome.Failure(headBranch, resolvedBase,
+                "ado_failed", "IAdoClient is not configured");
         }
 
         try
@@ -93,27 +138,22 @@ public sealed partial class PrCommands
             var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", ct).ConfigureAwait(false);
             if (headRefs.Count == 0)
             {
-                EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
-                    "missing_head_branch", $"head branch '{headBranch}' does not exist on remote",
-                    headBranch, resolvedBase);
-                return ExitCodes.Success;
+                return EvidenceAdoOutcome.Failure(headBranch, resolvedBase,
+                    "missing_head_branch", $"head branch '{headBranch}' does not exist on remote");
             }
 
             var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{resolvedBase}", ct).ConfigureAwait(false);
             if (baseRefs.Count == 0)
             {
-                EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
-                    "missing_base_branch", $"base branch '{resolvedBase}' does not exist on remote",
-                    headBranch, resolvedBase);
-                return ExitCodes.Success;
+                return EvidenceAdoOutcome.Failure(headBranch, resolvedBase,
+                    "missing_base_branch", $"base branch '{resolvedBase}' does not exist on remote");
             }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
-                "ado_failed", $"git ls-remote failed: {ex.Message}", headBranch, resolvedBase);
-            return ExitCodes.Success;
+            return EvidenceAdoOutcome.Failure(headBranch, resolvedBase,
+                "ado_failed", $"git ls-remote failed: {ex.Message}");
         }
 
         var prTitle = string.IsNullOrWhiteSpace(title)
@@ -131,11 +171,9 @@ public sealed partial class PrCommands
 
             if (activePrs is null)
             {
-                EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
+                return EvidenceAdoOutcome.Failure(headBranch, resolvedBase,
                     "pr_not_found",
-                    $"Repository '{repository}' not found in {organization}/{project}.",
-                    headBranch, resolvedBase);
-                return ExitCodes.Success;
+                    $"Repository '{repository}' not found in {organization}/{project}.");
             }
 
             var expectedTargetRef = "refs/heads/" + resolvedBase;
@@ -151,25 +189,17 @@ public sealed partial class PrCommands
 
             if (existing is not null)
             {
-                EmitOpenEvidenceAdo(new PrOpenEvidenceAdoResult
-                {
-                    WorkItemId = workItem,
-                    ApexId = effectiveApex,
-                    HeadBranch = headBranch,
-                    BaseBranch = resolvedBase,
-                    Organization = organization,
-                    Project = project,
-                    Repository = repository,
-                    RepoSlug = slug,
-                    PrNumber = existing.PullRequestId,
-                    PrUrl = !string.IsNullOrEmpty(existing.Url)
+                return new EvidenceAdoOutcome(
+                    PrNumber: existing.PullRequestId,
+                    PrUrl: !string.IsNullOrEmpty(existing.Url)
                         ? existing.Url
                         : BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
-                    Title = prTitle,
-                    Created = false,
-                    ErrorCode = "",
-                });
-                return ExitCodes.Success;
+                    Title: prTitle,
+                    HeadBranch: headBranch,
+                    BaseBranch: resolvedBase,
+                    Created: false,
+                    ErrorCode: "",
+                    Error: null);
             }
 
             var created = await ado.CreatePullRequestAsync(
@@ -182,61 +212,72 @@ public sealed partial class PrCommands
 
             if (created is null)
             {
-                EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
+                return EvidenceAdoOutcome.Failure(headBranch, resolvedBase,
                     "pr_not_found",
-                    $"Repository '{repository}' not found in {organization}/{project}.",
-                    headBranch, resolvedBase);
-                return ExitCodes.Success;
+                    $"Repository '{repository}' not found in {organization}/{project}.");
             }
 
-            EmitOpenEvidenceAdo(new PrOpenEvidenceAdoResult
-            {
-                WorkItemId = workItem,
-                ApexId = effectiveApex,
-                HeadBranch = headBranch,
-                BaseBranch = resolvedBase,
-                Organization = organization,
-                Project = project,
-                Repository = repository,
-                RepoSlug = slug,
-                PrNumber = created.PullRequestId,
-                PrUrl = !string.IsNullOrEmpty(created.Url)
+            return new EvidenceAdoOutcome(
+                PrNumber: created.PullRequestId,
+                PrUrl: !string.IsNullOrEmpty(created.Url)
                     ? created.Url
                     : BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
-                Title = prTitle,
-                Created = true,
-                ErrorCode = "",
-            });
-            return ExitCodes.Success;
+                Title: prTitle,
+                HeadBranch: headBranch,
+                BaseBranch: resolvedBase,
+                Created: true,
+                ErrorCode: "",
+                Error: null);
         }
         catch (OperationCanceledException) { throw; }
         catch (InvalidOperationException ex)
         {
-            EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
-                "no_pat", ex.Message, headBranch, resolvedBase);
-            return ExitCodes.Success;
+            return EvidenceAdoOutcome.Failure(headBranch, resolvedBase, "no_pat", ex.Message);
         }
         catch (TimeoutException ex)
         {
-            EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
-                "ado_timeout", ex.Message, headBranch, resolvedBase);
-            return ExitCodes.Success;
+            return EvidenceAdoOutcome.Failure(headBranch, resolvedBase, "ado_timeout", ex.Message);
         }
         catch (HttpRequestException ex)
         {
             var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
                 ? "no_pat"
                 : "ado_failed";
-            EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
-                code, ex.Message, headBranch, resolvedBase);
-            return ExitCodes.Success;
+            return EvidenceAdoOutcome.Failure(headBranch, resolvedBase, code, ex.Message);
         }
         catch (Exception ex)
         {
-            EmitOpenEvidenceAdoError(workItem, effectiveApex, organization, project, repository, slug,
-                "ado_failed", ex.Message, headBranch, resolvedBase);
-            return ExitCodes.Success;
+            return EvidenceAdoOutcome.Failure(headBranch, resolvedBase, "ado_failed", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Internal carrier for the platform-neutral fields produced by
+    /// <see cref="OpenEvidenceAdoCoreAsync"/>. Both the legacy ADO-only
+    /// envelope and the unified evidence-PR envelope are populated from
+    /// this struct.
+    /// </summary>
+    internal readonly record struct EvidenceAdoOutcome(
+        int PrNumber,
+        string PrUrl,
+        string Title,
+        string HeadBranch,
+        string BaseBranch,
+        bool Created,
+        string ErrorCode,
+        string? Error)
+    {
+        public static EvidenceAdoOutcome Failure(
+            string headBranch, string baseBranch, string errorCode, string message)
+            => new(
+                PrNumber: 0,
+                PrUrl: string.Empty,
+                Title: string.Empty,
+                HeadBranch: headBranch,
+                BaseBranch: baseBranch,
+                Created: false,
+                ErrorCode: errorCode,
+                Error: message);
     }
 
     private static void EmitOpenEvidenceAdo(PrOpenEvidenceAdoResult result)
