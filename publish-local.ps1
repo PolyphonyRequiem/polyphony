@@ -66,6 +66,7 @@ $builtMtime = (Get-Item $primaryExe).LastWriteTimeUtc
 $launcherScripts = @(
     'Invoke-PolyphonySdlc.ps1',
     'Resolve-GhIdentity.ps1',
+    'Twig-Hydration.ps1',
     'Migrate-ToBareRepo.ps1',
     'bootstrap-conductor.ps1'
 )

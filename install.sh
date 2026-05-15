@@ -96,7 +96,7 @@ mv "$tmpdir/$asset" "$install_dir/polyphony"
 # from main HEAD. Drifts vs binary version; acceptable until next release.
 launcher_base='https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/scripts'
 echo "==> downloading launcher scripts..."
-for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Migrate-ToBareRepo.ps1; do
+for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Twig-Hydration.ps1 Migrate-ToBareRepo.ps1; do
     curl -fsSL -o "$install_dir/$s" "$launcher_base/$s"
 done
 

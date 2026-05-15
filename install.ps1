@@ -108,7 +108,7 @@ Remove-Item $tempSha -Force
 # After that ships, switch $launcherBase to "$base".
 $launcherBase = 'https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/scripts'
 Write-Host "==> downloading launcher scripts..." -ForegroundColor Cyan
-foreach ($name in 'Invoke-PolyphonySdlc.ps1', 'Resolve-GhIdentity.ps1', 'Migrate-ToBareRepo.ps1', 'bootstrap-conductor.ps1') {
+foreach ($name in 'Invoke-PolyphonySdlc.ps1', 'Resolve-GhIdentity.ps1', 'Twig-Hydration.ps1', 'Migrate-ToBareRepo.ps1', 'bootstrap-conductor.ps1') {
     $dest = Join-Path $installDir $name
     Invoke-WebRequest -Uri "$launcherBase/$name" -OutFile $dest
     Unblock-File -Path $dest
@@ -120,6 +120,7 @@ foreach ($name in 'Invoke-PolyphonySdlc.ps1', 'Resolve-GhIdentity.ps1', 'Migrate
 $expectedLaunchers = @(
     'Invoke-PolyphonySdlc.ps1',
     'Resolve-GhIdentity.ps1',
+    'Twig-Hydration.ps1',
     'Migrate-ToBareRepo.ps1',
     'bootstrap-conductor.ps1'
 )
