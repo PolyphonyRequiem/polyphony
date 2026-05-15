@@ -1579,7 +1579,21 @@ agents:
       - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado is defined and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if (open_plan_pr is defined and open_plan_pr.output.pr_url is defined) else state_detector.output.pr_url) }}
       - **Branch:** `{{ ensure_plan_branch.output.branch if (ensure_plan_branch is defined and ensure_plan_branch.output.branch is defined) else state_detector.output.plan_branch }}`
 
-      Review the PR on GitHub/ADO. Approve to proceed with merge + seeding,
+      {% if workflow.input.platform == 'ado' %}
+      Review the PR in Azure DevOps. Vote **Approve** (or *Approve with
+      suggestions*) to proceed with merge + seeding, or vote **Wait for
+      author** / **Reject** to send the architect back for revision. Then
+      return here and click **Continue**.
+
+      ADO does not block self-approval — you can vote on your own PR
+      through the standard PR UI, or via:
+
+          az repos pr set-vote --id <pr-id> --vote approve
+
+      The polyphony plan_reviewer leaves an advisory comment but does
+      NOT cast a vote — the operator's vote is what gates the merge.
+      {% else %}
+      Review the PR on GitHub. Approve to proceed with merge + seeding,
       or request changes to send the architect back for revision. Then
       return here and click **Continue**.
 
@@ -1600,6 +1614,7 @@ agents:
       A bare `polyphony:approve` (no SHA) still works as a deprecation
       fallback but emits a warning; `polyphony:request-changes` REQUIRES
       a SHA — there is no bare form. See issue #207 for context.
+      {% endif %}
 
       ---
 

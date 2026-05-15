@@ -166,9 +166,7 @@ public sealed partial class PrCommands
                     Repository = repository,
                     RepoSlug = slug,
                     PrNumber = existing.PullRequestId,
-                    PrUrl = !string.IsNullOrEmpty(existing.Url)
-                        ? existing.Url
-                        : BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
+                    PrUrl = BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
                     Title = prTitle,
                     Created = false,
                     ErrorCode = "",
@@ -204,9 +202,7 @@ public sealed partial class PrCommands
                 Repository = repository,
                 RepoSlug = slug,
                 PrNumber = created.PullRequestId,
-                PrUrl = !string.IsNullOrEmpty(created.Url)
-                    ? created.Url
-                    : BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
+                PrUrl = BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
                 Title = prTitle,
                 Created = true,
                 ErrorCode = "",
