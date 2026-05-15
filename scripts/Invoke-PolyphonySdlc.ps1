@@ -658,9 +658,29 @@ if (-not $PSBoundParameters.ContainsKey('RepoProject')) {
 
 # ─── Phase 10: build the conductor command ───────────────────────────────────
 
+# Pin a free TCP port for conductor's web dashboard so abort-run.ps1 (and
+# any other script step that needs to call /api/stop) can find the API
+# without scanning. Conductor with `--web` does NOT propagate the port
+# to script subprocess env on its own (only --web-bg does, in
+# bg_runner.py:222) — so we set it here and pass --web-port to lock the
+# binding. Race window between Stop() and conductor binding is microseconds;
+# if it bites in practice, conductor fails fast with a clear "address in use".
+$webPort = $null
+$tcpListener = $null
+try {
+    $tcpListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $tcpListener.Start()
+    $webPort = ([System.Net.IPEndPoint]$tcpListener.LocalEndpoint).Port
+} finally {
+    if ($tcpListener) { $tcpListener.Stop() }
+}
+$env:CONDUCTOR_WEB_PORT = $webPort
+Write-Host "[polyphony-sdlc] Pinned conductor web port: $webPort (CONDUCTOR_WEB_PORT exported for /api/stop discovery)" -ForegroundColor Cyan
+
 $conductorArgs = @(
     'run', 'apex-driver@polyphony'
     '--web'
+    '--web-port', "$webPort"
     '--input', "apex_id=$ApexId"
     '--input', "intent=$Intent"
     '--input', "platform=$Platform"
@@ -697,6 +717,7 @@ $resolved = [pscustomobject]@{
     project_url        = $projectUrl
     command            = "conductor $($conductorArgs -join ' ')"
     args               = $conductorArgs
+    web_port           = $webPort
     detached           = -not $NoDetach
     layout_check_skipped = [bool]$SkipLayoutCheck
 }
