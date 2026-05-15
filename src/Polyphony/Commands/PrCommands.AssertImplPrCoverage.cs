@@ -32,6 +32,10 @@ public sealed partial class PrCommands
     /// <param name="itemId">ADO work-item id of the task whose impl PR was just squash-merged.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path of the enclosing MG (e.g. <c>pg-3176</c>).</param>
     /// <param name="remote">Remote name; both impl and mg refs are read as <c>{remote}/...</c>. Defaults to <c>origin</c>.</param>
+    /// <param name="platform">Platform override (forward-compat; not consumed — coverage is platform-neutral, derived from local refs).</param>
+    /// <param name="organization">ADO organization (forward-compat; not consumed).</param>
+    /// <param name="project">ADO project (forward-compat; not consumed).</param>
+    /// <param name="repositoryOverride">Repository override (forward-compat; not consumed).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("assert-impl-pr-coverage")]
     [VerbResult(typeof(PrAssertImplPrCoverageResult))]
@@ -40,8 +44,23 @@ public sealed partial class PrCommands
         int itemId = RequiredInput.MissingInt,
         string mgPath = "",
         string remote = "origin",
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
+        // The override flags are accepted for cross-platform workflow
+        // symmetry: cascade-remedy.yaml + implement-merge-group.yaml
+        // thread platform/org/project/repo through every PR-side verb,
+        // and we want this verb to accept the same vocabulary even
+        // though it operates exclusively on local git refs (no PR API
+        // calls). Suppressed-unused — explicit discard for clarity.
+        _ = platform;
+        _ = organization;
+        _ = project;
+        _ = repositoryOverride;
+
         if (RequiredInput.HaltIfMissing("pr assert-impl-pr-coverage",
             ("--root-id", rootId == RequiredInput.MissingInt),
             ("--item-id", itemId == RequiredInput.MissingInt),
