@@ -1,6 +1,5 @@
 using System.Reflection;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
@@ -45,19 +44,21 @@ namespace Polyphony.Commands;
 [VerbGroup("")]
 public sealed class StatusCommand(
     IWorkItemRepository repository,
-    IGitClient git,
-    IGhClient gh)
+    Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
+    Sdlc.Observers.PullRequestReader pullRequestReader)
 {
-    private static readonly Regex GitHubSlugRegex =
-        new(@"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?(?:[/?#].*)?$",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
     /// <summary>Compose a periodic status snapshot for an apex work item.</summary>
     /// <param name="apex">Apex (focus) work item ID.</param>
-    /// <param name="repoSlug">Owner/repo slug for the gh feature-PR lookup.
-    /// When empty, derived from the <c>origin</c> remote; when no slug can
-    /// be derived, the feature_pr section reports <c>error: no_slug</c>.</param>
+    /// <param name="repoSlug">Owner/repo slug (GitHub) for the feature-PR lookup.
+    /// When empty, derived from the <c>origin</c> remote (GitHub or ADO);
+    /// when no identity can be derived, the feature_pr section reports
+    /// <c>error: no_slug</c>. Override via <c>--platform/--organization/
+    /// --project/--repository-override</c> for ADO repos.</param>
     /// <param name="manifestPath">Run manifest path. Defaults to <c>.polyphony/run.yaml</c>.</param>
+    /// <param name="platform">Optional platform override (<c>github</c>|<c>ado</c>); defaults to origin URL detection.</param>
+    /// <param name="organization">ADO organization (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="project">ADO project (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="repositoryOverride">Repository override (GitHub <c>owner/repo</c> or ADO repo name).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("status")]
     [VerbResult(typeof(StatusResult))]
@@ -65,6 +66,10 @@ public sealed class StatusCommand(
         int apex = RequiredInput.MissingInt,
         string repoSlug = "",
         string manifestPath = RunManifestStore.DefaultRelativePath,
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("status",
@@ -73,7 +78,8 @@ public sealed class StatusCommand(
 
         var ado = await ReadAdoSectionAsync(apex, ct).ConfigureAwait(false);
         var manifest = ReadManifestSection(manifestPath);
-        var featurePr = await ReadFeaturePrSectionAsync(apex, repoSlug, ct).ConfigureAwait(false);
+        var featurePr = await ReadFeaturePrSectionAsync(
+            apex, repoSlug, platform, organization, project, repositoryOverride, ct).ConfigureAwait(false);
         var binary = ReadBinarySection();
 
         var warnings = ComputeWarnings(ado, manifest, featurePr);
@@ -179,26 +185,37 @@ public sealed class StatusCommand(
     }
 
     private async Task<StatusFeaturePrSection> ReadFeaturePrSectionAsync(
-        int apex, string repoSlug, CancellationToken ct)
+        int apex, string repoSlug,
+        string platform, string organization, string project, string repositoryOverride,
+        CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(repoSlug))
+        // If the operator passed an explicit slug, honor it as a GitHub slug
+        // (back-compat: this verb predates --platform). Otherwise resolve from
+        // origin URL or platform overrides via RepoIdentityResolver.
+        Sdlc.Observers.RepoIdentity? identity;
+        if (!string.IsNullOrEmpty(repoSlug))
+        {
+            var slugParts = repoSlug.Split('/');
+            identity = slugParts.Length == 2
+                ? new Sdlc.Observers.RepoIdentity.GitHubRepo(slugParts[0], slugParts[1])
+                : null;
+        }
+        else
         {
             try
             {
-                var url = await git.GetRemoteUrlAsync("origin", ct).ConfigureAwait(false);
-                if (!string.IsNullOrEmpty(url))
-                {
-                    var match = GitHubSlugRegex.Match(url);
-                    if (match.Success) repoSlug = match.Groups[1].Value;
-                }
+                var resolved = await repoIdentityResolver
+                    .ResolveAsync(platform, organization, project, repositoryOverride, ct)
+                    .ConfigureAwait(false);
+                identity = resolved.Identity;
             }
             catch
             {
-                // Fall through — no slug → no PR lookup.
+                identity = null;
             }
         }
 
-        if (string.IsNullOrEmpty(repoSlug))
+        if (identity is null)
         {
             return new StatusFeaturePrSection
             {
@@ -213,10 +230,8 @@ public sealed class StatusCommand(
             // Look at all states (open/merged/closed) so a merged feature PR is
             // visible. gh's --state default is `open`, which would hide a merged
             // PR and trip the feature_pr_unmerged_progress warning incorrectly.
-            var prs = await gh.ListPullRequestsAsync(
-                repoSlug,
-                new PrListFilters(Head: headBranch, State: "all", Limit: 5),
-                ct).ConfigureAwait(false);
+            var prs = await pullRequestReader.ListByHeadAsync(
+                identity, headBranch: headBranch, state: "all", limit: 5, ct).ConfigureAwait(false);
 
             var match = prs.FirstOrDefault(p => string.Equals(
                 p.HeadRefName, headBranch, StringComparison.Ordinal));

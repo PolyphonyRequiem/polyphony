@@ -30,10 +30,21 @@ public sealed partial class BranchCommands
     /// Operator-facing flag name preserved as <c>--pg-number</c> until
     /// the workflow rewire PR ships.
     /// </param>
+    /// <param name="platform">Optional platform override (<c>github</c>|<c>ado</c>); defaults to origin URL detection.</param>
+    /// <param name="organization">ADO organization (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="project">ADO project (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="repositoryOverride">Repository override (GitHub <c>owner/repo</c> or ADO repo name).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("route")]
     [VerbResult(typeof(BranchRouteResult))]
-    public async Task<int> Route(int workItem = RequiredInput.MissingInt, int pgNumber = 0, CancellationToken ct = default)
+    public async Task<int> Route(
+        int workItem = RequiredInput.MissingInt,
+        int pgNumber = 0,
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
+        CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("branch route",
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
@@ -59,11 +70,12 @@ public sealed partial class BranchCommands
             // Build merge groups (or a single fallback PG-1 when no tags exist).
             var groups = BuildRouteGroups(workItem, hierarchy, allItems, hint);
 
-            // Resolve repo + remote branches + PR lists; degrade gracefully on failure.
-            var repoSlug = await TryListRemoteSlugAsync(ct).ConfigureAwait(false);
+            // Resolve repo identity + remote branches + PR lists; degrade gracefully on failure.
+            var identity = await TryResolveRepoIdentityAsync(
+                platform, organization, project, repositoryOverride, ct).ConfigureAwait(false);
             var remoteBranches = await TryListRemoteBranchesAsync(ct).ConfigureAwait(false);
-            var mergedPrs = await TryListPrsAsync(repoSlug, "merged", ct).ConfigureAwait(false);
-            var openPrs = await TryListPrsAsync(repoSlug, "open", ct).ConfigureAwait(false);
+            var mergedPrs = await TryListPrsAsync(identity, "merged", ct).ConfigureAwait(false);
+            var openPrs = await TryListPrsAsync(identity, "open", ct).ConfigureAwait(false);
 
             var classified = ClassifyGroups(groups, allItems, remoteBranches, mergedPrs, openPrs);
 
@@ -336,34 +348,17 @@ public sealed partial class BranchCommands
     }
 
     private async Task<IReadOnlyList<PullRequestSummary>> TryListPrsAsync(
-        string repoSlug, string state, CancellationToken ct)
+        Sdlc.Observers.RepoIdentity? identity, string state, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(repoSlug)) return [];
+        if (identity is null) return [];
         try
         {
-            return await gh.ListPullRequestsAsync(
-                repoSlug,
-                new PrListFilters(State: state, Limit: 50),
-                ct).ConfigureAwait(false);
+            return await pullRequestReader.ListByHeadAsync(
+                identity, headBranch: null, state: state, limit: 50, ct).ConfigureAwait(false);
         }
         catch
         {
             return [];
-        }
-    }
-
-    private async Task<string> TryListRemoteSlugAsync(CancellationToken ct)
-    {
-        try
-        {
-            var url = await git.GetRemoteUrlAsync("origin", ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(url)) return "";
-            var match = GitHubSlugRegex.Match(url);
-            return match.Success ? match.Groups[1].Value : "";
-        }
-        catch
-        {
-            return "";
         }
     }
 

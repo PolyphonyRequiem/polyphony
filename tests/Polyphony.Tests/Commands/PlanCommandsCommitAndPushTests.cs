@@ -48,7 +48,7 @@ public sealed class PlanCommandsCommitAndPushTests : CommandTestBase, IDisposabl
         var walker = new HierarchyWalker(Config, Repository);
         var verifier = new FakePostconditionVerifier();
         var git = new GitClient(runner);
-        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), new ThrowingAdoClient(), verifier, new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git)), runner, verifier);
+        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), new ThrowingAdoClient(), verifier, new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(new GhClient(runner), null)), runner, verifier);
     }
 
     private static PlanCommitAndPushResult Parse(string output) =>

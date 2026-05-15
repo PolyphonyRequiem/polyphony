@@ -50,7 +50,7 @@ public sealed class PlanCommandsClassifyStaleDescendantsTests : CommandTestBase,
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
         var git = new GitClient(runner);
-        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), new ThrowingAdoClient(), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git)), runner);
+        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), new ThrowingAdoClient(), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(new GhClient(runner), null)), runner);
     }
 
     private static PlanClassifyStaleDescendantsResult Parse(string output) =>

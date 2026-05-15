@@ -52,7 +52,7 @@ public sealed class PlanCommandsDetectStateAdoTests : CommandTestBase, IDisposab
         var walker = new HierarchyWalker(Config, Repository);
         var git = new GitClient(runner);
         var ado = new FakeAdoClient();
-        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), ado, new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new RepoIdentityResolver(git)), runner, ado);
+        return (new PlanCommands(walker, Repository, Config, twig, git, new GhClient(runner), ado, new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new RepoIdentityResolver(git), new PullRequestReader(new GhClient(runner), ado)), runner, ado);
     }
 
     private static PlanDetectStateResult Parse(string output) =>

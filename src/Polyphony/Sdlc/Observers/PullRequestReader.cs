@@ -24,26 +24,27 @@ namespace Polyphony.Sdlc.Observers;
 /// </summary>
 public sealed class PullRequestReader(IGhClient gh, IAdoClient? ado)
 {
-    /// <summary>List PRs filtered by source (head) branch + state.</summary>
+    /// <summary>List PRs filtered by source (head) branch + state. Pass <c>null</c> headBranch to skip the filter.</summary>
     /// <param name="state">"open" | "merged" | "closed" | "all" — gh's vocabulary; mapped to ADO equivalents internally.</param>
     /// <param name="limit">Optional cap; passed through to gh, ignored by ADO (which has no list-limit knob).</param>
     public async Task<IReadOnlyList<PullRequestSummary>> ListByHeadAsync(
-        RepoIdentity identity, string headBranch, string state, int? limit, CancellationToken ct)
+        RepoIdentity identity, string? headBranch, string state, int? limit, CancellationToken ct)
     {
         switch (identity)
         {
             case RepoIdentity.GitHubRepo githubRepo:
                 return await gh.ListPullRequestsAsync(
                     githubRepo.Slug,
-                    new PrListFilters(Head: headBranch, State: state, Limit: limit),
+                    new PrListFilters(Head: string.IsNullOrEmpty(headBranch) ? null : headBranch, State: state, Limit: limit),
                     ct).ConfigureAwait(false);
             case RepoIdentity.AdoRepo adoRepo:
                 if (ado is null) throw new InvalidOperationException(
                     "IAdoClient is not configured but RepoIdentity resolved to AdoRepo");
                 var status = MapState(state);
+                var sourceBranch = string.IsNullOrEmpty(headBranch) ? null : $"refs/heads/{headBranch}";
                 var raw = await ado.ListPullRequestsAsync(
                     adoRepo.Organization, adoRepo.Project, adoRepo.Repository,
-                    status, $"refs/heads/{headBranch}", ct).ConfigureAwait(false);
+                    status, sourceBranch, ct).ConfigureAwait(false);
                 return raw is null
                     ? Array.Empty<PullRequestSummary>()
                     : [.. raw.Select(p => new PullRequestSummary(

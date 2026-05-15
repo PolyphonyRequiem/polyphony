@@ -22,7 +22,7 @@ public sealed class PlanCommandsDeriveAncestorChainTests : CommandTestBase
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new ThrowingAdoClient(), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(new GitClient(runner)), new Polyphony.Sdlc.Observers.RepoIdentityResolver(new GitClient(runner)));
+        return new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new ThrowingAdoClient(), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(new GitClient(runner)), new Polyphony.Sdlc.Observers.RepoIdentityResolver(new GitClient(runner)), new Polyphony.Sdlc.Observers.PullRequestReader(new GhClient(runner), null));
     }
 
     private static PlanDeriveAncestorChainResult Parse(string output) =>

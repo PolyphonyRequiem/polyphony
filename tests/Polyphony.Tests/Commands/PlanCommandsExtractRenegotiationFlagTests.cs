@@ -30,7 +30,7 @@ public sealed class PlanCommandsExtractRenegotiationFlagTests : CommandTestBase
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new ThrowingAdoClient(), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(new GitClient(runner)), new Polyphony.Sdlc.Observers.RepoIdentityResolver(new GitClient(runner))), runner);
+        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new ThrowingAdoClient(), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(new GitClient(runner)), new Polyphony.Sdlc.Observers.RepoIdentityResolver(new GitClient(runner)), new Polyphony.Sdlc.Observers.PullRequestReader(new GhClient(runner), null)), runner);
     }
 
     private static PlanExtractRenegotiationFlagResult Parse(string output) =>

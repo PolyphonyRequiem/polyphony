@@ -104,6 +104,19 @@ public sealed class RepoIdentityResolver(IGitClient git)
             return ResolveFromOverride(platform, organization, project, repository);
         }
 
+        // ── 1b. Back-compat: bare --repository in 'owner/name' shape ─────
+        // implies platform=github (callers that only pass --repo without a
+        // platform override are pre-ADO-era — preserve their wiring).
+        if (!string.IsNullOrWhiteSpace(repository))
+        {
+            var bareSlug = GitHubSlugRegex.Match(repository.Trim());
+            if (bareSlug.Success)
+            {
+                return ResolvedRepoIdentity.WithIdentity(
+                    new RepoIdentity.GitHubRepo(bareSlug.Groups[1].Value, bareSlug.Groups[2].Value));
+            }
+        }
+
         // ── 2. Fall back to origin URL parsing. ──────────────────────────
         string? url;
         try

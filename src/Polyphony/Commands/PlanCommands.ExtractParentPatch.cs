@@ -38,46 +38,22 @@ public sealed partial class PlanCommands
     /// <param name="prUrl">Full PR URL — accepts both
     /// <c>https://github.com/owner/repo/pull/N</c> and
     /// <c>https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/N</c>.
-    /// When supplied, the URL is parsed to derive the platform identity +
-    /// PR number (overrides any --pr-number / --platform inputs).</param>
-    /// <param name="prNumber">PR number to inspect. Use this with
-    /// --platform/--organization/--project/--repository when --pr-url
-    /// is not supplied (e.g. ADO inputs threaded directly from the
-    /// workflow).</param>
+    /// The URL is parsed to derive the platform identity + PR number.</param>
     /// <param name="rootId">Root work item ID (defines the snapshot key namespace).</param>
     /// <param name="parentItemId">Parent work item ID whose plan file we want hunks for.</param>
     /// <param name="diffSizeLimitBytes">Upper bound for the rendered parent-scoped diff. Defaults to 50 KB.</param>
-    /// <param name="platform">Optional platform override (<c>github</c>|<c>ado</c>); defaults to origin URL detection.</param>
-    /// <param name="organization">ADO organization (required when <paramref name="platform"/> is <c>ado</c>).</param>
-    /// <param name="project">ADO project (required when <paramref name="platform"/> is <c>ado</c>).</param>
-    /// <param name="repositoryOverride">Repository override (GitHub <c>owner/repo</c> or ADO repo name).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("extract-parent-patch")]
     [VerbResult(typeof(PlanExtractParentPatchResult))]
     public async Task<int> ExtractParentPatch(
         string prUrl = "",
-        int prNumber = RequiredInput.MissingInt,
         int rootId = RequiredInput.MissingInt,
         int parentItemId = RequiredInput.MissingInt,
         int diffSizeLimitBytes = DefaultDiffSizeLimitBytes,
-        string platform = "",
-        string organization = "",
-        string project = "",
-        string repositoryOverride = "",
         CancellationToken ct = default)
     {
-        // Either --pr-url XOR (--pr-number + identity) must be supplied.
-        var hasPrUrl = !string.IsNullOrWhiteSpace(prUrl);
-        var hasPrNumber = prNumber != RequiredInput.MissingInt;
-        if (!hasPrUrl && !hasPrNumber)
-        {
-            EmitError(prUrl, parentItemId,
-                "supply --pr-url, OR --pr-number plus --platform/--organization/--project/--repository",
-                "missing_inputs");
-            return ExitCodes.Success;
-        }
-
         if (RequiredInput.HaltIfMissing("plan extract-parent-patch",
+            ("--pr-url", string.IsNullOrEmpty(prUrl)),
             ("--root-id", rootId == RequiredInput.MissingInt),
             ("--parent-item-id", parentItemId == RequiredInput.MissingInt)) is { } halt)
             return halt;
@@ -99,51 +75,26 @@ public sealed partial class PlanCommands
             return ExitCodes.Success;
         }
 
-        // ── 2. Resolve repo identity + PR number. ─────────────────────────
-        // --pr-url wins when supplied (legacy invocation shape); otherwise
-        // we delegate to RepoIdentityResolver + the explicit --pr-number.
-        RepoIdentity identity;
-        int resolvedPrNumber;
-        if (hasPrUrl)
+        // ── 2. Parse the PR URL into platform identity + PR number. ───────
+        // Accepts both github.com and dev.azure.com / *.visualstudio.com PR
+        // URLs (Phase 6 — ADO parity for cascade-remedy.yaml +
+        // remedy-stale-descendant.yaml).
+        if (!TryParsePrUrl(prUrl, out var identity, out var resolvedPrNumber))
         {
-            if (!TryParsePrUrl(prUrl, out identity!, out resolvedPrNumber))
-            {
-                EmitError(prUrl, parentItemId,
-                    $"could not parse pr url '{prUrl}' (expected https://github.com/owner/repo/pull/N or https://dev.azure.com/{{org}}/{{project}}/_git/{{repo}}/pullrequest/N)",
-                    "invalid_pr_url");
-                return ExitCodes.Success;
-            }
-        }
-        else
-        {
-            var resolved = await repoIdentityResolver.ResolveAsync(
-                platform, organization, project, repositoryOverride, ct).ConfigureAwait(false);
-            if (resolved.Identity is null)
-            {
-                EmitError(prUrl, parentItemId,
-                    resolved.Error ?? "could not resolve repo identity from origin remote (pass --pr-url or --platform/--organization/--project/--repository)",
-                    "no_slug");
-                return ExitCodes.Success;
-            }
-            identity = resolved.Identity;
-            resolvedPrNumber = prNumber;
-            if (resolvedPrNumber <= 0)
-            {
-                EmitError(prUrl, parentItemId,
-                    $"--pr-number must be positive (got {resolvedPrNumber})",
-                    "invalid_pr_number");
-                return ExitCodes.Success;
-            }
+            EmitError(prUrl, parentItemId,
+                $"could not parse pr url '{prUrl}' (expected https://github.com/owner/repo/pull/N or https://dev.azure.com/{{org}}/{{project}}/_git/{{repo}}/pullrequest/N)",
+                "invalid_pr_url");
+            return ExitCodes.Success;
         }
 
-        var slug = PullRequestReader.BuildRepoSlug(identity);
-        var canonicalPrUrl = hasPrUrl ? prUrl : PullRequestReader.BuildPrUrl(identity, resolvedPrNumber);
+        var slug = PullRequestReader.BuildRepoSlug(identity!);
+        var canonicalPrUrl = prUrl;
 
         // ── 3. Fetch poll data — gives us body (front-matter) + headSha + headRef + baseRef. ─
         GhPullRequestPollData? pollData;
         try
         {
-            pollData = await pullRequestReader.GetPollDataAsync(identity, resolvedPrNumber, ct).ConfigureAwait(false);
+            pollData = await pullRequestReader.GetPollDataAsync(identity!, resolvedPrNumber, ct).ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
         {
@@ -213,54 +164,91 @@ public sealed partial class PlanCommands
                 break;
         }
 
-        // ── 6. Compute unified diff via local-git (BLOCKER #4 / Phase 6). ─
-        // Uses 3-dot diff (base...head) so we get only what head introduces,
-        // matching `gh pr diff` semantics. Local-git is more robust than the
-        // ADO unified-diff REST composer (rename/delete/binary edge cases).
-        var baseRef = pollData.BaseRefName ?? string.Empty;
-        if (string.IsNullOrEmpty(headRef) || string.IsNullOrEmpty(baseRef))
-        {
-            EmitError(canonicalPrUrl, parentItemId,
-                $"PR #{resolvedPrNumber} returned empty head or base ref; cannot compute local diff.",
-                "diff_unavailable", slug, resolvedPrNumber);
-            return ExitCodes.Success;
-        }
-
-        try
-        {
-            await git.FetchAsync("origin", baseRef, ct).ConfigureAwait(false);
-            await git.FetchAsync("origin", headRef, ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            EmitError(canonicalPrUrl, parentItemId,
-                $"git fetch failed for {baseRef}/{headRef}: {ex.Message}",
-                "git_failed", slug, resolvedPrNumber);
-            return ExitCodes.Success;
-        }
-
+        // ── 6. Compute unified diff. ──────────────────────────────────────
+        // GitHub: `gh pr diff` (CLI handles the 3-dot semantics + auth).
+        // ADO:    local-git 3-dot diff (REST diff composer is too fragile
+        //         for rename/delete/binary edge cases — BLOCKER #4 / Phase 6).
         string rawDiff;
-        try
+        if (identity is RepoIdentity.GitHubRepo ghIdent)
         {
-            rawDiff = await git.DiffAsync(
-                $"origin/{baseRef}",
-                $"origin/{headRef}",
-                threeDot: true,
-                ct).ConfigureAwait(false);
+            string? rawDiffResult;
+            try
+            {
+                rawDiffResult = await gh.GetPullRequestDiffAsync(
+                    PullRequestReader.BuildRepoSlug(ghIdent),
+                    resolvedPrNumber,
+                    ct).ConfigureAwait(false);
+            }
+            catch (ExternalToolTimeoutException ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    ex.FormatErrorMessage("gh pr diff"),
+                    "gh_timeout", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+            catch (ExternalToolException ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId, $"gh pr diff failed: {ex.Message}",
+                    "gh_failed", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+
+            if (string.IsNullOrEmpty(rawDiffResult))
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    $"gh pr diff returned no output for PR #{resolvedPrNumber}",
+                    "diff_unavailable", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+            rawDiff = rawDiffResult;
         }
-        catch (ExternalToolTimeoutException ex)
+        else
         {
-            EmitError(canonicalPrUrl, parentItemId,
-                ex.FormatErrorMessage("git diff"),
-                "git_timeout", slug, resolvedPrNumber);
-            return ExitCodes.Success;
-        }
-        catch (ExternalToolException ex)
-        {
-            EmitError(canonicalPrUrl, parentItemId, $"git diff failed: {ex.Message}",
-                "git_failed", slug, resolvedPrNumber);
-            return ExitCodes.Success;
+            // ADO leg: local-git 3-dot diff (base...head).
+            var baseRef = pollData.BaseRefName ?? string.Empty;
+            if (string.IsNullOrEmpty(headRef) || string.IsNullOrEmpty(baseRef))
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    $"PR #{resolvedPrNumber} returned empty head or base ref; cannot compute local diff.",
+                    "diff_unavailable", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+
+            try
+            {
+                await git.FetchAsync("origin", baseRef, ct).ConfigureAwait(false);
+                await git.FetchAsync("origin", headRef, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    $"git fetch failed for {baseRef}/{headRef}: {ex.Message}",
+                    "git_failed", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+
+            try
+            {
+                rawDiff = await git.DiffAsync(
+                    $"origin/{baseRef}",
+                    $"origin/{headRef}",
+                    threeDot: true,
+                    ct).ConfigureAwait(false);
+            }
+            catch (ExternalToolTimeoutException ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    ex.FormatErrorMessage("git diff"),
+                    "git_timeout", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+            catch (ExternalToolException ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId, $"git diff failed: {ex.Message}",
+                    "git_failed", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
         }
 
         // ── 7. Filter diff to parent plan file hunks. ─────────────────────

@@ -33,7 +33,7 @@ public sealed class BranchCommandsAssertOnImplTests : CommandTestBase
         var validator = new TransitionValidator(config);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new BranchCommands(twig, walker, repo, validator, git, gh, config), runner);
+        return (new BranchCommands(twig, walker, repo, validator, git, config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null)), runner);
     }
 
     private static void StubCurrentBranch(FakeProcessRunner runner, string branch)

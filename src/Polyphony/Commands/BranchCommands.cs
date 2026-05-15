@@ -27,8 +27,9 @@ public sealed partial class BranchCommands(
     IWorkItemRepository repository,
     TransitionValidator validator,
     IGitClient git,
-    IGhClient gh,
-    ProcessConfig processConfig)
+    ProcessConfig processConfig,
+    Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
+    Sdlc.Observers.PullRequestReader pullRequestReader)
 {
     /// <summary>
     /// Check ADO predecessor links for blocking dependencies on a work item.
