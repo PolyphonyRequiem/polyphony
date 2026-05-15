@@ -1084,12 +1084,61 @@ agents:
   # and adds a summary note. Then routes back to primary_router to pick
   # up the next task.
   #
-  # Risk acknowledged (rubber-duck #7): child tasks transition to Done
-  # before the MG PR merges. If the MG PR fails to merge afterwards, ADO
-  # will report tasks as Done while the feature branch lacks the work.
-  # The work IS physically present on the MG branch via the squash merge —
-  # only the feature-branch promotion is missing. Recovery: re-run this
-  # workflow; the MG PR open + merge are idempotent.
+  # ── Trust chain (AB#3214) ─────────────────────────────────────────────
+  #
+  # AB#3175 incident (apex run 3165, 2026-05-14): a child task reached
+  # `state = Done` in ADO via this step while the implementing commit
+  # was stranded on a sibling task's impl branch and the squash-merge
+  # to the MG carried zero diff. Net result: ADO reported the work as
+  # Done while `feature/{root}` lacked any of its commits.
+  #
+  # This step does NOT re-verify that the MG branch carries the work
+  # item's commits. That verification is the responsibility of the
+  # upstream defenses, which this step trusts:
+  #
+  #   1. Impl-branch routing assertion (AB#3210, PR #401):
+  #      `polyphony branch assert-current-impl` runs around the coder
+  #      turn (steps `assert_impl_branch_pre_coder` /
+  #      `assert_impl_branch_post_coder`). Guarantees the coder's
+  #      commits land on the right impl branch.
+  #
+  #   2. Squash-coverage assertion (AB#3211, PR #402):
+  #      `polyphony pr assert-impl-pr-coverage` runs at
+  #      `assert_impl_pr_coverage` and computes diff hashes for the
+  #      cumulative impl-branch range vs the squash on the MG branch.
+  #      On `ok` it routes through `delete_impl_branch → primary_completer`.
+  #      On `mismatch` it surfaces `squash_coverage_mismatch_gate` for
+  #      the operator; only `force_accept` (an explicit operator
+  #      acknowledgement of loss) routes onward to `delete_impl_branch
+  #      → primary_completer`.
+  #
+  # Routing invariant (enforced by
+  # tests/lint-primary-completer-trust-chain.ps1):
+  #   - The ONLY route INTO `primary_completer` is from
+  #     `delete_impl_branch`.
+  #   - The ONLY routes INTO `delete_impl_branch` are from
+  #     `assert_impl_pr_coverage` (action='ok') or
+  #     `squash_coverage_mismatch_gate` (option='force_accept').
+  #
+  # Together these mean: by the time `primary_completer` fires, either
+  # the squash-coverage assertion confirmed diff equivalence, or the
+  # operator has explicitly acknowledged a known mismatch. The AB#3175
+  # green-wash is structurally impossible.
+  #
+  # If you change this routing, the lint will fail. If you intentionally
+  # add a new predecessor to `primary_completer` or `delete_impl_branch`,
+  # update the lint's expected-predecessor lists in lockstep — and think
+  # very hard about whether the new path preserves the diff-coverage
+  # guarantee.
+  #
+  # ── Risk acknowledged (rubber-duck #7) ────────────────────────────────
+  #
+  # Child tasks transition to Done before the MG PR merges. If the MG
+  # PR fails to merge afterwards, ADO will report tasks as Done while
+  # the feature branch lacks the work. The work IS physically present
+  # on the MG branch via the squash merge (verified by the trust chain
+  # above) — only the feature-branch promotion is missing. Recovery:
+  # re-run this workflow; the MG PR open + merge are idempotent.
   #
   # AB#3169 carve-out (indivisible apex root): when `primary_id == root_id`
   # the "task" being completed IS the apex root work item itself (an
