@@ -396,7 +396,7 @@ agents:
         route: review_counter_reset
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Review counter reset ───────────────────────────────────────────────
   #
@@ -491,5 +491,25 @@ agents:
       error:
         type: string
         description: Empty string on success, otherwise the error message
+    routes:
+      - to: $end
+
+  # ── Terminal abort (operator chose Abort on an error gate) ────────────
+  #
+  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # abort-run.ps1, which walks the parent process chain and Stop-Processes
+  # the conductor host. Conductor's children (python workers) cascade-die.
+  - name: terminal_abort_run
+    type: script
+    description: Operator-initiated full-run abort — kills the conductor process tree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "operator-abort"
+      - "-Stage"
+      - "github-pr"
     routes:
       - to: $end

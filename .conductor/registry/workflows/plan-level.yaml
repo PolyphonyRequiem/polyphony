@@ -298,11 +298,11 @@ agents:
       ---
 
       Choose an action:
-      - **Abort** — cancel planning for this work item
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Root resolver error gate ──────────────────────────────────────────
   - name: root_resolver_error_gate
@@ -318,11 +318,11 @@ agents:
       ---
 
       Choose an action:
-      - **Abort** — cancel planning for this work item
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Type loader ──────────────────────────────────────────────────────────
   #
@@ -356,11 +356,11 @@ agents:
       ---
 
       Choose an action:
-      - **Abort** — cancel planning for this work item
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Ancestor chain derivation ─────────────────────────────────────────
   #
@@ -404,11 +404,11 @@ agents:
       ---
 
       Choose an action:
-      - **Abort** — cancel planning for this work item
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── State detector ────────────────────────────────────────────────────
   #
@@ -488,11 +488,11 @@ agents:
       ---
 
       Choose an action:
-      - **Abort** — cancel planning for this work item
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Closed-unmerged gate ───────────────────────────────────────────────
   #
@@ -925,14 +925,14 @@ agents:
 
       Choose an action:
       - **Retry** — re-run `polyphony plan write-plan` (idempotent)
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔁 Retry"
         value: retry
         route: write_plan
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Ensure plan branch ────────────────────────────────────────────────
   #
@@ -980,14 +980,14 @@ agents:
       Choose an action:
       - **Retry** — re-run `polyphony branch ensure-plan` (idempotent;
         recovers from transient git-network failures)
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔁 Retry"
         value: retry
         route: ensure_plan_branch
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Commit and push ────────────────────────────────────────────────────
   #
@@ -1044,14 +1044,14 @@ agents:
       - **Retry** — re-run `polyphony plan commit-and-push` (idempotent;
         emits no_changes when nothing is staged, recovers from transient
         push-network failures)
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔁 Retry"
         value: retry
         route: commit_and_push
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Open plan PR ───────────────────────────────────────────────────────
   #
@@ -1108,14 +1108,14 @@ agents:
       - **Retry** — re-run `polyphony pr open-plan-pr` (idempotent — reuses
         an existing PR with a matching ancestor snapshot; safe for
         transient gh/network failures)
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔁 Retry"
         value: retry
         route: open_plan_pr
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Plan reviewer (LLM advisory — platform-aware) ─────────────────────
   #
@@ -1355,14 +1355,14 @@ agents:
 
       Choose an action:
       - **Retry** — re-poll the PR
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔄 Retry"
         value: retry
         route: pr_poll_platform_router
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Extract parent patch (P8d wiring) ──────────────────────────────────
   #
@@ -1605,14 +1605,14 @@ agents:
 
       Choose an action:
       - **Continue** — re-poll the PR for the updated state
-      - **Abort** — stop planning this branch
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔄 Continue"
         value: continue
         route: pr_poll_platform_router
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Stuck-review gate policy router (AB#3104) ─────────────────────────
   #
@@ -1684,7 +1684,7 @@ agents:
       Choose an action:
       - **Continue waiting** — reset the poll counter and return to the pending-review gate
       - **Override approved** — treat the PR as approved and proceed to merge
-      - **Abort** — stop planning this branch
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "⏳ Continue waiting"
         value: continue_waiting
@@ -1694,7 +1694,7 @@ agents:
         route: stuck_review_override_router
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Stuck-review reset ────────────────────────────────────────────────
   #
@@ -1821,7 +1821,7 @@ agents:
       Choose an action:
       - **Re-poll** — perhaps reviewers approved since the last revision; check PR state again
       - **Force revision** — send the architect through one more revision cycle
-      - **Abort** — stop planning this branch
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔄 Re-poll PR"
         value: repoll
@@ -1831,7 +1831,7 @@ agents:
         route: architect
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Validate scope (Phase 3 P8c — scope renegotiation handler) ────────
   #
@@ -1926,16 +1926,17 @@ agents:
       - **Override** — accept the out-of-scope changes and proceed to
         merge. Use this when you're confident the agent's diff was
         correct and only the renegotiation declaration was missing.
-      - **Abort** — terminate the workflow without merging. The agent
-        must re-do the plan within the authorized scope or open a new
-        PR with the renegotiation fence in its body.
+      - **Abort** — halt the entire run (terminates the conductor process).
+        Re-run later with intent=resume after the agent has re-done the
+        plan within the authorized scope or opened a new PR with the
+        renegotiation fence in its body.
     options:
       - label: "✅ Override (merge anyway)"
         value: override
         route: merge_plan_pr
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Merge plan PR ─────────────────────────────────────────────────────
   #
@@ -2174,14 +2175,14 @@ agents:
 
       Choose an action:
       - **Retry** — re-attempt the merge
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔄 Retry"
         value: retry
         route: merge_plan_pr
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Seeder ─────────────────────────────────────────────────────────────
   #
@@ -2290,7 +2291,7 @@ agents:
       - **Continue** — proceed to `child_router` anyway (a partial seed is
         usually still useful; the next driver iteration will revisit any
         children that did get created)
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔁 Retry"
         value: retry
@@ -2300,7 +2301,7 @@ agents:
         route: child_router
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Child router ─────────────────────────────────────────────────────────
   #
@@ -2412,11 +2413,11 @@ agents:
       ---
 
       Choose an action:
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Open plan PR (ADO) ────────────────────────────────────────────────
   #
@@ -2472,14 +2473,14 @@ agents:
       - **Retry** — re-run `polyphony pr open-plan-pr-ado` (idempotent —
         reuses an existing PR with a matching ancestor snapshot; safe for
         transient ADO API / network failures)
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔁 Retry"
         value: retry
         route: open_plan_pr_ado
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Plan reviewer poster (ADO) ────────────────────────────────────────
   #
@@ -2650,14 +2651,14 @@ agents:
 
       Choose an action:
       - **Retry** — re-attempt the merge
-      - **Abort** — cancel planning
+      - **Abort** — halt the entire run (terminates the conductor process)
     options:
       - label: "🔄 Retry"
         value: retry
         route: merge_plan_pr_ado
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Plan children summary gate ───────────────────────────────────────────
   #
@@ -2683,6 +2684,35 @@ agents:
       - label: "✅ Acknowledge"
         value: acknowledge
         route: $end
+
+  # ── Terminal: operator-initiated full-run abort ──────────────────────────
+  #
+  # Routed-to from error gates whose "Abort" option means "halt the entire
+  # conductor run, not just this sub-workflow". Plain `route: $end` ends
+  # only plan-level; the parent (apex-item-dispatch / apex-wave-dispatch /
+  # apex-driver) then proceeds to teardown_worktree → next item → next
+  # wave, producing confusing downstream errors. This agent invokes
+  # abort-run.ps1, which walks the parent process chain and Stop-Processes
+  # the conductor host. Conductor's children (python workers) cascade-die.
+  #
+  # New error gates that surface a "halt everything" outcome should route
+  # their Abort option here too.
+  - name: terminal_abort_run
+    type: script
+    description: Operator-initiated full-run abort — kills the conductor process tree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "operator-abort"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Stage"
+      - "plan-level"
+    routes:
+      - to: $end
 
 # ── Plan children group (for_each) ─────────────────────────────────────
 #

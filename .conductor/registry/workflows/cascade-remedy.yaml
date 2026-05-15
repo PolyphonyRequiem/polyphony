@@ -166,7 +166,7 @@ agents:
         route: $end
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
 # ── Remedy fan-out (for_each) ──────────────────────────────────────────
 #
@@ -181,6 +181,27 @@ agents:
 # Conductor schema: for_each lives at workflow root, not nested under
 # agents (M8). `source:` is a bare dotted path (NOT a Jinja expression),
 # `as:` must avoid reserved names (workflow, output, _index, _key).
+
+  # ── Terminal abort (operator chose Abort on an error gate) ────────────
+  #
+  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # abort-run.ps1, which walks the parent process chain and Stop-Processes
+  # the conductor host. Conductor's children (python workers) cascade-die.
+  - name: terminal_abort_run
+    type: script
+    description: Operator-initiated full-run abort — kills the conductor process tree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "operator-abort"
+      - "-Stage"
+      - "cascade-remedy"
+    routes:
+      - to: $end
+
 for_each:
   - name: remedy_group
     type: for_each

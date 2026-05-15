@@ -409,7 +409,7 @@ agents:
         route: branch_assert_on_impl_pre_coder
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Coder agent ───────────────────────────────────────────────────────
   #
@@ -624,7 +624,7 @@ agents:
         route: branch_assert_on_impl_post_coder
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Fetch for primary review (AB#3157 / AB#3161) ──────────────────────
   #
@@ -1021,7 +1021,7 @@ agents:
     options:
       - label: "🛑 Abort (preserve impl branch for inspection)"
         value: abort
-        route: $end
+        route: terminal_abort_run
       - label: "⚡ Force-accept (acknowledge loss, proceed to delete branch)"
         value: force_accept
         route: delete_impl_branch
@@ -1064,7 +1064,7 @@ agents:
         route: fetch_for_coverage_assertion
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Delete impl branch (deferred from impl_pr_merge per AB#3211) ──────
   #
@@ -1267,7 +1267,7 @@ agents:
         route: primary_router
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Dependency check ──────────────────────────────────────────────────
   #
@@ -1928,7 +1928,7 @@ agents:
         route: pr_platform_router
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Scope revise reset (AB#3125) ──────────────────────────────────────
   #
@@ -2079,7 +2079,7 @@ agents:
         route: primary_router
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── PR platform router ────────────────────────────────────────────────
   #
@@ -2298,7 +2298,7 @@ agents:
     options:
       - label: "🛑 Abort (will re-invoke with inputs)"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── ADO MG-PR failure gate ────────────────────────────────────────────
   #
@@ -2357,7 +2357,7 @@ agents:
         route: mg_pr_open_ado
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Scope closer ──────────────────────────────────────────────────────
   #
@@ -2384,5 +2384,25 @@ agents:
       - "{{ workflow.input.work_item_id }}"
       - "--pg-number"
       - "{{ workflow.input.pg_number }}"
+    routes:
+      - to: $end
+
+  # ── Terminal abort (operator chose Abort on an error gate) ────────────
+  #
+  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # abort-run.ps1, which walks the parent process chain and Stop-Processes
+  # the conductor host. Conductor's children (python workers) cascade-die.
+  - name: terminal_abort_run
+    type: script
+    description: Operator-initiated full-run abort — kills the conductor process tree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "operator-abort"
+      - "-Stage"
+      - "implement-merge-group"
     routes:
       - to: $end
