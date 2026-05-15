@@ -298,22 +298,26 @@ public sealed partial class StateCommands(
     /// <summary>
     /// Resolves the absolute path that the OS process resolver would pick
     /// for <paramref name="binaryName"/>, so preflight diagnostics can name
-    /// the actual binary being invoked. Uses <c>where.exe</c> on Windows
-    /// and <c>which</c> elsewhere; returns <c>null</c> on any failure.
+    /// the actual binary being invoked. On Windows, uses PowerShell's
+    /// <c>Get-Command</c> rather than <c>where.exe</c> because the latter
+    /// enumerates matches in raw filesystem order (<c>.cmd</c> before
+    /// <c>.exe</c> within the same directory) while the actual command
+    /// resolver and <see cref="System.Diagnostics.Process"/> honour
+    /// <c>PATHEXT</c> precedence (<c>.exe</c> before <c>.cmd</c>). Returns
+    /// <c>null</c> on any failure.
     /// </summary>
     private async Task<string?> ResolveBinaryPathAsync(string binaryName, CancellationToken ct)
     {
         try
         {
             var (resolver, args) = OperatingSystem.IsWindows()
-                ? ("where.exe", new[] { binaryName })
+                ? ("powershell.exe", new[] { "-NoProfile", "-Command", $"(Get-Command {binaryName} -ErrorAction SilentlyContinue).Source" })
                 : ("which", new[] { binaryName });
             var result = await runner.RunAsync(resolver, args, ct).ConfigureAwait(false);
             if (!result.Succeeded)
             {
                 return null;
             }
-            // where.exe returns multiple lines (one per match); first wins.
             var firstLine = result.Stdout.Split('\n', 2)[0].Trim();
             return string.IsNullOrEmpty(firstLine) ? null : firstLine;
         }
