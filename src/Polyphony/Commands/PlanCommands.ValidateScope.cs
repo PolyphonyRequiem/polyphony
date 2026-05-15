@@ -3,6 +3,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -40,7 +41,11 @@ public sealed partial class PlanCommands
     /// non-separator char, everything else literal. Whitespace around
     /// each glob is trimmed; empty entries are dropped.
     /// </param>
-    /// <param name="repo">Optional <c>owner/repo</c> override; defaults to the slug derived from the current checkout's <c>origin</c> remote.</param>
+    /// <param name="repo">Optional GitHub <c>owner/repo</c> override; defaults to the slug derived from the current checkout's <c>origin</c> remote.</param>
+    /// <param name="platform">Optional platform override (<c>github</c>|<c>ado</c>); defaults to origin URL detection.</param>
+    /// <param name="organization">ADO organization (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="project">ADO project (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="repositoryOverride">ADO repository name (required when <paramref name="platform"/> is <c>ado</c>).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("validate-scope")]
     [VerbResult(typeof(PlanValidateScopeResult))]
@@ -48,6 +53,10 @@ public sealed partial class PlanCommands
         int prNumber = RequiredInput.MissingInt,
         string childScope = "",
         string repo = "",
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan validate-scope",
@@ -64,23 +73,26 @@ public sealed partial class PlanCommands
 
         var globs = ParseChildScope(childScope);
 
-        // ── 1. Resolve repo slug. ─────────────────────────────────────────
-        var slug = string.IsNullOrWhiteSpace(repo)
-            ? await TryResolveSlugAsync(ct).ConfigureAwait(false)
-            : repo.Trim();
-        if (string.IsNullOrEmpty(slug))
+        // ── 1. Resolve repo identity (cross-platform). ────────────────────
+        var resolved = await repoIdentityResolver.ResolveAsync(
+            platform, organization, project,
+            string.IsNullOrWhiteSpace(repositoryOverride) ? repo : repositoryOverride,
+            ct).ConfigureAwait(false);
+        if (resolved.Identity is null)
         {
             EmitScopeError(prNumber,
                 "repo_not_resolved",
-                "Could not resolve repo slug from origin remote (pass --repo to override).");
+                resolved.Error ?? "Could not resolve repo identity from origin remote (pass --platform/--organization/--project/--repository).");
             return ExitCodes.Success;
         }
+        var identity = resolved.Identity;
+        var slug = PullRequestReader.BuildRepoSlug(identity);
 
         // ── 2. Poll PR body (for the flag). ───────────────────────────────
         GhPullRequestPollData? poll;
         try
         {
-            poll = await gh.GetPullRequestPollDataAsync(slug, prNumber, ct).ConfigureAwait(false);
+            poll = await pullRequestReader.GetPollDataAsync(identity, prNumber, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ExternalToolTimeoutException ex)
@@ -106,14 +118,11 @@ public sealed partial class PlanCommands
             return ExitCodes.Success;
         }
 
-        // ── 3. Fetch the changed-file list. We use the same JSON-files
-        //      endpoint as validate-plan-diff so the verb does not depend
-        //      on `gh pr diff` parse-ability — and so a giant binary diff
-        //      doesn't pull MB of bytes through the runner.
+        // ── 3. Fetch the changed-file list (gh files endpoint or ADO iterations).
         IReadOnlyList<GhPullRequestChangedFile>? files;
         try
         {
-            files = await gh.GetPullRequestFilesAsync(slug, prNumber, ct).ConfigureAwait(false);
+            files = await pullRequestReader.GetChangedFilesAsync(identity, prNumber, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ExternalToolTimeoutException ex)

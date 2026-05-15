@@ -4,6 +4,7 @@ using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
+using Polyphony.Sdlc.Observers;
 using Twig.Domain.Interfaces;
 
 namespace Polyphony.Commands;
@@ -30,12 +31,20 @@ public sealed partial class PlanCommands
     /// </summary>
     /// <param name="rootId">Root work item ID — defines feature/{root} and is the manifest's owner.</param>
     /// <param name="manifestPath">Optional override of the run manifest path. When empty (default), derived under the git common dir via <c>PolyphonyStatePaths</c>. Pass an explicit path only as a testing seam.</param>
+    /// <param name="platform">Optional platform override (<c>github</c>|<c>ado</c>); defaults to origin URL detection.</param>
+    /// <param name="organization">ADO organization (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="project">ADO project (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="repositoryOverride">Repository override (GitHub <c>owner/repo</c> or ADO repo name).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("classify-stale-descendants")]
     [VerbResult(typeof(PlanClassifyStaleDescendantsResult))]
     public async Task<int> ClassifyStaleDescendants(
         int rootId = RequiredInput.MissingInt,
         string manifestPath = "",
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan classify-stale-descendants",
@@ -49,14 +58,16 @@ public sealed partial class PlanCommands
             return ExitCodes.Success;
         }
 
-        // ── 2. Resolve repo slug. ─────────────────────────────────────────
-        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(slug))
+        // ── 2. Resolve repo identity (cross-platform). ────────────────────
+        var resolved = await repoIdentityResolver.ResolveAsync(
+            platform, organization, project, repositoryOverride, ct).ConfigureAwait(false);
+        if (resolved.Identity is null)
         {
             EmitClassifyError(rootId, manifestPath,
-                "Could not resolve repo slug from origin remote", "no_slug");
+                resolved.Error ?? "Could not resolve repo identity from origin remote", "no_slug");
             return ExitCodes.Success;
         }
+        var identity = resolved.Identity;
 
         // ── 3. Read manifest from local common-dir state. ─────────────────
         // Rev 4.2: manifest is local + canonical; no git transaction.
@@ -115,10 +126,8 @@ public sealed partial class PlanCommands
             IReadOnlyList<PullRequestSummary> prs;
             try
             {
-                prs = await gh.ListPullRequestsAsync(
-                    slug,
-                    new PrListFilters(Head: planBranch, State: "open", Limit: 10),
-                    ct).ConfigureAwait(false);
+                prs = await pullRequestReader.ListByHeadAsync(
+                    identity, planBranch, "open", limit: 10, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -136,7 +145,7 @@ public sealed partial class PlanCommands
             GhPullRequestPollData? poll;
             try
             {
-                poll = await gh.GetPullRequestPollDataAsync(slug, pr.Number, ct).ConfigureAwait(false);
+                poll = await pullRequestReader.GetPollDataAsync(identity, pr.Number, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

@@ -6,6 +6,7 @@ using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
+using Polyphony.Sdlc.Observers;
 using Twig.Domain.Aggregates;
 
 namespace Polyphony.Commands;
@@ -45,7 +46,7 @@ public sealed partial class PlanCommands
     /// resolved relative to the current working directory; the manifest
     /// is optional — if it is absent <see cref="PlanStatusItem.PlanGeneration"/>
     /// is left null and the rest of the snapshot still renders.</param>
-    /// <param name="repo">Optional <c>owner/repo</c> slug. When omitted the
+    /// <param name="repo">Optional GitHub <c>owner/repo</c> slug. When omitted the
     /// slug is derived from <c>git remote get-url origin</c>; an unresolvable
     /// slug surfaces as <c>no_repo_slug</c>.</param>
     /// <param name="includeNa">When true, items with no plannable facet are
@@ -54,6 +55,10 @@ public sealed partial class PlanCommands
     /// summary counters always include n/a items so total scope is visible.</param>
     /// <param name="json">Emit the machine-readable JSON envelope instead of the
     /// human-readable table.</param>
+    /// <param name="platform">Optional platform override (<c>github</c>|<c>ado</c>); defaults to origin URL detection.</param>
+    /// <param name="organization">ADO organization (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="project">ADO project (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="repositoryOverride">Repository override (GitHub <c>owner/repo</c> or ADO repo name).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("status")]
     [VerbResult(typeof(PlanStatusResult))]
@@ -63,6 +68,10 @@ public sealed partial class PlanCommands
         string repo = "",
         bool includeNa = false,
         bool json = false,
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan status",
@@ -132,24 +141,26 @@ public sealed partial class PlanCommands
         // summary.total_items reflects the full tree) but get tagged "n/a".
         var classified = ClassifyPlannable(walked);
 
-        // ── 4. Resolve repo slug only if at least one item is plannable. ─
+        // ── 4. Resolve repo identity only if at least one item is plannable. ─
         // Otherwise we'd surface a spurious no_repo_slug error on a tree
         // composed entirely of leaf tasks.
         var anyPlannable = classified.Any(c => c.IsPlannable);
-        string slug = "";
+        RepoIdentity? identity = null;
         if (anyPlannable)
         {
-            slug = !string.IsNullOrWhiteSpace(repo)
-                ? repo.Trim()
-                : await TryResolveSlugAsync(ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(slug))
+            var resolved = await repoIdentityResolver.ResolveAsync(
+                platform, organization, project,
+                string.IsNullOrWhiteSpace(repositoryOverride) ? repo : repositoryOverride,
+                ct).ConfigureAwait(false);
+            if (resolved.Identity is null)
             {
                 EmitStatus(
                     ErrorResult(root, "no_repo_slug",
-                        "Could not resolve owner/repo slug from origin remote — pass --repo explicitly."),
+                        resolved.Error ?? "Could not resolve repo identity from origin remote — pass --platform/--organization/--project/--repository explicitly."),
                     json, includeNa);
                 return ExitCodes.Success;
             }
+            identity = resolved.Identity;
         }
 
         // ── 5. Per-item PR enumeration via gh. ─────────────────────────
@@ -176,7 +187,7 @@ public sealed partial class PlanCommands
             PlanPrSnapshot snapshot;
             try
             {
-                snapshot = await ResolvePlanPrAsync(slug, headBranch, ct).ConfigureAwait(false);
+                snapshot = await ResolvePlanPrAsync(identity!, headBranch, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -287,20 +298,18 @@ public sealed partial class PlanCommands
     /// <see cref="PlanStatusItem.PendingRevisions"/>.
     /// </summary>
     private async Task<PlanPrSnapshot> ResolvePlanPrAsync(
-        string slug, string headBranch, CancellationToken ct)
+        RepoIdentity identity, string headBranch, CancellationToken ct)
     {
         // Open?
-        var open = await gh.ListPullRequestsAsync(
-            slug,
-            new PrListFilters(Head: headBranch, State: "open", Limit: 1),
-            ct).ConfigureAwait(false);
+        var open = await pullRequestReader.ListByHeadAsync(
+            identity, headBranch, "open", limit: 1, ct).ConfigureAwait(false);
         if (open.Count > 0)
         {
             var pr = open[0];
             bool? pending = null;
             try
             {
-                var poll = await gh.GetPullRequestPollDataAsync(slug, pr.Number, ct).ConfigureAwait(false);
+                var poll = await pullRequestReader.GetPollDataAsync(identity, pr.Number, ct).ConfigureAwait(false);
                 if (poll is not null)
                 {
                     pending = string.Equals(poll.ReviewDecision, "CHANGES_REQUESTED", StringComparison.Ordinal);
@@ -317,45 +326,38 @@ public sealed partial class PlanCommands
             return new PlanPrSnapshot(
                 Status: "open",
                 PrNumber: pr.Number,
-                Url: pr.Url ?? BuildPrUrl(slug, pr.Number),
+                Url: pr.Url ?? PullRequestReader.BuildPrUrl(identity, pr.Number),
                 PendingRevisions: pending);
         }
 
         // Merged?
-        var merged = await gh.ListPullRequestsAsync(
-            slug,
-            new PrListFilters(Head: headBranch, State: "merged", Limit: 1),
-            ct).ConfigureAwait(false);
+        var merged = await pullRequestReader.ListByHeadAsync(
+            identity, headBranch, "merged", limit: 1, ct).ConfigureAwait(false);
         if (merged.Count > 0)
         {
             var pr = merged[0];
             return new PlanPrSnapshot(
                 Status: "merged",
                 PrNumber: pr.Number,
-                Url: pr.Url ?? BuildPrUrl(slug, pr.Number),
+                Url: pr.Url ?? PullRequestReader.BuildPrUrl(identity, pr.Number),
                 PendingRevisions: null);
         }
 
         // Abandoned (closed without merge)?
-        var closed = await gh.ListPullRequestsAsync(
-            slug,
-            new PrListFilters(Head: headBranch, State: "closed", Limit: 1),
-            ct).ConfigureAwait(false);
+        var closed = await pullRequestReader.ListByHeadAsync(
+            identity, headBranch, "closed", limit: 1, ct).ConfigureAwait(false);
         if (closed.Count > 0)
         {
             var pr = closed[0];
             return new PlanPrSnapshot(
                 Status: "abandoned",
                 PrNumber: pr.Number,
-                Url: pr.Url ?? BuildPrUrl(slug, pr.Number),
+                Url: pr.Url ?? PullRequestReader.BuildPrUrl(identity, pr.Number),
                 PendingRevisions: null);
         }
 
         return new PlanPrSnapshot("needed", null, null, null);
     }
-
-    private static string BuildPrUrl(string slug, int prNumber)
-        => $"https://github.com/{slug}/pull/{prNumber.ToString(CultureInfo.InvariantCulture)}";
 
     // ─── Manifest enrichment ──────────────────────────────────────────
 

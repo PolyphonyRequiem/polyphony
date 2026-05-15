@@ -49,6 +49,7 @@ public static class PolyphonyServiceRegistration
         // to produce per-RequirementKind observations. Shared by routing-style verbs
         // (e.g. plan detect-state) and the next-ready worklist builder.
         services.AddSingleton<Sdlc.Observers.RepoIdentityResolver>();
+        services.AddSingleton<Sdlc.Observers.PullRequestReader>();
         services.AddSingleton<Sdlc.Observers.PlanObserver>();
 
         // Process-shell-out infrastructure for verbs that need to talk to

@@ -42,7 +42,8 @@ public sealed partial class PlanCommands(
     IAdoClient ado,
     IPostconditionVerifier postconditions,
     PolyphonyStatePaths statePaths,
-    RepoIdentityResolver repoIdentityResolver)
+    RepoIdentityResolver repoIdentityResolver,
+    PullRequestReader pullRequestReader)
 {
     /// <summary>
     /// Validates current recursion depth against a configured maximum. Always exits 0.

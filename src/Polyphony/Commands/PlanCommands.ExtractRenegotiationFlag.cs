@@ -3,6 +3,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -31,13 +32,21 @@ public sealed partial class PlanCommands
     /// Extract the renegotiation flag and reason from a plan PR's body.
     /// </summary>
     /// <param name="prNumber">PR number to inspect.</param>
-    /// <param name="repo">Optional <c>owner/repo</c> override; defaults to the slug derived from the current checkout's <c>origin</c> remote.</param>
+    /// <param name="repo">Optional GitHub <c>owner/repo</c> override; defaults to the slug derived from the current checkout's <c>origin</c> remote.</param>
+    /// <param name="platform">Optional platform override (<c>github</c>|<c>ado</c>); defaults to origin URL detection.</param>
+    /// <param name="organization">ADO organization (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="project">ADO project (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="repositoryOverride">ADO repository name (required when <paramref name="platform"/> is <c>ado</c>).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("extract-renegotiation-flag")]
     [VerbResult(typeof(PlanExtractRenegotiationFlagResult))]
     public async Task<int> ExtractRenegotiationFlag(
         int prNumber = RequiredInput.MissingInt,
         string repo = "",
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan extract-renegotiation-flag",
@@ -52,23 +61,26 @@ public sealed partial class PlanCommands
             return ExitCodes.Success;
         }
 
-        // ── 1. Resolve repo slug (explicit override wins). ────────────────
-        var slug = string.IsNullOrWhiteSpace(repo)
-            ? await TryResolveSlugAsync(ct).ConfigureAwait(false)
-            : repo.Trim();
-        if (string.IsNullOrEmpty(slug))
+        // ── 1. Resolve repo identity (cross-platform; explicit overrides win). ─
+        var resolved = await repoIdentityResolver.ResolveAsync(
+            platform, organization, project,
+            string.IsNullOrWhiteSpace(repositoryOverride) ? repo : repositoryOverride,
+            ct).ConfigureAwait(false);
+        if (resolved.Identity is null)
         {
             EmitRenegotiationError(prNumber,
                 "repo_not_resolved",
-                "Could not resolve repo slug from origin remote (pass --repo to override).");
+                resolved.Error ?? "Could not resolve repo identity from origin remote (pass --platform/--organization/--project/--repository).");
             return ExitCodes.Success;
         }
+        var identity = resolved.Identity;
+        var slug = PullRequestReader.BuildRepoSlug(identity);
 
         // ── 2. Fetch PR body. ─────────────────────────────────────────────
         GhPullRequestPollData? poll;
         try
         {
-            poll = await gh.GetPullRequestPollDataAsync(slug, prNumber, ct).ConfigureAwait(false);
+            poll = await pullRequestReader.GetPollDataAsync(identity, prNumber, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ExternalToolTimeoutException ex)
