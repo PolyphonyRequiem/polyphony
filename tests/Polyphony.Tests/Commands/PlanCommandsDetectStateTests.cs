@@ -192,7 +192,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
         var result = Parse(output);
         result.State.ShouldBe("error");
         result.Error.ShouldNotBeNull();
-        result.Error!.ShouldContain("slug");
+        result.Error!.ShouldContain("identity");
     }
 
     // ─── not_started ──────────────────────────────────────────────────────
