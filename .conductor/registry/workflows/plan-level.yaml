@@ -1317,7 +1317,7 @@ agents:
         when: "{{ poll_status.output.state == 'approved' and workflow.input.child_scope_globs != '' }}"
       - to: merge_plan_pr
         when: "{{ poll_status.output.state == 'approved' }}"
-      - to: revise_counter
+      - to: approvals_policy
         when: "{{ poll_status.output.state == 'changes_requested' }}"
       # Stuck-review timeout MVP — pending re-entries flow through
       # pending_poll_counter so we can surface stuck_review_gate after
@@ -1734,15 +1734,42 @@ agents:
       # Catch-all per M4: default to ADO since plan-level defaults platform to 'ado'.
       - to: merge_plan_pr_ado
 
+  # ── Approvals policy resolver (AB#3181 partial wiring) ────────────────
+  #
+  # Resolves the `approvals` policy domain for the current work item type
+  # so revise_counter can drive its cap from policy.approvals.max_revision_cycles
+  # instead of a hardcoded literal. Pre-AB#3181 this domain was dead at
+  # workflow runtime — the resolver returned correct values but no
+  # workflow consumed them.
+  #
+  # Currently consumed: max_revision_cycles only. The mode (auto/warning/
+  # manual) and quality_threshold (avg_score_at_least, blocking_count_at_most)
+  # fields require reviewer-output schema changes (numeric scoring, blocking
+  # counts) before they can be wired — tracked as follow-up under AB#3181.
+  - name: approvals_policy
+    type: script
+    description: Resolve approvals policy for revise-loop cap (AB#3181)
+    command: polyphony
+    args:
+      - "policy"
+      - "resolve"
+      - "--domain"
+      - "approvals"
+      - "--scope"
+      - "type:{{ type_loader.output.type }}"
+    routes:
+      - to: revise_counter
+
   # ── Revise counter ────────────────────────────────────────────────────
   #
   # Tracks the number of architect-revision cycles when reviewers request
-  # changes. Capped at 5 to prevent runaway loops; on cap, escalates to a
-  # human gate that lets the operator approve the current plan, force a
-  # final revision, or abort.
+  # changes. Capped at policy.approvals.max_revision_cycles (AB#3181 wiring
+  # via approvals_policy above; falls back to 5 if the policy returned no
+  # value). On cap, escalates to a human gate that lets the operator
+  # approve the current plan, force a final revision, or abort.
   - name: revise_counter
     type: script
-    description: Track architect-revise loop iteration count (cap 5)
+    description: Track architect-revise loop iteration count (cap from policy.approvals.max_revision_cycles)
     command: pwsh
     args:
       - "-NoProfile"
@@ -1755,7 +1782,12 @@ agents:
             $count = 1
         }
         Set-Content $counterFile $count
-        $maxRevisions = 5
+        $policyMax = '{{ approvals_policy.output.max_revision_cycles }}'
+        if ([string]::IsNullOrWhiteSpace($policyMax) -or $policyMax -eq 'None' -or $policyMax -eq '0') {
+            $maxRevisions = 5
+        } else {
+            $maxRevisions = [int]$policyMax
+        }
         $capReached = $count -ge $maxRevisions
         @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached } | ConvertTo-Json
     routes:
@@ -2485,7 +2517,7 @@ agents:
         when: "{{ poll_status_ado.output.state == 'approved' and poll_status_ado.output.metadata is defined and poll_status_ado.output.metadata is not none and poll_status_ado.output.metadata.requests_parent_change == true }}"
       - to: merge_plan_pr_ado
         when: "{{ poll_status_ado.output.state == 'approved' }}"
-      - to: revise_counter
+      - to: approvals_policy
         when: "{{ poll_status_ado.output.state == 'changes_requested' }}"
       # Stuck-review timeout MVP — see poll_status counterpart.
       - to: pending_poll_counter

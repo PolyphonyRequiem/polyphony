@@ -1692,7 +1692,7 @@ agents:
     routes:
       - to: user_acceptance_policy_router
         when: "{{ scope_reviewer.output.verdict == 'approved' }}"
-      - to: scope_revise_counter
+      - to: scope_approvals_policy
         when: "{{ scope_reviewer.output.verdict == 'changes_requested' }}"
       # Catch-all per M4: unknown verdict (typo, schema drift) routes
       # through the revise counter so that even malformed verdicts cannot
@@ -1700,6 +1700,37 @@ agents:
       # routed back to primary_router, which combined with `next-impl`
       # returning `all_items_done` produced an infinite loop burning Opus
       # calls when an MG was structurally empty (see dogfood Run #7).
+      - to: scope_approvals_policy
+
+  # ── Scope approvals policy resolver (AB#3181 partial wiring) ──────────
+  #
+  # Resolves the `approvals` policy domain for the MG so scope_revise_counter
+  # can drive its cap from policy.approvals.max_revision_cycles instead of
+  # a hardcoded literal. Pre-AB#3181 this domain was dead at workflow
+  # runtime — the resolver returned correct values but no workflow consumed
+  # them.
+  #
+  # Scoped to `default` because the MG aggregates multiple tasks of
+  # potentially different types; the cap is an MG-wide concern, not a
+  # per-task one. If per-type tuning becomes useful later, an MG-level
+  # type loader can be added and this scope can switch to `type:{name}`.
+  #
+  # Currently consumed: max_revision_cycles only. The mode (auto/warning/
+  # manual) and quality_threshold fields require reviewer-output schema
+  # changes (numeric scoring, blocking counts) before they can be wired
+  # — tracked as follow-up under AB#3181.
+  - name: scope_approvals_policy
+    type: script
+    description: Resolve approvals policy for scope-revise cap (AB#3181)
+    command: polyphony
+    args:
+      - "policy"
+      - "resolve"
+      - "--domain"
+      - "approvals"
+      - "--scope"
+      - "default"
+    routes:
       - to: scope_revise_counter
 
   # ── Scope revise counter (AB#3125) ────────────────────────────────────
@@ -1715,9 +1746,13 @@ agents:
   # work_item_id + mg_path so parallel sibling MGs under the same parent
   # do not clobber each other's counters.
   #
+  # Cap source: policy.approvals.max_revision_cycles (AB#3181 wiring via
+  # scope_approvals_policy above; falls back to 3 if the policy returned
+  # no value, preserving pre-AB#3181 behavior).
+  #
   # Invariants:
   #   Pre:  scope_reviewer.output.verdict is 'changes_requested' or unknown.
-  #   Post: output.cap_reached is true after MAX_REVISIONS=3 cycles.
+  #   Post: output.cap_reached is true after max_revisions cycles.
   #
   # Known limitation (filed separately): the counter file persists
   # across conductor runs (TempPath is per-user, not per-run). A
@@ -1726,7 +1761,7 @@ agents:
   # canonical patterns; tracking as a sibling concern.
   - name: scope_revise_counter
     type: script
-    description: Track scope-reviewer revise-loop iteration count (cap 3)
+    description: Track scope-reviewer revise-loop iteration count (cap from policy.approvals.max_revision_cycles)
     command: pwsh
     args:
       - "-NoProfile"
@@ -1739,7 +1774,12 @@ agents:
             $count = 1
         }
         Set-Content $counterFile $count
-        $maxRevisions = 3
+        $policyMax = '{{ scope_approvals_policy.output.max_revision_cycles }}'
+        if ([string]::IsNullOrWhiteSpace($policyMax) -or $policyMax -eq 'None' -or $policyMax -eq '0') {
+            $maxRevisions = 3
+        } else {
+            $maxRevisions = [int]$policyMax
+        }
         $capReached = $count -ge $maxRevisions
         @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached } | ConvertTo-Json
     routes:
