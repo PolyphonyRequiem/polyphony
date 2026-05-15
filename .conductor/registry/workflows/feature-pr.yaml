@@ -262,7 +262,7 @@ agents:
     options:
       - label: "🛑 Abort (will re-invoke with inputs)"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── ADO feature-PR creator failure gate ────────────────────────────────
   #
@@ -306,7 +306,7 @@ agents:
         route: feature_pr_creator_ado
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── GitHub PR lifecycle sub-workflow ─────────────────────────────────────
   #
@@ -1011,3 +1011,23 @@ agents:
       - "{{ feature_pr_updater.output.comment_body }}"
     routes:
       - to: pr_platform_router
+
+  # ── Terminal abort (operator chose Abort on an error gate) ────────────
+  #
+  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # abort-run.ps1, which walks the parent process chain and Stop-Processes
+  # the conductor host. Conductor's children (python workers) cascade-die.
+  - name: terminal_abort_run
+    type: script
+    description: Operator-initiated full-run abort — kills the conductor process tree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "operator-abort"
+      - "-Stage"
+      - "feature-pr"
+    routes:
+      - to: $end

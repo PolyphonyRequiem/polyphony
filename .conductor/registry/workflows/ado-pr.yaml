@@ -383,7 +383,7 @@ agents:
         route: ado_pr_treat_as_merged_emitter
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── ADO connection-inputs missing gate ──────────────────────────────────
   #
@@ -418,7 +418,7 @@ agents:
     options:
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Changes-requested gate ──────────────────────────────────────────────
   #
@@ -466,7 +466,7 @@ agents:
         route: $end
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Pending poll counter (stuck-review timeout MVP) ─────────────────────
   #
@@ -558,7 +558,7 @@ agents:
         route: $end
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Stuck-review gate (poll-cap escalation) ─────────────────────────────
   #
@@ -611,7 +611,7 @@ agents:
         route: ado_pr_merger
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Stuck-review reset ──────────────────────────────────────────────────
   #
@@ -670,7 +670,7 @@ agents:
         route: ado_pr_treat_as_merged_emitter
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Status-check failed gate ────────────────────────────────────────────
   #
@@ -717,7 +717,7 @@ agents:
         route: ado_pr_status_check
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
 
   # ── Merge-failed gate ───────────────────────────────────────────────────
   #
@@ -772,4 +772,24 @@ agents:
         route: ado_pr_treat_as_merged_emitter
       - label: "🛑 Abort"
         value: abort
-        route: $end
+        route: terminal_abort_run
+
+  # ── Terminal abort (operator chose Abort on an error gate) ────────────
+  #
+  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # abort-run.ps1, which walks the parent process chain and Stop-Processes
+  # the conductor host. Conductor's children (python workers) cascade-die.
+  - name: terminal_abort_run
+    type: script
+    description: Operator-initiated full-run abort — kills the conductor process tree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "operator-abort"
+      - "-Stage"
+      - "ado-pr"
+    routes:
+      - to: $end
