@@ -7,6 +7,7 @@ using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Locking;
 using Polyphony.Manifest;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -50,6 +51,10 @@ public sealed partial class PlanCommands
     /// <param name="manifestPath">Optional override of the run manifest path. When empty (default), derived under the git common dir via <c>PolyphonyStatePaths</c>. Pass an explicit path only as a testing seam.</param>
     /// <param name="by">Lock acquirer name; defaults to <c>USERNAME</c>/<c>USER</c> env.</param>
     /// <param name="lockTtlHours">Run-lock TTL (default 24).</param>
+    /// <param name="platform">Optional platform override (<c>github</c>|<c>ado</c>); defaults to origin URL detection.</param>
+    /// <param name="organization">ADO organization (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="project">ADO project (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="repositoryOverride">Repository override (GitHub <c>owner/repo</c> or ADO repo name).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("rebase-stale-descendant")]
     [VerbResult(typeof(PlanRebaseStaleDescendantResult))]
@@ -62,6 +67,10 @@ public sealed partial class PlanCommands
         string manifestPath = "",
         string by = "",
         int lockTtlHours = 24,
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan rebase-stale-descendant",
@@ -118,12 +127,14 @@ public sealed partial class PlanCommands
                 headBranch: headBranch, parentPlanBranch: parentPlanBranch);
         var localManifestPath = resolvedPath.Path;
 
-        // ── 2. Resolve repo slug. ──────────────────────────────────────────
-        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(slug))
+        // ── 2. Resolve repo identity (cross-platform). ─────────────────────
+        var resolved = await repoIdentityResolver.ResolveAsync(
+            platform, organization, project, repositoryOverride, ct).ConfigureAwait(false);
+        if (resolved.Identity is null)
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "no_slug",
-                "Could not resolve repo slug from origin remote",
+                resolved.Error ?? "Could not resolve repo identity from origin remote",
                 headBranch: headBranch, parentPlanBranch: parentPlanBranch);
+        var identity = resolved.Identity;
 
         // ── 3. Acquire same-root run lock BEFORE any reads. ────────────────
         // RunLockStore is stateless; resolver only needs IGitClient. Construct
@@ -173,7 +184,7 @@ public sealed partial class PlanCommands
             return await RebaseStaleDescendantUnderLockAsync(
                 rootId, itemId, parentItemId, prNumber,
                 root, item, headBranch, parentPlanBranch, manifestBranch,
-                localManifestPath, slug, ancestorIds, ct).ConfigureAwait(false);
+                localManifestPath, identity, ancestorIds, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -192,10 +203,13 @@ public sealed partial class PlanCommands
         string parentPlanBranch,
         string manifestBranch,
         string manifestPath,
-        string slug,
+        RepoIdentity identity,
         string ancestorIds,
         CancellationToken ct)
     {
+        var slug = PullRequestReader.BuildRepoSlug(identity);
+        var prUrl = PullRequestReader.BuildPrUrl(identity, prNumber);
+
         // ── 4. Verify clean worktree. ──────────────────────────────────────
         try
         {
@@ -262,7 +276,7 @@ public sealed partial class PlanCommands
         GhPullRequestPollData? poll;
         try
         {
-            poll = await gh.GetPullRequestPollDataAsync(slug, prNumber, ct).ConfigureAwait(false);
+            poll = await pullRequestReader.GetPollDataAsync(identity, prNumber, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -279,24 +293,24 @@ public sealed partial class PlanCommands
         if (!string.Equals(poll.HeadRefName, headBranch, StringComparison.Ordinal))
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "pr_identity_mismatch",
                 $"PR #{prNumber} head ref is '{poll.HeadRefName ?? "<null>"}' but the verb expected '{headBranch}'.",
-                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: $"https://github.com/{slug}/pull/{prNumber}");
+                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: prUrl);
 
         if (!string.Equals(poll.BaseRefName, parentPlanBranch, StringComparison.Ordinal))
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "pr_identity_mismatch",
                 $"PR #{prNumber} base ref is '{poll.BaseRefName ?? "<null>"}' but the verb expected '{parentPlanBranch}'.",
-                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: $"https://github.com/{slug}/pull/{prNumber}");
+                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: prUrl);
 
         if (!string.Equals(poll.State, "OPEN", StringComparison.OrdinalIgnoreCase))
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "pr_state_invalid",
                 $"PR #{prNumber} is in state '{poll.State}'; only OPEN PRs are eligible for cascade rebase.",
-                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: prUrl,
                 oldHeadSha: poll.HeadRefOid);
 
         var polledSha = poll.HeadRefOid ?? string.Empty;
         if (string.IsNullOrEmpty(polledSha))
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "pr_state_invalid",
                 $"PR #{prNumber} returned no headRefOid from gh; cannot proceed with a force-with-lease push.",
-                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: $"https://github.com/{slug}/pull/{prNumber}");
+                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: prUrl);
 
         // ── 8. Fetch PR head + verify origin/{head} == polled SHA. ─────────
         // The poll-then-fetch ordering means a head that moved server-side
@@ -310,7 +324,7 @@ public sealed partial class PlanCommands
         {
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "git_failed",
                 $"git fetch origin {headBranch} failed: {ex.Message}",
-                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: prUrl,
                 oldHeadSha: polledSha);
         }
 
@@ -321,19 +335,19 @@ public sealed partial class PlanCommands
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "pr_head_changed",
                 $"origin/{headBranch} resolved to '{fetchedHeadSha ?? "<unresolved>"}' but the PR poll reported head SHA '{polledSha}'. The head moved between poll and fetch — re-run after the workflow re-classifies.",
                 headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                prUrl: $"https://github.com/{slug}/pull/{prNumber}", oldHeadSha: polledSha);
+                prUrl: prUrl, oldHeadSha: polledSha);
         }
 
         // ── 9. Cascade-precondition: parent plan branch must be fresh. ─────
         // The parent is fresh iff (a) it has no open plan PR, OR (b) its
         // open plan PR's snapshot matches the manifest. Rebasing onto a
         // stale parent would just re-stage the staleness.
-        var parentFreshness = await CheckParentFreshnessAsync(slug, parentPlanBranch, manifest, ct).ConfigureAwait(false);
+        var parentFreshness = await CheckParentFreshnessAsync(identity, parentPlanBranch, manifest, ct).ConfigureAwait(false);
         if (parentFreshness is { } parentMessage)
         {
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "parent_stale", parentMessage,
                 headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                prUrl: $"https://github.com/{slug}/pull/{prNumber}", oldHeadSha: polledSha);
+                prUrl: prUrl, oldHeadSha: polledSha);
         }
 
         // ── 10. Three-fact freshness check. ────────────────────────────────
@@ -354,7 +368,7 @@ public sealed partial class PlanCommands
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "git_failed",
                 $"git merge-base --is-ancestor failed: {ex.Message}",
                 headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                prUrl: $"https://github.com/{slug}/pull/{prNumber}", oldHeadSha: polledSha);
+                prUrl: prUrl, oldHeadSha: polledSha);
         }
 
         bool ledgerFresh = manifest.Rebases.Any(r =>
@@ -370,7 +384,7 @@ public sealed partial class PlanCommands
                 ItemId = itemId,
                 ParentItemId = parentItemId,
                 PrNumber = prNumber,
-                PrUrl = $"https://github.com/{slug}/pull/{prNumber}",
+                PrUrl = prUrl,
                 HeadBranch = headBranch,
                 ParentPlanBranch = parentPlanBranch,
                 Outcome = "noop",
@@ -394,7 +408,7 @@ public sealed partial class PlanCommands
                 return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "git_failed",
                     $"git merge-base could not find a common ancestor between {polledSha} and origin/{parentPlanBranch}.",
                     headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                    prUrl: $"https://github.com/{slug}/pull/{prNumber}", oldHeadSha: polledSha);
+                    prUrl: prUrl, oldHeadSha: polledSha);
             }
 
             RebaseOutcome rebaseOutcome;
@@ -408,7 +422,7 @@ public sealed partial class PlanCommands
                 return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "git_failed",
                     $"git rebase failed: {ex.Message}",
                     headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                    prUrl: $"https://github.com/{slug}/pull/{prNumber}", oldHeadSha: polledSha);
+                    prUrl: prUrl, oldHeadSha: polledSha);
             }
 
             switch (rebaseOutcome)
@@ -420,7 +434,7 @@ public sealed partial class PlanCommands
                         ItemId = itemId,
                         ParentItemId = parentItemId,
                         PrNumber = prNumber,
-                        PrUrl = $"https://github.com/{slug}/pull/{prNumber}",
+                        PrUrl = prUrl,
                         HeadBranch = headBranch,
                         ParentPlanBranch = parentPlanBranch,
                         Outcome = "conflict",
@@ -435,7 +449,7 @@ public sealed partial class PlanCommands
                     return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "rebase_failed",
                         $"Rebase failed: {failed.Stderr}",
                         headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                        prUrl: $"https://github.com/{slug}/pull/{prNumber}", oldHeadSha: polledSha);
+                        prUrl: prUrl, oldHeadSha: polledSha);
 
                 case RebaseOutcome.Clean clean:
                     newHeadSha = clean.NewHeadSha;
@@ -453,13 +467,13 @@ public sealed partial class PlanCommands
                     return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "pr_head_changed",
                         $"Force-with-lease push rejected (head moved between poll and push). Detail: {stderr}",
                         headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                        prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                        prUrl: prUrl,
                         oldHeadSha: polledSha, newHeadSha: newHeadSha);
                 }
                 return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "git_failed",
                     $"git push --force-with-lease failed (exit {pushResult.ExitCode}): {stderr}",
                     headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                    prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                    prUrl: prUrl,
                     oldHeadSha: polledSha, newHeadSha: newHeadSha);
             }
         }
@@ -476,7 +490,7 @@ public sealed partial class PlanCommands
                 return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "malformed_front_matter",
                     $"PR body's front-matter is malformed: {strict.ErrorDetail ?? "<no detail>"}. Refusing to overwrite a hand-edited body — operator must reconcile manually.",
                     headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                    prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                    prUrl: prUrl,
                     oldHeadSha: polledSha, newHeadSha: ranRebase ? newHeadSha : null);
             }
 
@@ -487,21 +501,21 @@ public sealed partial class PlanCommands
                     return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "malformed_front_matter",
                         $"PR body's front-matter is malformed: {malformed.Reason}",
                         headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                        prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                        prUrl: prUrl,
                         oldHeadSha: polledSha, newHeadSha: ranRebase ? newHeadSha : null);
 
                 case FrontMatterReplacement.Absent:
                     return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "malformed_front_matter",
                         "PR body has no fenced front-matter at the start; refusing to invent one (a hand-written plan PR is out of scope for the cascade remedy).",
                         headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                        prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                        prUrl: prUrl,
                         oldHeadSha: polledSha, newHeadSha: ranRebase ? newHeadSha : null);
 
                 case FrontMatterReplacement.Replaced replaced:
                     bool edited;
                     try
                     {
-                        edited = await gh.EditPullRequestBodyAsync(slug, prNumber, replaced.NewBody, ct).ConfigureAwait(false);
+                        edited = await pullRequestReader.EditBodyAsync(identity, prNumber, replaced.NewBody, ct).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
@@ -509,7 +523,7 @@ public sealed partial class PlanCommands
                         return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "body_update_failed",
                             $"gh pr edit failed: {ex.Message}. Branch was pushed; manifest NOT recorded — replay the verb to complete recovery.",
                             headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                            prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                            prUrl: prUrl,
                             oldHeadSha: polledSha, newHeadSha: ranRebase ? newHeadSha : null);
                     }
 
@@ -518,7 +532,7 @@ public sealed partial class PlanCommands
                         return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "body_update_failed",
                             "gh pr edit returned non-success. Branch was pushed; manifest NOT recorded — replay the verb to complete recovery.",
                             headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                            prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                            prUrl: prUrl,
                             oldHeadSha: polledSha, newHeadSha: ranRebase ? newHeadSha : null);
                     }
                     bodyUpdated = true;
@@ -544,7 +558,7 @@ public sealed partial class PlanCommands
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "manifest_read_failed",
                 $"Could not reload manifest at '{manifestPath}': {ex.Message}",
                 headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                prUrl: prUrl,
                 oldHeadSha: polledSha, newHeadSha: ranRebase ? newHeadSha : null,
                 bodyUpdated: bodyUpdated);
         }
@@ -562,7 +576,7 @@ public sealed partial class PlanCommands
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "internal_error",
                 "ManifestRebaseLedger rejected reason 'child_plan_drift'; this is a bug.",
                 headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                prUrl: prUrl,
                 oldHeadSha: polledSha, newHeadSha: ranRebase ? newHeadSha : null,
                 bodyUpdated: bodyUpdated);
         }
@@ -581,7 +595,7 @@ public sealed partial class PlanCommands
                 return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "internal_error",
                     $"Manifest save failed: {ex.Message}",
                     headBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                    prUrl: $"https://github.com/{slug}/pull/{prNumber}",
+                    prUrl: prUrl,
                     oldHeadSha: polledSha, newHeadSha: ranRebase ? newHeadSha : null,
                     bodyUpdated: bodyUpdated);
             }
@@ -595,7 +609,7 @@ public sealed partial class PlanCommands
             var commentBody = BuildAutoRebaseComment(parentPlanBranch, manifestForLedger.PlanGenerations, polledSha, newHeadSha);
             try
             {
-                commentPosted = await gh.CommentPullRequestAsync(slug, prNumber, commentBody, ct).ConfigureAwait(false);
+                commentPosted = await pullRequestReader.CommentAsync(identity, prNumber, commentBody, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -614,7 +628,7 @@ public sealed partial class PlanCommands
             ItemId = itemId,
             ParentItemId = parentItemId,
             PrNumber = prNumber,
-            PrUrl = $"https://github.com/{slug}/pull/{prNumber}",
+            PrUrl = prUrl,
             HeadBranch = headBranch,
             ParentPlanBranch = parentPlanBranch,
             Outcome = "rebased",
@@ -636,7 +650,7 @@ public sealed partial class PlanCommands
     /// reason string when the parent is stale.
     /// </summary>
     private async Task<string?> CheckParentFreshnessAsync(
-        string slug,
+        RepoIdentity identity,
         string parentPlanBranch,
         RunManifest manifest,
         CancellationToken ct)
@@ -644,10 +658,8 @@ public sealed partial class PlanCommands
         IReadOnlyList<PullRequestSummary> parentPrs;
         try
         {
-            parentPrs = await gh.ListPullRequestsAsync(
-                slug,
-                new PrListFilters(Head: parentPlanBranch, State: "open", Limit: 5),
-                ct).ConfigureAwait(false);
+            parentPrs = await pullRequestReader.ListByHeadAsync(
+                identity, parentPlanBranch, "open", limit: 5, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch
@@ -666,7 +678,7 @@ public sealed partial class PlanCommands
         GhPullRequestPollData? parentPoll;
         try
         {
-            parentPoll = await gh.GetPullRequestPollDataAsync(slug, parentPr.Number, ct).ConfigureAwait(false);
+            parentPoll = await pullRequestReader.GetPollDataAsync(identity, parentPr.Number, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch
