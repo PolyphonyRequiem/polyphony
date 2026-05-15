@@ -77,6 +77,25 @@ The release workflow (`.github/workflows/release.yml`) builds for `win-x64`,
 `linux-x64`, and `osx-arm64`, computes SHA256, and publishes a GitHub Release
 with assets named `polyphony-{ver}-{rid}[.exe]` plus a sibling `.sha256`.
 
+### One-liner (recommended)
+
+For operators who just want polyphony installed and ready, including both
+copilot skills as user-globals:
+
+**Windows**
+```powershell
+iex (irm https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/install.ps1)
+```
+
+**Linux / macOS**
+```bash
+curl -fsSL https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/install.sh | bash
+```
+
+The blocks below show the same install steps inline, for operators who
+prefer to read what they're running before they run it, or who need to
+adapt the install to a non-default location.
+
 ### Windows (PowerShell)
 
 ```powershell

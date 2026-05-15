@@ -51,6 +51,25 @@ from [`PolyphonyRequiem/twig`](https://github.com/PolyphonyRequiem/twig).
 
 ---
 
+## Install
+
+The fastest path is the upstream one-liner, which downloads the binary,
+launcher trio, and both copilot skills (`polyphony-runtime`,
+`polyphony-bootstrap`) as user-globals:
+
+**Windows**
+```powershell
+iex (irm https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/install.ps1)
+```
+
+**Linux / macOS**
+```bash
+curl -fsSL https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/install.sh | bash
+```
+
+If you'd rather read what you're running, the inline blocks below do the
+same thing step-by-step.
+
 ## Inline install (no upstream skill needed)
 
 Polyphony ships as self-contained single-file binaries via GitHub Releases.
