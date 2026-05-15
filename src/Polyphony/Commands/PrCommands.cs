@@ -36,6 +36,7 @@ public sealed partial class PrCommands(
     Polyphony.Locking.RunLockStore lockStore,
     Polyphony.Locking.RunLockPathResolver lockPathResolver,
     PolyphonyStatePaths statePaths,
+    Polyphony.Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
     IAdoClient? ado = null)
 {
     private static readonly Regex PullUrlRegex =
@@ -204,12 +205,18 @@ public sealed partial class PrCommands(
 
     private async Task<string> TryResolveSlugAsync(CancellationToken ct)
     {
+        // Delegate to the shared resolver and assert the variant. ADO
+        // origins (or any non-GitHub variant) return empty so existing
+        // callers' "could not resolve slug" branch fires — defense in
+        // depth against a workflow router mis-routing an ADO repo to a
+        // GH-only verb.
         try
         {
-            var url = await git.GetRemoteUrlAsync("origin", ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(url)) return "";
-            var match = GitHubSlugRegex.Match(url);
-            return match.Success ? match.Groups[1].Value : "";
+            var resolved = await repoIdentityResolver
+                .ResolveAsync("", "", "", "", ct).ConfigureAwait(false);
+            return resolved.Identity is Polyphony.Sdlc.Observers.RepoIdentity.GitHubRepo gh
+                ? gh.Slug
+                : "";
         }
         catch { return ""; }
     }

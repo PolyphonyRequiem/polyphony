@@ -56,7 +56,7 @@ public sealed class PrCommandsMergePlanAdoTests : CommandTestBase, IDisposable
         var gh = new GhClient(runner);
         var cmd = new PrCommands(
             git, gh, twig, Repository, Config,
-            new RunLockStore(), new RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), ado);
+            new RunLockStore(), new RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), ado);
         return (cmd, runner, ado);
     }
 

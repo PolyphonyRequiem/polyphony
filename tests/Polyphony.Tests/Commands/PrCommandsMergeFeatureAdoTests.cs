@@ -35,7 +35,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
             git, gh, twig, Repository, Config,
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
-            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
+            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
             ado);
         return (cmd, ado);
     }
@@ -156,7 +156,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
         var cmd = new PrCommands(git, gh, twig, Repository, Config,
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
-            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
+            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
             ado: null);
 
         var (_, output) = await CaptureConsoleAsync(

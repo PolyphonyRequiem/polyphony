@@ -30,7 +30,7 @@ public sealed class PrCommandsCheckEvidenceFloorTests : CommandTestBase
             new PrCommands(
                 git, gh, twig, Repository, Config,
                 new Polyphony.Locking.RunLockStore(),
-                new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git)),
+                new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git)),
             runner);
     }
 
