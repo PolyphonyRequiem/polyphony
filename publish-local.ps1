@@ -43,6 +43,30 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Published to: $primaryDest" -ForegroundColor Green
 $builtMtime = (Get-Item $primaryExe).LastWriteTimeUtc
 
+# Mirror the operator-facing launcher scripts alongside the binary so the
+# canonical install layout is always: ~/.twig/bin/{polyphony.exe,
+# Invoke-PolyphonySdlc.ps1, Resolve-GhIdentity.ps1, Migrate-ToBareRepo.ps1}.
+# Matches what release.yml ships as release assets — operators following
+# the polyphony-runtime skill see the same layout regardless of install
+# path. Resolve-GhIdentity is dot-sourced from Invoke-PolyphonySdlc via
+# $PSScriptRoot, so the two MUST live in the same directory.
+$launcherScripts = @(
+    'Invoke-PolyphonySdlc.ps1',
+    'Resolve-GhIdentity.ps1',
+    'Migrate-ToBareRepo.ps1'
+)
+foreach ($name in $launcherScripts) {
+    $src = Join-Path $PSScriptRoot "scripts/$name"
+    if (-not (Test-Path $src)) {
+        Write-Warning "Launcher script not found at $src — skipping mirror."
+        continue
+    }
+    $dst = Join-Path $primaryDest $name
+    Copy-Item -Path $src -Destination $dst -Force
+}
+Write-Host "Mirrored launcher scripts: $($launcherScripts -join ', ')" -ForegroundColor Green
+
+
 # Stub-binary guard. dotnet publish has been observed to produce a 1-byte
 # polyphony.dll when the build silently corrupts the managed assembly (e.g.
 # stale obj/, mid-publish kill, disk-full mid-write). The exit code is still

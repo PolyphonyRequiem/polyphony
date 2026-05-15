@@ -212,6 +212,35 @@ jobs:
           # actions/download-artifact lays each artifact into its own
           # subdirectory; flatten everything into release/.
           find artifacts -type f \( -name 'polyphony-*' \) -exec cp -v {} release/ \;
+
+          # Bundle the operator-facing launcher scripts as release assets so
+          # `polyphony` and its launcher install from a single place. The
+          # launcher is cross-platform PowerShell (uses $IsWindows guards);
+          # pwsh is required to run it on Linux/macOS. Resolve-GhIdentity is
+          # dot-sourced from the launcher via $PSScriptRoot, so the two MUST
+          # ship together. Migrate-ToBareRepo is the remediation script the
+          # launcher's bare-layout failure points at; bundling it keeps the
+          # operator's failure-recovery path self-contained.
+          for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Migrate-ToBareRepo.ps1; do
+            cp -v "scripts/$s" "release/$s"
+            # Compute SHA256 sidecar — same format as the binary sidecars
+            # ("hash  filename") so install scripts can verify either with
+            # the same tooling.
+            if command -v sha256sum >/dev/null 2>&1; then
+              (cd release && sha256sum "$s" > "$s.sha256")
+            else
+              (cd release && shasum -a 256 "$s" > "$s.sha256")
+            fi
+          done
+
+          # Smoke check: every expected asset is present (catches path
+          # mistakes before draft release creation).
+          for f in Invoke-PolyphonySdlc.ps1 Invoke-PolyphonySdlc.ps1.sha256 \
+                   Resolve-GhIdentity.ps1   Resolve-GhIdentity.ps1.sha256 \
+                   Migrate-ToBareRepo.ps1   Migrate-ToBareRepo.ps1.sha256; do
+            test -f "release/$f" || { echo "::error::missing release asset: $f"; exit 1; }
+          done
+
           ls -lh release/
 
       - name: Generate release notes
@@ -227,6 +256,20 @@ jobs:
 
           The conductor workflow suite ships from the same tag and is registered
           via \`conductor registry add\` (see install instructions below).
+
+          ### Assets
+
+          Per-platform binaries:
+
+          - \`polyphony-${VERSION}-win-x64.exe\` (+ \`.sha256\`)
+          - \`polyphony-${VERSION}-linux-x64\` (+ \`.sha256\`)
+          - \`polyphony-${VERSION}-osx-arm64\` (+ \`.sha256\`)
+
+          Operator launcher scripts (PowerShell; cross-platform via \`pwsh\`):
+
+          - \`Invoke-PolyphonySdlc.ps1\` (+ \`.sha256\`) — dispatches a full SDLC run for one apex work item
+          - \`Resolve-GhIdentity.ps1\` (+ \`.sha256\`) — required by the launcher (dot-sourced)
+          - \`Migrate-ToBareRepo.ps1\` (+ \`.sha256\`) — used by the launcher's bare-layout failure remediation
 
           ### Install
 

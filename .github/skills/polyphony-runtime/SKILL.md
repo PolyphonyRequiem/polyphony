@@ -80,6 +80,28 @@ New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Move-Item $asset (Join-Path $installDir 'polyphony.exe') -Force
 Remove-Item "$asset.sha256"
 
+# Operator-facing launcher scripts.
+#
+# THE GAP: GitHub Releases up to and including v1.0.1 ship only the
+# binary — the launcher (Invoke-PolyphonySdlc.ps1) lives in the polyphony
+# repo's scripts/ directory and isn't bundled. PolyphonyRequiem/polyphony
+# release.yml has been updated to include the launcher pair as release
+# assets going forward; until the first release with that change ships,
+# we fetch the launcher pair from `main` at HEAD. This drifts vs the
+# binary version — acceptable trade-off until the next release tag.
+#
+# After the next launcher-bundled release ships, replace the $launcherBase
+# line below with:
+#   $launcherBase = "$base"   # release-pinned, matches binary version
+$launcherBase = 'https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/scripts'
+foreach ($name in 'Invoke-PolyphonySdlc.ps1', 'Resolve-GhIdentity.ps1', 'Migrate-ToBareRepo.ps1') {
+    $dest = Join-Path $installDir $name
+    Invoke-WebRequest -Uri "$launcherBase/$name" -OutFile $dest
+    # Clear Mark-Of-The-Web so the script isn't blocked at first invocation
+    # under default execution policy.
+    Unblock-File -Path $dest
+}
+
 # Ensure PATH (idempotent — User scope persists across shells)
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -notlike "*$installDir*") {
@@ -94,6 +116,7 @@ if ($resolved -ne $expectedPath) {
     throw "polyphony resolves to $resolved, not $expectedPath. Check PATH ordering with ``Get-Command polyphony -All``."
 }
 polyphony --version
+& (Join-Path $installDir 'Invoke-PolyphonySdlc.ps1') -? | Select-Object -First 3
 ```
 
 ### Linux / macOS (bash)
@@ -126,6 +149,14 @@ mkdir -p ~/.twig/bin
 mv "$asset" ~/.twig/bin/polyphony
 rm "${asset}.sha256"
 
+# Operator-facing launcher scripts (cross-platform PowerShell — requires
+# pwsh on the host). See the Windows section's GAP comment: until the
+# next release ships with launcher assets bundled, fetch from main HEAD.
+launcher_base='https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/scripts'
+for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Migrate-ToBareRepo.ps1; do
+    curl -fsSL -o "$HOME/.twig/bin/$s" "$launcher_base/$s"
+done
+
 # Add to PATH if needed (zsh shown; adapt to shell)
 if [[ ":$PATH:" != *":$HOME/.twig/bin:"* ]]; then
     echo 'export PATH="$HOME/.twig/bin:$PATH"' >> ~/.zshrc
@@ -138,6 +169,7 @@ if [[ "$resolved" != "$HOME/.twig/bin/polyphony" ]]; then
     echo "ERROR: polyphony resolves to $resolved, not ~/.twig/bin/polyphony"; exit 1
 fi
 polyphony --version
+command -v pwsh >/dev/null 2>&1 || { echo "WARN: pwsh not found — install PowerShell to run the launcher"; }
 ```
 
 ### Build from source (rare — only when you need an unreleased commit)
@@ -158,20 +190,30 @@ the publish + install + staleness verification.
 
 ### The launcher (most common entry point)
 
-`scripts/Invoke-PolyphonySdlc.ps1` in the polyphony repo dispatches a full
-SDLC run for one apex work item. **The launcher derives repo context from the
-current working directory** — there is no `-RepoRoot` flag.
+`Invoke-PolyphonySdlc.ps1` dispatches a full SDLC run for one apex work
+item. **The launcher derives repo context from the current working
+directory** — there is no `-RepoRoot` flag.
+
+After installing per the section above, the launcher lives at
+`~/.twig/bin/Invoke-PolyphonySdlc.ps1` (Windows: `$env:USERPROFILE\.twig\bin\`).
+On Linux/macOS it requires `pwsh` on PATH.
 
 ```powershell
 # Run from the target repo's main worktree
 cd <target-repo-main-worktree>     # e.g. C:\Users\dangreen\projects\cloudvault-service-api\main
-& <polyphony-repo>\scripts\Invoke-PolyphonySdlc.ps1 `
+& "$env:USERPROFILE\.twig\bin\Invoke-PolyphonySdlc.ps1" `
     -ApexId <work-item-id> `
     -Intent new                    # or resume / replan
     # -Platform ado                # optional; auto-detected from `git remote get-url origin`
 ```
 
-Key parameters (run `Get-Help <path>\Invoke-PolyphonySdlc.ps1 -Full` for the rest):
+```bash
+# Linux / macOS — pwsh required
+cd <target-repo-main-worktree>
+pwsh ~/.twig/bin/Invoke-PolyphonySdlc.ps1 -ApexId <work-item-id> -Intent new
+```
+
+Key parameters (run `Get-Help ~/.twig/bin/Invoke-PolyphonySdlc.ps1 -Full` for the rest):
 
 - `-ApexId` (mandatory) — work item id (the root of the run).
 - `-Intent` — `new` (default) | `resume` | `replan`.
