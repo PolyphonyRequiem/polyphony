@@ -138,6 +138,24 @@ if ($resolved -ne $expectedPath) {
 }
 polyphony --version
 & (Join-Path $installDir 'Invoke-PolyphonySdlc.ps1') -? | Select-Object -First 3
+
+# Install both polyphony skills as user-globals so any future copilot
+# session — in any cwd, on any repo — auto-discovers them. Without this,
+# only repos that have committed a polyphony-runtime stub at
+# .github/skills/polyphony-runtime/ get the runtime skill, and nobody
+# gets the bootstrap skill until they're inside the polyphony repo itself.
+$skillsDir = Join-Path $env:USERPROFILE '.copilot\skills'
+New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null
+$skillBase = 'https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/.github/skills'
+foreach ($skill in 'polyphony-runtime', 'polyphony-bootstrap') {
+    $skillDir = Join-Path $skillsDir $skill
+    New-Item -ItemType Directory -Force -Path $skillDir | Out-Null
+    Invoke-WebRequest -Uri "$skillBase/$skill/SKILL.md" -OutFile (Join-Path $skillDir 'SKILL.md')
+}
+# polyphony-runtime additionally ships a target-repo-stub template
+$tmplDir = Join-Path $skillsDir 'polyphony-runtime\templates'
+New-Item -ItemType Directory -Force -Path $tmplDir | Out-Null
+Invoke-WebRequest -Uri "$skillBase/polyphony-runtime/templates/target-repo-stub.md" -OutFile (Join-Path $tmplDir 'target-repo-stub.md')
 ```
 
 ### Linux / macOS (bash)
@@ -191,6 +209,23 @@ if [[ "$resolved" != "$HOME/.twig/bin/polyphony" ]]; then
 fi
 polyphony --version
 command -v pwsh >/dev/null 2>&1 || { echo "WARN: pwsh not found — install PowerShell to run the launcher"; }
+
+# Install both polyphony skills as user-globals so any future copilot
+# session — in any cwd, on any repo — auto-discovers them. Without this,
+# only repos that have committed a polyphony-runtime stub at
+# .github/skills/polyphony-runtime/ get the runtime skill, and nobody
+# gets the bootstrap skill until they're inside the polyphony repo itself.
+skills_dir="$HOME/.copilot/skills"
+mkdir -p "$skills_dir"
+skill_base='https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/.github/skills'
+for skill in polyphony-runtime polyphony-bootstrap; do
+    mkdir -p "$skills_dir/$skill"
+    curl -fsSL -o "$skills_dir/$skill/SKILL.md" "$skill_base/$skill/SKILL.md"
+done
+# polyphony-runtime additionally ships a target-repo-stub template
+mkdir -p "$skills_dir/polyphony-runtime/templates"
+curl -fsSL -o "$skills_dir/polyphony-runtime/templates/target-repo-stub.md" \
+    "$skill_base/polyphony-runtime/templates/target-repo-stub.md"
 ```
 
 ### Build from source (rare — only when you need an unreleased commit)
