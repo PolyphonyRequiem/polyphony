@@ -37,10 +37,27 @@ jobs:
         # with `dotnet test --no-build` (or via the workflow_dispatch job).
         run: dotnet test --no-build --filter "Category!=Slow&Category!=Integration"
 
+      - name: Install Pester
+        # Sequenced before all lint steps so a lint failure in an earlier
+        # step (which runs `if: always()`) cannot cascade by skipping the
+        # install. Previously this lived after the lint block and a single
+        # type-agnostic violation cratered the whole job.
+        shell: pwsh
+        run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Install powershell-yaml
+        # Required by the actionable.yaml e2e suite (Phase 6 PR #8) and by
+        # tests/lint-pwsh-jinja-bareword.ps1. Sequenced before the lint
+        # block so the bareword lint's `if: always()` always sees the
+        # module — see Install Pester comment above.
+        shell: pwsh
+        run: Install-Module -Name powershell-yaml -Force -SkipPublisherCheck -Scope CurrentUser
+
       - name: Lint (type-agnosticism)
         # Runs the lint script against the actual repo (scripts/ + workflow YAMLs).
         # Pester tests below validate the lint's behavior on synthetic inputs;
         # this step is the gate that catches real regressions in shipped code.
+        if: always()
         shell: pwsh
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-type-agnostic.ps1 -Surface all
@@ -52,6 +69,7 @@ jobs:
         # excluded with a `# router-skip: <value> — <reason>` comment. Catches
         # the silent-drop class of bug where a new requirement kind is added but
         # the classifier never learns about it (PR #6, closed-loop step 6).
+        if: always()
         shell: pwsh
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-lifecycle-router-coverage.ps1
@@ -64,6 +82,7 @@ jobs:
         # structured `children:` block. Defense in depth alongside PR #225
         # (`polyphony plan seed-children`'s runtime refusal); this lint
         # catches the same shape at PR-author time on the plan PR diff.
+        if: always()
         shell: pwsh
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-prose-children.ps1 -Format github
@@ -76,6 +95,7 @@ jobs:
         # un-tracked state but does NOT prevent already-tracked paths
         # from being committed nor `git add -f` overrides — this lint
         # is the explicit invariant gate.
+        if: always()
         shell: pwsh
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-no-tracked-polyphony-state.ps1
@@ -94,6 +114,7 @@ jobs:
         # Convention is documented at
         # `.github/skills/polyphony-cli-developer/SKILL.md` § "State-
         # mutation durability".
+        if: always()
         shell: pwsh
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-sync-after-mutation.ps1 -Format github
@@ -114,18 +135,6 @@ jobs:
         shell: pwsh
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-bare-cross-branch-refs.ps1 -Format github
-
-      - name: Install Pester
-        shell: pwsh
-        run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
-
-      - name: Install powershell-yaml
-        # Required by the actionable.yaml e2e suite (Phase 6 PR #8) —
-        # parses the workflow into an in-memory graph for reachability
-        # / option-route assertions. Module ships a single .psm1 +
-        # supporting assembly; install is a few seconds.
-        shell: pwsh
-        run: Install-Module -Name powershell-yaml -Force -SkipPublisherCheck -Scope CurrentUser
 
       - name: Setup Python (for harness scenarios)
         # The polyphony workflow harness (tests/harness/) drives the real
