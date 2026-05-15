@@ -483,6 +483,125 @@ Describe 'Invoke-PolyphonySdlc — git remote detection (from main worktree)' {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
+# Repo vs tracker org+project split (cross-project ADO repos)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Twig config carries the WORK-TRACKING (org, project) — where work items
+# live. The git remote URL carries the REPO (org, project) — where the git
+# repo lives. For most operators these match. For cross-project repos
+# (e.g. cloudvault — items in microsoft/OS, repo in microsoft/CloudVault)
+# they differ, and the launcher must pass the REPO identity to ADO PR
+# verbs (which target `_apis/git/repositories/{repo}` scoped to a project).
+
+Describe 'Invoke-PolyphonySdlc — repo vs tracker project split' {
+
+    AfterEach {
+        if ($script:fx) { Remove-BareRepoFixture $script:fx }
+    }
+
+    It 'Same-project ADO repo: --input organization/project match twig config' {
+        # Twig config: test-org/TestProj. Origin: test-org/TestProj/_git/repo.
+        # Should pass test-org/TestProj as workflow inputs (no behavior change
+        # vs pre-split for the common same-project case).
+        $script:fx = New-BareRepoFixture -RemoteUrl 'https://dev.azure.com/test-org/TestProj/_git/myrepo'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r.platform | Should -Be 'ado'
+            $r.args | Should -Contain 'organization=test-org'
+            $r.args | Should -Contain 'project=TestProj'
+            $r.args | Should -Contain 'repository=myrepo'
+            $r.repo_organization | Should -Be 'test-org'
+            $r.repo_project | Should -Be 'TestProj'
+            $r.tracker_organization | Should -Be 'test-org'
+            $r.tracker_project | Should -Be 'TestProj'
+            # project_url stays tracker-side (work-item URL).
+            $r.project_url | Should -Be 'https://dev.azure.com/test-org/TestProj'
+        } finally { Pop-Location }
+    }
+
+    It 'Cross-project ADO repo: --input organization/project come from git remote, NOT twig config' {
+        # Twig config: test-org/TestProj (work tracking). Origin:
+        # test-org/CloudVault/_git/cloudvault-service-api (repo lives in
+        # a different project than work items). The fix: workflow inputs
+        # must reflect the REPO identity (where ADO REST PR endpoints live),
+        # not the tracker.
+        $script:fx = New-BareRepoFixture -RemoteUrl 'https://dev.azure.com/test-org/CloudVault/_git/cloudvault-service-api'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r.platform | Should -Be 'ado'
+            # Workflow inputs reflect the REPO project (CloudVault), NOT
+            # the tracker project (TestProj). Pre-fix this was 'TestProj'
+            # and `pr open-plan-ado` got "repo not found in test-org/TestProj".
+            $r.args | Should -Contain 'organization=test-org'
+            $r.args | Should -Contain 'project=CloudVault'
+            $r.args | Should -Contain 'repository=cloudvault-service-api'
+            $r.repo_organization | Should -Be 'test-org'
+            $r.repo_project | Should -Be 'CloudVault'
+            # Tracker side stays as twig-config values (used for work-item
+            # ops; surfaced in resolved object for diagnostics).
+            $r.tracker_organization | Should -Be 'test-org'
+            $r.tracker_project | Should -Be 'TestProj'
+            # project_url stays pointed at the WORK-TRACKING project (the
+            # ADO project where the work items live, which is what work-item
+            # URLs render against).
+            $r.project_url | Should -Be 'https://dev.azure.com/test-org/TestProj'
+        } finally { Pop-Location }
+    }
+
+    It 'Cross-project ADO repo via legacy visualstudio.com URL' {
+        $script:fx = New-BareRepoFixture -RemoteUrl 'https://contoso.visualstudio.com/RepoProj/_git/MyRepo'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r.platform | Should -Be 'ado'
+            $r.args | Should -Contain 'organization=contoso'
+            $r.args | Should -Contain 'project=RepoProj'
+            $r.args | Should -Contain 'repository=MyRepo'
+        } finally { Pop-Location }
+    }
+
+    It '-RepoOrganization override beats auto-detection' {
+        $script:fx = New-BareRepoFixture -RemoteUrl 'https://dev.azure.com/test-org/CloudVault/_git/cloudvault-service-api'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 1 -RepoOrganization 'override-org' -DryRun | ConvertFrom-Json
+            $r.repo_organization | Should -Be 'override-org'
+            $r.args | Should -Contain 'organization=override-org'
+            # RepoProject still auto-detected.
+            $r.repo_project | Should -Be 'CloudVault'
+        } finally { Pop-Location }
+    }
+
+    It '-RepoProject override beats auto-detection' {
+        $script:fx = New-BareRepoFixture -RemoteUrl 'https://dev.azure.com/test-org/CloudVault/_git/cloudvault-service-api'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 1 -RepoProject 'override-proj' -DryRun | ConvertFrom-Json
+            $r.repo_project | Should -Be 'override-proj'
+            $r.args | Should -Contain 'project=override-proj'
+            $r.repo_organization | Should -Be 'test-org'
+        } finally { Pop-Location }
+    }
+
+    It 'GitHub remote: repo_organization/repo_project fall back to twig config (unused on github leg)' {
+        # GitHub origin → no ADO regex match → no auto-detected repo
+        # org/project → fall back to twig config. The github workflow leg
+        # ignores these inputs entirely, but they must still be set so the
+        # workflow's required-input contract is satisfied.
+        $script:fx = New-BareRepoFixture -RemoteUrl 'https://github.com/owner/name'
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r.platform | Should -Be 'github'
+            $r.repo_organization | Should -Be 'test-org'
+            $r.repo_project | Should -Be 'TestProj'
+        } finally { Pop-Location }
+    }
+}
+
+# ════════════════════════════════════════════════════════════════════════════
 # .twig/ propagation
 # ════════════════════════════════════════════════════════════════════════════
 

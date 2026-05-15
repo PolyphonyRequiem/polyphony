@@ -49,6 +49,21 @@
     auto-derived from the git remote URL (GitHub: `<owner>/<name>`; ADO:
     `<repo>`).
 
+.PARAMETER RepoOrganization
+    ADO organization where the GIT REPO lives. Distinct from the
+    work-tracking organization (which lives in `.twig/config`). Default:
+    auto-derived from `git remote get-url origin`; falls back to
+    `.twig/config.organization` when origin is non-ADO or unparseable.
+    For most operators these match — only matters when the repo is hosted
+    in a different ADO project than the work items (e.g. work items in
+    `microsoft/OS`, repo in `microsoft/CloudVault`).
+
+.PARAMETER RepoProject
+    ADO project where the GIT REPO lives. Distinct from the work-tracking
+    project (which lives in `.twig/config`). Default: auto-derived from
+    `git remote get-url origin`; falls back to `.twig/config.project` when
+    origin is non-ADO or unparseable.
+
 .PARAMETER GitRepo
     Source-of-truth git repo path metadata field. Default: the canonical main
     worktree path returned by init-apex (no longer derived from the WorktreeRoot
@@ -119,6 +134,10 @@ param(
     [string]$Platform,
 
     [string]$Repository,
+
+    [string]$RepoOrganization,
+
+    [string]$RepoProject,
 
     [string]$GitRepo,
 
@@ -569,8 +588,18 @@ if (-not $GitRepo) {
 # The previous launcher detected from $WorktreeRoot, which was wrong under
 # the new layout (apex worktree shares the bare's remotes anyway, but reading
 # from main is the intentful choice — main is the canonical source-of-truth).
-$detectedPlatform   = $null
-$detectedRepository = $null
+#
+# REPO vs TRACKER identity (cross-project repos): for ADO platforms we ALSO
+# capture the repo's org + project from the origin URL. These are conceptually
+# distinct from the work-tracking org + project (which live in .twig/config)
+# and matter when the git repo is hosted in a different ADO project than the
+# work items live in (e.g. cloudvault — items in microsoft/OS, repo in
+# microsoft/CloudVault). Same-project repos see no behavior change because
+# the auto-detected repo identity matches the twig-config tracker identity.
+$detectedPlatform     = $null
+$detectedRepository   = $null
+$detectedRepoOrg      = $null
+$detectedRepoProject  = $null
 $remoteUrl = & git -C $mainWorktree remote get-url origin 2>&1
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteUrl)) {
     $remoteUrl = $null
@@ -587,16 +616,22 @@ if ($remoteUrl) {
         '^https?://(?:[^@/]+@)?dev\.azure\.com/(?<org>[^/]+)/(?<project>[^/]+)/_git/(?<repo>[^/?#]+?)(?:\.git)?/?$' {
             $detectedPlatform = 'ado'
             $detectedRepository = $Matches.repo
+            $detectedRepoOrg = $Matches.org
+            $detectedRepoProject = $Matches.project
             break
         }
         '^https?://(?:[^@/]+@)?(?<org>[^.]+)\.visualstudio\.com/(?<project>[^/]+)/_git/(?<repo>[^/?#]+?)(?:\.git)?/?$' {
             $detectedPlatform = 'ado'
             $detectedRepository = $Matches.repo
+            $detectedRepoOrg = $Matches.org
+            $detectedRepoProject = $Matches.project
             break
         }
         '^git@ssh\.dev\.azure\.com:v\d+/(?<org>[^/]+)/(?<project>[^/]+)/(?<repo>[^/?#]+?)(?:\.git)?/?$' {
             $detectedPlatform = 'ado'
             $detectedRepository = $Matches.repo
+            $detectedRepoOrg = $Matches.org
+            $detectedRepoProject = $Matches.project
             break
         }
     }
@@ -610,6 +645,17 @@ if (-not $PSBoundParameters.ContainsKey('Repository')) {
     $Repository = if ($detectedRepository) { $detectedRepository } else { '' }
 }
 
+# Repo-side org + project: explicit param > auto-detected from git remote >
+# tracker-side fallback (twig config). The tracker-side fallback preserves
+# backwards compatibility for the same-project case (most operators) where
+# the repo lives in the same ADO project as the work items.
+if (-not $PSBoundParameters.ContainsKey('RepoOrganization')) {
+    $RepoOrganization = if ($detectedRepoOrg) { $detectedRepoOrg } else { $twigConfig.organization }
+}
+if (-not $PSBoundParameters.ContainsKey('RepoProject')) {
+    $RepoProject = if ($detectedRepoProject) { $detectedRepoProject } else { $twigConfig.project }
+}
+
 # ─── Phase 10: build the conductor command ───────────────────────────────────
 
 $conductorArgs = @(
@@ -618,8 +664,8 @@ $conductorArgs = @(
     '--input', "apex_id=$ApexId"
     '--input', "intent=$Intent"
     '--input', "platform=$Platform"
-    '--input', "organization=$($twigConfig.organization)"
-    '--input', "project=$($twigConfig.project)"
+    '--input', "organization=$RepoOrganization"
+    '--input', "project=$RepoProject"
     '--input', "repository=$Repository"
     '-m', "tracker=ado"
     '-m', "project_url=$projectUrl"
@@ -636,6 +682,10 @@ $resolved = [pscustomobject]@{
     intent             = $Intent
     platform           = $Platform
     repository         = $Repository
+    repo_organization  = $RepoOrganization
+    repo_project       = $RepoProject
+    tracker_organization = $twigConfig.organization
+    tracker_project    = $twigConfig.project
     remote_url         = $remoteUrl
     worktree_root      = $WorktreeRoot
     main_worktree_path = $mainWorktree
