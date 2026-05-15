@@ -333,6 +333,8 @@ public sealed partial class PrCommands
                 complete = await ado.CompletePullRequestAsync(
                     organization, project, repository, activePr.PullRequestId,
                     lastMergeSourceCommitSha: lastMergeSha,
+                    mergeStrategy: AdoMergeStrategy.NoFastForward,
+                    deleteSourceBranch: false,
                     ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }

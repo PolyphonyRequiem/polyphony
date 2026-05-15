@@ -666,6 +666,7 @@ public sealed class PrCommandsGetCommentsAdoTests : CommandTestBase
         public Task<AdoCompletePullRequestResult> CompletePullRequestAsync(
             string organization, string project, string repository,
             int pullRequestId, string lastMergeSourceCommitSha,
+            AdoMergeStrategy mergeStrategy, bool deleteSourceBranch,
             CancellationToken ct = default)
             => throw new NotImplementedException();
 
@@ -687,5 +688,25 @@ public sealed class PrCommandsGetCommentsAdoTests : CommandTestBase
             if (ThrowOnListThreads is not null) throw ThrowOnListThreads;
             return Task.FromResult(Threads);
         }
+
+        public Task<AdoEvidenceFloorRead> GetPullRequestEvidenceFloorAsync(
+            string organization, string project, string repository,
+            int pullRequestId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<IReadOnlyList<AdoPullRequestChangedFile>?> GetPullRequestFilesAsync(
+            string organization, string project, string repository,
+            int pullRequestId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<bool> EditPullRequestBodyAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string body, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<bool> ClosePullRequestAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string commentBeforeClose, CancellationToken ct = default)
+            => throw new NotImplementedException();
     }
 }

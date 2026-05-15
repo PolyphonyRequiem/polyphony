@@ -499,6 +499,8 @@ public sealed class AdoClient : IAdoClient
         string repository,
         int pullRequestId,
         string lastMergeSourceCommitSha,
+        AdoMergeStrategy mergeStrategy,
+        bool deleteSourceBranch,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(organization);
@@ -520,8 +522,8 @@ public sealed class AdoClient : IAdoClient
             LastMergeSourceCommit = new AdoCommitRef { CommitId = lastMergeSourceCommitSha },
             CompletionOptions = new AdoCompletionOptions
             {
-                MergeStrategy = "noFastForward",
-                DeleteSourceBranch = false,
+                MergeStrategy = MergeStrategyToWire(mergeStrategy),
+                DeleteSourceBranch = deleteSourceBranch,
                 BypassPolicy = false,
             },
         };
@@ -708,6 +710,368 @@ public sealed class AdoClient : IAdoClient
             mapped.Add(projected);
         }
         return mapped;
+    }
+
+    /// <inheritdoc />
+    public async Task<AdoEvidenceFloorRead> GetPullRequestEvidenceFloorAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(organization);
+        ArgumentException.ThrowIfNullOrEmpty(project);
+        ArgumentException.ThrowIfNullOrEmpty(repository);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
+
+        // ── PR detail (description + existence probe) ────────────────────
+        AdoPullRequestDetailRaw? detail;
+        try
+        {
+            var detailUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                            $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                            $"?api-version=7.1";
+            var pat = ResolvePatOrThrow();
+            using var detailResponse = await SendWithRetryAsync(() =>
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, detailUrl);
+                AddAuthHeaders(req, pat);
+                return req;
+            }, ct).ConfigureAwait(false);
+
+            if (detailResponse.StatusCode == HttpStatusCode.NotFound)
+            {
+                return new AdoEvidenceFloorRead(
+                    AdoEvidenceFloorOutcome.PrNotFound,
+                    CommitCount: 0,
+                    Body: string.Empty,
+                    Detail: $"PR {pullRequestId} not found in {organization}/{project}/{repository}");
+            }
+            if (!detailResponse.IsSuccessStatusCode)
+            {
+                return new AdoEvidenceFloorRead(
+                    AdoEvidenceFloorOutcome.AdoFailed,
+                    CommitCount: 0,
+                    Body: string.Empty,
+                    Detail: await ComposeFailureDetailAsync(detailResponse, ct).ConfigureAwait(false));
+            }
+            await using var detailStream = await detailResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            detail = await JsonSerializer.DeserializeAsync(
+                detailStream, PolyphonyJsonContext.Default.AdoPullRequestDetailRaw, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return new AdoEvidenceFloorRead(
+                AdoEvidenceFloorOutcome.AdoFailed,
+                CommitCount: 0,
+                Body: string.Empty,
+                Detail: $"PR detail call failed: {ex.Message}");
+        }
+
+        // ── Commit list (count beyond base) ───────────────────────────────
+        int commitCount;
+        try
+        {
+            var commitsUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                             $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                             $"/commits?api-version=7.1";
+            var pat = ResolvePatOrThrow();
+            using var commitsResponse = await SendWithRetryAsync(() =>
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, commitsUrl);
+                AddAuthHeaders(req, pat);
+                return req;
+            }, ct).ConfigureAwait(false);
+
+            if (commitsResponse.StatusCode == HttpStatusCode.NotFound)
+            {
+                // PR existed at the detail call but the commits route 404'd
+                // — treat as not-found for the floor read (a deleted PR
+                // between the two calls would land here).
+                return new AdoEvidenceFloorRead(
+                    AdoEvidenceFloorOutcome.PrNotFound,
+                    CommitCount: 0,
+                    Body: string.Empty,
+                    Detail: $"PR {pullRequestId} commits not found");
+            }
+            if (!commitsResponse.IsSuccessStatusCode)
+            {
+                return new AdoEvidenceFloorRead(
+                    AdoEvidenceFloorOutcome.AdoFailed,
+                    CommitCount: 0,
+                    Body: string.Empty,
+                    Detail: await ComposeFailureDetailAsync(commitsResponse, ct).ConfigureAwait(false));
+            }
+            await using var commitsStream = await commitsResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            var commitsEnvelope = await JsonSerializer.DeserializeAsync(
+                commitsStream, PolyphonyJsonContext.Default.AdoCommitListResponse, ct).ConfigureAwait(false);
+            // Prefer the explicit count field; fall back to value.Count when
+            // the server omits it (some api-versions do).
+            commitCount = commitsEnvelope?.Count ?? commitsEnvelope?.Value?.Count ?? 0;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return new AdoEvidenceFloorRead(
+                AdoEvidenceFloorOutcome.AdoFailed,
+                CommitCount: 0,
+                Body: string.Empty,
+                Detail: $"PR commits call failed: {ex.Message}");
+        }
+
+        return new AdoEvidenceFloorRead(
+            AdoEvidenceFloorOutcome.Found,
+            CommitCount: commitCount,
+            Body: detail?.Description ?? string.Empty,
+            Detail: null);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AdoPullRequestChangedFile>?> GetPullRequestFilesAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(organization);
+        ArgumentException.ThrowIfNullOrEmpty(project);
+        ArgumentException.ThrowIfNullOrEmpty(repository);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
+
+        // ── 1. Find the latest iteration ─────────────────────────────────
+        var pat = ResolvePatOrThrow();
+        var iterationsUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                            $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                            $"/iterations?api-version=7.1";
+
+        using var iterResp = await SendWithRetryAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, iterationsUrl);
+            AddAuthHeaders(req, pat);
+            return req;
+        }, ct).ConfigureAwait(false);
+
+        if (iterResp.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(iterResp, ct).ConfigureAwait(false);
+
+        await using var iterStream = await iterResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        var iterEnvelope = await JsonSerializer.DeserializeAsync(
+            iterStream, PolyphonyJsonContext.Default.AdoIterationListResponse, ct).ConfigureAwait(false);
+        var latestIterationId = iterEnvelope?.Value?.Count > 0
+            ? iterEnvelope.Value.Max(e => e.Id)
+            : 0;
+        if (latestIterationId == 0)
+        {
+            // PR exists but has no iterations — treat as no-changes (empty
+            // list, not null). Differentiates from "PR not found".
+            return Array.Empty<AdoPullRequestChangedFile>();
+        }
+
+        // ── 2. Read the per-file changes for that iteration ──────────────
+        var changesUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                         $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                         $"/iterations/{latestIterationId}/changes?api-version=7.1";
+
+        using var chgResp = await SendWithRetryAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, changesUrl);
+            AddAuthHeaders(req, pat);
+            return req;
+        }, ct).ConfigureAwait(false);
+
+        if (chgResp.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(chgResp, ct).ConfigureAwait(false);
+
+        await using var chgStream = await chgResp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        var chgEnvelope = await JsonSerializer.DeserializeAsync(
+            chgStream, PolyphonyJsonContext.Default.AdoIterationChangesResponse, ct).ConfigureAwait(false);
+
+        if (chgEnvelope?.ChangeEntries is null || chgEnvelope.ChangeEntries.Count == 0)
+        {
+            return Array.Empty<AdoPullRequestChangedFile>();
+        }
+
+        var mapped = new List<AdoPullRequestChangedFile>(chgEnvelope.ChangeEntries.Count);
+        foreach (var entry in chgEnvelope.ChangeEntries)
+        {
+            var path = entry.Item?.Path;
+            if (string.IsNullOrEmpty(path)) continue;
+            // ADO paths are absolute (leading slash); normalise to repo-
+            // relative for parity with the GitHub side.
+            if (path.StartsWith('/')) path = path[1..];
+            mapped.Add(new AdoPullRequestChangedFile(
+                Path: path,
+                Additions: -1, // ADO does not report; verb-side computes locally when needed.
+                Deletions: -1,
+                ChangeType: NormalizeChangeType(entry.ChangeType)));
+        }
+        return mapped;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> EditPullRequestBodyAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string body,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(organization);
+        ArgumentException.ThrowIfNullOrEmpty(project);
+        ArgumentException.ThrowIfNullOrEmpty(repository);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
+        // Body may legitimately be empty (clearing the description) — no
+        // ThrowIfNullOrEmpty here.
+        ArgumentNullException.ThrowIfNull(body);
+
+        try
+        {
+            var pat = ResolvePatOrThrow();
+            var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                      $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                      $"?api-version=7.1";
+
+            var bodyJson = JsonSerializer.Serialize(
+                new AdoEditPullRequestRequest { Description = body },
+                PolyphonyJsonContext.Default.AdoEditPullRequestRequest);
+
+            using var response = await SendWithRetryAsync(() =>
+            {
+                var req = new HttpRequestMessage(HttpMethod.Patch, url)
+                {
+                    Content = new StringContent(bodyJson, Encoding.UTF8, "application/json"),
+                };
+                AddAuthHeaders(req, pat);
+                return req;
+            }, ct).ConfigureAwait(false);
+
+            return response.IsSuccessStatusCode;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Per the contract: false on any non-success outcome (timeout,
+            // network, malformed JSON, missing PAT). Caller-driven
+            // cancellation has already re-thrown above.
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> ClosePullRequestAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string commentBeforeClose,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(organization);
+        ArgumentException.ThrowIfNullOrEmpty(project);
+        ArgumentException.ThrowIfNullOrEmpty(repository);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
+
+        // ── Optional comment first; best-effort (don't abort the close on
+        //    comment failure — matches the gh CLI behaviour where
+        //    `gh pr close --comment "x"` continues even if the comment leg
+        //    has trouble). ───────────────────────────────────────────────
+        if (!string.IsNullOrEmpty(commentBeforeClose))
+        {
+            try
+            {
+                _ = await CreatePullRequestCommentThreadAsync(
+                    organization, project, repository, pullRequestId, commentBeforeClose, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Best-effort — swallow and proceed to the close PATCH.
+            }
+        }
+
+        // ── Abandon PATCH ────────────────────────────────────────────────
+        try
+        {
+            var pat = ResolvePatOrThrow();
+            var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                      $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                      $"?api-version=7.1";
+
+            var bodyJson = JsonSerializer.Serialize(
+                new AdoAbandonPullRequestRequest(),
+                PolyphonyJsonContext.Default.AdoAbandonPullRequestRequest);
+
+            using var response = await SendWithRetryAsync(() =>
+            {
+                var req = new HttpRequestMessage(HttpMethod.Patch, url)
+                {
+                    Content = new StringContent(bodyJson, Encoding.UTF8, "application/json"),
+                };
+                AddAuthHeaders(req, pat);
+                return req;
+            }, ct).ConfigureAwait(false);
+
+            return response.IsSuccessStatusCode;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Translate <see cref="AdoMergeStrategy"/> to the ADO REST wire-level
+    /// <c>completionOptions.mergeStrategy</c> string.
+    /// </summary>
+    internal static string MergeStrategyToWire(AdoMergeStrategy strategy) => strategy switch
+    {
+        AdoMergeStrategy.NoFastForward => "noFastForward",
+        AdoMergeStrategy.Squash => "squash",
+        AdoMergeStrategy.Rebase => "rebase",
+        AdoMergeStrategy.RebaseMerge => "rebaseMerge",
+        _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, "Unknown ADO merge strategy."),
+    };
+
+    /// <summary>
+    /// Normalise ADO's <c>VersionControlChangeType</c> string to a stable
+    /// lower-case vocabulary. ADO can return comma-separated combinations
+    /// (e.g. <c>"edit, rename"</c>); we keep the raw string trimmed and
+    /// lower-cased so the verb side can grep substring (<c>contains
+    /// "rename"</c>, etc.) without re-deriving casing.
+    /// </summary>
+    internal static string NormalizeChangeType(string? changeType)
+    {
+        if (string.IsNullOrWhiteSpace(changeType)) return "unknown";
+        return changeType.Trim().ToLowerInvariant();
+    }
+
+    private static async Task<string> ComposeFailureDetailAsync(
+        HttpResponseMessage response, CancellationToken ct)
+    {
+        var snippet = await ReadBodyTruncatedAsync(response, ct).ConfigureAwait(false);
+        return string.IsNullOrEmpty(snippet)
+            ? $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}"
+            : $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}: {snippet}";
     }
 
     /// <summary>

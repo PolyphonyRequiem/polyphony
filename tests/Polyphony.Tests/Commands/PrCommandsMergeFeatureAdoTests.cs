@@ -792,6 +792,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
         public Task<AdoCompletePullRequestResult> CompletePullRequestAsync(
             string organization, string project, string repository,
             int pullRequestId, string lastMergeSourceCommitSha,
+            AdoMergeStrategy mergeStrategy, bool deleteSourceBranch,
             CancellationToken ct = default)
         {
             CompleteCallCount++;
@@ -811,6 +812,25 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
         public Task<IReadOnlyList<AdoPullRequestThread>?> ListPullRequestThreadsAsync(
             string organization, string project, string repository,
             int pullRequestId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public Task<AdoEvidenceFloorRead> GetPullRequestEvidenceFloorAsync(
+            string organization, string project, string repository,
+            int pullRequestId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<IReadOnlyList<AdoPullRequestChangedFile>?> GetPullRequestFilesAsync(
+            string organization, string project, string repository,
+            int pullRequestId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<bool> EditPullRequestBodyAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string body, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<bool> ClosePullRequestAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string commentBeforeClose, CancellationToken ct = default)
             => throw new NotImplementedException();
 }
 }
