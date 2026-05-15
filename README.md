@@ -95,7 +95,8 @@ For the deeper "why split it this way?" — see
 
 You will need:
 
-- **.NET 11 SDK** — to build the CLI.
+- **.NET 11 SDK** — to build the CLI **from source** (operators using the
+  pre-built binary do not need this).
 - **PowerShell 7+** — workflow scripts are PowerShell.
 - **`twig` CLI** — Polyphony's write-side companion. Install from
   [`PolyphonyRequiem/twig`](https://github.com/PolyphonyRequiem/twig) and put
@@ -105,6 +106,32 @@ You will need:
 - **`gh` CLI** — used by the GitHub PR sub-workflow.
 - **`git` CLI** — git worktrees are how we run multiple SDLC instances in
   parallel.
+
+### Operator one-liner (recommended)
+
+If you don't intend to develop polyphony itself — you just want to *use* it
+to drive an SDLC run on some other repo — install everything in one shot:
+
+**Windows (PowerShell)**
+```powershell
+iex (irm https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/install.ps1)
+```
+
+**Linux / macOS (bash)**
+```bash
+curl -fsSL https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/install.sh | bash
+```
+
+Both scripts download the latest release binary, the launcher trio, and
+both copilot skills (`polyphony-runtime`, `polyphony-bootstrap`) into
+`~/.twig/bin/` and `~/.copilot/skills/` respectively. Idempotent — re-run
+to upgrade. Pin a specific version with `install.ps1 -Version v2.4.0` /
+`install.sh v2.4.0`. Prereqs (git, pwsh, conductor) are *not* auto-installed
+— the script warns if any are missing and prints the install command.
+
+After install, open a copilot CLI session in any repo and ask
+*"set up polyphony for this repo"* (bootstrap) or *"run polyphony for
+work item N"* (runtime).
 
 ### Build and install the CLI
 
