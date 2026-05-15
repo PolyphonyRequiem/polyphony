@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Shouldly;
 using Xunit;
 
@@ -8,8 +9,8 @@ namespace Polyphony.Tests.Infrastructure.AzureDevOps;
 
 public sealed class AdoClientTests
 {
-    private static AdoTokenResolver TokenResolver(string? token) =>
-        new(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]);
+    private static IPolyphonyAuthProvider TokenResolver(string? token) =>
+        new PatAuthProvider(new AdoTokenResolver(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]));
 
     private const string SuccessBody = """
         {
@@ -30,7 +31,7 @@ public sealed class AdoClientTests
         var status = await client.GetAuthStatusAsync();
 
         status.IsAuthenticated.ShouldBeFalse();
-        status.Detail.ShouldContain("No PAT configured");
+        status.Detail.ShouldContain("No PAT found");
         status.Detail.ShouldContain("AZURE_DEVOPS_EXT_PAT");
         status.OrganizationName.ShouldBeNull();
         handler.RequestCount.ShouldBe(0);
@@ -91,7 +92,7 @@ public sealed class AdoClientTests
         var status = await client.GetAuthStatusAsync();
 
         status.IsAuthenticated.ShouldBeFalse();
-        status.Detail.ShouldBe("PAT rejected");
+        status.Detail.ShouldBe("Credentials rejected");
         status.OrganizationName.ShouldBeNull();
     }
 
@@ -105,7 +106,7 @@ public sealed class AdoClientTests
         var status = await client.GetAuthStatusAsync();
 
         status.IsAuthenticated.ShouldBeFalse();
-        status.Detail.ShouldBe("PAT rejected");
+        status.Detail.ShouldBe("Credentials rejected");
     }
 
     [Fact]

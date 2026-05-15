@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Shouldly;
 using Xunit;
 
@@ -22,8 +23,8 @@ public sealed class AdoClientPullRequestsTests
     private const string Project = "myproj";
     private const string Repo = "myrepo";
 
-    private static AdoTokenResolver TokenResolver(string? token) =>
-        new(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]);
+    private static IPolyphonyAuthProvider TokenResolver(string? token) =>
+        new PatAuthProvider(new AdoTokenResolver(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]));
 
     private static AdoClient NewClient(StubHandler handler, string? pat = "real-pat",
         AdoClientPolicy? policy = null)
@@ -212,12 +213,12 @@ public sealed class AdoClientPullRequestsTests
     }
 
     [Fact]
-    public async Task ListPullRequestsAsync_NoPat_ThrowsInvalidOperation()
+    public async Task ListPullRequestsAsync_NoPat_ThrowsAdoAuthenticationException()
     {
         var handler = StubHandler.AlwaysFail();
         var client = NewClient(handler, pat: null);
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(
+        var ex = await Should.ThrowAsync<AdoAuthenticationException>(
             () => client.ListPullRequestsAsync(Org, Project, Repo));
         ex.Message.ShouldContain("AZURE_DEVOPS_EXT_PAT");
         handler.RequestCount.ShouldBe(0);
@@ -309,12 +310,12 @@ public sealed class AdoClientPullRequestsTests
     }
 
     [Fact]
-    public async Task GetPullRequestAsync_NoPat_ThrowsInvalidOperation()
+    public async Task GetPullRequestAsync_NoPat_ThrowsAdoAuthenticationException()
     {
         var handler = StubHandler.AlwaysFail();
         var client = NewClient(handler, pat: null);
 
-        await Should.ThrowAsync<InvalidOperationException>(
+        await Should.ThrowAsync<AdoAuthenticationException>(
             () => client.GetPullRequestAsync(Org, Project, Repo, 42));
     }
 
@@ -449,12 +450,12 @@ public sealed class AdoClientPullRequestsTests
     }
 
     [Fact]
-    public async Task CreatePullRequestAsync_NoPat_ThrowsInvalidOperation()
+    public async Task CreatePullRequestAsync_NoPat_ThrowsAdoAuthenticationException()
     {
         var handler = StubHandler.AlwaysFail();
         var client = NewClient(handler, pat: null);
 
-        await Should.ThrowAsync<InvalidOperationException>(
+        await Should.ThrowAsync<AdoAuthenticationException>(
             () => client.CreatePullRequestAsync(
                 Org, Project, Repo, "feature/x", "main", "T", "D"));
     }

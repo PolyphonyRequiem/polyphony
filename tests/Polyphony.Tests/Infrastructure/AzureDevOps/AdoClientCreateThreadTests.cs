@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Shouldly;
 using Xunit;
 
@@ -23,8 +24,8 @@ public sealed class AdoClientCreateThreadTests
     private const int PrId = 42;
     private const string CommentBody = "Looks good — shipping.";
 
-    private static AdoTokenResolver TokenResolver(string? token) =>
-        new(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]);
+    private static IPolyphonyAuthProvider TokenResolver(string? token) =>
+        new PatAuthProvider(new AdoTokenResolver(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]));
 
     private static AdoClient NewClient(StubHandler handler, string? pat = "real-pat",
         AdoClientPolicy? policy = null)
@@ -210,12 +211,12 @@ public sealed class AdoClientCreateThreadTests
     }
 
     [Fact]
-    public async Task CreatePullRequestCommentThreadAsync_NoPat_ThrowsInvalidOperation()
+    public async Task CreatePullRequestCommentThreadAsync_NoPat_ThrowsAdoAuthenticationException()
     {
         var handler = StubHandler.AlwaysFail();
         var client = NewClient(handler, pat: null);
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(
+        var ex = await Should.ThrowAsync<AdoAuthenticationException>(
             () => client.CreatePullRequestCommentThreadAsync(Org, Project, Repo, PrId, CommentBody));
         ex.Message.ShouldContain("AZURE_DEVOPS_EXT_PAT");
         handler.RequestCount.ShouldBe(0);

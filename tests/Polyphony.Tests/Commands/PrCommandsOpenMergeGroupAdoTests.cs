@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
@@ -424,7 +425,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
     {
         var (cmd, runner, ado) = CreateCommand();
         StubBranchesExist(runner, "mg/100_core", "feature/100");
-        ado.ThrowOnList = new InvalidOperationException("No PAT configured (set AZURE_DEVOPS_EXT_PAT).");
+        ado.ThrowOnList = new AdoAuthenticationException("No PAT configured (set AZURE_DEVOPS_EXT_PAT).");
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));

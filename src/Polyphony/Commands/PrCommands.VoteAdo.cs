@@ -3,6 +3,7 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Routing;
 
 namespace Polyphony.Commands;
@@ -126,9 +127,9 @@ public sealed partial class PrCommands
             return ExitCodes.Success;
         }
         catch (OperationCanceledException) { throw; }
-        catch (InvalidOperationException ex)
+        catch (AdoAuthenticationException ex)
         {
-            // Raised by AdoClient.ResolvePatOrThrow when no PAT is configured.
+            // Raised by IPolyphonyAuthProvider when no ADO credential chain succeeds (PAT env or AAD).
             EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, ex.Message, "no_pat");
             return ExitCodes.Success;
         }

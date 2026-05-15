@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Shouldly;
 using Xunit;
 
@@ -22,8 +23,8 @@ public sealed class AdoClientVoteTests
     private const int PrId = 42;
     private const string ReviewerId = "11111111-2222-3333-4444-555555555555";
 
-    private static AdoTokenResolver TokenResolver(string? token) =>
-        new(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]);
+    private static IPolyphonyAuthProvider TokenResolver(string? token) =>
+        new PatAuthProvider(new AdoTokenResolver(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]));
 
     private static AdoClient NewClient(StubHandler handler, string? pat = "real-pat",
         AdoClientPolicy? policy = null)
@@ -182,12 +183,12 @@ public sealed class AdoClientVoteTests
     }
 
     [Fact]
-    public async Task SetPullRequestVoteAsync_NoPat_ThrowsInvalidOperation()
+    public async Task SetPullRequestVoteAsync_NoPat_ThrowsAdoAuthenticationException()
     {
         var handler = StubHandler.AlwaysFail();
         var client = NewClient(handler, pat: null);
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(
+        var ex = await Should.ThrowAsync<AdoAuthenticationException>(
             () => client.SetPullRequestVoteAsync(Org, Project, Repo, PrId, ReviewerId, 10));
         ex.Message.ShouldContain("AZURE_DEVOPS_EXT_PAT");
         handler.RequestCount.ShouldBe(0);

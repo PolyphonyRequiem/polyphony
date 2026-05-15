@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Manifest;
 using Polyphony.Locking;
 using Polyphony.Models;
@@ -208,6 +209,14 @@ namespace Polyphony;
 [JsonSerializable(typeof(ArchivistOutput))]
 [JsonSerializable(typeof(ResearchWriteArticlesResult))]
 [JsonSerializable(typeof(WrittenArticle))]
+// ADO auth chain DTOs (port of twig's MSAL refresh-token methodology)
+[JsonSerializable(typeof(JwtAccessTokenPayload))]
+[JsonSerializable(typeof(MsalTokenCache))]
+[JsonSerializable(typeof(MsalAccessTokenEntry))]
+[JsonSerializable(typeof(MsalRefreshTokenEntry))]
+[JsonSerializable(typeof(MsalAccountEntry))]
+[JsonSerializable(typeof(TokenRefreshResponse))]
+[JsonSerializable(typeof(PolyphonyRefreshTokenStoreEntry))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
