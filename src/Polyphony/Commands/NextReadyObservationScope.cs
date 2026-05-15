@@ -1,5 +1,6 @@
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Sdlc;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -141,12 +142,14 @@ internal sealed class NextReadyObservationScope
 
     // ── Plan-kind shared signals ────────────────────────────────────────
 
-    /// <summary>GitHub <c>owner/repo</c> slug from
-    /// <c>git remote get-url origin</c>. Empty when the remote could not
-    /// be parsed (no origin, non-GitHub URL, transient git failure).
-    /// When empty, all plan-kind composers degrade to Needed with a
-    /// "no slug" reason.</summary>
-    public string Slug { get; set; } = string.Empty;
+    /// <summary>The resolved <see cref="RepoIdentity"/> for the active
+    /// origin remote (or the operator's <c>--platform/--organization/
+    /// --project/--repository</c> overrides). Null when neither overrides
+    /// nor origin parsing produced a recognised identity (no remote,
+    /// unknown URL pattern, transient git failure). When null, all
+    /// plan-kind composers degrade to Needed with a "no identity"
+    /// reason.</summary>
+    public RepoIdentity? Identity { get; set; }
 
     /// <summary>Result of <c>git ls-remote --heads origin
     /// refs/heads/{plan_branch}</c>. False on absence OR transient

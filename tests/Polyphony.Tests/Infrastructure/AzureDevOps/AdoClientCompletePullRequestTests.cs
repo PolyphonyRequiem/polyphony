@@ -57,7 +57,7 @@ public sealed class AdoClientCompletePullRequestTests
         var handler = StubHandler.Returns(HttpStatusCode.OK, SuccessBody());
         var client = NewClient(handler);
 
-        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha);
+        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
         result.Status.ShouldBe("completed");
         result.MergeCommitSha.ShouldBe(MergeSha);
@@ -72,7 +72,7 @@ public sealed class AdoClientCompletePullRequestTests
         var handler = StubHandler.Returns(HttpStatusCode.OK, SuccessBody());
         var client = NewClient(handler);
 
-        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha);
+        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
         var req = handler.Requests[0];
         req.Method.ShouldBe(HttpMethod.Patch);
@@ -86,7 +86,7 @@ public sealed class AdoClientCompletePullRequestTests
         var handler = StubHandler.Returns(HttpStatusCode.OK, SuccessBody());
         var client = NewClient(handler, pat: "my-pat");
 
-        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha);
+        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
         var auth = handler.Requests[0].Headers.Authorization;
         auth.ShouldNotBeNull();
@@ -101,7 +101,7 @@ public sealed class AdoClientCompletePullRequestTests
         var handler = StubHandler.Returns(HttpStatusCode.OK, SuccessBody());
         var client = NewClient(handler);
 
-        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha);
+        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
         var body = handler.RequestBodies[0];
         body.ShouldNotBeNull();
@@ -129,12 +129,46 @@ public sealed class AdoClientCompletePullRequestTests
         var handler = StubHandler.Returns(HttpStatusCode.OK, SuccessBody());
         var client = NewClient(handler);
 
-        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha);
+        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
         var body = handler.RequestBodies[0];
         using var doc = JsonDocument.Parse(body!);
         doc.RootElement.GetProperty("completionOptions").GetProperty("mergeStrategy").GetString()
             .ShouldBe("noFastForward");
+    }
+
+    [Fact]
+    public async Task CompletePullRequestAsync_SquashStrategy_WiresSquashAndDeletesSourceBranch()
+    {
+        // Impl-PR path: squash + source-branch deletion is the GitHub
+        // analogue this codepath must produce on ADO.
+        var handler = StubHandler.Returns(HttpStatusCode.OK, SuccessBody());
+        var client = NewClient(handler);
+
+        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.Squash, deleteSourceBranch: true);
+
+        var body = handler.RequestBodies[0];
+        using var doc = JsonDocument.Parse(body!);
+        var opts = doc.RootElement.GetProperty("completionOptions");
+        opts.GetProperty("mergeStrategy").GetString().ShouldBe("squash");
+        opts.GetProperty("deleteSourceBranch").GetBoolean().ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(AdoMergeStrategy.Rebase, "rebase")]
+    [InlineData(AdoMergeStrategy.RebaseMerge, "rebaseMerge")]
+    public async Task CompletePullRequestAsync_OtherStrategies_TranslateToWireString(
+        AdoMergeStrategy strategy, string expectedWire)
+    {
+        var handler = StubHandler.Returns(HttpStatusCode.OK, SuccessBody());
+        var client = NewClient(handler);
+
+        await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, strategy, deleteSourceBranch: false);
+
+        var body = handler.RequestBodies[0];
+        using var doc = JsonDocument.Parse(body!);
+        doc.RootElement.GetProperty("completionOptions").GetProperty("mergeStrategy").GetString()
+            .ShouldBe(expectedWire);
     }
 
     // ─── Routable-failure axes ───────────────────────────────────────────
@@ -145,7 +179,7 @@ public sealed class AdoClientCompletePullRequestTests
         var handler = StubHandler.Returns(HttpStatusCode.NotFound, """{"message":"PR vanished"}""");
         var client = NewClient(handler);
 
-        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha);
+        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
         result.Status.ShouldBe("not_found");
         result.MergeCommitSha.ShouldBeNull();
@@ -160,7 +194,7 @@ public sealed class AdoClientCompletePullRequestTests
         var handler = StubHandler.Returns(HttpStatusCode.Conflict, """{"message":"head moved"}""");
         var client = NewClient(handler);
 
-        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha);
+        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
         result.Status.ShouldBe("stale_head");
         result.MergeCommitSha.ShouldBeNull();
@@ -174,7 +208,7 @@ public sealed class AdoClientCompletePullRequestTests
         var handler = StubHandler.Returns(HttpStatusCode.BadRequest, """{"message":"policy blocked"}""");
         var client = NewClient(handler);
 
-        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha);
+        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
         result.Status.ShouldBe("not_mergeable");
         result.MergeCommitSha.ShouldBeNull();
@@ -192,7 +226,7 @@ public sealed class AdoClientCompletePullRequestTests
         var client = NewClient(handler, pat: "bad-pat");
 
         var ex = await Should.ThrowAsync<HttpRequestException>(
-            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha));
+            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
         ex.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
@@ -203,7 +237,7 @@ public sealed class AdoClientCompletePullRequestTests
         var client = NewClient(handler, pat: "bad-pat");
 
         var ex = await Should.ThrowAsync<HttpRequestException>(
-            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha));
+            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
         ex.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
@@ -214,7 +248,7 @@ public sealed class AdoClientCompletePullRequestTests
         var client = NewClient(handler);
 
         var ex = await Should.ThrowAsync<HttpRequestException>(
-            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha));
+            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
         ex.StatusCode.ShouldBe(HttpStatusCode.BadGateway);
         // 5xx is treated as a real signal — single attempt, no retry.
         handler.RequestCount.ShouldBe(1);
@@ -231,7 +265,7 @@ public sealed class AdoClientCompletePullRequestTests
         var client = NewClient(handler, policy: policy);
 
         await Should.ThrowAsync<TimeoutException>(
-            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha));
+            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
         handler.RequestCount.ShouldBe(3);
     }
 
@@ -242,7 +276,7 @@ public sealed class AdoClientCompletePullRequestTests
         var client = NewClient(handler, pat: null);
 
         var ex = await Should.ThrowAsync<InvalidOperationException>(
-            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha));
+            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
         ex.Message.ShouldContain("AZURE_DEVOPS_EXT_PAT");
         handler.RequestCount.ShouldBe(0);
     }
@@ -266,7 +300,7 @@ public sealed class AdoClientCompletePullRequestTests
         var handler = StubHandler.Returns(HttpStatusCode.OK, bodyMissingMerge);
         var client = NewClient(handler);
 
-        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha);
+        var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
         result.Status.ShouldBe("completed");
         result.MergeCommitSha.ShouldBeNull();
@@ -285,7 +319,7 @@ public sealed class AdoClientCompletePullRequestTests
         var client = NewClient(handler);
 
         await Should.ThrowAsync<ArgumentException>(
-            () => client.CompletePullRequestAsync(organization, project, repository, PrId, HeadSha));
+            () => client.CompletePullRequestAsync(organization, project, repository, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
     }
 
     [Fact]
@@ -295,7 +329,7 @@ public sealed class AdoClientCompletePullRequestTests
         var client = NewClient(handler);
 
         await Should.ThrowAsync<ArgumentOutOfRangeException>(
-            () => client.CompletePullRequestAsync(Org, Project, Repo, 0, HeadSha));
+            () => client.CompletePullRequestAsync(Org, Project, Repo, 0, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
     }
 
     [Fact]
@@ -305,7 +339,7 @@ public sealed class AdoClientCompletePullRequestTests
         var client = NewClient(handler);
 
         await Should.ThrowAsync<ArgumentException>(
-            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, ""));
+            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, "", AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
     }
 
     [Fact]
@@ -317,7 +351,7 @@ public sealed class AdoClientCompletePullRequestTests
         cts.CancelAfter(TimeSpan.FromMilliseconds(50));
 
         await Should.ThrowAsync<OperationCanceledException>(
-            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, cts.Token));
+            () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false, cts.Token));
     }
 
     // ─── Test fake (records request bodies, single response) ─────────────

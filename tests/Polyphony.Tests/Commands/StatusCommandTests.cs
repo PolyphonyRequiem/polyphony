@@ -30,7 +30,10 @@ public sealed class StatusCommandTests : CommandTestBase
             .Returns(Task.FromResult<string?>(null));
     }
 
-    private StatusCommand CreateCommand() => new(Repository, _git, _gh);
+    private StatusCommand CreateCommand() => new(
+        Repository,
+        new Polyphony.Sdlc.Observers.RepoIdentityResolver(_git),
+        new Polyphony.Sdlc.Observers.PullRequestReader(_gh, null));
 
     [Fact]
     public async Task Status_MissingApex_ReturnsRoutingFailure_AndDoesNotEmitJson()

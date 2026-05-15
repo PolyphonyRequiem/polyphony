@@ -221,7 +221,7 @@ jobs:
           # ship together. Migrate-ToBareRepo is the remediation script the
           # launcher's bare-layout failure points at; bundling it keeps the
           # operator's failure-recovery path self-contained.
-          for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Migrate-ToBareRepo.ps1; do
+          for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Migrate-ToBareRepo.ps1 bootstrap-conductor.ps1; do
             cp -v "scripts/$s" "release/$s"
             # Compute SHA256 sidecar — same format as the binary sidecars
             # ("hash  filename") so install scripts can verify either with
@@ -237,7 +237,8 @@ jobs:
           # mistakes before draft release creation).
           for f in Invoke-PolyphonySdlc.ps1 Invoke-PolyphonySdlc.ps1.sha256 \
                    Resolve-GhIdentity.ps1   Resolve-GhIdentity.ps1.sha256 \
-                   Migrate-ToBareRepo.ps1   Migrate-ToBareRepo.ps1.sha256; do
+                   Migrate-ToBareRepo.ps1   Migrate-ToBareRepo.ps1.sha256 \
+                   bootstrap-conductor.ps1  bootstrap-conductor.ps1.sha256; do
             test -f "release/$f" || { echo "::error::missing release asset: $f"; exit 1; }
           done
 
@@ -270,6 +271,7 @@ jobs:
           - \`Invoke-PolyphonySdlc.ps1\` (+ \`.sha256\`) — dispatches a full SDLC run for one apex work item
           - \`Resolve-GhIdentity.ps1\` (+ \`.sha256\`) — required by the launcher (dot-sourced)
           - \`Migrate-ToBareRepo.ps1\` (+ \`.sha256\`) — used by the launcher's bare-layout failure remediation
+          - \`bootstrap-conductor.ps1\` (+ \`.sha256\`) — first-run repo onboarding (creates \`.polyphony-config/\`)
 
           ### Install
 

@@ -387,7 +387,7 @@ Before invoking the launcher, verify:
    On Daniel's box, `safe.bareRepository=explicit` is set — see the `polyphony-branch-model` skill for layout invariants and the `--git-dir` requirement.
 4. **Twig configured for the workspace** (the launcher uses twig for ADO calls):
    ```powershell
-   twig list-workspaces
+   twig workspace          # shows the active sprint items — proves config is loaded
    ```
 5. **ADO auth** (azcli token or PAT):
    ```powershell

@@ -49,7 +49,7 @@ public sealed class PrCommandsMergePlanPrTests : CommandTestBase, IDisposable
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new PrCommands(git, gh, twig, Repository, Config, new RunLockStore(), new RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git)), runner);
+        return (new PrCommands(git, gh, twig, Repository, Config, new RunLockStore(), new RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git)), runner);
     }
 
     private void SeedManifest(int rootId, Dictionary<string, int>? planGenerations = null, List<MergedPlanPrEntry>? ledger = null)

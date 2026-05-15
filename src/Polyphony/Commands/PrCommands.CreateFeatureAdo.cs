@@ -129,7 +129,7 @@ public sealed partial class PrCommands
             // ── 3. Reuse check: scan active PRs for a matching source/target. ─
             var activePrs = await ado.ListPullRequestsAsync(
                 organization, project, repository,
-                AdoPullRequestStatus.Active, ct).ConfigureAwait(false);
+                AdoPullRequestStatus.Active, null, ct).ConfigureAwait(false);
 
             if (activePrs is null)
             {

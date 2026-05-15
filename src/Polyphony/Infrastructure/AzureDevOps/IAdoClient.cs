@@ -77,6 +77,7 @@ public interface IAdoClient
         string project,
         string repository,
         AdoPullRequestStatus status = AdoPullRequestStatus.Active,
+        string? sourceBranch = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -251,12 +252,28 @@ public interface IAdoClient
     /// HTTP 409 (surfaced as <c>"stale_head"</c>) when they differ — the
     /// stale-head guard.
     /// </param>
+    /// <param name="mergeStrategy">
+    /// Wire-level merge strategy. Plan/MG PRs pass
+    /// <see cref="AdoMergeStrategy.NoFastForward"/> (per ADR Rev 4 — preserves
+    /// the merge commit). Impl PRs pass <see cref="AdoMergeStrategy.Squash"/>
+    /// (matches the GitHub-side <c>gh pr merge --squash</c>). The enum is
+    /// translated to ADO's wire-level strings (<c>noFastForward</c>,
+    /// <c>squash</c>, <c>rebase</c>, <c>rebaseMerge</c>) inside the impl.
+    /// </param>
+    /// <param name="deleteSourceBranch">
+    /// True ⇒ ADO deletes the source ref as part of the completion. Plan PRs
+    /// pass <c>false</c> because sibling plan branches may still be in
+    /// flight; impl PRs pass <c>true</c> to clean up the per-MG impl branch
+    /// after squash.
+    /// </param>
     Task<AdoCompletePullRequestResult> CompletePullRequestAsync(
         string organization,
         string project,
         string repository,
         int pullRequestId,
         string lastMergeSourceCommitSha,
+        AdoMergeStrategy mergeStrategy,
+        bool deleteSourceBranch,
         CancellationToken ct = default);
 
     /// <summary>
@@ -319,5 +336,135 @@ public interface IAdoClient
         string project,
         string repository,
         int pullRequestId,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Compose the platform-neutral evidence-floor read for an ADO pull
+    /// request — the ADO analogue of
+    /// <see cref="Polyphony.Infrastructure.Processes.IGhClient.GetPullRequestEvidenceFloorAsync"/>.
+    ///
+    /// <para>
+    /// Composes the result from two ADO REST calls:
+    /// <list type="bullet">
+    ///   <item><c>GET /_apis/git/repositories/{repo}/pullrequests/{prId}</c> —
+    ///     PR detail (for the description / "body").</item>
+    ///   <item><c>GET /_apis/git/repositories/{repo}/pullrequests/{prId}/commits</c>
+    ///     — commits on the source branch beyond base (for the commit count).</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para>
+    /// Returns a discriminated <see cref="AdoEvidenceFloorRead"/> so the
+    /// calling verb can distinguish "PR genuinely missing" (404 →
+    /// <see cref="AdoEvidenceFloorOutcome.PrNotFound"/>) from "ADO failed for
+    /// some other reason" (timeout, malformed JSON, network error →
+    /// <see cref="AdoEvidenceFloorOutcome.AdoFailed"/>) and route them to
+    /// distinct error codes (<c>pr_not_found</c> vs <c>ado_failed</c>) in
+    /// its envelope. Mirrors the failure-shape contract of the GitHub
+    /// sibling exactly so the workflow neutral-normalization step can
+    /// treat both legs identically.
+    /// </para>
+    /// </summary>
+    Task<AdoEvidenceFloorRead> GetPullRequestEvidenceFloorAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Return the list of files changed by an ADO pull request — the ADO
+    /// analogue of
+    /// <see cref="Polyphony.Infrastructure.Processes.IGhClient.GetPullRequestFilesAsync"/>.
+    /// Used by <c>polyphony pr validate-plan-diff</c> and the merge-time
+    /// guard in <c>polyphony pr merge-plan-pr</c>'s ADO sibling to classify
+    /// whether a child plan PR touched parent / ancestor / polyphony-state
+    /// files.
+    ///
+    /// <para>
+    /// Hits <c>GET /_apis/git/repositories/{repo}/pullrequests/{prId}/iterations</c>
+    /// to find the latest iteration, then
+    /// <c>GET /_apis/git/repositories/{repo}/pullrequests/{prId}/iterations/{iter}/changes</c>
+    /// to read the per-file change list. Returns <c>null</c> when the PR
+    /// (or repo) does not exist (HTTP 404). Throws on other failures — see
+    /// <see cref="ListPullRequestsAsync"/> for the failure shape.
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<AdoPullRequestChangedFile>?> GetPullRequestFilesAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Replace the description (= body) of an existing ADO pull request —
+    /// the ADO analogue of
+    /// <see cref="Polyphony.Infrastructure.Processes.IGhClient.EditPullRequestBodyAsync"/>.
+    ///
+    /// <para>
+    /// Hits <c>PATCH /_apis/git/repositories/{repo}/pullrequests/{prId}</c>
+    /// with body <c>{ description: &lt;body&gt; }</c>.
+    /// <b>ADO field name is <c>description</c>, not <c>body</c></b> (per
+    /// the REST contract: <c>git/pullrequests/update</c>).
+    /// </para>
+    ///
+    /// <para>
+    /// Used by the cascade remedy
+    /// (<c>polyphony plan rebase-stale-descendant</c>) to rewrite the
+    /// <c>ancestor_plan_generations</c> front-matter snapshot after a
+    /// successful auto-rebase. Body-edit failure on that path is a
+    /// recoverable, routable outcome — not a fatal exception — so this
+    /// method <b>returns false on any failure</b> (non-success status,
+    /// timeout, network error) and never throws
+    /// <see cref="HttpRequestException"/> /
+    /// <see cref="TimeoutException"/>. Caller-driven cancellation still
+    /// propagates as <see cref="OperationCanceledException"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Length limit.</b> ADO rejects descriptions longer than
+    /// <see cref="AdoConstants.MaxPullRequestDescriptionLength"/> characters
+    /// (4000) with HTTP 400. Callers that may exceed the limit should trim
+    /// to that length and post the overflow as a comment thread via
+    /// <see cref="CreatePullRequestCommentThreadAsync"/>.
+    /// </para>
+    /// </summary>
+    Task<bool> EditPullRequestBodyAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string body,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Abandon an open ADO pull request, optionally posting a final comment
+    /// thread first — the ADO analogue of
+    /// <see cref="Polyphony.Infrastructure.Processes.IGhClient.ClosePullRequestAsync"/>.
+    ///
+    /// <para>
+    /// Sequence: when <paramref name="commentBeforeClose"/> is non-empty,
+    /// first POST a comment thread via
+    /// <see cref="CreatePullRequestCommentThreadAsync"/>; comment failure is
+    /// best-effort (logged, does not abort the close). Then PATCH the PR
+    /// with <c>{ status: "abandoned" }</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// Used by the cascade-remedy <c>recreate</c> path
+    /// (<c>polyphony plan recreate-stale-descendant</c>) to abandon a stale
+    /// plan PR before a fresh PR is opened from the new ancestor tip.
+    /// Returns <c>false</c> on any non-success outcome (404, timeout,
+    /// network error). Idempotent: PATCHing an already-abandoned PR returns
+    /// 200 (ADO accepts the no-op write).
+    /// </para>
+    /// </summary>
+    Task<bool> ClosePullRequestAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string commentBeforeClose,
         CancellationToken ct = default);
 }

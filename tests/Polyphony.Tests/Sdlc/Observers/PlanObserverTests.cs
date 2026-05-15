@@ -2,6 +2,7 @@ using Polyphony.Infrastructure.Processes;
 using Polyphony.Sdlc;
 using Polyphony.Sdlc.Observers;
 using Polyphony.Tests.Infrastructure.Processes;
+using Polyphony.Tests.Stubs;
 using Shouldly;
 using Xunit;
 
@@ -20,7 +21,10 @@ public sealed class PlanObserverTests
     private const string RootPlanBranch = "plan/100";
 
     private static PlanObserver CreateObserver(FakeProcessRunner runner)
-        => new(new GitClient(runner), new GhClient(runner), new TwigClient(runner));
+    {
+        var git = new GitClient(runner);
+        return new PlanObserver(git, new GhClient(runner), new ThrowingAdoClient(), new TwigClient(runner), new RepoIdentityResolver(git));
+    }
 
     private static void StubRemoteUrl(FakeProcessRunner runner, string url = "https://github.com/acme/repo.git")
         => runner.WhenExact("git", ["remote", "get-url", "origin"], new ProcessResult(0, url + "\n", ""));
@@ -172,7 +176,7 @@ public sealed class PlanObserverTests
 
         obs.Disposition.ShouldBe(Disposition.Needed);
         obs.Reason.ShouldNotBeNullOrWhiteSpace();
-        obs.Reason.ShouldContain("slug");
+        obs.Reason.ShouldContain("repo identity");
         obs.PrNumber.ShouldBeNull();
     }
 

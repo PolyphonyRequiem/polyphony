@@ -2,10 +2,12 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Configuration;
+using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Paths;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Postconditions;
 using Polyphony.Routing;
+using Polyphony.Sdlc.Observers;
 using Twig.Domain.Interfaces;
 
 namespace Polyphony.Commands;
@@ -37,8 +39,11 @@ public sealed partial class PlanCommands(
     ITwigClient twig,
     IGitClient git,
     IGhClient gh,
+    IAdoClient ado,
     IPostconditionVerifier postconditions,
-    PolyphonyStatePaths statePaths)
+    PolyphonyStatePaths statePaths,
+    RepoIdentityResolver repoIdentityResolver,
+    PullRequestReader pullRequestReader)
 {
     /// <summary>
     /// Validates current recursion depth against a configured maximum. Always exits 0.

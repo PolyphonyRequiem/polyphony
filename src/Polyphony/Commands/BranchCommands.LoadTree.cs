@@ -4,6 +4,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -17,19 +18,26 @@ namespace Polyphony.Commands;
 /// </summary>
 public sealed partial class BranchCommands
 {
-    private static readonly Regex GitHubSlugRegex =
-        new(@"github\.com(?:/|:)([^/]+/[^/.]+)", RegexOptions.Compiled);
-
     /// <summary>
     /// Loads the work-item tree rooted at <paramref name="workItem"/>,
     /// discovers merge groups, and reports completion + reconciliation
     /// status.
     /// </summary>
     /// <param name="workItem">ADO work item ID — root of the hierarchy (typically an epic).</param>
+    /// <param name="platform">Optional platform override (<c>github</c>|<c>ado</c>); defaults to origin URL detection.</param>
+    /// <param name="organization">ADO organization (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="project">ADO project (required when <paramref name="platform"/> is <c>ado</c>).</param>
+    /// <param name="repositoryOverride">Repository override (GitHub <c>owner/repo</c> or ADO repo name).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("load-tree")]
     [VerbResult(typeof(BranchLoadTreeResult))]
-    public async Task<int> LoadTree(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
+    public async Task<int> LoadTree(
+        int workItem = RequiredInput.MissingInt,
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
+        CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("branch load-tree",
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
@@ -52,10 +60,11 @@ public sealed partial class BranchCommands
             var allItems = Flatten(hierarchy).ToList();
             var workTree = BuildWorkTree(hierarchy);
 
-            // Resolve repo + merged PRs in parallel with no-throw fallbacks
+            // Resolve repo identity + merged PRs in parallel with no-throw fallbacks
             // (failures here degrade gracefully — completion just stays false).
-            var repoSlug = await TryResolveRepoSlugAsync(ct).ConfigureAwait(false);
-            var mergedPrs = await TryListMergedPrsAsync(repoSlug, ct).ConfigureAwait(false);
+            var identity = await TryResolveRepoIdentityAsync(
+                platform, organization, project, repositoryOverride, ct).ConfigureAwait(false);
+            var mergedPrs = await TryListMergedPrsAsync(identity, ct).ConfigureAwait(false);
 
             var mergeGroups = BuildMergeGroups(hierarchy, allItems, mergedPrs);
 
@@ -290,28 +299,27 @@ public sealed partial class BranchCommands
     [GeneratedRegex(@"[^a-zA-Z0-9]+")]
     private static partial Regex SlugRegex();
 
-    private async Task<string> TryResolveRepoSlugAsync(CancellationToken ct)
+    private async Task<RepoIdentity?> TryResolveRepoIdentityAsync(
+        string platform, string organization, string project, string repositoryOverride, CancellationToken ct)
     {
         try
         {
-            var url = await git.GetRemoteUrlAsync("origin", ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(url)) return "";
-            var match = GitHubSlugRegex.Match(url);
-            return match.Success ? match.Groups[1].Value : "";
+            var resolved = await repoIdentityResolver
+                .ResolveAsync(platform, organization, project, repositoryOverride, ct)
+                .ConfigureAwait(false);
+            return resolved.Identity;
         }
-        catch { return ""; }
+        catch { return null; }
     }
 
     private async Task<IReadOnlyList<PullRequestSummary>> TryListMergedPrsAsync(
-        string repoSlug, CancellationToken ct)
+        RepoIdentity? identity, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(repoSlug)) return [];
+        if (identity is null) return [];
         try
         {
-            return await gh.ListPullRequestsAsync(
-                repoSlug,
-                new PrListFilters(State: "merged", Limit: 50),
-                ct).ConfigureAwait(false);
+            return await pullRequestReader.ListByHeadAsync(
+                identity, headBranch: "", state: "merged", limit: 50, ct).ConfigureAwait(false);
         }
         catch { return []; }
     }

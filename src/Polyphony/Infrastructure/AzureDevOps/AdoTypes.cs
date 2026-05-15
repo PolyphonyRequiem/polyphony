@@ -788,3 +788,227 @@ public sealed record AdoPullRequestComment
     /// <summary>Comment type (lowercased ADO <c>CommentType</c> name): typically <c>text</c>.</summary>
     public required string CommentType { get; init; }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 1 (P1) types — extensions for impl/evidence parity. Mirror the
+// shapes used by IGhClient to keep consuming verbs symmetric across
+// platforms; the workflow neutral-normalization step relies on identical
+// failure-shape contracts on both legs.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Constants shared across the ADO client surface.
+/// </summary>
+public static class AdoConstants
+{
+    /// <summary>
+    /// Maximum length (in characters) of the <c>description</c> field on an
+    /// ADO pull request. ADO REST returns HTTP 400 with
+    /// "must not be longer than 4000 characters" for any payload above this.
+    /// Verified empirically (<c>az repos pr update</c>, 2026-05-15).
+    /// </summary>
+    public const int MaxPullRequestDescriptionLength = 4000;
+}
+
+/// <summary>
+/// ADO completion merge strategy enumeration. Translated to ADO's wire-level
+/// <c>completionOptions.mergeStrategy</c> string inside
+/// <see cref="AdoClient.CompletePullRequestAsync"/>.
+/// </summary>
+public enum AdoMergeStrategy
+{
+    /// <summary>
+    /// <c>noFastForward</c>: a real merge commit, never a fast-forward. Plan
+    /// and merge-group PRs use this per ADR Rev 4 — preserves a recoverable
+    /// merge commit so sibling plan branches can still be reasoned about by
+    /// SHA after merge.
+    /// </summary>
+    NoFastForward,
+
+    /// <summary>
+    /// <c>squash</c>: collapse all commits into a single one, written
+    /// against the target branch's tip. Impl PRs use this — matches the
+    /// GitHub-side <c>gh pr merge --squash</c>.
+    /// </summary>
+    Squash,
+
+    /// <summary>
+    /// <c>rebase</c>: replay commits onto the target branch's tip with no
+    /// merge commit. Not used by polyphony today; included for completeness.
+    /// </summary>
+    Rebase,
+
+    /// <summary>
+    /// <c>rebaseMerge</c>: replay commits onto the target branch's tip and
+    /// then add a merge commit. Not used by polyphony today; included for
+    /// completeness.
+    /// </summary>
+    RebaseMerge,
+}
+
+/// <summary>
+/// Discriminator for <see cref="AdoEvidenceFloorRead"/>. Mirrors the GitHub
+/// counterpart <see cref="Polyphony.Infrastructure.Processes.GhEvidenceFloorOutcome"/>
+/// so the workflow neutral-normalization step can treat both legs
+/// identically when mapping to <c>error_code</c>.
+/// </summary>
+public enum AdoEvidenceFloorOutcome
+{
+    /// <summary>ADO returned a parseable PR detail + commit list — <see cref="AdoEvidenceFloorRead.CommitCount"/> and <see cref="AdoEvidenceFloorRead.Body"/> are populated.</summary>
+    Found,
+
+    /// <summary>ADO returned 404 for either the PR detail or the commits endpoint (PR or repo missing).</summary>
+    PrNotFound,
+
+    /// <summary>ADO failed for any other reason (auth missing, timeout exhausted, malformed JSON, network error). The verb surfaces <see cref="AdoEvidenceFloorRead.Detail"/> in its error_message envelope.</summary>
+    AdoFailed,
+}
+
+/// <summary>
+/// Result of <see cref="IAdoClient.GetPullRequestEvidenceFloorAsync"/>.
+/// Always non-null — failure modes are conveyed via <see cref="Outcome"/>
+/// rather than null sentinels because the caller (a routing-style verb)
+/// needs to distinguish "not found" from "transport error" deterministically.
+/// </summary>
+/// <param name="Outcome">Discriminator (see <see cref="AdoEvidenceFloorOutcome"/>).</param>
+/// <param name="CommitCount">Commits on the PR's source branch beyond base. Zero when not <see cref="AdoEvidenceFloorOutcome.Found"/>.</param>
+/// <param name="Body">Raw PR description (untrimmed). Empty when not <see cref="AdoEvidenceFloorOutcome.Found"/>.</param>
+/// <param name="Detail">Human-readable diagnostic detail (typically ADO error body trimmed). Null when <see cref="AdoEvidenceFloorOutcome.Found"/>.</param>
+public sealed record AdoEvidenceFloorRead(
+    AdoEvidenceFloorOutcome Outcome,
+    int CommitCount,
+    string Body,
+    string? Detail);
+
+/// <summary>
+/// One file changed in an ADO pull request, as reported by the per-iteration
+/// changes endpoint. Mirrors
+/// <see cref="Polyphony.Infrastructure.Processes.GhPullRequestChangedFile"/>;
+/// path uses forward slashes regardless of platform.
+///
+/// <para>
+/// Additions/Deletions are <c>-1</c> when ADO did not report them (the
+/// changes endpoint returns change kind but not line counts; the verb side
+/// computes line stats from local <c>git diff</c> when needed).
+/// </para>
+/// </summary>
+/// <param name="Path">Repo-relative path of the changed file.</param>
+/// <param name="Additions">Lines added (-1 if not reported).</param>
+/// <param name="Deletions">Lines deleted (-1 if not reported).</param>
+/// <param name="ChangeType">Lowercased ADO <c>VersionControlChangeType</c> name (<c>add</c>, <c>edit</c>, <c>delete</c>, <c>rename</c>, …).</param>
+public sealed record AdoPullRequestChangedFile(
+    string Path,
+    int Additions,
+    int Deletions,
+    string ChangeType);
+
+// ── Wire-level DTOs for the new endpoints ───────────────────────────────
+
+/// <summary>
+/// Wire-level body for the "edit PR description" PATCH:
+/// <c>PATCH /_apis/git/repositories/{repo}/pullrequests/{pr}</c> with body
+/// <c>{ description: &lt;body&gt; }</c>. ADO's field name is
+/// <c>description</c>, NOT <c>body</c> — the GitHub naming would silently
+/// no-op. AOT-safe: registered in <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoEditPullRequestRequest
+{
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Wire-level body for the "abandon PR" PATCH:
+/// <c>PATCH /_apis/git/repositories/{repo}/pullrequests/{pr}</c> with body
+/// <c>{ status: "abandoned" }</c>. AOT-safe: registered in
+/// <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoAbandonPullRequestRequest
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "abandoned";
+}
+
+/// <summary>
+/// Wire-level response from
+/// <c>GET /_apis/git/repositories/{repo}/pullrequests/{pr}/commits?api-version=7.1</c>.
+/// We only need the count, so each commit is read minimally.
+/// AOT-safe: registered in <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoCommitListResponse
+{
+    [JsonPropertyName("value")]
+    public List<AdoCommitListEntry> Value { get; set; } = new();
+
+    [JsonPropertyName("count")]
+    public int Count { get; set; }
+}
+
+/// <summary>
+/// Single commit entry from <see cref="AdoCommitListResponse"/>. Only the SHA
+/// is read; all other fields are ignored. AOT-safe: registered in
+/// <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoCommitListEntry
+{
+    [JsonPropertyName("commitId")]
+    public string? CommitId { get; set; }
+}
+
+/// <summary>
+/// Wire-level response from
+/// <c>GET /_apis/git/repositories/{repo}/pullrequests/{pr}/iterations?api-version=7.1</c>.
+/// We only need the highest iteration ID. AOT-safe: registered in
+/// <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoIterationListResponse
+{
+    [JsonPropertyName("value")]
+    public List<AdoIterationEntry> Value { get; set; } = new();
+}
+
+/// <summary>
+/// Single iteration entry from <see cref="AdoIterationListResponse"/>. We
+/// only need the iteration ID; other fields ignored. AOT-safe: registered
+/// in <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoIterationEntry
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+}
+
+/// <summary>
+/// Wire-level response from
+/// <c>GET /_apis/git/repositories/{repo}/pullrequests/{pr}/iterations/{iter}/changes?api-version=7.1</c>.
+/// AOT-safe: registered in <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoIterationChangesResponse
+{
+    [JsonPropertyName("changeEntries")]
+    public List<AdoIterationChangeEntry> ChangeEntries { get; set; } = new();
+}
+
+/// <summary>
+/// Single change entry from <see cref="AdoIterationChangesResponse"/>.
+/// Path lives at <c>item.path</c>; change kind at <c>changeType</c>.
+/// AOT-safe: registered in <see cref="PolyphonyJsonContext"/>.
+/// </summary>
+public sealed class AdoIterationChangeEntry
+{
+    [JsonPropertyName("changeType")]
+    public string? ChangeType { get; set; }
+
+    [JsonPropertyName("item")]
+    public AdoIterationChangeItem? Item { get; set; }
+}
+
+/// <summary>
+/// Inner <c>item</c> object from <see cref="AdoIterationChangeEntry"/>.
+/// Carries the repo-relative path of the changed file.
+/// </summary>
+public sealed class AdoIterationChangeItem
+{
+    [JsonPropertyName("path")]
+    public string? Path { get; set; }
+}

@@ -28,6 +28,10 @@ public sealed partial class PrCommands
     /// When set, gh refuses to merge if the head SHA has moved off this
     /// commit. Use to guard against races between status checks and merge.
     /// </param>
+    /// <param name="platform">Platform override (<c>github</c>|<c>ado</c>). Empty for origin-URL auto-detect.</param>
+    /// <param name="organization">ADO organization. Required when platform=ado.</param>
+    /// <param name="project">ADO project. Required when platform=ado.</param>
+    /// <param name="repository">For ADO: repository name/GUID. For GitHub: <c>owner/name</c> slug. Required when <paramref name="platform"/> is non-empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-impl-pr")]
     [VerbResult(typeof(PrMergeImplResult))]
@@ -39,6 +43,10 @@ public sealed partial class PrCommands
         bool admin = false,
         bool deleteBranch = true,
         string matchHeadCommit = "",
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repository = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("pr merge-impl-pr",
@@ -46,6 +54,26 @@ public sealed partial class PrCommands
             ("--item-id", itemId == RequiredInput.MissingInt),
             ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
             return halt;
+
+        // ── Platform-aware identity resolution ───────────────────────────
+        // Resolve early so the ADO branch can dispatch via the existing
+        // MergeImplAdo verb (output captured + remapped to the unified
+        // envelope). Bridge approach (rather than helper extraction) keeps
+        // the ~280-line ADO body untouched at this stage; the *Pr verb
+        // remains the single entry point for workflows.
+        var resolved = await repoIdentityResolver
+            .ResolveAsync(platform, organization, project, repository, ct)
+            .ConfigureAwait(false);
+
+        if (resolved.Identity is Polyphony.Sdlc.Observers.RepoIdentity.AdoRepo adoRepo)
+        {
+            // ADO impl merges are squash-only with branch deletion (per
+            // MergeImplAdo's hardcoded ImplMethod / ImplDeleteBranch). Honor
+            // the *Pr verb's defaults but warn on incompatible overrides.
+            return await DispatchMergeImplAdoAsync(
+                adoRepo, rootId, itemId, mgPath, method, deleteBranch, matchHeadCommit, ct)
+                .ConfigureAwait(false);
+        }
 
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
@@ -148,6 +176,96 @@ public sealed partial class PrCommands
     private static void EmitMergeImpl(PrMergeImplResult result)
         => Console.WriteLine(JsonSerializer.Serialize(
             result, PolyphonyJsonContext.Default.PrMergeImplResult));
+
+    /// <summary>
+    /// Bridge from <see cref="MergeImplPr"/>'s ADO branch into the legacy
+    /// <see cref="MergeImplAdo"/> verb body. Captures the verb's stdout JSON
+    /// (the <see cref="PrMergeImplAdoResult"/> envelope), parses it, and
+    /// re-emits a <see cref="PrMergeImplResult"/> populated with both the
+    /// platform-neutral fields and the ADO-specific echo fields. Avoids
+    /// extracting a large helper from MergeImplAdo's ~280-line body until a
+    /// future refactor pass.
+    /// </summary>
+    private async Task<int> DispatchMergeImplAdoAsync(
+        Polyphony.Sdlc.Observers.RepoIdentity.AdoRepo adoRepo,
+        int rootId,
+        int itemId,
+        string mgPath,
+        string method,
+        bool deleteBranch,
+        string matchHeadCommit,
+        CancellationToken ct)
+    {
+        var sw = new StringWriter();
+        var origOut = Console.Out;
+        Console.SetOut(sw);
+        int exitCode;
+        try
+        {
+            exitCode = await MergeImplAdo(
+                adoRepo.Organization, adoRepo.Project, adoRepo.Repository,
+                rootId, itemId, mgPath, matchHeadCommit, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Console.SetOut(origOut);
+        }
+
+        var json = sw.ToString();
+        PrMergeImplAdoResult? adoResult = null;
+        try
+        {
+            adoResult = JsonSerializer.Deserialize(
+                json.Trim(),
+                PolyphonyJsonContext.Default.PrMergeImplAdoResult);
+        }
+        catch (JsonException) { /* malformed — fall through to error envelope */ }
+
+        if (adoResult is null)
+        {
+            EmitMergeImpl(new PrMergeImplResult
+            {
+                PrNumber = 0,
+                HeadBranch = "",
+                BaseBranch = "",
+                RootId = rootId,
+                ItemId = itemId,
+                MgPath = mgPath,
+                Method = "squash",
+                Merged = false,
+                AlreadyMerged = false,
+                DeleteBranch = true,
+                MergeSha = null,
+                Organization = adoRepo.Organization,
+                Project = adoRepo.Project,
+                Repository = adoRepo.Repository,
+                RepoSlug = BuildAdoSlug(adoRepo.Organization, adoRepo.Project, adoRepo.Repository),
+                Error = $"merge-impl-ado bridge: failed to parse output (exit {exitCode}): {json.Trim()}",
+            });
+            return ExitCodes.RoutingFailure;
+        }
+
+        EmitMergeImpl(new PrMergeImplResult
+        {
+            PrNumber = adoResult.PrNumber,
+            HeadBranch = adoResult.HeadBranch,
+            BaseBranch = adoResult.BaseBranch,
+            RootId = adoResult.RootId,
+            ItemId = adoResult.ItemId,
+            MgPath = adoResult.MgPath,
+            Method = adoResult.Method,
+            Merged = adoResult.Merged,
+            AlreadyMerged = adoResult.AlreadyMerged,
+            DeleteBranch = adoResult.DeleteBranch,
+            MergeSha = string.IsNullOrEmpty(adoResult.MergeCommit) ? null : adoResult.MergeCommit,
+            Organization = adoResult.Organization,
+            Project = adoResult.Project,
+            Repository = adoResult.Repository,
+            RepoSlug = adoResult.RepoSlug,
+            Error = string.IsNullOrEmpty(adoResult.Error) ? null : adoResult.Error,
+        });
+        return string.IsNullOrEmpty(adoResult.Error) ? ExitCodes.Success : ExitCodes.RoutingFailure;
+    }
 
     private static void EmitMergeImplError(
         int rootId,

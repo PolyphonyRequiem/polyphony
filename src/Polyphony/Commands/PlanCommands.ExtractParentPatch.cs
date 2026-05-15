@@ -5,6 +5,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -34,7 +35,10 @@ public sealed partial class PlanCommands
     /// <summary>
     /// Extract the parent-plan hunks from a child plan PR.
     /// </summary>
-    /// <param name="prUrl">Full PR URL, e.g. <c>https://github.com/owner/repo/pull/123</c>.</param>
+    /// <param name="prUrl">Full PR URL — accepts both
+    /// <c>https://github.com/owner/repo/pull/N</c> and
+    /// <c>https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/N</c>.
+    /// The URL is parsed to derive the platform identity + PR number.</param>
     /// <param name="rootId">Root work item ID (defines the snapshot key namespace).</param>
     /// <param name="parentItemId">Parent work item ID whose plan file we want hunks for.</param>
     /// <param name="diffSizeLimitBytes">Upper bound for the rendered parent-scoped diff. Defaults to 50 KB.</param>
@@ -71,39 +75,45 @@ public sealed partial class PlanCommands
             return ExitCodes.Success;
         }
 
-        // ── 2. Parse PR URL into slug + number. ───────────────────────────
-        if (!TryParsePrUrl(prUrl, out var slug, out var prNumber))
+        // ── 2. Parse the PR URL into platform identity + PR number. ───────
+        // Accepts both github.com and dev.azure.com / *.visualstudio.com PR
+        // URLs (Phase 6 — ADO parity for cascade-remedy.yaml +
+        // remedy-stale-descendant.yaml).
+        if (!TryParsePrUrl(prUrl, out var identity, out var resolvedPrNumber))
         {
             EmitError(prUrl, parentItemId,
-                $"could not parse pr url '{prUrl}' (expected https://github.com/owner/repo/pull/N)",
+                $"could not parse pr url '{prUrl}' (expected https://github.com/owner/repo/pull/N or https://dev.azure.com/{{org}}/{{project}}/_git/{{repo}}/pullrequest/N)",
                 "invalid_pr_url");
             return ExitCodes.Success;
         }
 
-        // ── 3. Fetch poll data — gives us body (front-matter) + headSha + headRef. ─
+        var slug = PullRequestReader.BuildRepoSlug(identity!);
+        var canonicalPrUrl = prUrl;
+
+        // ── 3. Fetch poll data — gives us body (front-matter) + headSha + headRef + baseRef. ─
         GhPullRequestPollData? pollData;
         try
         {
-            pollData = await gh.GetPullRequestPollDataAsync(slug, prNumber, ct).ConfigureAwait(false);
+            pollData = await pullRequestReader.GetPollDataAsync(identity!, resolvedPrNumber, ct).ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
         {
-            EmitError(prUrl, parentItemId,
+            EmitError(canonicalPrUrl, parentItemId,
                 ex.FormatErrorMessage("gh pr view"),
-                "gh_timeout", slug, prNumber);
+                "gh_timeout", slug, resolvedPrNumber);
             return ExitCodes.Success;
         }
         catch (ExternalToolException ex)
         {
-            EmitError(prUrl, parentItemId, $"gh pr view failed: {ex.Message}",
-                "gh_failed", slug, prNumber);
+            EmitError(canonicalPrUrl, parentItemId, $"gh pr view failed: {ex.Message}",
+                "gh_failed", slug, resolvedPrNumber);
             return ExitCodes.Success;
         }
 
         if (pollData is null)
         {
-            EmitError(prUrl, parentItemId, $"PR #{prNumber} not found in {slug}",
-                "pr_not_found", slug, prNumber);
+            EmitError(canonicalPrUrl, parentItemId, $"PR #{resolvedPrNumber} not found in {slug}",
+                "pr_not_found", slug, resolvedPrNumber);
             return ExitCodes.Success;
         }
 
@@ -154,31 +164,91 @@ public sealed partial class PlanCommands
                 break;
         }
 
-        // ── 6. Fetch unified diff. ────────────────────────────────────────
-        string? rawDiff;
-        try
+        // ── 6. Compute unified diff. ──────────────────────────────────────
+        // GitHub: `gh pr diff` (CLI handles the 3-dot semantics + auth).
+        // ADO:    local-git 3-dot diff (REST diff composer is too fragile
+        //         for rename/delete/binary edge cases — BLOCKER #4 / Phase 6).
+        string rawDiff;
+        if (identity is RepoIdentity.GitHubRepo ghIdent)
         {
-            rawDiff = await gh.GetPullRequestDiffAsync(slug, prNumber, ct).ConfigureAwait(false);
-        }
-        catch (ExternalToolTimeoutException ex)
-        {
-            EmitError(prUrl, parentItemId,
-                ex.FormatErrorMessage("gh pr diff"),
-                "gh_timeout", slug, prNumber);
-            return ExitCodes.Success;
-        }
-        catch (ExternalToolException ex)
-        {
-            EmitError(prUrl, parentItemId, $"gh pr diff failed: {ex.Message}",
-                "gh_failed", slug, prNumber);
-            return ExitCodes.Success;
-        }
+            string? rawDiffResult;
+            try
+            {
+                rawDiffResult = await gh.GetPullRequestDiffAsync(
+                    PullRequestReader.BuildRepoSlug(ghIdent),
+                    resolvedPrNumber,
+                    ct).ConfigureAwait(false);
+            }
+            catch (ExternalToolTimeoutException ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    ex.FormatErrorMessage("gh pr diff"),
+                    "gh_timeout", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+            catch (ExternalToolException ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId, $"gh pr diff failed: {ex.Message}",
+                    "gh_failed", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
 
-        if (rawDiff is null)
+            if (string.IsNullOrEmpty(rawDiffResult))
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    $"gh pr diff returned no output for PR #{resolvedPrNumber}",
+                    "diff_unavailable", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+            rawDiff = rawDiffResult;
+        }
+        else
         {
-            EmitError(prUrl, parentItemId, $"PR #{prNumber} diff unavailable",
-                "diff_unavailable", slug, prNumber);
-            return ExitCodes.Success;
+            // ADO leg: local-git 3-dot diff (base...head).
+            var baseRef = pollData.BaseRefName ?? string.Empty;
+            if (string.IsNullOrEmpty(headRef) || string.IsNullOrEmpty(baseRef))
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    $"PR #{resolvedPrNumber} returned empty head or base ref; cannot compute local diff.",
+                    "diff_unavailable", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+
+            try
+            {
+                await git.FetchAsync("origin", baseRef, ct).ConfigureAwait(false);
+                await git.FetchAsync("origin", headRef, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    $"git fetch failed for {baseRef}/{headRef}: {ex.Message}",
+                    "git_failed", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+
+            try
+            {
+                rawDiff = await git.DiffAsync(
+                    $"origin/{baseRef}",
+                    $"origin/{headRef}",
+                    threeDot: true,
+                    ct).ConfigureAwait(false);
+            }
+            catch (ExternalToolTimeoutException ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId,
+                    ex.FormatErrorMessage("git diff"),
+                    "git_timeout", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
+            catch (ExternalToolException ex)
+            {
+                EmitError(canonicalPrUrl, parentItemId, $"git diff failed: {ex.Message}",
+                    "git_failed", slug, resolvedPrNumber);
+                return ExitCodes.Success;
+            }
         }
 
         // ── 7. Filter diff to parent plan file hunks. ─────────────────────
@@ -206,8 +276,8 @@ public sealed partial class PlanCommands
         // ── 9. Emit. ──────────────────────────────────────────────────────
         var result = new PlanExtractParentPatchResult
         {
-            PrUrl = prUrl,
-            PrNumber = prNumber,
+            PrUrl = canonicalPrUrl,
+            PrNumber = resolvedPrNumber,
             RepoSlug = slug,
             ChildItemId = childItemId,
             ParentItemId = parentItemId,
@@ -367,20 +437,49 @@ public sealed partial class PlanCommands
         return enc.GetString(buffer, 0, safeLen);
     }
 
-    private static bool TryParsePrUrl(string prUrl, out string repoSlug, out int prNumber)
+    private static bool TryParsePrUrl(string prUrl, out RepoIdentity? identity, out int prNumber)
     {
-        repoSlug = string.Empty;
+        identity = null;
         prNumber = 0;
         if (string.IsNullOrWhiteSpace(prUrl)) return false;
 
-        var match = System.Text.RegularExpressions.Regex.Match(
+        // GitHub: https://github.com/owner/repo/pull/N
+        var ghMatch = System.Text.RegularExpressions.Regex.Match(
             prUrl,
-            @"^https?://github\.com/([^/]+/[^/]+)/pull/(\d+)(?:[/?#].*)?$",
+            @"^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)(?:[/?#].*)?$",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (!match.Success) return false;
-        if (!int.TryParse(match.Groups[2].Value, out prNumber)) return false;
-        repoSlug = match.Groups[1].Value;
-        return true;
+        if (ghMatch.Success && int.TryParse(ghMatch.Groups[3].Value, out prNumber))
+        {
+            identity = new RepoIdentity.GitHubRepo(ghMatch.Groups[1].Value, ghMatch.Groups[2].Value);
+            return true;
+        }
+
+        // ADO modern: https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/N
+        var adoMatch = System.Text.RegularExpressions.Regex.Match(
+            prUrl,
+            @"^https?://dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/]+)/pullrequest/(\d+)(?:[/?#].*)?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (adoMatch.Success && int.TryParse(adoMatch.Groups[4].Value, out prNumber))
+        {
+            identity = new RepoIdentity.AdoRepo(
+                adoMatch.Groups[1].Value, adoMatch.Groups[2].Value, adoMatch.Groups[3].Value);
+            return true;
+        }
+
+        // ADO legacy: https://{org}.visualstudio.com/{project}/_git/{repo}/pullrequest/N
+        var adoLegacyMatch = System.Text.RegularExpressions.Regex.Match(
+            prUrl,
+            @"^https?://([^.]+)\.visualstudio\.com/([^/]+)/_git/([^/]+)/pullrequest/(\d+)(?:[/?#].*)?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (adoLegacyMatch.Success && int.TryParse(adoLegacyMatch.Groups[4].Value, out prNumber))
+        {
+            identity = new RepoIdentity.AdoRepo(
+                adoLegacyMatch.Groups[1].Value, adoLegacyMatch.Groups[2].Value, adoLegacyMatch.Groups[3].Value);
+            return true;
+        }
+
+        prNumber = 0;
+        return false;
     }
 
     private static void EmitError(

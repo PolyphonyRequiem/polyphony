@@ -22,7 +22,9 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         var c = cfg ?? Config;
         var walker = new HierarchyWalker(c, Repository);
         var validator = new TransitionValidator(c);
-        return (new BranchCommands(twig, walker, Repository, validator, git, gh, c), runner);
+        var resolver = new Polyphony.Sdlc.Observers.RepoIdentityResolver(git);
+        var reader = new Polyphony.Sdlc.Observers.PullRequestReader(gh, null);
+        return (new BranchCommands(twig, walker, Repository, validator, git, c, resolver, reader), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)

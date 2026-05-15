@@ -1,9 +1,12 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -43,6 +46,10 @@ public sealed partial class PrCommands
     /// <param name="prNumber">PR number to validate.</param>
     /// <param name="parentItemId">Immediate plan-tree parent id; 0 when item is root or a direct child of root.</param>
     /// <param name="ancestorIds">Comma-separated ancestor ids ABOVE the immediate parent, ending in the literal token <c>root</c>. Empty when item is root or a direct child of root. Format matches the <c>ancestor_ids</c> field emitted by <c>plan derive-ancestor-chain</c> minus the leading parent id.</param>
+    /// <param name="platform">Platform override: <c>github</c> or <c>ado</c>. Empty for origin-URL auto-detect.</param>
+    /// <param name="organization">ADO organization (required when <c>--platform ado</c>).</param>
+    /// <param name="project">ADO project (required when <c>--platform ado</c>).</param>
+    /// <param name="repositoryOverride">Repository override. For <c>--platform ado</c>: the repo name. For <c>--platform github</c>: <c>owner/repo</c> slug.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("validate-plan-diff")]
     [VerbResult(typeof(PrValidatePlanDiffResult))]
@@ -52,6 +59,10 @@ public sealed partial class PrCommands
         int prNumber = RequiredInput.MissingInt,
         int parentItemId = 0,
         string ancestorIds = "",
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("pr validate-plan-diff",
@@ -84,70 +95,128 @@ public sealed partial class PrCommands
             return EmitValidateError(rootId, itemId, parentItemId, prNumber,
                 "config_error", $"--parent-item-id must be non-negative (got {parentItemId})");
 
-        // ── 2. Resolve repo slug. ───────────────────────────────────────
-        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(slug))
+        // ── 2. Resolve repo identity (cross-platform). ──────────────────
+        var resolved = await repoIdentityResolver
+            .ResolveAsync(platform, organization, project, repositoryOverride, ct)
+            .ConfigureAwait(false);
+        if (resolved.Identity is null)
             return EmitValidateError(rootId, itemId, parentItemId, prNumber,
                 "repo_not_resolved",
-                "Could not resolve repo slug from origin remote.");
+                resolved.Error ?? "Could not resolve repo identity from origin remote.");
 
-        // ── 3. Poll PR for body + state + head SHA. ─────────────────────
-        GhPullRequestPollData? poll;
+        // ── 3. Fetch PR poll data + changed file paths from the platform.
+        string prBody;
+        string prState;
+        string headSha;
+        IReadOnlyList<string> changedPaths;
+        string slug;
+
         try
         {
-            poll = await gh.GetPullRequestPollDataAsync(slug, prNumber, ct).ConfigureAwait(false);
+            switch (resolved.Identity)
+            {
+                case RepoIdentity.GitHubRepo githubRepo:
+                {
+                    slug = githubRepo.Slug;
+                    var poll = await gh.GetPullRequestPollDataAsync(slug, prNumber, ct)
+                        .ConfigureAwait(false);
+                    if (poll is null)
+                        return EmitValidateError(rootId, itemId, parentItemId, prNumber,
+                            "pr_not_found", $"PR #{prNumber} not found in repo {slug}.",
+                            slug: slug);
+                    prBody = poll.Body ?? string.Empty;
+                    prState = poll.State;
+                    headSha = poll.HeadRefOid ?? string.Empty;
+
+                    var files = await gh.GetPullRequestFilesAsync(slug, prNumber, ct)
+                        .ConfigureAwait(false);
+                    if (files is null)
+                        return EmitValidateError(rootId, itemId, parentItemId, prNumber,
+                            "pr_not_found", $"PR #{prNumber} files endpoint returned no payload.",
+                            slug: slug, headSha: headSha, prState: prState);
+                    changedPaths = [.. files.Select(f => f.Path)];
+                    break;
+                }
+                case RepoIdentity.AdoRepo adoRepo:
+                {
+                    if (ado is null)
+                        return EmitValidateError(rootId, itemId, parentItemId, prNumber,
+                            "internal_error",
+                            "IAdoClient is not configured but identity resolved to AdoRepo.");
+                    slug = $"{adoRepo.Organization}/{adoRepo.Project}/{adoRepo.Repository}";
+                    AdoPullRequestPollData? adoPoll;
+                    try
+                    {
+                        adoPoll = await ado.GetPullRequestPollDataAsync(
+                            adoRepo.Organization, adoRepo.Project, adoRepo.Repository, prNumber, ct)
+                            .ConfigureAwait(false);
+                    }
+                    catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        adoPoll = null;
+                    }
+
+                    if (adoPoll is null)
+                        return EmitValidateError(rootId, itemId, parentItemId, prNumber,
+                            "pr_not_found", $"PR #{prNumber} not found in repo {slug}.",
+                            slug: slug);
+                    prBody = adoPoll.Body ?? string.Empty;
+                    prState = adoPoll.State;
+                    headSha = adoPoll.HeadRefOid ?? string.Empty;
+
+                    IReadOnlyList<AdoPullRequestChangedFile>? adoFiles;
+                    try
+                    {
+                        adoFiles = await ado.GetPullRequestFilesAsync(
+                            adoRepo.Organization, adoRepo.Project, adoRepo.Repository, prNumber, ct)
+                            .ConfigureAwait(false);
+                    }
+                    catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        return EmitValidateError(rootId, itemId, parentItemId, prNumber,
+                            "pr_not_found", $"PR #{prNumber} files endpoint returned 404.",
+                            slug: slug, headSha: headSha, prState: prState);
+                    }
+
+                    if (adoFiles is null)
+                        return EmitValidateError(rootId, itemId, parentItemId, prNumber,
+                            "pr_not_found", $"PR #{prNumber} files endpoint returned no payload.",
+                            slug: slug, headSha: headSha, prState: prState);
+
+                    changedPaths = [.. adoFiles.Select(f => f.Path)];
+                    break;
+                }
+                default:
+                    return EmitValidateError(rootId, itemId, parentItemId, prNumber,
+                        "internal_error",
+                        $"Unsupported repo identity variant: {resolved.Identity.GetType().Name}");
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             return EmitValidateError(rootId, itemId, parentItemId, prNumber,
-                "internal_error", $"Could not poll PR #{prNumber}: {ex.Message}",
-                slug: slug);
+                "internal_error", $"Could not poll PR #{prNumber}: {ex.Message}");
         }
 
-        if (poll is null)
-            return EmitValidateError(rootId, itemId, parentItemId, prNumber,
-                "pr_not_found", $"PR #{prNumber} not found in repo {slug}.",
-                slug: slug);
-
-        // ── 4. Fetch changed files. ─────────────────────────────────────
-        IReadOnlyList<GhPullRequestChangedFile>? files;
-        try
-        {
-            files = await gh.GetPullRequestFilesAsync(slug, prNumber, ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            return EmitValidateError(rootId, itemId, parentItemId, prNumber,
-                "internal_error", $"Could not fetch PR #{prNumber} files: {ex.Message}",
-                slug: slug, headSha: poll.HeadRefOid ?? "", prState: poll.State);
-        }
-
-        if (files is null)
-            return EmitValidateError(rootId, itemId, parentItemId, prNumber,
-                "pr_not_found", $"PR #{prNumber} files endpoint returned no payload.",
-                slug: slug, headSha: poll.HeadRefOid ?? "", prState: poll.State);
-
-        // ── 5. Parse front-matter strictly + compute file paths. ────────
-        var frontMatter = PlanPrFrontMatter.ParseStrict(poll.Body);
-        var changedPaths = files.Select(f => f.Path).ToList();
+        // ── 4. Parse front-matter strictly + compute file paths. ────────
+        var frontMatter = PlanPrFrontMatter.ParseStrict(prBody);
         var selfPlanFile = PlanFilePath(itemId);
         string? parentPlanFile = (isRootPlan || parentItemId == 0) ? null : PlanFilePath(parentItemId);
         var ancestorPlanFiles = ParseAncestorIds(ancestorIds, rootId, parentItemId)
             .Select(PlanFilePath)
             .ToList();
 
-        // ── 6. Classify. ────────────────────────────────────────────────
+        // ── 5. Classify. ────────────────────────────────────────────────
         var classification = PlanDiffValidator.Check(
-            changedPaths,
+            changedPaths.ToList(),
             selfPlanFile,
             parentPlanFile,
             ancestorPlanFiles,
             frontMatter.RequestsParentChange,
             frontMatter.Status);
 
-        // ── 7. Emit. ────────────────────────────────────────────────────
+        // ── 6. Emit. ────────────────────────────────────────────────────
         EmitValidate(new PrValidatePlanDiffResult
         {
             RootId = rootId,
@@ -155,8 +224,8 @@ public sealed partial class PrCommands
             ParentItemId = parentItemId,
             PrNumber = prNumber,
             RepoSlug = slug,
-            HeadSha = poll.HeadRefOid ?? "",
-            PrState = poll.State,
+            HeadSha = headSha,
+            PrState = prState,
             Severity = SeverityToken(classification.Severity),
             Code = classification.Code,
             Message = classification.Message,

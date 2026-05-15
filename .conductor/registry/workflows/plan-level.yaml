@@ -440,6 +440,14 @@ agents:
       - "{{ root_resolver.output.resolved_root_id }}"
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-override"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: state_detector_error_gate
         when: "{{ state_detector.output.state == 'error' }}"
@@ -1855,6 +1863,14 @@ agents:
       - "{{ poll_status.output.pr_number if (poll_status is defined and poll_status.output.pr_number is defined) else open_plan_pr.output.pr_number }}"
       - "--child-scope"
       - "{{ workflow.input.child_scope_globs }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-override"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: scope_violation_gate
         when: "{{ validate_scope.output.verdict == 'block' }}"
@@ -1987,6 +2003,14 @@ agents:
       - "extract-renegotiation-flag"
       - "--pr-number"
       - "{{ poll_status.output.pr_number if (poll_status is defined and poll_status.output.pr_number is defined) else open_plan_pr.output.pr_number }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-override"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: cascade_remedy
 

@@ -53,7 +53,8 @@ $builtMtime = (Get-Item $primaryExe).LastWriteTimeUtc
 $launcherScripts = @(
     'Invoke-PolyphonySdlc.ps1',
     'Resolve-GhIdentity.ps1',
-    'Migrate-ToBareRepo.ps1'
+    'Migrate-ToBareRepo.ps1',
+    'bootstrap-conductor.ps1'
 )
 foreach ($name in $launcherScripts) {
     $src = Join-Path $PSScriptRoot "scripts/$name"

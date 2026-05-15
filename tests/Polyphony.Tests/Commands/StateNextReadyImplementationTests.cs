@@ -5,6 +5,7 @@ using Polyphony.Infrastructure.Processes;
 using Polyphony.Sdlc;
 using Polyphony.Sdlc.Observers;
 using Polyphony.Tests.Infrastructure.Processes;
+using Polyphony.Tests.Stubs;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
@@ -49,7 +50,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        var planObserver = new PlanObserver(git, gh, twig);
+        var planObserver = new PlanObserver(git, gh, new ThrowingAdoClient(), twig, new RepoIdentityResolver(git));
         return new StateCommands(twig, git, gh, runner, Repository, config, planObserver);
     }
 

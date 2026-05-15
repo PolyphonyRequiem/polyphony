@@ -32,7 +32,7 @@ public sealed partial class PlanCommands
         new(@"github\.com[:/]([^/]+/[^/.]+?)(?:\.git)?/?$",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    private readonly PlanObserver observer = new(git, gh, twig);
+    private readonly PlanObserver observer = new(git, gh, ado, twig, repoIdentityResolver);
 
     /// <summary>
     /// Detect the current plan-workflow state for a work item.
@@ -46,6 +46,16 @@ public sealed partial class PlanCommands
     /// to mark the parent as seeded. Used to discriminate
     /// <c>merged_unseeded</c> from <c>complete</c>. Defaults to
     /// <c>polyphony:planned</c> — match the seeder's default.</param>
+    /// <param name="platform">PR-platform override (<c>github</c> or <c>ado</c>).
+    /// When supplied, takes precedence over origin-URL detection. The launcher
+    /// passes this through from <c>workflow.input.platform</c>.</param>
+    /// <param name="organization">ADO organization override. Required when
+    /// <paramref name="platform"/> is <c>ado</c>.</param>
+    /// <param name="project">ADO project override. Required when
+    /// <paramref name="platform"/> is <c>ado</c>.</param>
+    /// <param name="repositoryOverride">Repository override. For
+    /// <paramref name="platform"/> = <c>ado</c>: the repo name. For
+    /// <c>github</c>: the <c>owner/repo</c> slug.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("detect-state")]
     [VerbResult(typeof(PlanDetectStateResult))]
@@ -54,6 +64,10 @@ public sealed partial class PlanCommands
         int itemId = RequiredInput.MissingInt,
         string manifestPath = "",
         string plannedTag = PlannedTagDefault,
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan detect-state",
@@ -89,12 +103,14 @@ public sealed partial class PlanCommands
         }
         var localManifestPath = resolvedPath.Path;
 
-        // ── 2. Slug. ──────────────────────────────────────────────────────
-        var slug = await observer.TryResolveSlugAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(slug))
+        // ── 2. Repo identity. ─────────────────────────────────────────────
+        var identity = await observer
+            .TryResolveRepoIdentityAsync(platform, organization, project, repositoryOverride, ct)
+            .ConfigureAwait(false);
+        if (identity is null)
         {
             EmitDetectStateError(rootId, itemId, planBranch,
-                "Could not resolve repo slug from origin remote");
+                "Could not resolve repo identity from origin remote (or supplied overrides)");
             return ExitCodes.Success;
         }
 
@@ -115,18 +131,18 @@ public sealed partial class PlanCommands
         PullRequestSummary? latestPr;
         try
         {
-            latestPr = await observer.GetLatestPlanPrAsync(slug, planBranch, ct)
+            latestPr = await observer.GetLatestPlanPrAsync(identity, planBranch, ct)
                 .ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
         {
             EmitDetectStateError(rootId, itemId, planBranch,
-                ex.FormatErrorMessage("gh pr list"));
+                ex.FormatErrorMessage("pr list"));
             return ExitCodes.Success;
         }
         catch (ExternalToolException ex)
         {
-            EmitDetectStateError(rootId, itemId, planBranch, $"gh pr list failed: {ex.Message}");
+            EmitDetectStateError(rootId, itemId, planBranch, $"pr list failed: {ex.Message}");
             return ExitCodes.Success;
         }
 
@@ -148,18 +164,18 @@ public sealed partial class PlanCommands
         GhPullRequestPollData? pollData;
         try
         {
-            pollData = await observer.GetPlanPrPollAsync(slug, latestPr.Number, ct)
+            pollData = await observer.GetPlanPrPollAsync(identity, latestPr.Number, ct)
                 .ConfigureAwait(false);
         }
         catch (ExternalToolTimeoutException ex)
         {
             EmitDetectStateError(rootId, itemId, planBranch,
-                ex.FormatErrorMessage("gh pr view"));
+                ex.FormatErrorMessage("pr view"));
             return ExitCodes.Success;
         }
         catch (ExternalToolException ex)
         {
-            EmitDetectStateError(rootId, itemId, planBranch, $"gh pr view failed: {ex.Message}");
+            EmitDetectStateError(rootId, itemId, planBranch, $"pr view failed: {ex.Message}");
             return ExitCodes.Success;
         }
         if (pollData is null)
@@ -252,7 +268,7 @@ public sealed partial class PlanCommands
         // current plan generation. If so, override to parent_change_pending
         // so plan-level.yaml routes to the parent replan loop.
         var pendingChildren = await CheckChildrenForParentChangeRequestsAsync(
-            rootId, itemId, slug, localManifestPath, ct)
+            rootId, itemId, identity, localManifestPath, ct)
             .ConfigureAwait(false);
 
         EmitDetectState(new PlanDetectStateResult
@@ -287,7 +303,7 @@ public sealed partial class PlanCommands
     private async Task<IReadOnlyList<ChildPendingParentChange>> CheckChildrenForParentChangeRequestsAsync(
         int rootId,
         int parentItemId,
-        string slug,
+        RepoIdentity identity,
         string manifestPath,
         CancellationToken ct)
     {
@@ -348,10 +364,7 @@ public sealed partial class PlanCommands
             IReadOnlyList<PullRequestSummary> childPrs;
             try
             {
-                childPrs = await gh.ListPullRequestsAsync(
-                    slug,
-                    new PrListFilters(Head: childPlanBranch, State: "open", Limit: 10),
-                    ct).ConfigureAwait(false);
+                childPrs = await ListOpenChildPlanPrsAsync(identity, childPlanBranch, ct).ConfigureAwait(false);
             }
             catch
             {
@@ -363,7 +376,7 @@ public sealed partial class PlanCommands
                 GhPullRequestPollData? pollData;
                 try
                 {
-                    pollData = await gh.GetPullRequestPollDataAsync(slug, pr.Number, ct)
+                    pollData = await observer.GetPlanPrPollAsync(identity, pr.Number, ct)
                         .ConfigureAwait(false);
                 }
                 catch
@@ -396,6 +409,46 @@ public sealed partial class PlanCommands
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Branch on identity variant to list OPEN PRs for the given source
+    /// branch — returns at most 10 (matches the original gh-side cap so
+    /// nothing else changes). Used by parent-change-request detection.
+    /// </summary>
+    private async Task<IReadOnlyList<PullRequestSummary>> ListOpenChildPlanPrsAsync(
+        RepoIdentity identity, string sourceBranch, CancellationToken ct)
+    {
+        switch (identity)
+        {
+            case RepoIdentity.GitHubRepo ghIdent:
+                return await gh.ListPullRequestsAsync(
+                    ghIdent.Slug,
+                    new PrListFilters(Head: sourceBranch, State: "open", Limit: 10),
+                    ct).ConfigureAwait(false);
+
+            case RepoIdentity.AdoRepo adoIdent:
+                var adoPrs = await ado.ListPullRequestsAsync(
+                    adoIdent.Organization, adoIdent.Project, adoIdent.Repository,
+                    Polyphony.Infrastructure.AzureDevOps.AdoPullRequestStatus.Active,
+                    sourceBranch,
+                    ct).ConfigureAwait(false);
+                if (adoPrs is null || adoPrs.Count == 0) return [];
+                return adoPrs
+                    .OrderByDescending(p => p.PullRequestId)
+                    .Take(10)
+                    .Select(p => new PullRequestSummary(
+                        Number: p.PullRequestId,
+                        HeadRefName: p.SourceRefName.StartsWith("refs/heads/", StringComparison.Ordinal)
+                            ? p.SourceRefName.Substring("refs/heads/".Length)
+                            : p.SourceRefName,
+                        Url: p.Url,
+                        MergedAt: null))
+                    .ToList();
+
+            default:
+                throw new InvalidOperationException($"Unhandled RepoIdentity variant: {identity.GetType().Name}");
+        }
     }
 
     private async Task<IReadOnlyList<string>> ComputeStaleAncestorsAsync(

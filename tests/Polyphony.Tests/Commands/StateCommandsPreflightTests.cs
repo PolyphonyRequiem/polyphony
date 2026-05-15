@@ -3,6 +3,7 @@ using Polyphony.Commands;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
+using Polyphony.Tests.Stubs;
 using Shouldly;
 using Xunit;
 using NSubstitute;
@@ -17,7 +18,7 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        var planObserver = new Polyphony.Sdlc.Observers.PlanObserver(git, gh, twig);
+        var planObserver = new Polyphony.Sdlc.Observers.PlanObserver(git, gh, new ThrowingAdoClient(), twig, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git));
         return (new StateCommands(twig, git, gh, runner, Repository, Config, planObserver), runner);
     } // End of CreateCommand
 

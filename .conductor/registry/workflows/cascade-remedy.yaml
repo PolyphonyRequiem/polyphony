@@ -43,6 +43,29 @@ workflow:
       type: number
       required: true
       description: Run-root work item id whose descendant tree to scan.
+    # ── ADO platform inputs (Phase 8 — ADO parity) ──────────────────────
+    # Forwarded from apex-driver / plan-level callers so classify and the
+    # per-PR remedies can resolve PRs against the correct platform.
+    platform:
+      type: string
+      required: false
+      default: ""
+      description: "PR platform: 'ado' or 'github'. Empty → origin URL detection."
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: ADO organization name. Required when platform=ado.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: ADO project name. Required when platform=ado.
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: ADO repository identifier. Required when platform=ado.
 
 # Workflow-scope output: bare Jinja template strings (M7). Auto-coerced
 # by _maybe_parse_json — numeric strings become ints, lowercase
@@ -68,6 +91,14 @@ agents:
       - "classify-stale-descendants"
       - "--root-id"
       - "{{ workflow.input.root_id }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-override"
+      - "{{ workflow.input.repository }}"
     routes:
       # Verb-level error (manifest read/parse, repo slug, etc.) — surface
       # to the cascade-error gate so the operator can decide.
@@ -168,6 +199,10 @@ for_each:
         parent_item_id: "{{ stale.parent_item_id }}"
         pr_number: "{{ stale.pr_number }}"
         pr_url: "{{ stale.pr_url }}"
+        platform: "{{ workflow.input.platform }}"
+        organization: "{{ workflow.input.organization }}"
+        project: "{{ workflow.input.project }}"
+        repository: "{{ workflow.input.repository }}"
     routes:
       - to: cascade_summary_gate
         when: "{{ (remedy_group.errors | length) > 0 }}"

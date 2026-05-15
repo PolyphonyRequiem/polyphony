@@ -35,7 +35,7 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
             git, gh, twig, Repository, Config,
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
-            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
+            new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
             ado);
         return (cmd, ado);
     }
@@ -477,6 +477,7 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
         public Task<IReadOnlyList<AdoPullRequest>?> ListPullRequestsAsync(
             string organization, string project, string repository,
             AdoPullRequestStatus status = AdoPullRequestStatus.Active,
+            string? sourceBranch = null,
             CancellationToken ct = default)
             => throw new NotImplementedException();
 
@@ -513,6 +514,7 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
         public Task<AdoCompletePullRequestResult> CompletePullRequestAsync(
             string organization, string project, string repository,
             int pullRequestId, string lastMergeSourceCommitSha,
+            AdoMergeStrategy mergeStrategy, bool deleteSourceBranch,
             CancellationToken ct = default)
             => throw new NotImplementedException();
 
@@ -532,5 +534,25 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
             }
             return Task.FromResult(Threads);
         }
+
+        public Task<AdoEvidenceFloorRead> GetPullRequestEvidenceFloorAsync(
+            string organization, string project, string repository,
+            int pullRequestId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<IReadOnlyList<AdoPullRequestChangedFile>?> GetPullRequestFilesAsync(
+            string organization, string project, string repository,
+            int pullRequestId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<bool> EditPullRequestBodyAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string body, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<bool> ClosePullRequestAsync(
+            string organization, string project, string repository,
+            int pullRequestId, string commentBeforeClose, CancellationToken ct = default)
+            => throw new NotImplementedException();
     }
 }

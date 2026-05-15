@@ -254,16 +254,34 @@ public sealed partial class StateCommands(
 
     private async Task<PreflightCheck> CheckTwigCliAsync(CancellationToken ct)
     {
+        var resolvedPath = await ResolveBinaryPathAsync("twig", ct).ConfigureAwait(false);
         try
         {
-            var version = await twig.GetVersionAsync(ct).ConfigureAwait(false);
+            string? version;
+            if (!string.IsNullOrEmpty(resolvedPath))
+            {
+                // Honor where.exe / which resolution explicitly so the version
+                // reported here matches what the operator's shell sees, even
+                // when polyphony.exe lives in a directory that hosts an older
+                // twig.exe (e.g. ~/.twig/bin) and the OS resolver would
+                // otherwise prefer the colocated binary. See AB#3216.
+                var result = await runner.RunAsync(resolvedPath, ["--version"], ct).ConfigureAwait(false);
+                version = result.Succeeded ? result.Stdout.Trim() : null;
+            }
+            else
+            {
+                version = await twig.GetVersionAsync(ct).ConfigureAwait(false);
+            }
             if (!string.IsNullOrEmpty(version))
             {
+                var detail = string.IsNullOrEmpty(resolvedPath)
+                    ? $"twig CLI available: {version}"
+                    : $"twig CLI available: {version} (from {resolvedPath})";
                 return new PreflightCheck
                 {
                     Name = "twig_cli",
                     Passed = true,
-                    Detail = $"twig CLI available: {version}",
+                    Detail = detail,
                 };
             }
         }
@@ -275,6 +293,34 @@ public sealed partial class StateCommands(
             Detail = "twig CLI not found or not responding",
             Remediation = "Install twig CLI and ensure it is in PATH",
         };
+    }
+
+    /// <summary>
+    /// Resolves the absolute path that the OS process resolver would pick
+    /// for <paramref name="binaryName"/>, so preflight diagnostics can name
+    /// the actual binary being invoked. Uses <c>where.exe</c> on Windows
+    /// and <c>which</c> elsewhere; returns <c>null</c> on any failure.
+    /// </summary>
+    private async Task<string?> ResolveBinaryPathAsync(string binaryName, CancellationToken ct)
+    {
+        try
+        {
+            var (resolver, args) = OperatingSystem.IsWindows()
+                ? ("where.exe", new[] { binaryName })
+                : ("which", new[] { binaryName });
+            var result = await runner.RunAsync(resolver, args, ct).ConfigureAwait(false);
+            if (!result.Succeeded)
+            {
+                return null;
+            }
+            // where.exe returns multiple lines (one per match); first wins.
+            var firstLine = result.Stdout.Split('\n', 2)[0].Trim();
+            return string.IsNullOrEmpty(firstLine) ? null : firstLine;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<(PreflightCheck Check, string? Org, string? Project)> CheckTwigConfigAsync(CancellationToken ct)

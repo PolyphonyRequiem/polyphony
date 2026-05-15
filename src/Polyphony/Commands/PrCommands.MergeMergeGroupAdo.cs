@@ -112,7 +112,7 @@ public sealed partial class PrCommands
             // ── 2. Locate the PR by (source, target) pair. ────────────────
             var activePrs = await ado.ListPullRequestsAsync(
                 organization, project, repository,
-                AdoPullRequestStatus.All, ct).ConfigureAwait(false);
+                AdoPullRequestStatus.All, null, ct).ConfigureAwait(false);
 
             if (activePrs is null)
             {
@@ -339,6 +339,8 @@ public sealed partial class PrCommands
                 complete = await ado.CompletePullRequestAsync(
                     organization, project, repository, activePr.PullRequestId,
                     lastMergeSourceCommitSha: lastMergeSha,
+                    mergeStrategy: AdoMergeStrategy.NoFastForward,
+                    deleteSourceBranch: false,
                     ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }

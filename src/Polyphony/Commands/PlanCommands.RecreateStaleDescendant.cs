@@ -7,6 +7,7 @@ using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Locking;
 using Polyphony.Manifest;
+using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
 
@@ -74,6 +75,10 @@ public sealed partial class PlanCommands
         string manifestPath = "",
         string by = "",
         int lockTtlHours = 24,
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repositoryOverride = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("plan recreate-stale-descendant",
@@ -130,12 +135,14 @@ public sealed partial class PlanCommands
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
         var localManifestPath = resolvedPath.Path;
 
-        // ── 2. Resolve repo slug. ──────────────────────────────────────────
-        var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(slug))
+        // ── 2. Resolve repo identity (cross-platform). ─────────────────────
+        var resolved = await repoIdentityResolver.ResolveAsync(
+            platform, organization, project, repositoryOverride, ct).ConfigureAwait(false);
+        if (resolved.Identity is null)
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "no_slug",
-                "Could not resolve repo slug from origin remote",
+                resolved.Error ?? "Could not resolve repo identity from origin remote",
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch);
+        var identity = resolved.Identity;
 
         // ── 3. Acquire same-root run lock BEFORE any reads. ────────────────
         var lockStore = new RunLockStore();
@@ -182,7 +189,7 @@ public sealed partial class PlanCommands
             return await RecreateStaleDescendantUnderLockAsync(
                 rootId, itemId, parentItemId, prNumber,
                 headBranch, parentPlanBranch, manifestBranch,
-                localManifestPath, slug, ancestorIds, ct).ConfigureAwait(false);
+                localManifestPath, identity, ancestorIds, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -199,10 +206,12 @@ public sealed partial class PlanCommands
         string parentPlanBranch,
         string manifestBranch,
         string manifestPath,
-        string slug,
+        RepoIdentity identity,
         string ancestorIds,
         CancellationToken ct)
     {
+        var slug = PullRequestReader.BuildRepoSlug(identity);
+
         // ── 4. Verify clean worktree. ──────────────────────────────────────
         try
         {
@@ -269,7 +278,7 @@ public sealed partial class PlanCommands
         GhPullRequestPollData? poll;
         try
         {
-            poll = await gh.GetPullRequestPollDataAsync(slug, prNumber, ct).ConfigureAwait(false);
+            poll = await pullRequestReader.GetPollDataAsync(identity, prNumber, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -287,20 +296,20 @@ public sealed partial class PlanCommands
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "pr_identity_mismatch",
                 $"PR #{prNumber} head ref is '{poll.HeadRefName ?? "<null>"}' but the verb expected '{headBranch}'.",
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                oldPrUrl: $"https://github.com/{slug}/pull/{prNumber}");
+                oldPrUrl: PullRequestReader.BuildPrUrl(identity, prNumber));
 
         if (!string.Equals(poll.BaseRefName, parentPlanBranch, StringComparison.Ordinal))
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "pr_identity_mismatch",
                 $"PR #{prNumber} base ref is '{poll.BaseRefName ?? "<null>"}' but the verb expected '{parentPlanBranch}'.",
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch,
-                oldPrUrl: $"https://github.com/{slug}/pull/{prNumber}");
+                oldPrUrl: PullRequestReader.BuildPrUrl(identity, prNumber));
 
         // The polled SHA is captured purely for ledger bookkeeping. Unlike
         // the rebase verb, we don't need a force-with-lease here — the new
         // branch is created from a fresh parent tip, the old branch is
         // deleted outright.
         var polledSha = poll.HeadRefOid ?? string.Empty;
-        var oldPrUrl = $"https://github.com/{slug}/pull/{prNumber}";
+        var oldPrUrl = PullRequestReader.BuildPrUrl(identity, prNumber);
 
         // ── 8. Compute desired ancestor snapshot. ──────────────────────────
         var snapshotInBody = PlanPrFrontMatter.Parse(poll.Body).AncestorPlanGenerations;
@@ -308,7 +317,7 @@ public sealed partial class PlanCommands
         var desiredSnapshot = ProjectManifestOntoAncestorsForRecreate(manifest.PlanGenerations, ancestorKeys, snapshotInBody);
 
         // ── 9. Cascade-precondition: parent plan branch must be fresh. ─────
-        var parentFreshness = await CheckParentFreshnessForRecreateAsync(slug, parentPlanBranch, manifest, ct).ConfigureAwait(false);
+        var parentFreshness = await CheckParentFreshnessForRecreateAsync(identity, parentPlanBranch, manifest, ct).ConfigureAwait(false);
         if (parentFreshness is { } parentMessage)
         {
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "parent_stale", parentMessage,
@@ -320,7 +329,7 @@ public sealed partial class PlanCommands
         // Replay-safe: a re-run after a successful recreate should be a noop
         // when (a) old PR is already CLOSED, (b) a fresh OPEN PR exists on
         // the same head with current snapshot, (c) ledger has an entry.
-        var existingFresh = await TryFindFreshReplacementPrAsync(slug, headBranch, parentPlanBranch, desiredSnapshot, ct).ConfigureAwait(false);
+        var existingFresh = await TryFindFreshReplacementPrAsync(identity, headBranch, parentPlanBranch, desiredSnapshot, ct).ConfigureAwait(false);
         bool oldPrAlreadyClosed = !string.Equals(poll.State, "OPEN", StringComparison.OrdinalIgnoreCase);
         bool ledgerHasEntry = manifest.Rebases.Any(r =>
             string.Equals(r.Branch, headBranch, StringComparison.Ordinal)
@@ -361,7 +370,7 @@ public sealed partial class PlanCommands
         bool closed;
         try
         {
-            closed = await gh.ClosePullRequestAsync(slug, prNumber, closeComment, ct).ConfigureAwait(false);
+            closed = await pullRequestReader.CloseAsync(identity, prNumber, closeComment, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -429,7 +438,7 @@ public sealed partial class PlanCommands
         string? newPrUrl;
         try
         {
-            newPrUrl = await gh.CreatePullRequestAsync(slug, parentPlanBranch, headBranch, prTitle, fullBody, ct).ConfigureAwait(false);
+            newPrUrl = await pullRequestReader.CreateAsync(identity, parentPlanBranch, headBranch, prTitle, fullBody, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -550,7 +559,7 @@ public sealed partial class PlanCommands
     /// replacement found", which falls through to the recreate path).
     /// </summary>
     private async Task<(int Number, string Url)?> TryFindFreshReplacementPrAsync(
-        string slug,
+        RepoIdentity identity,
         string headBranch,
         string parentPlanBranch,
         IReadOnlyDictionary<string, int> desiredSnapshot,
@@ -559,10 +568,8 @@ public sealed partial class PlanCommands
         IReadOnlyList<PullRequestSummary> candidates;
         try
         {
-            candidates = await gh.ListPullRequestsAsync(
-                slug,
-                new PrListFilters(Head: headBranch, Base: parentPlanBranch, State: "open", Limit: 5),
-                ct).ConfigureAwait(false);
+            candidates = await pullRequestReader.ListByHeadAsync(
+                identity, headBranch, "open", limit: 5, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch
@@ -577,7 +584,7 @@ public sealed partial class PlanCommands
             GhPullRequestPollData? candidatePoll;
             try
             {
-                candidatePoll = await gh.GetPullRequestPollDataAsync(slug, pr.Number, ct).ConfigureAwait(false);
+                candidatePoll = await pullRequestReader.GetPollDataAsync(identity, pr.Number, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }
             catch
@@ -586,6 +593,10 @@ public sealed partial class PlanCommands
             }
             if (candidatePoll is null) continue;
             if (!string.Equals(candidatePoll.State, "OPEN", StringComparison.OrdinalIgnoreCase)) continue;
+            // Only consider PRs targeting the expected parent plan branch.
+            // gh used to filter this server-side via Base=parentPlanBranch;
+            // ADO has no equivalent list-level filter, so check after polling.
+            if (!string.Equals(candidatePoll.BaseRefName, parentPlanBranch, StringComparison.Ordinal)) continue;
 
             var snapshot = PlanPrFrontMatter.Parse(candidatePoll.Body).AncestorPlanGenerations;
             if (SnapshotsEquivalentForRecreate(snapshot, desiredSnapshot))
@@ -603,7 +614,7 @@ public sealed partial class PlanCommands
     /// a human-readable reason when stale.
     /// </summary>
     private async Task<string?> CheckParentFreshnessForRecreateAsync(
-        string slug,
+        RepoIdentity identity,
         string parentPlanBranch,
         RunManifest manifest,
         CancellationToken ct)
@@ -611,10 +622,8 @@ public sealed partial class PlanCommands
         IReadOnlyList<PullRequestSummary> parentPrs;
         try
         {
-            parentPrs = await gh.ListPullRequestsAsync(
-                slug,
-                new PrListFilters(Head: parentPlanBranch, State: "open", Limit: 5),
-                ct).ConfigureAwait(false);
+            parentPrs = await pullRequestReader.ListByHeadAsync(
+                identity, parentPlanBranch, "open", limit: 5, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch
@@ -629,7 +638,7 @@ public sealed partial class PlanCommands
         GhPullRequestPollData? parentPoll;
         try
         {
-            parentPoll = await gh.GetPullRequestPollDataAsync(slug, parentPr.Number, ct).ConfigureAwait(false);
+            parentPoll = await pullRequestReader.GetPollDataAsync(identity, parentPr.Number, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch

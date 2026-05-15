@@ -23,7 +23,7 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         var c = cfg ?? Config;
         var walker = new HierarchyWalker(c, Repository);
         var validator = new TransitionValidator(c);
-        return (new BranchCommands(twig, walker, Repository, validator, git, gh, c), runner);
+        return (new BranchCommands(twig, walker, Repository, validator, git, c, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null)), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)
@@ -337,7 +337,7 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         var gh = new GhClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
         var validator = new TransitionValidator(Config);
-        var cmd = new BranchCommands(twig, walker, Repository, validator, git, gh, Config);
+        var cmd = new BranchCommands(twig, walker, Repository, validator, git, Config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null));
 
         StubSync(runner);
         StubConfig(runner);

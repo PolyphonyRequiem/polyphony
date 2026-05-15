@@ -511,6 +511,48 @@ $remediation
     }
 }
 
+# ─── Phase 8.5: destination-worktree preflight (#421) ────────────────────────
+#
+# Re-run preflight from inside the apex worktree so worktree-specific
+# issues (missing twig db, ADO credentials not visible from this
+# directory, etc.) surface BEFORE we hand off to conductor. The earlier
+# launcher only ever ran preflight in the main worktree (per the bootstrap
+# skill), giving operators false confidence — see #421.
+#
+# Soft-fail: a failed destination preflight is INFORMATIVE, not blocking.
+# Hard-blocking checks already live in Phase 2 (bare-repo) + Phase 8
+# (assert-clean); preflight is the wider sanity net. The launcher prints
+# the failure summary and asks for confirmation before launching.
+
+if (-not $DryRun) {
+    Push-Location $WorktreeRoot
+    try {
+        $preflightArgs = @('state', 'preflight', '--work-item', $ApexId)
+        $preflightOutput = & polyphony @preflightArgs 2>&1
+        $preflightExit = $LASTEXITCODE
+        $global:LASTEXITCODE = 0
+        $preflightJson = $null
+        try { $preflightJson = $preflightOutput | ConvertFrom-Json } catch { }
+        if ($preflightExit -ne 0 -or ($preflightJson -and $preflightJson.failed_count -gt 0)) {
+            $failedNames = if ($preflightJson -and $preflightJson.required) {
+                ($preflightJson.required | Where-Object { -not $_.passed } | ForEach-Object { $_.name }) -join ', '
+            } else { '(could not parse preflight JSON)' }
+            Write-Host @"
+[polyphony-sdlc] WARNING: destination-worktree preflight reported failures.
+  Path:    $WorktreeRoot
+  Failed:  $failedNames
+  Output:  $preflightOutput
+
+This is the launcher's wider sanity net (#421). The conductor run will
+likely fail similarly once it reaches the same checks. Continuing anyway
+because the hard-blocking layout checks already passed.
+"@ -ForegroundColor Yellow
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
 # ─── Phase 9: derive metadata ────────────────────────────────────────────────
 
 $projectUrl = 'https://dev.azure.com/{0}/{1}' -f $twigConfig.organization, $twigConfig.project

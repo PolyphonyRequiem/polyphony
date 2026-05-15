@@ -5,6 +5,7 @@ using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
 using Polyphony.Routing;
 using Polyphony.Tests.Infrastructure.Processes;
+using Polyphony.Tests.Stubs;
 using Polyphony.Tests.TestFixtures;
 using Shouldly;
 using Xunit;
@@ -59,7 +60,7 @@ public sealed class PlanCommandsRebaseStaleDescendantTests : CommandTestBase, ID
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
-        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(new GitClient(runner))), runner);
+        return (new PlanCommands(walker, Repository, Config, twig, new GitClient(runner), new GhClient(runner), new ThrowingAdoClient(), new FakePostconditionVerifier(), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(new GitClient(runner)), new Polyphony.Sdlc.Observers.RepoIdentityResolver(new GitClient(runner)), new Polyphony.Sdlc.Observers.PullRequestReader(new GhClient(runner), null)), runner);
     }
 
     private static PlanRebaseStaleDescendantResult Parse(string output) =>

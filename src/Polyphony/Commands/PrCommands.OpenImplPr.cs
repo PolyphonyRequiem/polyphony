@@ -19,6 +19,10 @@ public sealed partial class PrCommands
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path of the enclosing MG.</param>
     /// <param name="title">Optional PR title; deterministic fallback derived from the cached work-item title.</param>
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
+    /// <param name="platform">Platform override (<c>github</c>|<c>ado</c>). Empty for origin-URL auto-detect.</param>
+    /// <param name="organization">ADO organization. Required when platform=ado.</param>
+    /// <param name="project">ADO project. Required when platform=ado.</param>
+    /// <param name="repository">For ADO: repository name/GUID. For GitHub: <c>owner/name</c> slug. Required when <paramref name="platform"/> is non-empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-impl-pr")]
     [VerbResult(typeof(PrOpenImplResult))]
@@ -28,6 +32,10 @@ public sealed partial class PrCommands
         string mgPath = "",
         string title = "",
         string body = "",
+        string platform = "",
+        string organization = "",
+        string project = "",
+        string repository = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("pr open-impl-pr",
@@ -60,6 +68,40 @@ public sealed partial class PrCommands
 
         var headBranch = BranchNameBuilder.Impl(root, item).Value;
         var baseBranch = BranchNameBuilder.MergeGroup(root, path).Value;
+
+        // ── Platform-aware identity resolution ───────────────────────────
+        var resolved = await repoIdentityResolver
+            .ResolveAsync(platform, organization, project, repository, ct)
+            .ConfigureAwait(false);
+
+        if (resolved.Identity is Polyphony.Sdlc.Observers.RepoIdentity.AdoRepo adoRepo)
+        {
+            var adoSlug = BuildAdoSlug(adoRepo.Organization, adoRepo.Project, adoRepo.Repository);
+            var outcome = await OpenImplAdoCoreAsync(
+                adoRepo.Organization, adoRepo.Project, adoRepo.Repository, adoSlug,
+                rootId, itemId, path,
+                headBranch, baseBranch,
+                title, body, ct).ConfigureAwait(false);
+
+            EmitImpl(new PrOpenImplResult
+            {
+                PrNumber = outcome.PrNumber,
+                PrUrl = outcome.PrUrl,
+                Title = outcome.Title,
+                HeadBranch = outcome.HeadBranch,
+                BaseBranch = outcome.BaseBranch,
+                RootId = rootId,
+                ItemId = itemId,
+                MgPath = path.Canonical,
+                Created = outcome.Created,
+                Organization = adoRepo.Organization,
+                Project = adoRepo.Project,
+                Repository = adoRepo.Repository,
+                RepoSlug = adoSlug,
+                Error = outcome.Error,
+            });
+            return outcome.Error is null ? ExitCodes.Success : ExitCodes.RoutingFailure;
+        }
 
         try
         {

@@ -489,6 +489,14 @@ agents:
       - "{{ ensure_evidence_branch.output.branch }}"
       - "--base-branch"
       - "{{ ensure_evidence_branch.output.base_branch }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: workflow_error_gate
         when: "{{ open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' }}"
@@ -529,6 +537,14 @@ agents:
       - "pr"
       - "check-evidence-floor"
       - "{{ open_evidence_pr.output.pr_number }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-override"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: workflow_error_gate
         when: "{{ evidence_floor_check.output.error_code is defined and evidence_floor_check.output.error_code != null }}"
