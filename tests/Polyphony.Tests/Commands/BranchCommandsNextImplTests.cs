@@ -41,12 +41,28 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         => runner.WhenExact("git", ["branch", "--show-current"],
             new ProcessResult(0, current, ""));
 
-    private static void ExpectStateTransition(FakeProcessRunner runner, int id, string state)
+    private void ExpectStateTransition(FakeProcessRunner runner, int id, string state)
     {
         runner.WhenExact("twig", ["set", id.ToString(), "--output", "json"],
             new ProcessResult(0, "{}", ""));
-        runner.WhenExact("twig", ["state", state, "--output", "json"],
-            new ProcessResult(0, "{}", ""));
+        // Mirror twig state's behavior: after pushing the transition to ADO,
+        // twig refetches the work item and saves it back to cache. Tests
+        // need this so the polyphony read-after-write assertion (AB#3189)
+        // sees a consistent state. Without the cache update here, every
+        // happy-path test would trip the new mismatch guard.
+        runner.WhenAsync(
+            (e, a) => e == "twig" && a.Count >= 2 && a[0] == "state" && a[1] == state,
+            async (_, _) =>
+            {
+                var existing = await Repository.GetByIdAsync(id);
+                if (existing is not null)
+                {
+                    existing.ChangeState(state);
+                    existing.MarkSynced(existing.Revision + 1);
+                    await Repository.SaveAsync(existing);
+                }
+                return new ProcessResult(0, "{}", "");
+            });
     }
 
     [Fact]
@@ -303,6 +319,86 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
 
         postStateSync.inv.ShouldNotBeNull(
             "next-impl must invoke `twig sync` after `twig state` to flush the staged transition (AB#3126)");
+    }
+
+    [Fact]
+    public async Task NextImpl_PostSyncStateMismatch_EmitsErrorWithDiagnostics()
+    {
+        // AB#3189 regression: when `twig state` + `twig sync` both exit 0
+        // but the cache still reports the pre-transition state (apex 3165
+        // dispatch_items[0] for AB#3172 — observed 12-minute self-heal
+        // before second next-impl invocation finally saw Doing), the verb
+        // must surface action=error with the task id, transition, and ADO
+        // URL instead of returning success and leaving primary_completer
+        // to refuse implementation_complete with no diagnostic.
+        var runner = new FakeProcessRunner();
+        var twig = new TwigClient(runner);
+        var git = new GitClient(runner);
+        var gh = new GhClient(runner);
+        var walker = new HierarchyWalker(Config, Repository);
+        var validator = new TransitionValidator(Config);
+        var cmd = new BranchCommands(twig, walker, Repository, validator, git, gh, Config);
+
+        StubSync(runner);
+        StubConfig(runner);
+        StubBranch(runner, "");
+        // SetActive succeeds; SetState succeeds at the boundary BUT we
+        // intentionally do NOT update the cache here, simulating the race
+        // where twig sync's pull-back overwrites the freshly-pushed state
+        // before ADO has settled.
+        runner.WhenExact("twig", ["set", "300", "--output", "json"], new ProcessResult(0, "{}", ""));
+        runner.WhenExact("twig", ["state", "Doing", "--output", "json"], new ProcessResult(0, "{}", ""));
+
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing");
+        var task = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("T")
+            .WithState("To Do").WithTags("PG-1").WithParentId(100);
+        await SeedAsync(epic.Build(), task.Build());
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.NextImpl(workItem: 100, pgName: "PG-1"));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Deserialize(output);
+        result.Action.ShouldBe("error", $"Output was: {output}");
+        result.Error.ShouldNotBeNull();
+        result.Error.ShouldContain("#300");
+        result.Error.ShouldContain("Doing");
+        result.Error.ShouldContain("To Do");
+        result.Error.ShouldContain("https://dev.azure.com/org/proj/_workitems/edit/300");
+    }
+
+    [Fact]
+    public async Task NextImpl_TwigStateThrows_ErrorEnvelopeIncludesAdoUrl()
+    {
+        // AB#3191 regression: when the twig boundary fails, the error
+        // envelope must include enough context (root work item id, merge
+        // group, and ADO URL) for the operator to jump straight to the
+        // work item. Pre-AB#3191 the message was just "Error routing next
+        // task: <ex.Message>" — no task id, no URL.
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+        StubBranch(runner, "");
+        runner.WhenExact("twig", ["set", "300", "--output", "json"], new ProcessResult(0, "{}", ""));
+        runner.WhenExact("twig", ["state", "Doing", "--output", "json"],
+            new ProcessResult(1, "", "ado unreachable"));
+
+        var epic = new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("E").WithState("Doing");
+        var task = new WorkItemBuilder().WithId(300).WithType("Task").WithTitle("T")
+            .WithState("To Do").WithTags("PG-1").WithParentId(100);
+        await SeedAsync(epic.Build(), task.Build());
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.NextImpl(workItem: 100, pgName: "PG-1"));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Deserialize(output);
+        result.Action.ShouldBe("error", $"Output was: {output}");
+        result.Error.ShouldNotBeNull();
+        result.Error.ShouldContain("PG-1");
+        result.Error.ShouldContain("#100");
+        result.Error.ShouldContain("begin_implementation");
+        result.Error.ShouldContain("https://dev.azure.com/org/proj/_workitems/edit/100");
     }
 
     private static BranchNextImplResult Deserialize(string output)
