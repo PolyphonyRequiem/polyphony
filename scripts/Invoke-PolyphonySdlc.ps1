@@ -200,6 +200,12 @@ function Invoke-PolyphonyJson {
     }
 }
 
+# ─── Helper: recursively copy missing .twig/ entries from main into apex ─────
+# Implementation lives in Twig-Hydration.ps1 (sibling file) so Pester can
+# unit-test it independently of the launcher's full pipeline.
+
+. (Join-Path $PSScriptRoot 'Twig-Hydration.ps1')
+
 # ─── Phase 1: cwd is a worktree of a git repo ────────────────────────────────
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -434,35 +440,26 @@ intended to start a new run, re-invoke with -Intent new (the default).
 "@
 }
 
-# ─── Phase 7: copy .twig/ from main worktree if missing in apex worktree ─────
+# ─── Phase 7: hydrate apex .twig/ workspace from main ────────────────────────
 
-# .twig/ is gitignored, so a freshly-created worktree from `git worktree add`
-# does not have it. The launcher copies it once from main; subsequent launches
-# (resume) reuse the apex worktree's existing .twig/ unchanged.
-$mainTwigDir = Join-Path $mainWorktree '.twig'
-$apexTwigDir = Join-Path $WorktreeRoot '.twig'
-$twigSourceForConfig = $null
+# `git worktree add` materializes only TRACKED files. `.twig/config` IS tracked
+# (committed); `.twig/<org>/<project>/twig.db` (workspace DB) and
+# `.twig/prompt.json` are GITIGNORED (`.twig/*` + `!.twig/config` is the
+# canonical pattern). So a freshly-created apex worktree has `.twig/config`
+# present but no usable workspace — twig in that worktree throws
+# `WorkspaceNotFoundException` on its first DI resolution.
+#
+# We hydrate the apex `.twig/` from main, preserving any operator-curated
+# state already in apex (resume safety). We then assert the workspace DB is
+# present at the expected path; if not, we fail fast with remediation rather
+# than letting conductor crash.
 
-if (Test-Path $apexTwigDir -PathType Container) {
-    $twigSourceForConfig = $apexTwigDir
-} elseif (Test-Path $mainTwigDir -PathType Container) {
-    if (-not $DryRun) {
-        # On a real launch, copy main's .twig/ into the apex worktree so twig
-        # commands inside the apex have local state. Skip-if-exists; never
-        # clobber operator-curated state in an existing apex worktree.
-        if (Test-Path $WorktreeRoot -PathType Container) {
-            Copy-Item -LiteralPath $mainTwigDir -Destination $apexTwigDir -Recurse -Force
-            $twigSourceForConfig = $apexTwigDir
-        } else {
-            # Apex worktree path doesn't exist yet (init-apex returned a path
-            # it would have created in non-dry-run; shouldn't happen here).
-            throw "[polyphony-sdlc] init-apex reported outcome=$initOutcome but worktree path '$WorktreeRoot' does not exist. Aborting."
-        }
-    } else {
-        # DryRun: read .twig/config from main since we can't copy.
-        $twigSourceForConfig = $mainTwigDir
-    }
-} else {
+$mainTwigDir   = Join-Path $mainWorktree '.twig'
+$apexTwigDir   = Join-Path $WorktreeRoot '.twig'
+$mainConfigPath = Join-Path $mainTwigDir 'config'
+$apexConfigPath = Join-Path $apexTwigDir 'config'
+
+if (-not (Test-Path $mainTwigDir -PathType Container)) {
     throw @"
 [polyphony-sdlc] No .twig/ directory found in main worktree.
 Main worktree: $mainWorktree
@@ -474,14 +471,45 @@ worktree first:
     twig set $ApexId
 "@
 }
-
-$twigConfigPath = Join-Path $twigSourceForConfig 'config'
-if (-not (Test-Path $twigConfigPath -PathType Leaf)) {
-    throw "[polyphony-sdlc] .twig/ exists at $twigSourceForConfig but config file is missing."
+if (-not (Test-Path $mainConfigPath -PathType Leaf)) {
+    throw "[polyphony-sdlc] .twig/ exists at $mainTwigDir but config file is missing."
 }
+
+if (-not $DryRun) {
+    # 1. Ensure apex .twig/ exists. The tracked config usually materializes
+    #    it, but we belt-and-braces in case a stale apex was pre-cleaned.
+    if (-not (Test-Path $apexTwigDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $apexTwigDir -Force | Out-Null
+    }
+    # 2. Ensure apex has a config file. If the tracked file did not
+    #    materialize (defense-in-depth), seed from main.
+    if (-not (Test-Path $apexConfigPath -PathType Leaf)) {
+        Copy-Item -LiteralPath $mainConfigPath -Destination $apexConfigPath -Force
+    }
+    # 3. Recursively copy missing children from main's .twig/ into apex's,
+    #    preserving any apex-local state. 'config' is excluded because the
+    #    apex worktree's tracked config is canonical (and may be the older
+    #    schema if twig in main has silently migrated; that's a separate bug).
+    Copy-MissingTwigEntries -SourceRoot $mainTwigDir -DestinationRoot $apexTwigDir -ExcludeAtRoot @('config')
+}
+
+$twigConfigPath = if (Test-Path $apexConfigPath -PathType Leaf) { $apexConfigPath } else { $mainConfigPath }
 $twigConfig = Get-Content $twigConfigPath -Raw | ConvertFrom-Json
 if (-not $twigConfig.organization -or -not $twigConfig.project) {
     throw "[polyphony-sdlc] twig config at $twigConfigPath is missing 'organization' or 'project'."
+}
+
+# 4. Post-hydration invariant: the apex twig workspace DB MUST exist at
+#    .twig/<org>/<project>/twig.db. If it doesn't, main never had it either —
+#    fail fast here with operator remediation, instead of letting conductor
+#    crash later with WorkspaceNotFoundException.
+if (-not $DryRun) {
+    Assert-ApexTwigWorkspace `
+        -ApexTwigDir $apexTwigDir `
+        -Organization $twigConfig.organization `
+        -Project $twigConfig.project `
+        -ApexId $ApexId `
+        -MainWorktree $mainWorktree
 }
 
 # ─── Phase 8: assert-clean (skip on -DryRun) ─────────────────────────────────
