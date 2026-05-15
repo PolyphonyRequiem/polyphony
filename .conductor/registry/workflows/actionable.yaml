@@ -529,6 +529,14 @@ agents:
       - "pr"
       - "check-evidence-floor"
       - "{{ open_evidence_pr.output.pr_number }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-override"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: workflow_error_gate
         when: "{{ evidence_floor_check.output.error_code is defined and evidence_floor_check.output.error_code != null }}"

@@ -300,6 +300,14 @@ agents:
       - "next-ready"
       - "--work-item"
       - "{{ workflow.input.apex_id }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: preflight_ensure_branch
         when: "{{ preflight_apex_state.output.status == 'dispatchable' }}"
@@ -875,7 +883,7 @@ agents:
         # (PR #5 hand-off note).
         $apexSatisfied = $false;
         try {
-          $nextRaw = polyphony state next-ready --work-item {{ workflow.input.apex_id }} 2>$null;
+          $nextRaw = polyphony state next-ready --work-item {{ workflow.input.apex_id }} --platform {{ workflow.input.platform }} --organization "{{ workflow.input.organization }}" --project "{{ workflow.input.project }}" --repository "{{ workflow.input.repository }}" 2>$null;
           if ($nextRaw) {
             $next = $nextRaw | ConvertFrom-Json;
             if ($null -ne $next -and $next.PSObject.Properties.Name -contains 'status') {

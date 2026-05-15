@@ -932,6 +932,14 @@ agents:
       - "{{ primary_router.output.primary_id }}"
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-override"
+      - "{{ workflow.input.repository }}"
     routes:
       - when: "{{ assert_impl_pr_coverage.output.action == 'ok' }}"
         to: delete_impl_branch

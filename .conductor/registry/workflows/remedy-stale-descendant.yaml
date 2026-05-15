@@ -71,6 +71,27 @@ workflow:
       required: false
       default: ""
       description: PR URL (informational, used in human-gate prompts).
+    # ── ADO platform inputs (Phase 8) ───────────────────────────────────
+    platform:
+      type: string
+      required: false
+      default: ""
+      description: "PR platform: 'ado' or 'github'. Empty → origin URL detection."
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: ADO organization name. Required when platform=ado.
+    project:
+      type: string
+      required: false
+      default: ""
+      description: ADO project name. Required when platform=ado.
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: ADO repository identifier. Required when platform=ado.
 
 # Workflow-scope output: bare Jinja template strings (M7). The outcome
 # string is consumed by cascade-remedy.yaml's for_each error/success
@@ -100,6 +121,14 @@ agents:
       - "{{ workflow.input.parent_item_id }}"
       - "--pr-number"
       - "{{ workflow.input.pr_number }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-override"
+      - "{{ workflow.input.repository }}"
     routes:
       # Success — clean rebase or three-fact noop.
       - to: $end
@@ -140,6 +169,14 @@ agents:
       - "{{ workflow.input.parent_item_id }}"
       - "--pr-number"
       - "{{ workflow.input.pr_number }}"
+      - "--platform"
+      - "{{ workflow.input.platform }}"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository-override"
+      - "{{ workflow.input.repository }}"
     routes:
       - to: $end
         when: "{{ recreate_attempt.output.outcome == 'recreated' }}"
