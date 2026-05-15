@@ -451,7 +451,7 @@ public sealed partial class PrCommands
                     slug, prNumber, GhMergeMethod.Merge,
                     admin: admin, deleteBranch: false,
                     matchHeadCommit: poll.HeadRefOid,
-                    ct).ConfigureAwait(false);
+                    ct: ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)

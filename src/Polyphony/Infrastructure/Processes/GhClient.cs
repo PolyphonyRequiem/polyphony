@@ -195,9 +195,10 @@ public sealed class GhClient : IGhClient
         bool admin = false,
         bool deleteBranch = false,
         string? matchHeadCommit = null,
+        bool auto = false,
         CancellationToken ct = default)
     {
-        var args = BuildPrMergeArgs(repoSlug, prNumber, method, admin, deleteBranch, matchHeadCommit);
+        var args = BuildPrMergeArgs(repoSlug, prNumber, method, admin, deleteBranch, matchHeadCommit, auto);
 
         for (int attempt = 1; attempt <= _policy.MaxAttempts; attempt++)
         {
@@ -736,7 +737,8 @@ public sealed class GhClient : IGhClient
         GhMergeMethod method,
         bool admin,
         bool deleteBranch,
-        string? matchHeadCommit)
+        string? matchHeadCommit,
+        bool auto)
     {
         var args = new List<string>
         {
@@ -752,6 +754,7 @@ public sealed class GhClient : IGhClient
         };
         if (admin) args.Add("--admin");
         if (deleteBranch) args.Add("--delete-branch");
+        if (auto) args.Add("--auto");
         if (!string.IsNullOrEmpty(matchHeadCommit))
         {
             args.Add("--match-head-commit");
