@@ -94,10 +94,30 @@ Remove-Item $tempSha -Force
 # After that ships, switch $launcherBase to "$base".
 $launcherBase = 'https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/scripts'
 Write-Host "==> downloading launcher scripts..." -ForegroundColor Cyan
-foreach ($name in 'Invoke-PolyphonySdlc.ps1', 'Resolve-GhIdentity.ps1', 'Migrate-ToBareRepo.ps1') {
+foreach ($name in 'Invoke-PolyphonySdlc.ps1', 'Resolve-GhIdentity.ps1', 'Migrate-ToBareRepo.ps1', 'bootstrap-conductor.ps1') {
     $dest = Join-Path $installDir $name
     Invoke-WebRequest -Uri "$launcherBase/$name" -OutFile $dest
     Unblock-File -Path $dest
+}
+
+# ── Verify launcher scripts landed (defensive — Invoke-WebRequest with
+# $ErrorActionPreference='Stop' throws on HTTP errors but silent partial
+# downloads have been observed against transient GitHub raw 502s) ──────────
+$expectedLaunchers = @(
+    'Invoke-PolyphonySdlc.ps1',
+    'Resolve-GhIdentity.ps1',
+    'Migrate-ToBareRepo.ps1',
+    'bootstrap-conductor.ps1'
+)
+$missingLaunchers = @()
+foreach ($name in $expectedLaunchers) {
+    $p = Join-Path $installDir $name
+    if (-not (Test-Path $p) -or (Get-Item $p).Length -lt 100) {
+        $missingLaunchers += $name
+    }
+}
+if ($missingLaunchers) {
+    throw "launcher download incomplete: missing/truncated $($missingLaunchers -join ', ') under $installDir. Refusing to leave a half-installed environment."
 }
 
 # ── Ensure ~/.twig/bin on PATH ──────────────────────────────────────────────
