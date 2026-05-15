@@ -378,7 +378,7 @@ agents:
       |---|---|
       | Expected branch | `{{ branch_assert_on_impl_pre_coder.output.expected_branch }}` |
       | Actual branch | `{{ branch_assert_on_impl_pre_coder.output.actual_branch | default('(detached or unknown)') }}` |
-      | Task | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
+      | Work item | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
       | MG branch | `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` |
       {% if branch_assert_on_impl_pre_coder.output.error is defined and branch_assert_on_impl_pre_coder.output.error %}
       | Error | `{{ branch_assert_on_impl_pre_coder.output.error | default('') }}` |
@@ -582,7 +582,7 @@ agents:
       |---|---|
       | Expected branch | `{{ branch_assert_on_impl_post_coder.output.expected_branch }}` |
       | Actual branch | `{{ branch_assert_on_impl_post_coder.output.actual_branch | default('(detached or unknown)') }}` |
-      | Task | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
+      | Work item | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
       | MG branch | `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` |
       {% if branch_assert_on_impl_post_coder.output.error is defined and branch_assert_on_impl_post_coder.output.error %}
       | Error | `{{ branch_assert_on_impl_post_coder.output.error | default('') }}` |
@@ -869,7 +869,7 @@ agents:
   # We fetch ONLY the mg branch — fetching all refs would include
   # `--prune` semantics on `impl/{root}-{item}`, which gh just deleted
   # on the server. The impl ref must remain locally cached so the
-  # assertion's `git diff base..origin/impl/{root}-{item}` sees the
+  # assertion's diff (`base..origin/impl/{root}-{item}`) sees the
   # commits the squash was supposed to carry.
   #
   # Invariants:
@@ -966,7 +966,7 @@ agents:
 
       | Field | Value |
       |---|---|
-      | Task | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
+      | Work item | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
       | Impl ref | `{{ assert_impl_pr_coverage.output.impl_ref }}` |
       | MG ref | `{{ assert_impl_pr_coverage.output.mg_ref }}` |
       | Comparison base | `{{ assert_impl_pr_coverage.output.comparison_base }}` |
@@ -976,8 +976,11 @@ agents:
       ### Inspect
 
       ```
+      # bare-ref-ok: comparison_base is `origin/mg/...^` at runtime (PrCommands.AssertImplPrCoverage emits "{remote}/{branch}^")
       git log --oneline {{ assert_impl_pr_coverage.output.comparison_base }}..{{ assert_impl_pr_coverage.output.impl_ref }}
+      # bare-ref-ok: comparison_base / impl_ref are origin/-prefixed at runtime
       git diff {{ assert_impl_pr_coverage.output.comparison_base }}..{{ assert_impl_pr_coverage.output.impl_ref }}
+      # bare-ref-ok: comparison_base / mg_ref are origin/-prefixed at runtime
       git diff {{ assert_impl_pr_coverage.output.comparison_base }}..{{ assert_impl_pr_coverage.output.mg_ref }}
       ```
 
