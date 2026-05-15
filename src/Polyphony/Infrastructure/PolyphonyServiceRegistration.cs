@@ -66,12 +66,19 @@ public static class PolyphonyServiceRegistration
         // See Polyphony.Postconditions.IPostconditionVerifier for the contract.
         services.AddSingleton<IPostconditionVerifier, PostconditionVerifier>();
 
-        // Azure DevOps REST infrastructure (Phase 5 scaffolding — auth probe only).
-        // HttpClient is registered as a singleton to avoid socket exhaustion under
-        // repeated CLI invocations and to share the underlying handler pool. The
-        // AdoTokenResolver reads PAT env vars and is also stateless / singleton-safe.
+        // Azure DevOps REST infrastructure. HttpClient is registered as a
+        // singleton to avoid socket exhaustion under repeated CLI invocations
+        // and to share the underlying handler pool. AdoTokenResolver reads
+        // PAT env vars and is stateless / singleton-safe.
+        //
+        // IPolyphonyAuthProvider is the production composite: PAT env vars
+        // win when set (rotated PAT picked up per-call), AAD MSAL chain
+        // (~/.polyphony/.token-cache + .refresh-token) takes over otherwise.
         services.AddSingleton<HttpClient>(_ => new HttpClient());
         services.AddSingleton<AdoTokenResolver>();
+        services.AddSingleton<Polyphony.Infrastructure.AzureDevOps.Auth.IPolyphonyAuthProvider>(sp =>
+            Polyphony.Infrastructure.AzureDevOps.Auth.PolyphonyAdoAuthFactory.CreateForAdo(
+                sp.GetRequiredService<AdoTokenResolver>()));
         services.AddSingleton<IAdoClient, AdoClient>();
 
         // Run lock infrastructure (Phase 4b PR D1b).

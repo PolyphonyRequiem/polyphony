@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;

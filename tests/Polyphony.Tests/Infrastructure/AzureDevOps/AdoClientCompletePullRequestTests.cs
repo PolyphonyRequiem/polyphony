@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Shouldly;
 using Xunit;
 
@@ -28,8 +29,8 @@ public sealed class AdoClientCompletePullRequestTests
     private const string HeadSha = "deadbeefcafe1234567890abcdef1234567890ab";
     private const string MergeSha = "abc1234567890def1234567890abcdef12345678";
 
-    private static AdoTokenResolver TokenResolver(string? token) =>
-        new(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]);
+    private static IPolyphonyAuthProvider TokenResolver(string? token) =>
+        new PatAuthProvider(new AdoTokenResolver(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]));
 
     private static AdoClient NewClient(StubHandler handler, string? pat = "real-pat",
         AdoClientPolicy? policy = null)
@@ -270,12 +271,12 @@ public sealed class AdoClientCompletePullRequestTests
     }
 
     [Fact]
-    public async Task CompletePullRequestAsync_NoPat_ThrowsInvalidOperation()
+    public async Task CompletePullRequestAsync_NoPat_ThrowsAdoAuthenticationException()
     {
         var handler = StubHandler.AlwaysFail();
         var client = NewClient(handler, pat: null);
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(
+        var ex = await Should.ThrowAsync<AdoAuthenticationException>(
             () => client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
         ex.Message.ShouldContain("AZURE_DEVOPS_EXT_PAT");
         handler.RequestCount.ShouldBe(0);

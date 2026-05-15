@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 
 namespace Polyphony.Infrastructure.AzureDevOps;
 
@@ -20,11 +21,12 @@ namespace Polyphony.Infrastructure.AzureDevOps;
 /// </para>
 ///
 /// <para>
-/// Authentication uses Basic auth with the PAT as the password and an empty
-/// username (<c>Authorization: Basic base64(":pat")</c>) — the format the
-/// connection-data endpoint accepts. The PAT is resolved per-request from
-/// <see cref="AdoTokenResolver"/> so a token rotated mid-process is picked
-/// up on the next call.
+/// Authentication is delegated to <see cref="IPolyphonyAuthProvider"/>,
+/// which returns a complete <c>Authorization</c> header value: either
+/// <c>"Basic base64(:pat)"</c> for env-var PAT, or a raw JWT (transmitted
+/// as <c>"Bearer …"</c>) for the AAD MSAL chain. The provider is consulted
+/// per-request so a rotated PAT or refreshed token is picked up on the next
+/// call without restart.
 /// </para>
 /// </summary>
 public sealed class AdoClient : IAdoClient
@@ -39,45 +41,49 @@ public sealed class AdoClient : IAdoClient
     internal const string ConnectionDataUrl = "https://dev.azure.com/_apis/connectionData?api-version=7.1";
 
     private readonly HttpClient _http;
-    private readonly AdoTokenResolver _tokenResolver;
+    private readonly IPolyphonyAuthProvider _authProvider;
     private readonly AdoClientPolicy _policy;
 
     /// <summary>Production constructor; uses <see cref="AdoClientPolicy.Default"/>.</summary>
-    public AdoClient(HttpClient http, AdoTokenResolver tokenResolver)
-        : this(http, tokenResolver, AdoClientPolicy.Default)
+    public AdoClient(HttpClient http, IPolyphonyAuthProvider authProvider)
+        : this(http, authProvider, AdoClientPolicy.Default)
     {
     }
 
     /// <summary>Test constructor accepting an explicit policy.</summary>
-    public AdoClient(HttpClient http, AdoTokenResolver tokenResolver, AdoClientPolicy policy)
+    public AdoClient(HttpClient http, IPolyphonyAuthProvider authProvider, AdoClientPolicy policy)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
-        _tokenResolver = tokenResolver ?? throw new ArgumentNullException(nameof(tokenResolver));
+        _authProvider = authProvider ?? throw new ArgumentNullException(nameof(authProvider));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
     }
 
     /// <inheritdoc />
     public async Task<AdoAuthStatus> GetAuthStatusAsync(CancellationToken ct = default)
     {
-        var pat = _tokenResolver.Resolve();
-        if (string.IsNullOrEmpty(pat))
+        string header;
+        try
+        {
+            header = await _authProvider.GetAccessTokenAsync(ct).ConfigureAwait(false);
+        }
+        catch (AdoAuthenticationException ex)
         {
             return new AdoAuthStatus(
                 IsAuthenticated: false,
-                Detail: "No PAT configured (set AZURE_DEVOPS_EXT_PAT or run 'az devops login')",
+                Detail: ex.Message,
                 OrganizationName: null);
         }
 
         try
         {
             using var response = await SendWithRetryAsync(
-                () => BuildProbeRequest(pat), ct).ConfigureAwait(false);
+                () => BuildProbeRequest(header), ct).ConfigureAwait(false);
 
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
                 return new AdoAuthStatus(
                     IsAuthenticated: false,
-                    Detail: "PAT rejected",
+                    Detail: "Credentials rejected",
                     OrganizationName: null);
             }
 
@@ -115,7 +121,7 @@ public sealed class AdoClient : IAdoClient
                     OrganizationName: null);
             }
 
-            // 200 with body: PAT is valid. Surface the display name when present so
+            // 200 with body: credentials are valid. Surface the display name when present so
             // CLI output can confirm "logged in as <name>" rather than just "OK".
             var displayName = data?.AuthenticatedUser?.ProviderDisplayName
                 ?? data?.AuthenticatedUser?.CustomDisplayName;
@@ -155,41 +161,47 @@ public sealed class AdoClient : IAdoClient
         }
     }
 
-    private static HttpRequestMessage BuildProbeRequest(string pat)
+    private static HttpRequestMessage BuildProbeRequest(string authHeader)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, ConnectionDataUrl);
-        AddAuthHeaders(request, pat);
+        AddAuthHeaders(request, authHeader);
         return request;
     }
 
     /// <summary>
-    /// Apply Basic auth + JSON Accept headers to a request. Centralised so
-    /// every verb sends the exact same wire-level shape (the connection-data
-    /// probe established the format; PR verbs reuse it verbatim).
+    /// Apply the resolved Authorization header value plus a JSON Accept
+    /// header to the request. The header value's shape determines the
+    /// scheme:
+    /// <list type="bullet">
+    /// <item><c>"Basic …"</c> — set verbatim (PAT-as-password form).</item>
+    /// <item>anything else — treated as a raw bearer token (JWT) and
+    ///       wrapped as <c>"Bearer …"</c>.</item>
+    /// </list>
     /// </summary>
-    private static void AddAuthHeaders(HttpRequestMessage request, string pat)
+    private static void AddAuthHeaders(HttpRequestMessage request, string authHeader)
     {
-        // ":pat" — PAT is the password, username is empty.
-        var encoded = Convert.ToBase64String(Encoding.ASCII.GetBytes(":" + pat));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", encoded);
+        if (authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+        {
+            // Set verbatim — the value is already the complete header.
+            request.Headers.TryAddWithoutValidation("Authorization", authHeader);
+        }
+        else
+        {
+            // Raw token — apply Bearer scheme.
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authHeader);
+        }
+
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 
     /// <summary>
-    /// Resolve the PAT or throw. Used by operational verbs (PR list/get/create)
-    /// that have no graceful "unauthenticated" projection — unlike the auth
-    /// probe, which encodes "no PAT" as a status outcome.
+    /// Resolve the Authorization header or throw. Used by operational verbs
+    /// (PR list/get/create) that have no graceful "unauthenticated"
+    /// projection — unlike the auth probe, which encodes "no credentials"
+    /// as a status outcome.
     /// </summary>
-    private string ResolvePatOrThrow()
-    {
-        var pat = _tokenResolver.Resolve();
-        if (string.IsNullOrEmpty(pat))
-        {
-            throw new InvalidOperationException(
-                "No ADO PAT configured (set AZURE_DEVOPS_EXT_PAT or run 'az devops login').");
-        }
-        return pat;
-    }
+    private Task<string> ResolveAuthHeaderOrThrowAsync(CancellationToken ct)
+        => _authProvider.GetAccessTokenAsync(ct);
 
     /// <summary>
     /// Map the wire-level <see cref="AdoPullRequestRaw"/> shape to the public
@@ -238,7 +250,7 @@ public sealed class AdoClient : IAdoClient
         ArgumentException.ThrowIfNullOrEmpty(project);
         ArgumentException.ThrowIfNullOrEmpty(repository);
 
-        var pat = ResolvePatOrThrow();
+        var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
         var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                   $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullrequests" +
                   $"?searchCriteria.status={StatusToQueryValue(status)}";
@@ -294,7 +306,7 @@ public sealed class AdoClient : IAdoClient
         ArgumentException.ThrowIfNullOrEmpty(repository);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
 
-        var pat = ResolvePatOrThrow();
+        var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
         var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                   $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullrequests/{pullRequestId}" +
                   $"?api-version=7.1";
@@ -337,7 +349,7 @@ public sealed class AdoClient : IAdoClient
         ArgumentException.ThrowIfNullOrEmpty(title);
         ArgumentNullException.ThrowIfNull(description);
 
-        var pat = ResolvePatOrThrow();
+        var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
         var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                   $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullrequests" +
                   $"?api-version=7.1";
@@ -389,7 +401,7 @@ public sealed class AdoClient : IAdoClient
         ArgumentException.ThrowIfNullOrEmpty(repositoryId);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
 
-        var pat = ResolvePatOrThrow();
+        var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
 
         // 1) Basic PR detail.
         var detailUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
@@ -471,7 +483,7 @@ public sealed class AdoClient : IAdoClient
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
         ArgumentException.ThrowIfNullOrEmpty(reviewerId);
 
-        var pat = ResolvePatOrThrow();
+        var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
         var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                   $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
                   $"/reviewers/{Uri.EscapeDataString(reviewerId)}?api-version=7.1";
@@ -519,7 +531,7 @@ public sealed class AdoClient : IAdoClient
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
         ArgumentException.ThrowIfNullOrEmpty(lastMergeSourceCommitSha);
 
-        var pat = ResolvePatOrThrow();
+        var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
         var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                   $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
                   $"?api-version=7.1";
@@ -612,7 +624,7 @@ public sealed class AdoClient : IAdoClient
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
         ArgumentException.ThrowIfNullOrEmpty(commentBody);
 
-        var pat = ResolvePatOrThrow();
+        var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
         var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                   $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
                   $"/threads?api-version=7.1";
@@ -675,7 +687,7 @@ public sealed class AdoClient : IAdoClient
         ArgumentException.ThrowIfNullOrEmpty(repository);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
 
-        var pat = ResolvePatOrThrow();
+        var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
         var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                   $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
                   $"/threads?api-version=7.1";
@@ -742,7 +754,7 @@ public sealed class AdoClient : IAdoClient
             var detailUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                             $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
                             $"?api-version=7.1";
-            var pat = ResolvePatOrThrow();
+            var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
             using var detailResponse = await SendWithRetryAsync(() =>
             {
                 var req = new HttpRequestMessage(HttpMethod.Get, detailUrl);
@@ -790,7 +802,7 @@ public sealed class AdoClient : IAdoClient
             var commitsUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                              $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
                              $"/commits?api-version=7.1";
-            var pat = ResolvePatOrThrow();
+            var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
             using var commitsResponse = await SendWithRetryAsync(() =>
             {
                 var req = new HttpRequestMessage(HttpMethod.Get, commitsUrl);
@@ -858,7 +870,7 @@ public sealed class AdoClient : IAdoClient
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pullRequestId);
 
         // ── 1. Find the latest iteration ─────────────────────────────────
-        var pat = ResolvePatOrThrow();
+        var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
         var iterationsUrl = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                             $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
                             $"/iterations?api-version=7.1";
@@ -946,7 +958,7 @@ public sealed class AdoClient : IAdoClient
 
         try
         {
-            var pat = ResolvePatOrThrow();
+            var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
             var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                       $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
                       $"?api-version=7.1";
@@ -1018,7 +1030,7 @@ public sealed class AdoClient : IAdoClient
         // ── Abandon PATCH ────────────────────────────────────────────────
         try
         {
-            var pat = ResolvePatOrThrow();
+            var pat = await ResolveAuthHeaderOrThrowAsync(ct).ConfigureAwait(false);
             var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
                       $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
                       $"?api-version=7.1";

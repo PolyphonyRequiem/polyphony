@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.TestFixtures;
@@ -431,7 +432,7 @@ public sealed class PrCommandsGetCommentsAdoTests : CommandTestBase
     public async Task GetCommentsAdo_NoPat_EmitsNoPatErrorCode()
     {
         var (cmd, ado) = CreateCommand();
-        ado.ThrowOnListThreads = new InvalidOperationException(
+        ado.ThrowOnListThreads = new AdoAuthenticationException(
             "No ADO PAT configured (set AZURE_DEVOPS_EXT_PAT or run 'az devops login').");
 
         var (_, output) = await CaptureConsoleAsync(

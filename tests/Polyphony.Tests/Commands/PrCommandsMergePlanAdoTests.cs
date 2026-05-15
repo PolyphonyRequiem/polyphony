@@ -3,6 +3,7 @@ using System.Text.Json;
 using Polyphony.Branching;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Locking;
 using Polyphony.Manifest;

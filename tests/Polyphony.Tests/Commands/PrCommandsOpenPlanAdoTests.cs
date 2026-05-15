@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
 using Polyphony.Tests.Infrastructure.Processes;
@@ -423,7 +424,7 @@ public sealed class PrCommandsOpenPlanAdoTests : CommandTestBase
         var (cmd, runner, ado) = CreateCommand();
         var manifestPath = SeedManifest(runner, rootId: 100);
         StubTwigShow(runner, 100, "Root");
-        ado.ThrowOnList = new InvalidOperationException("No PAT configured (set AZURE_DEVOPS_EXT_PAT).");
+        ado.ThrowOnList = new AdoAuthenticationException("No PAT configured (set AZURE_DEVOPS_EXT_PAT).");
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.OpenPlanAdo(Org, Project, Repo, rootId: 100, itemId: 100, manifestPath: manifestPath));

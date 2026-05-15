@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Shouldly;
 using Xunit;
 
@@ -22,8 +23,8 @@ public sealed class AdoClientListThreadsTests
     private const string Repo = "myrepo";
     private const int PrId = 42;
 
-    private static AdoTokenResolver TokenResolver(string? token) =>
-        new(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]);
+    private static IPolyphonyAuthProvider TokenResolver(string? token) =>
+        new PatAuthProvider(new AdoTokenResolver(envReader: _ => token, precedence: [AdoTokenResolver.AzureDevOpsExtPatVar]));
 
     private static AdoClient NewClient(StubHandler handler, string? pat = "real-pat",
         AdoClientPolicy? policy = null)
@@ -430,11 +431,11 @@ public sealed class AdoClientListThreadsTests
     }
 
     [Fact]
-    public async Task ListPullRequestThreadsAsync_NoPat_ThrowsInvalidOperation()
+    public async Task ListPullRequestThreadsAsync_NoPat_ThrowsAdoAuthenticationException()
     {
         var client = NewClient(StubHandler.AlwaysFail(), pat: null);
 
-        await Should.ThrowAsync<InvalidOperationException>(
+        await Should.ThrowAsync<AdoAuthenticationException>(
             () => client.ListPullRequestThreadsAsync(Org, Project, Repo, PrId));
     }
 

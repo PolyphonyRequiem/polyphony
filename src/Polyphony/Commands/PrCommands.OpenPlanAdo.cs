@@ -6,6 +6,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Manifest;
 
@@ -371,9 +372,9 @@ public sealed partial class PrCommands
             return ExitCodes.Success;
         }
         catch (OperationCanceledException) { throw; }
-        catch (InvalidOperationException ex)
+        catch (AdoAuthenticationException ex)
         {
-            // Raised by AdoClient.ResolvePatOrThrow when no PAT is configured.
+            // Raised by IPolyphonyAuthProvider when no ADO credential chain succeeds (PAT env or AAD).
             EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "no_pat", ex.Message, headBranch, baseBranch);
             return ExitCodes.Success;
