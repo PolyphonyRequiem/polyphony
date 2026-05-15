@@ -152,6 +152,24 @@ jobs:
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-primary-completer-trust-chain.ps1 -Format github
 
+      - name: Lint (workflow version drift — bundle internal consistency)
+        # Asserts every workflow YAML's workflow.version matches the value in
+        # .conductor/registry/index.yaml, AND that each workflow's
+        # min_polyphony_version is <= its workflow.version. This catches the
+        # PR #351 / PR #410 drift class: a single YAML's version forward-bumped
+        # without the rest of the bundle following along, leaving the registry
+        # in an unshippable state until the next release tag attempt.
+        #
+        # CI mode (no -RequiredVersion): asserts internal consistency only.
+        # Release mode (release.yml passes -RequiredVersion <bare-tag>): also
+        # asserts the bundle's shared version equals the tag being cut. Per
+        # docs/decisions/versioning-strategy.md, one tag drives both binary
+        # and bundle.
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-version-drift.ps1
+
       - name: Setup Python (for harness scenarios)
         # The polyphony workflow harness (tests/harness/) drives the real
         # conductor engine in-process from Python with a FakeProvider for
