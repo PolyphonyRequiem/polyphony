@@ -83,6 +83,20 @@ foreach ($name in 'Invoke-PolyphonySdlc.ps1', 'Resolve-GhIdentity.ps1', 'Migrate
 
 $env:Path = "$installDir;$env:Path"
 & "$installDir\polyphony.exe" --version
+
+# Install both polyphony skills as user-globals so future copilot
+# sessions in any repo auto-discover them (no per-repo stub required).
+$skillsDir = Join-Path $env:USERPROFILE '.copilot\skills'
+New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null
+$skillBase = 'https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/.github/skills'
+foreach ($skill in 'polyphony-runtime', 'polyphony-bootstrap') {
+    $d = Join-Path $skillsDir $skill
+    New-Item -ItemType Directory -Force -Path $d | Out-Null
+    Invoke-WebRequest -Uri "$skillBase/$skill/SKILL.md" -OutFile (Join-Path $d 'SKILL.md')
+}
+$tmplDir = Join-Path $skillsDir 'polyphony-runtime\templates'
+New-Item -ItemType Directory -Force -Path $tmplDir | Out-Null
+Invoke-WebRequest -Uri "$skillBase/polyphony-runtime/templates/target-repo-stub.md" -OutFile (Join-Path $tmplDir 'target-repo-stub.md')
 ```
 
 ### Linux / macOS (bash)
@@ -112,6 +126,19 @@ for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Migrate-ToBareRepo.ps1;
 done
 
 ~/.twig/bin/polyphony --version
+
+# Install both polyphony skills as user-globals so future copilot
+# sessions in any repo auto-discover them (no per-repo stub required).
+skills_dir="$HOME/.copilot/skills"
+mkdir -p "$skills_dir"
+skill_base='https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/.github/skills'
+for skill in polyphony-runtime polyphony-bootstrap; do
+    mkdir -p "$skills_dir/$skill"
+    curl -fsSL -o "$skills_dir/$skill/SKILL.md" "$skill_base/$skill/SKILL.md"
+done
+mkdir -p "$skills_dir/polyphony-runtime/templates"
+curl -fsSL -o "$skills_dir/polyphony-runtime/templates/target-repo-stub.md" \
+    "$skill_base/polyphony-runtime/templates/target-repo-stub.md"
 ```
 
 Make sure `~/.twig/bin` (or `$env:USERPROFILE\.twig\bin` on Windows) is on PATH.
