@@ -63,8 +63,21 @@ esac
 
 asset="polyphony-${ver}-${rid}"
 base="https://github.com/PolyphonyRequiem/polyphony/releases/download/${tag}"
-install_dir="$HOME/.twig/bin"
+install_dir="$HOME/.polyphony/bin"
 mkdir -p "$install_dir"
+
+# Migration warning: the canonical location moved from ~/.twig/bin to
+# ~/.polyphony/bin. Surface a legacy install if present.
+legacy_install="$HOME/.twig/bin/polyphony"
+if [ -f "$legacy_install" ]; then
+    echo ""
+    echo "==> NOTE: legacy install found at $legacy_install"
+    echo "    The canonical install location is now ~/.polyphony/bin/."
+    echo "    After this install, verify \`command -v polyphony\` resolves to"
+    echo "    the new location, then remove the legacy copy:"
+    echo "      rm '$legacy_install'"
+    echo ""
+fi
 
 # ── Download + verify binary ─────────────────────────────────────────────────
 tmpdir=$(mktemp -d)
@@ -87,12 +100,12 @@ for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Migrate-ToBareRepo.ps1;
     curl -fsSL -o "$install_dir/$s" "$launcher_base/$s"
 done
 
-# ── Ensure ~/.twig/bin on PATH ──────────────────────────────────────────────
+# ── Ensure ~/.polyphony/bin on PATH ─────────────────────────────────────────
 if [[ ":$PATH:" != *":$install_dir:"* ]]; then
     echo "==> adding $install_dir to PATH (in ~/.zshrc and ~/.bashrc if present)..."
     for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
-        if [ -f "$rc" ] && ! grep -q "\.twig/bin" "$rc"; then
-            echo 'export PATH="$HOME/.twig/bin:$PATH"' >> "$rc"
+        if [ -f "$rc" ] && ! grep -q "\.polyphony/bin" "$rc"; then
+            echo 'export PATH="$HOME/.polyphony/bin:$PATH"' >> "$rc"
         fi
     done
     export PATH="$install_dir:$PATH"

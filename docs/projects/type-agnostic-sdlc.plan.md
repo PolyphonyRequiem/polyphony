@@ -97,7 +97,7 @@ the invocation target — ANY type can be root depending on what the user passes
 - Reads `.polyphony-config/` config for type facets and transition mappings
 - Outputs structured JSON to stdout, uses exit codes for conductor routing
 - Includes `workspace_hint` in routing output (branch names for scripts to use)
-- AOT-compiled, single-file binary deployed to ~/.twig/bin/
+- AOT-compiled, single-file binary deployed to ~/.polyphony/bin/
 
 **Key Commands:**
 ```bash
@@ -689,7 +689,7 @@ The existing hardcoded workflow is preserved as a fallback:
 | Rollout | Parallel v2 workflow, config-presence gated | Zero risk to existing workflow |
 | Polyphony v1 scope | Route + validate + hierarchy ONLY | Prove core value before expanding |
 | PG ordering | Full parallel in v1 | Maximize throughput; agents resolve conflicts via rebase |
-| Polyphony packaging | Standalone binary via publish-local.ps1 to ~/.twig/bin/ | Consistent with twig deployment model |
+| Polyphony packaging | Standalone binary via publish-local.ps1 to ~/.polyphony/bin/ | Consistent with twig deployment model |
 | Routing AI | Fully deterministic | AI judgment belongs in agents; ambiguous routing escalates to human gate |
 | ADO PR support | GitHub primary, ADO stub (interfaces defined) | Prove on GitHub first; ADO implementation deferred |
 | Type facets | Declared per-type, not per-position | Any type can be root; facets don't change based on hierarchy position |
@@ -701,7 +701,7 @@ The existing hardcoded workflow is preserved as a fallback:
 
 All previously open questions have been resolved:
 
-1. **Polyphony packaging:** Standalone binary deployed alongside twig via `publish-local.ps1` to `~/.twig/bin/`.
+1. **Polyphony packaging:** Standalone binary deployed alongside twig via `publish-local.ps1` to `~/.polyphony/bin/`.
 2. **Config inheritance / role overlap:** Eliminated — review policies bind to workflow phases, not type facets.
    Any type can be root; the review policy is determined by which phase the workflow is in (planning, implementation, remediation).
 3. **Parallel PGs:** Full parallel support in v1. Merge conflicts resolved by implementing agent via rebase.

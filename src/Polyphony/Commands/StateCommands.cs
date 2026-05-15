@@ -263,8 +263,11 @@ public sealed partial class StateCommands(
                 // Honor where.exe / which resolution explicitly so the version
                 // reported here matches what the operator's shell sees, even
                 // when polyphony.exe lives in a directory that hosts an older
-                // twig.exe (e.g. ~/.twig/bin) and the OS resolver would
-                // otherwise prefer the colocated binary. See AB#3216.
+                // twig.exe (legacy install layouts colocated both binaries
+                // under ~/.twig/bin) and the OS resolver would otherwise
+                // prefer the colocated binary. Polyphony's canonical install
+                // location is now ~/.polyphony/bin, but this guard remains
+                // for operators on the legacy layout. See AB#3216.
                 var result = await runner.RunAsync(resolvedPath, ["--version"], ct).ConfigureAwait(false);
                 version = result.Succeeded ? result.Stdout.Trim() : null;
             }

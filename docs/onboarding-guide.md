@@ -32,9 +32,9 @@ Before starting, ensure the following are in place:
 - **Phases 1–4 complete** — The Polyphony core engine, generic workflow scripts,
   workflow YAML refactoring, and validation/testing phases must all be merged.
 - **twig CLI installed** — The AOT-compiled `twig` binary is available on your PATH
-  (typically at `~/.twig/bin/twig`).
+  (typically at `~/.polyphony/bin/twig`).
 - **Polyphony CLI installed** — The AOT-compiled `polyphony` binary is available on
-  your PATH (typically at `~/.twig/bin/polyphony`). Build it with `publish-local.ps1`
+  your PATH (typically at `~/.polyphony/bin/polyphony`). Build it with `publish-local.ps1`
   from the polyphony repo if not already installed.
 - **Type facets configured** — Every type in `.polyphony-config/process-config.yaml` must declare a `facets` field with at least one of `plannable` or `implementable` (case-insensitive). Only these two values are valid.
 - **ADO workspace configured** — Your repo has a `.twig/config` file pointing to the

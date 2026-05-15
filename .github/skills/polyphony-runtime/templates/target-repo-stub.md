@@ -86,7 +86,7 @@ Invoke-WebRequest -Uri "$base/$asset.sha256" -OutFile "$asset.sha256"
 $expected = (Get-Content "$asset.sha256").Split(' ')[0]
 $actual = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
 if ($expected -ne $actual) { throw "SHA256 mismatch" }
-$installDir = Join-Path $env:USERPROFILE '.twig\bin'
+$installDir = Join-Path $env:USERPROFILE '.polyphony\bin'
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Move-Item $asset (Join-Path $installDir 'polyphony.exe') -Force
 Remove-Item "$asset.sha256"
@@ -134,17 +134,17 @@ curl -fsSL -o "$asset" "${base}/${asset}"
 curl -fsSL -o "${asset}.sha256" "${base}/${asset}.sha256"
 shasum -a 256 -c "${asset}.sha256"
 chmod +x "$asset"
-mkdir -p ~/.twig/bin
-mv "$asset" ~/.twig/bin/polyphony
+mkdir -p ~/.polyphony/bin
+mv "$asset" ~/.polyphony/bin/polyphony
 rm "${asset}.sha256"
 
 # Launcher scripts (cross-platform PowerShell — requires pwsh).
 launcher_base='https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/scripts'
 for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Migrate-ToBareRepo.ps1; do
-    curl -fsSL -o "$HOME/.twig/bin/$s" "$launcher_base/$s"
+    curl -fsSL -o "$HOME/.polyphony/bin/$s" "$launcher_base/$s"
 done
 
-~/.twig/bin/polyphony --version
+~/.polyphony/bin/polyphony --version
 
 # Install both polyphony skills as user-globals so future copilot
 # sessions in any repo auto-discover them (no per-repo stub required).
@@ -160,7 +160,7 @@ curl -fsSL -o "$skills_dir/polyphony-runtime/templates/target-repo-stub.md" \
     "$skill_base/polyphony-runtime/templates/target-repo-stub.md"
 ```
 
-Make sure `~/.twig/bin` (or `$env:USERPROFILE\.twig\bin` on Windows) is on PATH.
+Make sure `~/.polyphony/bin` (or `$env:USERPROFILE\.polyphony\bin` on Windows) is on PATH.
 
 ---
 
@@ -192,7 +192,7 @@ polyphony health
 # Kick off an SDLC run for a work item.
 # The launcher derives repo context from cwd — run from the main worktree.
 cd <this-repo-main-worktree>
-& "$env:USERPROFILE\.twig\bin\Invoke-PolyphonySdlc.ps1" `
+& "$env:USERPROFILE\.polyphony\bin\Invoke-PolyphonySdlc.ps1" `
     -ApexId <work-item-id> `
     -Intent new
     # -Platform ado          # optional; auto-detected from origin remote
@@ -201,7 +201,7 @@ cd <this-repo-main-worktree>
 ```bash
 # Linux / macOS — pwsh required
 cd <this-repo-main-worktree>
-pwsh ~/.twig/bin/Invoke-PolyphonySdlc.ps1 -ApexId <work-item-id> -Intent new
+pwsh ~/.polyphony/bin/Invoke-PolyphonySdlc.ps1 -ApexId <work-item-id> -Intent new
 ```
 
 For verbs, pre-flight checks, common pitfalls, and the worktree lifecycle,

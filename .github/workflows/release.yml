@@ -283,9 +283,9 @@ jobs:
           curl -L -o polyphony.sha256 "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/polyphony-${VERSION}-\${RID}.sha256"
           shasum -a 256 -c polyphony.sha256
           chmod +x polyphony
-          mkdir -p ~/.twig/bin && mv polyphony ~/.twig/bin/
-          # Add ~/.twig/bin to PATH if it isn't already.
-          ~/.twig/bin/polyphony --version
+          mkdir -p ~/.polyphony/bin && mv polyphony ~/.polyphony/bin/
+          # Add ~/.polyphony/bin to PATH if it isn't already.
+          ~/.polyphony/bin/polyphony --version
           \`\`\`
 
           **Windows (PowerShell):**
@@ -297,9 +297,9 @@ jobs:
           \$expected = (Get-Content polyphony.exe.sha256).Split(' ')[0]
           \$actual = (Get-FileHash polyphony.exe -Algorithm SHA256).Hash.ToLower()
           if (\$expected -ne \$actual) { throw "SHA256 mismatch" }
-          New-Item -ItemType Directory -Force -Path "\$env:USERPROFILE\.twig\bin" | Out-Null
-          Move-Item polyphony.exe "\$env:USERPROFILE\.twig\bin\" -Force
-          & "\$env:USERPROFILE\.twig\bin\polyphony.exe" --version
+          New-Item -ItemType Directory -Force -Path "\$env:USERPROFILE\.polyphony\bin" | Out-Null
+          Move-Item polyphony.exe "\$env:USERPROFILE\.polyphony\bin\" -Force
+          & "\$env:USERPROFILE\.polyphony\bin\polyphony.exe" --version
           \`\`\`
 
           ### Register the workflow suite with conductor
