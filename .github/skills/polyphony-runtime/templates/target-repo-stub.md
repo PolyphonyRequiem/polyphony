@@ -54,6 +54,16 @@ $installDir = Join-Path $env:USERPROFILE '.twig\bin'
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Move-Item $asset (Join-Path $installDir 'polyphony.exe') -Force
 Remove-Item "$asset.sha256"
+
+# Launcher scripts (until next polyphony release bundles them as assets,
+# fetch from main HEAD).
+$launcherBase = 'https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/scripts'
+foreach ($name in 'Invoke-PolyphonySdlc.ps1', 'Resolve-GhIdentity.ps1', 'Migrate-ToBareRepo.ps1') {
+    $dest = Join-Path $installDir $name
+    Invoke-WebRequest -Uri "$launcherBase/$name" -OutFile $dest
+    Unblock-File -Path $dest
+}
+
 $env:Path = "$installDir;$env:Path"
 & "$installDir\polyphony.exe" --version
 ```
@@ -77,6 +87,13 @@ chmod +x "$asset"
 mkdir -p ~/.twig/bin
 mv "$asset" ~/.twig/bin/polyphony
 rm "${asset}.sha256"
+
+# Launcher scripts (cross-platform PowerShell — requires pwsh).
+launcher_base='https://raw.githubusercontent.com/PolyphonyRequiem/polyphony/main/scripts'
+for s in Invoke-PolyphonySdlc.ps1 Resolve-GhIdentity.ps1 Migrate-ToBareRepo.ps1; do
+    curl -fsSL -o "$HOME/.twig/bin/$s" "$launcher_base/$s"
+done
+
 ~/.twig/bin/polyphony --version
 ```
 
@@ -96,10 +113,16 @@ polyphony health
 # Kick off an SDLC run for a work item.
 # The launcher derives repo context from cwd — run from the main worktree.
 cd <this-repo-main-worktree>
-& <polyphony-repo>\scripts\Invoke-PolyphonySdlc.ps1 `
+& "$env:USERPROFILE\.twig\bin\Invoke-PolyphonySdlc.ps1" `
     -ApexId <work-item-id> `
     -Intent new
     # -Platform ado          # optional; auto-detected from origin remote
+```
+
+```bash
+# Linux / macOS — pwsh required
+cd <this-repo-main-worktree>
+pwsh ~/.twig/bin/Invoke-PolyphonySdlc.ps1 -ApexId <work-item-id> -Intent new
 ```
 
 For verbs, pre-flight checks, common pitfalls, and the worktree lifecycle,
