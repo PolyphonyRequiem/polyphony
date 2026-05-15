@@ -364,14 +364,38 @@ Describe 'apex-driver e2e — outer loop reachability' {
         $byValue['renegotiate']  | Should -Be 'terminal_apex_abandoned'
     }
 
-    It 'renegotiation_summary routes any-pending->renegotiation_gate else outer_loop_evaluator (PR #9 wraps the wave loop in an iterate-until-stable outer loop, so the no-pending edge feeds the evaluator instead of the completion gate directly)' {
+    It 'renegotiation_summary routes any-pending->renegotiation_policy else outer_loop_evaluator (AB#3185 inserted the policy resolver between renegotiation_summary and renegotiation_gate; resolver decides whether to fire the gate)' {
         $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'renegotiation_summary')
         $hot = $routes | Where-Object { $_.When -match "any_pending \| string \| lower == 'true'" }
         $hot | Should -Not -BeNullOrEmpty
-        $hot.Target | Should -Be 'renegotiation_gate'
+        $hot.Target | Should -Be 'renegotiation_policy'
         $catchAll = $routes[-1]
         $catchAll.When   | Should -BeNullOrEmpty
         $catchAll.Target | Should -Be 'outer_loop_evaluator'
+    }
+
+    It 'renegotiation_policy resolves auto_decide and routes auto_restart->outer_loop_evaluator, ignore->apex_completion_gate_policy_router, prompt->renegotiation_gate (AB#3185 wires policy.renegotiation.auto_decide; routing through outer_loop_evaluator on auto_restart preserves the iteration cap)' {
+        $node = $script:ApexAgents['renegotiation_policy']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'renegotiation_policy')
+
+        $autoRestart = $routes | Where-Object { $_.When -match "auto_decide == 'auto_restart'" }
+        $autoRestart | Should -Not -BeNullOrEmpty
+        $autoRestart.Target | Should -Be 'outer_loop_evaluator'
+
+        $ignore = $routes | Where-Object { $_.When -match "auto_decide == 'ignore'" }
+        $ignore | Should -Not -BeNullOrEmpty
+        $ignore.Target | Should -Be 'apex_completion_gate_policy_router'
+
+        $prompt = $routes | Where-Object { $_.When -match "auto_decide == 'prompt'" }
+        $prompt | Should -Not -BeNullOrEmpty
+        $prompt.Target | Should -Be 'renegotiation_gate'
+
+        # M4 catch-all: malformed/unknown policy degrades to manual.
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'renegotiation_gate'
     }
 
     It 'renegotiation_gate exposes renegotiate/override/abort with the documented routes' {

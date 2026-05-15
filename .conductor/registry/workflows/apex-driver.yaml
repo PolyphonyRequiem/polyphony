@@ -37,17 +37,24 @@
 #        workflow needing to re-read `process-config.yaml`.
 #
 #   Q3 — Renegotiation bubble-up is gated by `renegotiation.auto_decide`
-#        in `.polyphony-config/policy.yaml`:
+#        in `.polyphony-config/policy.yaml` (AB#3185, wired via
+#        `renegotiation_policy` step below):
 #          - `prompt`       — surface the renegotiation human gate
 #                             (default — `renegotiation_gate` below).
-#          - `auto_restart` — re-enter the parent's plan-level workflow
-#                             so the parent can re-author. MVP STUB:
-#                             treated identically to `prompt` until the
-#                             auto-restart loop ships in a follow-up.
-#          - `ignore`       — treat the child plan as accepted; continue.
-#                             MVP STUB: not yet wired (would require a
-#                             policy reader step to short-circuit the
-#                             gate to `override`).
+#          - `auto_restart` — skip the gate and re-enter the dispatch
+#                             loop via `outer_loop_evaluator` so the
+#                             iteration cap counts these cycles too.
+#                             NOTE: this re-observes the (presumably
+#                             externally-mutated) tree; it does NOT
+#                             re-author plans automatically. True
+#                             auto-replanning needs a follow-up that
+#                             dispatches the architect on the renegotiating
+#                             items before the next loop pass.
+#          - `ignore`       — skip the gate and treat the child plan as
+#                             accepted; route directly to
+#                             `apex_completion_gate_policy_router`
+#                             (semantically equivalent to the operator
+#                             picking `override`).
 #        plan-level.yaml DOES emit the four bubble-up outputs as of
 #        PR #144 (`renegotiation_pending`, `renegotiation_request`,
 #        `validate_scope_verdict`, `scope_violation_files`). The
@@ -55,7 +62,10 @@
 #           plan-level → apex-item-dispatch.output.renegotiation_pending
 #           apex-item-dispatch → apex-wave-dispatch.aggregate_renegotiation
 #           apex-wave-dispatch → apex-driver.renegotiation_summary
-#           apex-driver.renegotiation_summary → renegotiation_gate.
+#           apex-driver.renegotiation_summary → renegotiation_policy
+#               (auto_restart) → outer_loop_evaluator
+#               (ignore)       → apex_completion_gate_policy_router
+#               (prompt)       → renegotiation_gate.
 #
 #   Q4 — Resume is pure observable-state re-entry. `intent: resume`
 #        re-runs `worklist build` + `edges check` and lets the
@@ -682,11 +692,73 @@ agents:
           wave_count = $items.Count;
         } | ConvertTo-Json -Compress -Depth 6
     routes:
-      - to: renegotiation_gate
+      - to: renegotiation_policy
         when: "{{ renegotiation_summary.output.any_pending | string | lower == 'true' }}"
       - to: outer_loop_evaluator
       # M4 catch-all
       - to: outer_loop_evaluator
+
+  # ── Renegotiation policy resolver (AB#3185) ─────────────────────────────
+  #
+  # Resolves `policy.renegotiation.auto_decide` so the renegotiation
+  # request can be auto-handled per the operator's policy rather than
+  # always firing a human gate. Three policy values, three routes:
+  #
+  #   - `auto_restart` → route to `outer_loop_evaluator` so the
+  #     iteration cap counts these cycles too. The evaluator decides
+  #     `complete | cap | blocked | continue`; on `continue` it routes
+  #     to `build_worklist` for the next dispatch pass. Equivalent to
+  #     the operator picking "renegotiate" at the gate, plus the
+  #     iteration-cap safety net.
+  #   - `ignore` → skip the gate and proceed to apex completion
+  #     (equivalent to the operator picking "override"). Use when the
+  #     renegotiation flag is advisory rather than blocking.
+  #   - `prompt` (default) → fall through to `renegotiation_gate` for
+  #     human input. Preserves pre-AB#3185 behavior.
+  #
+  # The gate itself is unchanged; the resolver just decides whether to
+  # short-circuit it. Abort is NOT auto-routable — operators always
+  # need to opt into a failed terminal explicitly.
+  #
+  # Pwsh wrapper (rather than a direct `polyphony policy load` call) so
+  # malformed policy / CLI errors degrade to `prompt` (today's behavior)
+  # rather than tripping conductor's StrictUndefined and failing the
+  # workflow. Same posture as the `remediation_counter` step in
+  # feature-pr.yaml.
+  - name: renegotiation_policy
+    type: script
+    description: Resolve renegotiation.auto_decide policy (AB#3185)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $auto = 'prompt'
+        try {
+          $raw = & polyphony policy load 2>$null
+          if ($LASTEXITCODE -eq 0 -and $raw) {
+            $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
+            $value = $parsed.renegotiation.auto_decide
+            if ($value -in @('prompt', 'auto_restart', 'ignore')) {
+              $auto = $value
+            }
+          }
+        } catch {
+          # Any failure (CLI crash, malformed JSON, missing field)
+          # leaves $auto at the safe default 'prompt'.
+        }
+        @{ auto_decide = $auto } | ConvertTo-Json -Compress
+    routes:
+      - to: outer_loop_evaluator
+        when: "{{ renegotiation_policy.output.auto_decide == 'auto_restart' }}"
+      - to: apex_completion_gate_policy_router
+        when: "{{ renegotiation_policy.output.auto_decide == 'ignore' }}"
+      - to: renegotiation_gate
+        when: "{{ renegotiation_policy.output.auto_decide == 'prompt' }}"
+      # M4 catch-all — defensive belt-and-suspenders. The pwsh wrapper
+      # above already coerces unknown values to 'prompt', so this arm
+      # should never fire in practice.
+      - to: renegotiation_gate
 
   # ── Outer loop evaluator (PR #9 — iterate-until-stable) ──────────────────
   #
@@ -864,11 +936,16 @@ agents:
   #     apex completion as if the child plan was accepted.
   #   - abort: halt the workflow with apex_satisfied=false.
   #
-  # `policy.renegotiation.auto_decide` defaults to `prompt` (this gate
-  # fires); `auto_restart` is a stub treated identically to `prompt`
-  # until the auto-restart loop ships in a follow-up; `ignore` would
-  # short-circuit to `override` but is not yet wired (would require a
-  # policy reader step).
+  # `policy.renegotiation.auto_decide` is now wired (AB#3185) via the
+  # `renegotiation_policy` resolver step above:
+  #   - `auto_restart` → routes to `outer_loop_evaluator` (iteration
+  #     cap counts the cycle; on `continue` it goes to `build_worklist`).
+  #     Operator's "renegotiate" choice with the cap safety net.
+  #   - `ignore` → routes directly to `apex_completion_gate_policy_router`
+  #     (skips this gate; operator's "override" choice).
+  #   - `prompt` (default) → falls through to this gate.
+  # Abort remains operator-only — auto-failing on a renegotiation
+  # request would be too aggressive a default.
   - name: renegotiation_gate
     type: human_gate
     description: Child plan-level invocation requested renegotiation — operator decides
