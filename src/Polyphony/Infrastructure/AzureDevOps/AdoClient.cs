@@ -205,13 +205,19 @@ public sealed class AdoClient : IAdoClient
 
     /// <summary>
     /// Map the wire-level <see cref="AdoPullRequestRaw"/> shape to the public
-    /// <see cref="AdoPullRequest"/> projection. Prefers <c>_links.web.href</c>
-    /// for the URL (canonical user-facing page); falls back to the raw API
-    /// <c>url</c> when the links envelope is absent.
+    /// <see cref="AdoPullRequest"/> projection. The <c>Url</c> field is
+    /// always synthesised as the canonical web URL
+    /// <c>https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{n}</c>
+    /// from the request context — ADO's <c>raw.url</c> is the API URL
+    /// (and <c>_links.web.href</c> is not always populated on POST
+    /// responses), so neither is suitable for human-facing display.
     /// </summary>
-    private static AdoPullRequest MapPullRequest(AdoPullRequestRaw raw)
+    private static AdoPullRequest MapPullRequest(
+        AdoPullRequestRaw raw,
+        string organization,
+        string project,
+        string repository)
     {
-        var url = raw.Links?.Web?.Href ?? raw.Url ?? "";
         return new AdoPullRequest(
             PullRequestId: raw.PullRequestId,
             Title: raw.Title ?? "",
@@ -222,7 +228,29 @@ public sealed class AdoClient : IAdoClient
             MergeStatus: raw.MergeStatus,
             CreatedBy: raw.CreatedBy?.DisplayName ?? "",
             CreationDate: raw.CreationDate,
-            Url: url);
+            Url: BuildCanonicalPrUrl(organization, project, repository, raw.PullRequestId));
+    }
+
+    /// <summary>
+    /// Synthesise the canonical ADO PR web URL
+    /// (<c>https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{n}</c>).
+    /// Returns an empty string when any component is missing, matching the
+    /// shared convention in <see cref="Polyphony.Commands.PrCommands"/>.
+    /// </summary>
+    internal static string BuildCanonicalPrUrl(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId)
+    {
+        if (string.IsNullOrWhiteSpace(organization)
+            || string.IsNullOrWhiteSpace(project)
+            || string.IsNullOrWhiteSpace(repository))
+        {
+            return string.Empty;
+        }
+        return $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+               $"/_git/{Uri.EscapeDataString(repository)}/pullrequest/{pullRequestId}";
     }
 
     /// <summary>
@@ -288,7 +316,7 @@ public sealed class AdoClient : IAdoClient
         var mapped = new AdoPullRequest[envelope.Value.Length];
         for (int i = 0; i < envelope.Value.Length; i++)
         {
-            mapped[i] = MapPullRequest(envelope.Value[i]);
+            mapped[i] = MapPullRequest(envelope.Value[i], organization, project, repository);
         }
         return mapped;
     }
@@ -327,7 +355,7 @@ public sealed class AdoClient : IAdoClient
         await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         var raw = await JsonSerializer.DeserializeAsync(
             stream, PolyphonyJsonContext.Default.AdoPullRequestRaw, ct).ConfigureAwait(false);
-        return raw is null ? null : MapPullRequest(raw);
+        return raw is null ? null : MapPullRequest(raw, organization, project, repository);
     }
 
     /// <inheritdoc />
@@ -385,7 +413,7 @@ public sealed class AdoClient : IAdoClient
         await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         var raw = await JsonSerializer.DeserializeAsync(
             stream, PolyphonyJsonContext.Default.AdoPullRequestRaw, ct).ConfigureAwait(false);
-        return raw is null ? null : MapPullRequest(raw);
+        return raw is null ? null : MapPullRequest(raw, organization, project, repository);
     }
 
     /// <inheritdoc />
