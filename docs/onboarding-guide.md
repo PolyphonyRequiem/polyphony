@@ -332,9 +332,9 @@ the `.polyphony-config/` directory reference):
 ├── process-config.yaml                 # Type facets, transitions, branch strategy
 ├── profile.yaml                        # Project metadata, tech stack, build commands
 ├── agent-guidance/
-│   ├── epic.md                         # Guidance for Epic type
-│   ├── user-story.md                   # Guidance for User Story type
-│   ├── task.md                         # Guidance for Task type
+│   ├── architect.md                    # Per-role guidance: planning & decomposition
+│   ├── coder.md                        # Per-role guidance: implementation
+│   └── reviewer.md                     # Per-role guidance: review
 └── work-item-types/
     ├── epic.md                         # Epic type definition
     ├── user-story.md                   # Mid-level type definition (Agile stub)
@@ -349,9 +349,15 @@ For kyber you will rename `user-story.md` → `primitive.md` and
 `user-story-template.md` → `primitive-template.md` after bootstrap, then update
 `process-config.yaml` to reference the renamed type. The bootstrap can't infer
 custom type names; it always generates the standard mid-level type for the
-parent template. 
+parent template.
 
-> **Note:** Agent guidance files are now generated per type (e.g. `agent-guidance/primitive.md`). V-11 warnings will reference the slug for each type. Ensure your agent-guidance directory matches your type names.
+> **Note:** Agent-guidance files are generated **per role**
+> (`architect.md`, `coder.md`, `reviewer.md`), not per type — V-11/12/13
+> warnings reference those role files. Optional per-role-per-type
+> refinements live at `agent-guidance/<role>/<typeslug>.md` (e.g.
+> `agent-guidance/coder/primitive.md`); the bootstrap does not scaffold
+> them. See § 7 of this guide for the per-role vs all-agents authoring
+> contract.
 
 ### Review and Customize
 

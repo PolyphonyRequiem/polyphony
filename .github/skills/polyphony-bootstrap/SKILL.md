@@ -53,8 +53,20 @@ create `.twig/config` (the workspace discovery walks up from CWD looking for
 `twig2/src/Twig.Infrastructure/Config/WorkspaceDiscovery.cs:23-67` and
 `src/Polyphony/Program.cs:11-12`).
 
-Pick **one real work item ID** to smoke-test against — list with
-`twig workspace --tree`. Call it `$WI` from here on.
+> **Repos onboarded from a template that ships a sample `.twig/config`**
+> (twig itself does this) need `twig init --force` — the bare `twig init`
+> refuses to overwrite an existing config and exits with an error.
+
+Pick **one real work item ID** to smoke-test against. The natural list is
+`twig workspace --tree`, but a brand-new sprint may be empty. Fall back
+to a workspace-wide query that doesn't depend on sprint pinning:
+
+```powershell
+twig query --state Doing                      # whatever's in-flight right now
+twig query --state "To Do" --type <leaf-type> # any open leaf (substitute your leaf-type name)
+```
+
+Pick any returned ID. Call it `$WI` from here on.
 
 ---
 
@@ -67,6 +79,14 @@ Follow `docs/onboarding-guide.md` sections 3–9 to:
     `~/.polyphony/bin/Bootstrap-BareRepo.ps1 -RemoteUrl <url> [-ParentDir <dir>] [-Commit]`
     to produce the canonical `<parent>/<repo>.git/ + <parent>/<repo>/ + <parent>/<repo>-runs/` layout.
   - **Existing operator clone**: run `Migrate-ToBareRepo.ps1` instead.
+  - **Windows pitfall:** if `git config --global safe.bareRepository`
+    is `explicit` (the Microsoft-managed-device default), plain
+    `git -C <repo>.git ...` is rejected with
+    `fatal: cannot use bare repository '<repo>.git' (safe.bareRepository is 'explicit')`.
+    Address the bare repo via `git --git-dir=<repo>.git ...` from any
+    cwd, or `cd <repo>.git; git --git-dir=. ...`. `Bootstrap-BareRepo.ps1`
+    and `Sync-BareRepo.ps1` already use the `--git-dir` form; this only
+    bites when running raw `git` against the bare root by hand.
 - Select your process template (Basic / Agile / Scrum / CMMI / custom)
 - Run `bootstrap-conductor.ps1 -ProcessTemplate <template>` to scaffold
   `.polyphony-config/`
@@ -148,14 +168,14 @@ If `is_valid: false`:
 
 `twig state` has no `--dry-run` flag (`twig2/src/Twig/Commands/StateCommand.cs:34`).
 Cheapest dry test: confirm the state name exists in the type's state set via
-`twig process <Type>`:
+`twig process --type <Type>`:
 
 ```powershell
 $validate = polyphony validate --work-item $WI --event implementation_complete |
   ConvertFrom-Json
 $type = (polyphony hierarchy --work-item $WI --depth 0 |
   ConvertFrom-Json).type
-twig process $type | Select-String $validate.target_state
+twig process --type $type | Select-String $validate.target_state
 ```
 
 Non-empty match → twig will accept the state name. Empty → `twig state`
@@ -163,6 +183,11 @@ would fail at write time with `"Unknown state '<name>'. Valid states: …"`
 (`twig2/src/Twig.Domain/ValueObjects/StateResolver.cs:58-59`). This is the
 single most valuable smoke-test step — it catches the
 `scope_removed: Removed` footgun (pitfall 5a) without writing to ADO.
+
+> `twig process` requires the `--type` flag in twig 0.77+; the positional
+> form (`twig process <Type>`) fails with `Argument '<Type>' is not
+> recognized.` Twig's own help examples still show the positional form —
+> that's an upstream inconsistency, but the flag form is what works.
 
 ### 3.6 — Optional: round-trip a real state change
 
@@ -186,7 +211,7 @@ Step 3.5 catches one event mismatch. Repeat it for every event in your
 ```powershell
 $v = polyphony validate --work-item $someWiOfType --event $eventName |
   ConvertFrom-Json
-twig process $type | Select-String $v.target_state
+twig process --type $type | Select-String $v.target_state
 ```
 
 This catches every state-name-vs-template mismatch before any workflow runs.
@@ -270,7 +295,7 @@ config emits 10 of those warnings before V-11..V-14. Recommended order:
 [ ] 3.2  hierarchy --work-item $WI --depth 1 returns valid JSON with non-empty type
 [ ] 3.3  route --work-item $WI returns phase + action
 [ ] 3.4  validate --work-item $WI --event <evt> returns is_valid + target_state
-[ ] 3.5  twig process $type lists $target_state in its state set
+[ ] 3.5  twig process --type $type lists $target_state in its state set
 [ ] 4    Walk every (type, event) pair in transitions: through 3.5 (catches 5a)
 [ ] 6    docs/onboarding-guide.md § 10: conductor run apex-driver@polyphony works
 ```
