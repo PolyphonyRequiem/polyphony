@@ -366,6 +366,32 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
         result.PrState.ShouldBe("CLOSED");
     }
 
+    [Fact]
+    public async Task DetectState_ClosedPrBranchDeleted_NotStarted()
+    {
+        // Regression: GitHub leg of the abandoned-PR dead-end fix. When the
+        // operator closes a plan PR and then deletes the plan branch on
+        // origin (matching the closed_unmerged_gate's "delete the plan
+        // branch and re-run" remediation), the next detect-state call must
+        // route to not_started so the architect can re-plan instead of
+        // looping back to the same gate.
+        var (cmd, runner) = CreateCommand();
+        StubRemoteUrl(runner);
+        StubLsRemote(runner, ChildPlanBranch, exists: false);
+        StubPrListSingle(runner, 42, ChildPlanBranch, "https://gh/pr/42");
+        StubPrPoll(runner, 42, "CLOSED");
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.DetectState(RootId, ChildId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("not_started");
+        result.BranchExistsOnOrigin.ShouldBeFalse();
+        result.PrNumber.ShouldBeNull();
+        result.PrState.ShouldBeNull();
+    }
+
     // ─── merged_unseeded vs complete ──────────────────────────────────────
 
     [Fact]
