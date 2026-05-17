@@ -79,10 +79,10 @@ workflow:
     MG branch, iterates tasks through coder → reviewer with per-task
     branches and PRs, runs scope-level review, and opens + merges the
     MG PR via the merge-commit-only path required by the ADR.
-  version: "2.4.2"
+  version: "2.4.3"
   entry_point: branch_ensure_mg
   metadata:
-    min_polyphony_version: "2.4.2"
+    min_polyphony_version: "2.4.3"
 
   limits:
     # Per the rubber-duck pass — implement-merge-group's task loop is wide because
@@ -236,6 +236,14 @@ agents:
       - "{{ workflow.input.work_item_id }}"
       - "--pg-number"
       - "{{ workflow.input.pg_number }}"
+      # AB#3217: thread the structural mg-path so next-impl can match the
+      # impl-merged-in-mg marker stamped by primary_completer's apex-root
+      # branch. Without this, next-impl falls back to the pg-name form
+      # (PG-N) which doesn't agree with primary_completer's mg-path
+      # (pg-N) under casing rules and lets the same apex root re-dispatch
+      # forever.
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
     routes:
       - to: impl_branch_ensure
         when: "{{ primary_router.output.action == 'implement_item' }}"
@@ -1184,7 +1192,14 @@ agents:
   #   Post: For child tasks, item is transitioned to its template's done
   #         state in ADO and a note added.
   #         For an indivisible apex root, only a note is added; terminal
-  #         state is deferred to apex-driver close-out (AB#3169). # type is runtime-injected; do not hardcode type names
+  #         state is deferred to apex-driver close-out (AB#3169). When
+  #         this is the apex root, the impl-merged-in-mg marker is
+  #         stamped on the apex via `polyphony branch mark-impl-merged`
+  #         so the next `primary_router` poll reports `all_items_done`
+  #         instead of re-dispatching the same item (AB#3217 fix to the
+  #         apex-3175 redispatch loop). The marker is cleared on every
+  #         revision route that re-dispatches the MG (see
+  #         `clear_apex_impl_marker_*` nodes below). # type is runtime-injected; do not hardcode type names
   - name: primary_completer
     type: script
     description: "Transition completed child task to its template's done state (apex root: defer to close_mark_satisfied per AB#3169) and route to next"
@@ -1197,12 +1212,15 @@ agents:
         $PSNativeCommandUseErrorActionPreference = $true;
         $taskId = [int]'{{ primary_router.output.primary_id }}';
         $rootId = [int]'{{ workflow.input.root_id }}';
+        $mgPath = '{{ workflow.input.mg_path }}';
         $isApexRoot = ($taskId -eq $rootId);
         twig set $taskId;
         if ($isApexRoot) {
           twig note --text 'Apex root implementation merged into MG branch via impl PR; deferring terminal state transition to close_mark_satisfied after feature-to-main promotion (AB#3169).';
           twig sync;
-          @{ child_id = $taskId; completed = $true; target_state = $null; deferred_apex_root = $true } | ConvertTo-Json
+          $marker = polyphony branch mark-impl-merged --work-item $taskId --mg-path $mgPath | ConvertFrom-Json;
+          if (-not $marker.success) { throw "Failed to mark apex root #$taskId impl-merged-in-mg=$($mgPath) (AB#3217 break-loop guard): $($marker.error)" };
+          @{ child_id = $taskId; completed = $true; target_state = $null; deferred_apex_root = $true; marker_tag = $marker.tag; marker_already_present = $marker.already_in_desired_state } | ConvertTo-Json
         } else {
           twig note --text 'Item implementation merged into MG branch via impl PR';
           twig sync;
@@ -1858,7 +1876,11 @@ agents:
     routes:
       - to: scope_revise_cap_gate
         when: "{{ scope_revise_counter.output.cap_reached == true }}"
-      - to: primary_router
+      # AB#3217: route revision passes through clear_apex_impl_marker so
+      # the impl-merged-in-mg marker (stamped by primary_completer when
+      # the apex root completed last round) doesn't suppress this round's
+      # re-dispatch.
+      - to: clear_apex_impl_marker
         when: "{{ scope_revise_counter.output.cap_reached == false }}"
       # Catch-all per M4: defensive against cap_reached missing/malformed.
       # Routes to the gate so a human resolves it rather than silently
@@ -1951,6 +1973,51 @@ agents:
         $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-mg-scope-revise-{{ workflow.input.work_item_id }}-{{ workflow.input.mg_path }}"
         Set-Content $counterFile 0
         @{ iteration = 0; reset = $true } | ConvertTo-Json
+    routes:
+      # AB#3217: clear the apex-root impl-merged-in-mg marker so the
+      # restarted loop can actually re-dispatch the apex root for revision.
+      - to: clear_apex_impl_marker
+
+  # ── Clear apex impl marker (AB#3217) ─────────────────────────────────
+  #
+  # Deterministic single-node funnel for every workflow route that
+  # re-dispatches the same MG for revision. Clears the
+  # `polyphony:impl-merged-in-mg=<mg-path>` marker stamped by
+  # `primary_completer`'s apex-root branch (see AB#3217 / AB#3169 for
+  # why the marker exists).
+  #
+  # Without this funnel, when the apex root IS the sole implementable
+  # item in the MG, the marker stays on the work item across revision
+  # passes and `primary_router` reports `all_items_done` immediately —
+  # the scope_reviewer's feedback is silently lost and the workflow
+  # loops between user_acceptance and pr_platform_router with nothing
+  # actually re-implemented.
+  #
+  # Idempotent: `polyphony branch clear-impl-merged` returns
+  # `success=true, already_in_desired_state=true` when the tag is
+  # already absent (e.g. the apex root never completed for this MG, or
+  # this is a non-apex-root MG where primary_completer never stamped),
+  # so this node is safe on every revision route regardless of whether
+  # the marker was actually present.
+  #
+  # Invariants:
+  #   Pre:  A revision route has fired (scope_revise_counter cap_reached
+  #         == false, scope_revise_reset, or user_acceptance Request
+  #         Changes).
+  #   Post: The impl-merged-in-mg marker is absent from the apex root;
+  #         primary_router is free to re-dispatch the apex root if it is
+  #         non-terminal.
+  - name: clear_apex_impl_marker
+    type: script
+    description: Clear the impl-merged-in-mg marker on the apex root before re-dispatching for revision (AB#3217)
+    command: polyphony
+    args:
+      - "branch"
+      - "clear-impl-merged"
+      - "--work-item"
+      - "{{ workflow.input.root_id }}"
+      - "--mg-path"
+      - "{{ workflow.input.mg_path }}"
     routes:
       - to: primary_router
 
@@ -2076,7 +2143,10 @@ agents:
         route: pr_platform_router
       - label: "🔄 Request Changes"
         value: changes
-        route: primary_router
+        # AB#3217: route through clear_apex_impl_marker so the
+        # impl-merged-in-mg marker doesn't suppress the next
+        # primary_router poll for the apex root case.
+        route: clear_apex_impl_marker
       - label: "🛑 Abort"
         value: abort
         route: terminal_abort_run

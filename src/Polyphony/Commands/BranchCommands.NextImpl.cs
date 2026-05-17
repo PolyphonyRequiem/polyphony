@@ -3,6 +3,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Routing;
+using Polyphony.Tagging;
 
 namespace Polyphony.Commands;
 
@@ -22,6 +23,7 @@ public sealed partial class BranchCommands
     /// <param name="workItem">ADO work item ID — root of the hierarchy.</param>
     /// <param name="pgName">Merge-group name (e.g. "PG-1"). Either this or pg-number is required. Operator-facing flag name preserved as <c>--pg-name</c> until the workflow rewire PR ships.</param>
     /// <param name="pgNumber">Merge-group number (e.g. 1). Convenience for callers that track merge groups as ints.</param>
+    /// <param name="mgPath">Rev 4 merge-group path (e.g. "pg-1" or nested "pg-1/pg-2"). When supplied, this is the canonical key used to look up the <c>polyphony:impl-merged-in-mg=&lt;key&gt;</c> tag and skip apex roots whose impl PR for THIS MG has already been merged (AB#3217 fix). Falls back to <paramref name="pgName"/> / derived PG-N when omitted, matching the existing impl-routing fallback ladder.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("next-impl")]
     [VerbResult(typeof(BranchNextImplResult))]
@@ -29,6 +31,7 @@ public sealed partial class BranchCommands
         int workItem = RequiredInput.MissingInt,
         string pgName = "",
         int pgNumber = 0,
+        string mgPath = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("branch next-impl",
@@ -44,6 +47,15 @@ public sealed partial class BranchCommands
             EmitNextImpl(EmptyNextImplResult("Either --pg-name or --pg-number must be provided.", "", ""));
             return ExitCodes.Success;
         }
+
+        // AB#3217: tag-skip key. Workflows now thread `--mg-path` (the
+        // structural Rev 4 identifier) so we can match the stamp written by
+        // `primary_completer` regardless of pg-name/pg-number casing drift
+        // between call sites. Pre-Rev-4 callers (and our own tests) may
+        // still omit it — in that case fall back to the same string we
+        // already use for routing so the tag layer is harmless when the
+        // workflow hasn't been wired yet.
+        var implMergedKey = !string.IsNullOrEmpty(mgPath) ? mgPath : resolvedMergeGroup;
 
         BranchNextImplResult result;
         try
@@ -102,7 +114,27 @@ public sealed partial class BranchCommands
                 candidates = implementable;
             }
 
-            var nonTerminal = candidates.Where(n => !IsTerminalCategory(n.Node.State)).ToList();
+            var nonTerminal = candidates
+                .Where(n => !IsTerminalCategory(n.Node.State))
+                // AB#3217: filter out the apex root if `primary_completer`
+                // already stamped the impl-merged-in-mg marker for this MG.
+                // Without this filter, when the apex root is the sole
+                // implementable item AND its terminal transition is
+                // deferred (per AB#3169 — terminal state is fired by
+                // `close_mark_satisfied` AFTER feature → main promotes,
+                // not here), `primary_completer`'s `twig sync` returns
+                // the apex root still in its in-progress state, this
+                // method re-dispatches it, the impl branch is recreated
+                // empty, the coder generates a tiny no-op commit, and the
+                // squash-coverage assertion fails. The loop has cost an
+                // entire dogfood cycle to diagnose. The marker is cleared
+                // on every workflow route that legitimately re-runs the
+                // MG (scope_revise_counter, scope_revise_reset,
+                // user_acceptance Request Changes), so revision loops
+                // continue to work.
+                .Where(n => !PolyphonyTags.HasImplMergedInMg(
+                    TagSet.Parse(n.Node.Tags), implMergedKey))
+                .ToList();
             var workspace = await ResolveAdoWorkspaceAsync(ct).ConfigureAwait(false);
 
             if (nonTerminal.Count == 0)

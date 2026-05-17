@@ -40,6 +40,12 @@ skip_files:
   # of twig but the skill files themselves are about twig's surface.
   - '.github/skills/twig-cli/SKILL.md'
   - '.github/skills/twig-sdlc/SKILL.md'
+  # Recovery runbook for stuck dogfood runs — by nature describes concrete
+  # ADO work-item types + state names (operator needs literals to act on,
+  # not abstract facet vocabulary). The CMMI re-entry table is the whole
+  # point of the skill. Type-agnosticism applies to executable artifacts,
+  # not to runbooks that tell a human "in CMMI, reset Task to Committed".
+  - '.github/skills/polyphony-dogfood-recovery/SKILL.md'
 
 allowed_substrings:
   # Feature branch / Feature PR — branch and PR vocabulary, not the type "Feature"
