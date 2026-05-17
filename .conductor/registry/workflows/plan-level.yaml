@@ -1193,7 +1193,7 @@ agents:
         description: |
           The fully-rendered markdown comment ready to be posted by the
           platform-specific poster. MUST start with the
-          `<!-- polyphony:agent-comment agent=plan_reviewer head_sha=... -->`
+          `<!-- polyphony:agent-comment agent=plan_reviewer pr_number=... -->`
           marker line. Body contains ONLY the blocking_concerns list
           (or "No blocking concerns identified" when empty). The full
           rubric assessment lives in this agent's other output fields.
@@ -1235,11 +1235,11 @@ agents:
       {% if workflow.input.platform == 'ado' -%}
       - **PR URL:** {{ open_plan_pr_ado.output.pr_url }}
       - **PR number:** {{ open_plan_pr_ado.output.pr_number }}
-      - **Head SHA:** {{ open_plan_pr_ado.output.head_sha | default('') }}
+      - **Head branch:** {{ open_plan_pr_ado.output.head_branch }}
       {% else -%}
       - **PR URL:** {{ open_plan_pr.output.pr_url }}
       - **PR number:** {{ open_plan_pr.output.pr_number }}
-      - **Head SHA:** {{ open_plan_pr.output.head_sha | default('') }}
+      - **Head branch:** {{ open_plan_pr.output.head_branch }}
       {%- endif %}
       - **Plan file path:** plans/plan-{{ workflow.input.work_item_id }}.md
 
@@ -1264,7 +1264,7 @@ agents:
       or any other section — only the blocking-concerns list:
 
       ```
-      <!-- polyphony:agent-comment agent=plan_reviewer head_sha={{ open_plan_pr_ado.output.head_sha if workflow.input.platform == 'ado' else open_plan_pr.output.head_sha }} -->
+      <!-- polyphony:agent-comment agent=plan_reviewer pr_number={{ open_plan_pr_ado.output.pr_number if workflow.input.platform == 'ado' else open_plan_pr.output.pr_number }} -->
       ### 🤖 Polyphony plan reviewer
 
       **Blocking concerns** (sentiment-driven loop reads this section):
