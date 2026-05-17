@@ -1590,7 +1590,7 @@ agents:
       ```json
       {
         "has_negative_feedback": <true|false>,
-        "feedback_summary": "<markdown brief for the architect, ≤2KB; empty string when no negative feedback>",
+        "feedback_summary": "<markdown brief for the architect; HARD CAP 2048 chars — anything longer will be truncated mid-sentence when injected into the architect prompt; empty string when no negative feedback>",
         "feedback_digest": "<short stable hash of everything you considered — comment ids + thread ids + vote tuples; same inputs MUST produce the same digest>",
         "reasoning": "<≤500 chars audit explanation of the decision>"
       }
@@ -1654,36 +1654,37 @@ agents:
 
   # ── Pending-review gate policy router ─────────────────────────────────
   #
-  # Reads `policy.unattended.review_wait_mode`. Two modes (the third —
-  # `auto` — was the magic-comment auto-approve fast-track and is gone
-  # under the sentiment-driven model; if operators want unattended runs
-  # they should set `skip` and let the throttle gate be a no-op):
-  #   • `skip`  → bypasses the throttle gate by routing directly to
-  #               `pr_poll_platform_router` (the same target the
-  #               operator's "Continue" option selects — re-poll the
-  #               PR). Polls forever until the cap, then surfaces
-  #               `stuck_review_gate`.
-  #   • `wait`  → falls through to the human throttle gate (default).
-  #
-  # NOTE: `auto` is silently downgraded to `skip` so existing policy
-  # files don't error. A future PR can either reintroduce an
-  # autonomous-approve path (e.g. operator-identity vote via the
-  # platform API) or formally remove `auto` from the policy schema.
+  # Reads `policy.unattended.review_wait_mode`. Three modes, two behaviors:
+  #   • `wait` (default) → fall through to the human throttle gate.
+  #   • `skip`           → bypass the gate, route directly back to re-poll.
+  #   • `auto`           → REJECTED. The old `auto` mode self-approved via
+  #                        magic comments; that mechanism is gone in the
+  #                        sentiment-driven loop and reintroducing it
+  #                        requires calling the platform vote APIs with
+  #                        an operator-identity token. Until that PR
+  #                        lands, treat `auto` as a hard misconfiguration
+  #                        so it surfaces immediately rather than silently
+  #                        degrading to `skip` (which keeps polling forever
+  #                        with no human in the loop — an unattended
+  #                        operator might wait days for a PR they thought
+  #                        was being auto-merged).
   #
   # Invariants:
   #   Pre:  pending_poll_counter has been computed (cap not reached).
   #   Post: load_policy.output.unattended.review_wait_mode is
-  #         {wait, skip, auto} (validated by the loader).
+  #         {wait, skip} (validated by the loader; `auto` is rejected here).
   - name: pending_review_gate_policy_router
     type: script
-    description: Bypass pending_review_gate when policy.unattended.review_wait_mode is skip (or auto, downgraded).
+    description: Bypass pending_review_gate when policy.unattended.review_wait_mode is skip; reject auto.
     command: polyphony
     args:
       - "policy"
       - "load"
     routes:
+      - to: terminal_abort_auto_mode_unsupported
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
       - to: pr_poll_platform_router
-        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' or pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
       - to: pending_review_gate
 
   # ── Pending-review gate (in-workflow human checkpoint) ────────────────
@@ -2891,6 +2892,35 @@ agents:
       - "{{ workflow.input.work_item_id }}"
       - "-Stage"
       - "plan-level"
+    routes:
+      - to: $end
+
+  # ── Auto-mode misconfiguration abort ──────────────────────────────────
+  #
+  # Reached when policy.unattended.review_wait_mode == 'auto'. The old
+  # auto path self-approved the plan PR via magic comments. That
+  # mechanism is gone in the sentiment-driven loop. Reintroducing it
+  # requires calling the platform vote/merge APIs with an operator
+  # identity. Until that work lands, refuse the misconfiguration loudly
+  # so an operator who set `auto` finds out at policy-load time instead
+  # of watching the run poll forever (or, worse, escalate to a stuck
+  # gate days later) under what looks like normal `skip` behavior.
+  - name: terminal_abort_auto_mode_unsupported
+    type: script
+    description: Abort — policy.unattended.review_wait_mode='auto' is unsupported under the sentiment-driven PR-review loop.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "auto-mode-unsupported"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Stage"
+      - "plan-level"
+      - "-Detail"
+      - "policy.unattended.review_wait_mode='auto' was honored by the magic-comment auto-approve path that this PR (sentiment-driven loop) deleted. Set it to 'skip' (silent unattended polling) or 'wait' (human throttle gate) and re-run; a future PR will reintroduce 'auto' on top of the platform vote APIs."
     routes:
       - to: $end
 
