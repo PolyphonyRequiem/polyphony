@@ -34,10 +34,10 @@ workflow:
     the architect's plan to a plan branch, opening a plan PR, surfacing
     LLM advisory + human approval via native PR review, then merging and
     seeding child work items.
-  version: "2.4.1"
+  version: "2.4.2"
   entry_point: depth_guard
   metadata:
-    min_polyphony_version: "2.4.1"
+    min_polyphony_version: "2.4.2"
 
   limits:
     # Recursive planning: each level fans out plan_children_group (for_each)

@@ -260,6 +260,25 @@ jobs:
           $result = Invoke-Pester -Path tests/lint-jinja-resolver.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
 
+      - name: Lint (CAF bool flag value form)
+        # Detects workflow `args:` that pair a bool flag with "true"/"false",
+        # which ConsoleAppFramework rejects at dispatcher parse-time with
+        # `Argument 'false' is not recognized.` Fix: flip the verb parameter
+        # to `string` and parse via `Polyphony.StringBoolArg.Parse`. See
+        # PR introducing v2.4.2 and src/Polyphony/StringBoolArg.cs.
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File tests/lint-caf-bool-value-form.ps1 -Format github
+
+      - name: Test (Pester) — CAF bool flag value form lint
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path tests/lint-caf-bool-value-form.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
+
       - name: E2E (actionable.yaml)
         # Phase 6 PR #8 — graph-walk + agent-prompt-threading +
         # router-script behavior tests for actionable.yaml. Goes

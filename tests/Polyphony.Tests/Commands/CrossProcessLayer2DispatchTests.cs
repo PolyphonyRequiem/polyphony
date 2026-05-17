@@ -87,6 +87,81 @@ public sealed class CrossProcessLayer2DispatchTests
         stdout.TrimStart().ShouldNotStartWith("{");
     }
 
+    /// <summary>
+    /// Regression for the CAF-bool wiring bug class (PR #451 + AB#3211):
+    /// every call to <c>polyphony pr merge-impl-pr --delete-branch false</c>
+    /// used to crash at CAF parse with
+    /// <c>"Argument 'false' is not recognized."</c> — the dispatcher
+    /// returned exit 1 with an error envelope, the workflow node had no
+    /// error route, and the silent failure cascaded into a
+    /// <c>squash_coverage_mismatch_gate</c> downstream. This test pins the
+    /// fix at the CAF dispatch boundary: <c>--delete-branch false</c> must
+    /// be accepted as a value form. The verb body itself will still fail
+    /// (no real git/gh/ado in this exec environment), but it must fail
+    /// AFTER our <see cref="StringBoolArg"/> parse succeeded — the
+    /// dispatcher must never reject the value.
+    /// </summary>
+    [Theory]
+    [InlineData("pr", "merge-impl-pr", "--delete-branch", "false")]
+    [InlineData("pr", "merge-impl-pr", "--delete-branch", "true")]
+    [InlineData("pr", "merge-impl-ado", "--delete-branch", "false")]
+    [InlineData("pr", "merge-impl-ado", "--delete-branch", "true")]
+    public async Task DeleteBranchValueForm_NotRejectedAtCafParse(
+        string area, string verb, string flag, string value)
+    {
+        if (!BinaryExists) return;
+
+        // Pass enough required flags that we reach the StringBoolArg parse
+        // step rather than halting on a missing required arg first; pass
+        // garbage for the rest so the verb body itself fails after CAF
+        // accepts our flag.
+        var (exitCode, stdout, stderr) = await RunAsync(
+            area, verb,
+            "--root-id", "100",
+            "--item-id", "200",
+            "--mg-path", "core",
+            "--organization", "o",
+            "--project", "p",
+            "--repository", "r",
+            flag, value);
+
+        // The KEY assertion: CAF did not reject the value. Old behavior
+        // crashed with this exact string and a non-zero exit before any
+        // verb body code ran.
+        var combined = stdout + "\n" + stderr;
+        var sentinel = $"Argument '{value}' is not recognized.";
+        combined.Contains(sentinel, StringComparison.Ordinal).ShouldBeFalse(
+            $"CAF rejected --{flag} {value} at parse — the string-bool shim regressed. exit={exitCode} stdout=<{stdout}> stderr=<{stderr}>");
+    }
+
+    /// <summary>
+    /// Companion to <see cref="DeleteBranchValueForm_NotRejectedAtCafParse"/>:
+    /// confirms the value-rejection error envelope round-trips correctly
+    /// when the workflow passes an unparseable string (operator typo).
+    /// </summary>
+    [Fact]
+    public async Task DeleteBranchGarbageValue_EmitsRoutingErrorEnvelope()
+    {
+        if (!BinaryExists) return;
+
+        var (exitCode, stdout, _) = await RunAsync(
+            "pr", "merge-impl-pr",
+            "--root-id", "100",
+            "--item-id", "200",
+            "--mg-path", "core",
+            "--delete-branch", "yes");
+
+        exitCode.ShouldNotBe(0);
+        var envelope = JsonSerializer.Deserialize(
+            ExtractFirstJsonObject(stdout),
+            PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope.ShouldNotBeNull();
+        envelope!.Action.ShouldBe("error");
+        envelope.Verb.ShouldBe("pr merge-impl-pr");
+        envelope.Error.ShouldContain("--delete-branch");
+        envelope.Error.ShouldContain("'true' or 'false'");
+    }
+
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(params string[] args)
     {
         using var process = new Process();

@@ -17,7 +17,9 @@ public sealed partial class PrCommands
     ///
     /// <para>Strategy is hardcoded to <c>squash</c> (impl PRs carry
     /// micro-history we do not want to pollute the merge-group branch with);
-    /// the head branch IS deleted after merge (impl branches are single-use).</para>
+    /// the head branch is deleted after merge by default (impl branches are
+    /// single-use), but the planner may override via
+    /// <paramref name="deleteBranch"/>.</para>
     ///
     /// <para><b>Routing-style exit code</b> — always exits 0; consumers
     /// branch on <see cref="PrMergeImplAdoResult.ErrorCode"/>.</para>
@@ -33,6 +35,13 @@ public sealed partial class PrCommands
     /// not match this value. Forwarded as ADO's <c>lastMergeSourceCommit</c>
     /// stale-head guard. When omitted, the polled head SHA is used directly.
     /// </param>
+    /// <param name="deleteBranch">
+    /// Delete the impl source branch on the ADO complete-PR call. Default
+    /// <c>"true"</c>. Accepts <c>"true"</c> or <c>"false"</c>
+    /// (case-insensitive) — declared as <see cref="string"/> rather than
+    /// <see cref="bool"/> so workflow YAMLs can pass the explicit-value form;
+    /// see <see cref="StringBoolArg"/> for the rationale.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-impl-ado")]
     [VerbResult(typeof(PrMergeImplAdoResult))]
@@ -44,6 +53,7 @@ public sealed partial class PrCommands
         int itemId = RequiredInput.MissingInt,
         string mgPath = "",
         string matchHeadCommit = "",
+        string deleteBranch = "true",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("pr merge-impl-ado",
@@ -55,8 +65,11 @@ public sealed partial class PrCommands
             ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
             return halt;
 
+        var deleteBranchParsed = StringBoolArg.Parse("pr merge-impl-ado", "--delete-branch", deleteBranch);
+        if (deleteBranchParsed is null) return ExitCodes.RoutingFailure;
+
         const string ImplMethod = "squash";
-        const bool ImplDeleteBranch = true;
+        var implDeleteBranch = deleteBranchParsed.Value;
 
         var slug = BuildAdoSlug(organization, project, repository);
 
@@ -168,7 +181,7 @@ public sealed partial class PrCommands
                     Method = ImplMethod,
                     Merged = true,
                     AlreadyMerged = true,
-                    DeleteBranch = ImplDeleteBranch,
+                    DeleteBranch = implDeleteBranch,
                     MergeCommit = mergeShaPrev,
                     ErrorCode = "",
                 });
@@ -269,7 +282,7 @@ public sealed partial class PrCommands
                     Method = ImplMethod,
                     Merged = true,
                     AlreadyMerged = true,
-                    DeleteBranch = ImplDeleteBranch,
+                    DeleteBranch = implDeleteBranch,
                     MergeCommit = poll.MergeCommit,
                     ErrorCode = "",
                 });
@@ -298,7 +311,8 @@ public sealed partial class PrCommands
                 return ExitCodes.Success;
             }
 
-            // Complete the PR via SQUASH + delete source branch.
+            // Complete the PR via SQUASH; deleteSourceBranch honors the
+            // verb's --delete-branch parameter (default true).
             var lastMergeSha = poll.HeadRefOid;
             AdoCompletePullRequestResult complete;
             try
@@ -307,7 +321,7 @@ public sealed partial class PrCommands
                     organization, project, repository, activePr.PullRequestId,
                     lastMergeSourceCommitSha: lastMergeSha,
                     mergeStrategy: AdoMergeStrategy.Squash,
-                    deleteSourceBranch: true,
+                    deleteSourceBranch: implDeleteBranch,
                     ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }
@@ -375,7 +389,7 @@ public sealed partial class PrCommands
                         Method = ImplMethod,
                         Merged = true,
                         AlreadyMerged = false,
-                        DeleteBranch = ImplDeleteBranch,
+                        DeleteBranch = implDeleteBranch,
                         MergeCommit = complete.MergeCommitSha,
                         ErrorCode = "",
                     });
@@ -477,6 +491,8 @@ public sealed partial class PrCommands
             Method = "squash",
             Merged = merged,
             AlreadyMerged = alreadyMerged,
+            // Error envelopes echo the verb default (true). Callers that
+            // need the requested value on success paths populate it directly.
             DeleteBranch = true,
             MergeCommit = mergeCommit,
             ErrorCode = errorCode,

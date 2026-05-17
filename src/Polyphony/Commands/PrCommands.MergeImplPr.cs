@@ -23,7 +23,16 @@ public sealed partial class PrCommands
     /// Merge method: <c>squash</c> (default), <c>merge</c>, or <c>rebase</c>.
     /// </param>
     /// <param name="admin">Pass <c>--admin</c> to bypass branch-protection requirements.</param>
-    /// <param name="deleteBranch">Delete the head branch after merge. Default true.</param>
+    /// <param name="deleteBranch">
+    /// Delete the head branch after merge. Default <c>"true"</c>. Accepts
+    /// <c>"true"</c> or <c>"false"</c> (case-insensitive) — declared as
+    /// <see cref="string"/> rather than <see cref="bool"/> so workflow YAMLs
+    /// can pass the explicit-value form (e.g.
+    /// <c>--delete-branch false</c>); ConsoleAppFramework treats <c>bool</c>
+    /// params as no-value-only switches and rejects the value form.
+    /// Parsed via <see cref="StringBoolArg.Parse"/>; non-recognised values
+    /// halt with a routing-style error envelope.
+    /// </param>
     /// <param name="matchHeadCommit">
     /// When set, gh refuses to merge if the head SHA has moved off this
     /// commit. Use to guard against races between status checks and merge.
@@ -41,7 +50,7 @@ public sealed partial class PrCommands
         string mgPath = "",
         string method = "squash",
         bool admin = false,
-        bool deleteBranch = true,
+        string deleteBranch = "true",
         string matchHeadCommit = "",
         string platform = "",
         string organization = "",
@@ -54,6 +63,10 @@ public sealed partial class PrCommands
             ("--item-id", itemId == RequiredInput.MissingInt),
             ("--mg-path", string.IsNullOrEmpty(mgPath))) is { } halt)
             return halt;
+
+        var deleteBranchParsed = StringBoolArg.Parse("pr merge-impl-pr", "--delete-branch", deleteBranch);
+        if (deleteBranchParsed is null) return ExitCodes.RoutingFailure;
+        var deleteBranchBool = deleteBranchParsed.Value;
 
         // ── Platform-aware identity resolution ───────────────────────────
         // Resolve early so the ADO branch can dispatch via the existing
@@ -71,19 +84,19 @@ public sealed partial class PrCommands
             // MergeImplAdo's hardcoded ImplMethod / ImplDeleteBranch). Honor
             // the *Pr verb's defaults but warn on incompatible overrides.
             return await DispatchMergeImplAdoAsync(
-                adoRepo, rootId, itemId, mgPath, method, deleteBranch, matchHeadCommit, ct)
+                adoRepo, rootId, itemId, mgPath, method, deleteBranchBool, matchHeadCommit, ct)
                 .ConfigureAwait(false);
         }
 
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
-            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, $"rootId must be positive (got {rootId})");
+            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranchBool, $"rootId must be positive (got {rootId})");
             return ExitCodes.ConfigError;
         }
 
         if (!WorkItemId.TryParse(itemId, out var item))
         {
-            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, $"itemId must be positive (got {itemId})");
+            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranchBool, $"itemId must be positive (got {itemId})");
             return ExitCodes.ConfigError;
         }
 
@@ -94,14 +107,14 @@ public sealed partial class PrCommands
                 itemId,
                 mgPath,
                 method,
-                deleteBranch,
+                deleteBranchBool,
                 $"'{mgPath}' is not a valid merge-group path. Each segment must match {MergeGroupId.GrammarPattern}; segments are joined by '_'.");
             return ExitCodes.ConfigError;
         }
 
         if (!TryParseMethod(method, out var mergeMethod, out var methodError))
         {
-            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, methodError);
+            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranchBool, methodError);
             return ExitCodes.ConfigError;
         }
 
@@ -113,14 +126,14 @@ public sealed partial class PrCommands
             var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
             if (string.IsNullOrEmpty(slug))
             {
-                EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, "Could not resolve repo slug from origin remote", headBranch, baseBranch);
+                EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranchBool, "Could not resolve repo slug from origin remote", headBranch, baseBranch);
                 return ExitCodes.RoutingFailure;
             }
 
             var resolution = await FindPrForMergeAsync(slug, headBranch, baseBranch, ct).ConfigureAwait(false);
             if (resolution.Error is not null)
             {
-                EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, resolution.Error, headBranch, baseBranch);
+                EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranchBool, resolution.Error, headBranch, baseBranch);
                 return ExitCodes.RoutingFailure;
             }
 
@@ -138,7 +151,7 @@ public sealed partial class PrCommands
                     Method = method,
                     Merged = true,
                     AlreadyMerged = true,
-                    DeleteBranch = deleteBranch,
+                    DeleteBranch = deleteBranchBool,
                     MergeSha = null,
                 });
                 return ExitCodes.Success;
@@ -147,7 +160,7 @@ public sealed partial class PrCommands
             var openPr = resolution.OpenPr!;
             var mergeMatch = string.IsNullOrEmpty(matchHeadCommit) ? null : matchHeadCommit;
             var result = await gh.MergePullRequestAsync(
-                slug, openPr.Number, mergeMethod, admin, deleteBranch, mergeMatch, ct: ct).ConfigureAwait(false);
+                slug, openPr.Number, mergeMethod, admin, deleteBranchBool, mergeMatch, ct: ct).ConfigureAwait(false);
 
             EmitMergeImpl(new PrMergeImplResult
             {
@@ -160,7 +173,7 @@ public sealed partial class PrCommands
                 Method = method,
                 Merged = result.Succeeded,
                 AlreadyMerged = result.AlreadyMerged,
-                DeleteBranch = deleteBranch,
+                DeleteBranch = deleteBranchBool,
                 MergeSha = result.MergeSha,
             });
             return result.Succeeded ? ExitCodes.Success : ExitCodes.RoutingFailure;
@@ -168,7 +181,7 @@ public sealed partial class PrCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranch, ex.Message, headBranch, baseBranch);
+            EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranchBool, ex.Message, headBranch, baseBranch);
             return ExitCodes.RoutingFailure;
         }
     }
@@ -204,7 +217,9 @@ public sealed partial class PrCommands
         {
             exitCode = await MergeImplAdo(
                 adoRepo.Organization, adoRepo.Project, adoRepo.Repository,
-                rootId, itemId, mgPath, matchHeadCommit, ct).ConfigureAwait(false);
+                rootId, itemId, mgPath, matchHeadCommit,
+                deleteBranch: deleteBranch ? "true" : "false",
+                ct: ct).ConfigureAwait(false);
         }
         finally
         {
@@ -234,7 +249,7 @@ public sealed partial class PrCommands
                 Method = "squash",
                 Merged = false,
                 AlreadyMerged = false,
-                DeleteBranch = true,
+                DeleteBranch = deleteBranch,
                 MergeSha = null,
                 Organization = adoRepo.Organization,
                 Project = adoRepo.Project,
