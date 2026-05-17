@@ -222,6 +222,107 @@ public sealed class AdoClientTests
             new AdoClient(http, TokenResolver("p"), policy: null!));
     }
 
+    // ─── AggregateReviewDecision — strict mode (existing behaviour) ─────
+
+    [Fact]
+    public void AggregateReviewDecision_Strict_NoRequiredReviewers_VoluntaryApproval_StillReviewRequired()
+    {
+        // The bug shape: PR has no required reviewers configured, an
+        // operator casts +10, strict mode falls through to REVIEW_REQUIRED.
+        var reviewers = new[]
+        {
+            new AdoReviewerRaw { Vote = 10, IsRequired = false, DisplayName = "Author" },
+        };
+
+        AdoClient.AggregateReviewDecision(reviewers).ShouldBe("REVIEW_REQUIRED");
+    }
+
+    [Fact]
+    public void AggregateReviewDecision_Strict_RequiredApproved_ReturnsApproved()
+    {
+        var reviewers = new[]
+        {
+            new AdoReviewerRaw { Vote = 10, IsRequired = true, DisplayName = "Required" },
+        };
+
+        AdoClient.AggregateReviewDecision(reviewers).ShouldBe("APPROVED");
+    }
+
+    [Fact]
+    public void AggregateReviewDecision_Strict_RejectionWins()
+    {
+        var reviewers = new[]
+        {
+            new AdoReviewerRaw { Vote = 10, IsRequired = true, DisplayName = "Required" },
+            new AdoReviewerRaw { Vote = -10, IsRequired = false, DisplayName = "Vetoer" },
+        };
+
+        AdoClient.AggregateReviewDecision(reviewers).ShouldBe("REJECTED");
+    }
+
+    // ─── AggregateReviewDecision — permissive mode (allow_any_approval_vote) ─
+
+    [Fact]
+    public void AggregateReviewDecision_Permissive_AnyApprovalVote_ReturnsApproved()
+    {
+        // Same shape as the bug-trigger case but with the flag on:
+        // any +10 from a voluntary reviewer counts.
+        var reviewers = new[]
+        {
+            new AdoReviewerRaw { Vote = 10, IsRequired = false, DisplayName = "Author" },
+        };
+
+        AdoClient.AggregateReviewDecision(reviewers, allowAnyApprovalVote: true).ShouldBe("APPROVED");
+    }
+
+    [Fact]
+    public void AggregateReviewDecision_Permissive_ApprovedWithSuggestions_ReturnsApproved()
+    {
+        // +5 is "approved with suggestions" — counts as approval under both
+        // strict and permissive semantics; verify here that permissive doesn't
+        // raise the bar.
+        var reviewers = new[]
+        {
+            new AdoReviewerRaw { Vote = 5, IsRequired = false, DisplayName = "Voluntary" },
+        };
+
+        AdoClient.AggregateReviewDecision(reviewers, allowAnyApprovalVote: true).ShouldBe("APPROVED");
+    }
+
+    [Fact]
+    public void AggregateReviewDecision_Permissive_NoVotes_ReviewRequired()
+    {
+        // Permissive mode is "approval is approval" — it doesn't waive the
+        // need for SOMEONE to have signed off.
+        var reviewers = new[]
+        {
+            new AdoReviewerRaw { Vote = 0, IsRequired = false, DisplayName = "NoVote" },
+            new AdoReviewerRaw { Vote = -5, IsRequired = false, DisplayName = "WaitingForAuthor" },
+        };
+
+        AdoClient.AggregateReviewDecision(reviewers, allowAnyApprovalVote: true).ShouldBe("REVIEW_REQUIRED");
+    }
+
+    [Fact]
+    public void AggregateReviewDecision_Permissive_RejectionStillWins()
+    {
+        // Even under permissive mode, -10 shortcircuits to REJECTED —
+        // operators retain a hard veto.
+        var reviewers = new[]
+        {
+            new AdoReviewerRaw { Vote = 10, IsRequired = false, DisplayName = "Approver" },
+            new AdoReviewerRaw { Vote = -10, IsRequired = false, DisplayName = "Vetoer" },
+        };
+
+        AdoClient.AggregateReviewDecision(reviewers, allowAnyApprovalVote: true).ShouldBe("REJECTED");
+    }
+
+    [Fact]
+    public void AggregateReviewDecision_Permissive_EmptyReviewers_ReviewRequired()
+    {
+        AdoClient.AggregateReviewDecision(Array.Empty<AdoReviewerRaw>(), allowAnyApprovalVote: true).ShouldBe("REVIEW_REQUIRED");
+    }
+
     // ─── Test fake ──────────────────────────────────────────────────────
 
     private sealed class StubHandler : HttpMessageHandler

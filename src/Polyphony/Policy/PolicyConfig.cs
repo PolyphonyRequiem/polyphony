@@ -372,6 +372,29 @@ public sealed class ScopeRule
     /// <summary>Deep-researcher escalation cap per research_needs topic. Used by research domain.
     /// Defaults to 1 (conservative); overridable per scope.</summary>
     public int? EscalationCap { get; set; }
+
+    /// <summary>
+    /// PR domain only: when <c>true</c>, the
+    /// <c>pr poll-status-ado</c> aggregator treats ANY reviewer's positive
+    /// vote (+5 or +10) as APPROVED — not just required-reviewer
+    /// approvals. Null inherits from a less-specific scope; the workspace
+    /// default (set by <see cref="PolicyLoader.ApplyBuiltInDefaults"/>) is
+    /// <c>false</c>, preserving strict ADO branch-policy semantics.
+    ///
+    /// <para><b>Scope of effect.</b> Only consulted by the
+    /// <c>plan-level.yaml</c> ADO poll step. Other PR-domain consumers
+    /// (feature / implementation / evidence PRs via <c>ado-pr.yaml</c>)
+    /// continue to use strict aggregation regardless of this setting.
+    /// PR-kind discrimination (e.g. <c>allow_any_approval_vote.by_kind:
+    /// {plan: true, feature: false}</c>) is a planned schema follow-up.</para>
+    ///
+    /// <para><b>Stale-approval caveat.</b> ADO does not invalidate
+    /// reviewer votes when new commits are pushed. Enabling this flag
+    /// means an approval cast before a force push will still count
+    /// after the push. SHA-bound approval semantics are tracked under
+    /// AB#3104 PR2.</para>
+    /// </summary>
+    public bool? AllowAnyApprovalVote { get; set; }
 }
 
 /// <summary>Quality threshold for considering a review "clean" before mode-based routing.</summary>

@@ -30,6 +30,15 @@ public sealed partial class PrCommands
     /// <param name="repositoryId">Repository identifier — GUID or name; both accepted by ADO.</param>
     /// <param name="prNumber">Pull request ID (positive integer).</param>
     /// <param name="includeMetadata">When true, parse plan-PR YAML front-matter from the PR body.</param>
+    /// <param name="allowAnyApprovalVote">
+    /// When true, the review-decision aggregator treats ANY reviewer's
+    /// positive vote (+5 or +10) as APPROVED — not just required-reviewer
+    /// approvals. Opt-in via <c>pr.allow_any_approval_vote</c> in
+    /// policy.yaml; default false preserves strict ADO branch-policy
+    /// semantics. See
+    /// <see cref="AdoClient.AggregateReviewDecision(IReadOnlyList{AdoReviewerRaw}, bool)"/>
+    /// for the full semantic + the stale-approval caveat.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("poll-status-ado")]
     [VerbResult(typeof(PrPollStatusResult))]
@@ -39,6 +48,7 @@ public sealed partial class PrCommands
         string repositoryId = "",
         int prNumber = RequiredInput.MissingInt,
         bool includeMetadata = false,
+        bool allowAnyApprovalVote = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("pr poll-status-ado",
@@ -90,7 +100,7 @@ public sealed partial class PrCommands
         try
         {
             var data = await ado.GetPullRequestPollDataAsync(
-                organization, project, repositoryId, prNumber, ct).ConfigureAwait(false);
+                organization, project, repositoryId, prNumber, allowAnyApprovalVote, ct).ConfigureAwait(false);
             if (data is null)
             {
                 EmitPollStatusAdoError(
