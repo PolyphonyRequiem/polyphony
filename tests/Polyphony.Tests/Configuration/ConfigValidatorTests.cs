@@ -543,6 +543,79 @@ public sealed class ConfigValidatorTests
         result.Warnings.ShouldNotContain(d => d.RuleId == "V-14");
     }
 
+    [Fact]
+    public void V22_ProfileWithUnresolvedTodos_ProducesWarningPerLine()
+    {
+        var config = ValidConfig();
+        var repoRoot = CreateTempRepoRoot();
+        var content =
+            "project:\n" +
+            "  name: <!-- TODO: Project name -->\n" +
+            "  repository: <!-- TODO: org/repo -->\n" +
+            "tech_stack:\n" +
+            "  language: <!-- TODO: Primary language -->\n";
+        CreateFileWithContent(content,
+            repoRoot, ".polyphony-config", "profile.yaml");
+
+        var result = ConfigValidator.Validate(config, repoRoot);
+
+        var v22 = result.Warnings.Where(w => w.RuleId == "V-22").ToList();
+        v22.Count.ShouldBe(3);
+        v22.ShouldContain(w => w.Message.Contains(":2:") && w.Message.Contains("Project name"));
+        v22.ShouldContain(w => w.Message.Contains(":3:") && w.Message.Contains("org/repo"));
+        v22.ShouldContain(w => w.Message.Contains(":5:") && w.Message.Contains("Primary language"));
+    }
+
+    [Fact]
+    public void V22_ProfileWithoutTodos_NoWarning()
+    {
+        var config = ValidConfig();
+        var repoRoot = CreateTempRepoRoot();
+        var content =
+            "project:\n" +
+            "  name: twig\n" +
+            "  repository: PolyphonyRequiem/twig\n";
+        CreateFileWithContent(content,
+            repoRoot, ".polyphony-config", "profile.yaml");
+
+        var result = ConfigValidator.Validate(config, repoRoot);
+
+        result.Warnings.ShouldNotContain(w => w.RuleId == "V-22");
+    }
+
+    [Fact]
+    public void V22_ProfileMissing_NoWarning()
+    {
+        // V-22 only fires when the file exists; the missing-file case is V-14.
+        var config = ValidConfig();
+        var repoRoot = CreateTempRepoRoot();
+
+        var result = ConfigValidator.Validate(config, repoRoot);
+
+        result.Warnings.ShouldNotContain(w => w.RuleId == "V-22");
+        result.Warnings.ShouldContain(w => w.RuleId == "V-14");
+    }
+
+    [Fact]
+    public void V22_TodoLikeStringInDataValue_DoesNotMatch()
+    {
+        // The detector specifically looks for the bootstrap placeholder shape
+        // "<!-- TODO:" (XML comment open + TODO marker). A bare "TODO" word
+        // inside a value should NOT trigger a warning.
+        var config = ValidConfig();
+        var repoRoot = CreateTempRepoRoot();
+        var content =
+            "project:\n" +
+            "  name: twig\n" +
+            "  notes: \"TODO list lives in the wiki\"\n";
+        CreateFileWithContent(content,
+            repoRoot, ".polyphony-config", "profile.yaml");
+
+        var result = ConfigValidator.Validate(config, repoRoot);
+
+        result.Warnings.ShouldNotContain(w => w.RuleId == "V-22");
+    }
+
     #endregion
 
     #region Integration / composite scenarios
@@ -868,6 +941,14 @@ public sealed class ConfigValidatorTests
         var dir = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(dir);
         File.WriteAllText(path, "");
+    }
+
+    private static void CreateFileWithContent(string content, params string[] segments)
+    {
+        var path = Path.Combine(segments);
+        var dir = Path.GetDirectoryName(path)!;
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(path, content);
     }
 }
 
