@@ -50,7 +50,7 @@ the items in the brief below — that is the full set of negative
 feedback gating this revision cycle.
 
 ```markdown
-{{ pr_feedback_analyzer.output.feedback_summary | truncate(2048, true, '\n\n... [feedback summary truncated at 2 KB — see pr_feedback_analyzer.output.feedback_summary in the run log for the full text]') }}
+{{ pr_feedback_analyzer.output.feedback_summary }}
 ```
 
 {% if state_detector is defined and state_detector.output is defined and state_detector.output.pr_url is defined and state_detector.output.pr_url %}

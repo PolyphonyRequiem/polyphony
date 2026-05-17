@@ -1509,7 +1509,8 @@ agents:
   #   Pre:  poll_status (or poll_status_ado) returned route == 'none'.
   #   Post: output.has_negative_feedback bool drives routing;
   #         output.feedback_summary is the architect's revision brief
-  #         (≤2KB, plain markdown); output.feedback_digest dedups
+  #         (concise markdown — the analyzer summarizes; raw threads
+  #         are not pasted back); output.feedback_digest dedups
   #         no-progress polls in revise_counter.
   - name: pr_feedback_analyzer
     type: agent
@@ -1590,7 +1591,7 @@ agents:
       ```json
       {
         "has_negative_feedback": <true|false>,
-        "feedback_summary": "<markdown brief for the architect; HARD CAP 2048 chars — anything longer will be truncated mid-sentence when injected into the architect prompt; empty string when no negative feedback>",
+        "feedback_summary": "<markdown brief for the architect; concise — summarize, do not paste raw threads; empty string when no negative feedback>",
         "feedback_digest": "<short stable hash of everything you considered — comment ids + thread ids + vote tuples; same inputs MUST produce the same digest>",
         "reasoning": "<≤500 chars audit explanation of the decision>"
       }
