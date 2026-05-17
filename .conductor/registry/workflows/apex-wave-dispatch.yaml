@@ -53,10 +53,10 @@ workflow:
     bubble-up AND per-item progress counts (items_satisfied_count,
     items_dispatched_count) so the apex-driver outer loop (PR #9) can
     decide whether the iteration made progress.
-  version: "2.4.1"
+  version: "2.4.2"
   entry_point: check_prior_wave_status
   metadata:
-    min_polyphony_version: "2.4.1"
+    min_polyphony_version: "2.4.2"
 
   limits:
     # Each wave can hold dozens of items; the for_each iteration count

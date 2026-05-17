@@ -33,10 +33,10 @@ workflow:
     fails to merge. After each remediation, re-requests review via
     feature_pr_updater (gh on GitHub, `pr post-comment-ado` on ADO).
     Escalates to human gate after cap is exceeded.
-  version: "2.4.1"
+  version: "2.4.2"
   entry_point: pr_platform_router
   metadata:
-    min_polyphony_version: "2.4.1"
+    min_polyphony_version: "2.4.2"
 
   limits:
     max_iterations: 200

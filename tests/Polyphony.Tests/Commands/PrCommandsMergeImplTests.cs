@@ -220,7 +220,7 @@ public sealed class PrCommandsMergeImplTests : CommandTestBase
         StubPrViewMerged(runner);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core", deleteBranch: false));
+            () => cmd.MergeImplPr(rootId: 100, itemId: 200, mgPath: "core", deleteBranch: "false"));
 
         var merge = runner.Invocations.Single(i => i.Arguments[1] == "merge");
         merge.Arguments.ShouldNotContain("--delete-branch");

@@ -47,10 +47,10 @@ workflow:
     single advisory bot review (marker-only — no native approval vote),
     then loops poll → analyze → fix → push until the operator merges, the
     operator closes the PR, or the revise cap fires.
-  version: "2.4.1"
+  version: "2.4.2"
   entry_point: guidance_loader
   metadata:
-    min_polyphony_version: "2.4.1"
+    min_polyphony_version: "2.4.2"
 
   limits:
     max_iterations: 200

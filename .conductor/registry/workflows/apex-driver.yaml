@@ -131,10 +131,10 @@ workflow:
     (plannable+implementable, etc.) traverse plan → impl → close in a
     single invocation rather than requiring per-facet re-invocation.
     Replaces the deleted polyphony-full.yaml.
-  version: "2.4.1"
+  version: "2.4.2"
   entry_point: preflight_sync
   metadata:
-    min_polyphony_version: "2.4.1"
+    min_polyphony_version: "2.4.2"
 
   limits:
     # The dispatch loop is a for_each over waves; each wave is itself a

@@ -181,6 +181,75 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
     }
 
     [Fact]
+    public async Task MergeImplAdo_DeleteBranchFalse_PassesDeleteSourceBranchFalseToAdo()
+    {
+        // Regression for the v2.4.1 CAF-bool wiring bug: when
+        // `polyphony pr merge-impl-ado --delete-branch false` was rejected
+        // at parse time, the impl PR squash never ran, MG branch never
+        // advanced, and `assert_impl_pr_coverage` correctly fired on the
+        // gap. This test pins the threaded-through behavior end-to-end:
+        // `--delete-branch false` ⇒ `deleteSourceBranch: false` on the
+        // ADO complete-PR call.
+        var (cmd, _, ado) = CreateCommand();
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 88, status: "active",
+                sourceRef: "refs/heads/impl/100-200",
+                targetRef: "refs/heads/mg/100_core"),
+        };
+        ado.PollData = MakePoll(state: "OPEN", headOid: "head-sha-1");
+        ado.CompleteResult = new AdoCompletePullRequestResult(
+            HttpStatus: 200, Status: "completed", MergeCommitSha: "merge-sha-9", ErrorBody: "");
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.MergeImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core",
+                deleteBranch: "false"));
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.ErrorCode.ShouldBeEmpty();
+        result.Merged.ShouldBeTrue();
+        result.DeleteBranch.ShouldBeFalse();
+        ado.LastCompleteDeleteSourceBranch.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task MergeImplAdo_DeleteBranchCaseInsensitive_AcceptsTrueFalse()
+    {
+        var (cmd, _, ado) = CreateCommand();
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 88, status: "active",
+                sourceRef: "refs/heads/impl/100-200",
+                targetRef: "refs/heads/mg/100_core"),
+        };
+        ado.PollData = MakePoll(state: "OPEN", headOid: "head-sha-1");
+        ado.CompleteResult = new AdoCompletePullRequestResult(
+            HttpStatus: 200, Status: "completed", MergeCommitSha: "merge-sha-9", ErrorBody: "");
+
+        var (exit, _) = await CaptureConsoleAsync(
+            () => cmd.MergeImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core",
+                deleteBranch: "FALSE"));
+        exit.ShouldBe(ExitCodes.Success);
+        ado.LastCompleteDeleteSourceBranch.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task MergeImplAdo_DeleteBranchGarbage_EmitsDispatchErrorEnvelope()
+    {
+        var (cmd, _, _) = CreateCommand();
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.MergeImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core",
+                deleteBranch: "yes"));
+        exit.ShouldBe(ExitCodes.RoutingFailure);
+        var envelope = JsonSerializer.Deserialize(
+            output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
+        envelope!.Verb.ShouldBe("pr merge-impl-ado");
+        envelope.Error.ShouldContain("--delete-branch");
+        envelope.Error.ShouldContain("'yes'");
+        envelope.MissingArgs.ShouldContain("--delete-branch");
+    }
+
+    [Fact]
     public async Task MergeImplAdo_StaleHeadFromMatchHeadCommit_RoutesStaleHead()
     {
         var (cmd, _, ado) = CreateCommand();

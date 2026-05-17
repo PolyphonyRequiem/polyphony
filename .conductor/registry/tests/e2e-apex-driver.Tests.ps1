@@ -183,7 +183,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ApexYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ApexYaml.workflow.name        | Should -Be 'apex-driver'
         $script:ApexYaml.workflow.entry_point | Should -Be 'preflight_sync'
-        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.1'
+        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.2'
         $script:ApexYaml.tools                | Should -Contain 'twig'
         $script:ApexYaml.agents.Count         | Should -BeGreaterThan 10
     }
@@ -192,7 +192,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:WaveYaml.workflow | Should -Not -BeNullOrEmpty
         $script:WaveYaml.workflow.name        | Should -Be 'apex-wave-dispatch'
         $script:WaveYaml.workflow.entry_point | Should -Be 'check_prior_wave_status'
-        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.1'
+        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.2'
         $script:WaveYaml.tools                | Should -Contain 'twig'
         # Per-M8 the workflow exposes 2 agents (aggregate_renegotiation,
         # integrate_wave) and 1 top-level for_each entry (dispatch_items).
@@ -204,7 +204,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ItemYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ItemYaml.workflow.name        | Should -Be 'apex-item-dispatch'
         $script:ItemYaml.workflow.entry_point | Should -Be 'classify_lifecycle'
-        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.1'
+        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.2'
         $script:ItemYaml.agents.Count         | Should -BeGreaterThan 8
     }
 
