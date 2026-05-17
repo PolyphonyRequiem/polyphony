@@ -279,6 +279,36 @@ config emits 10 of those warnings before V-11..V-14. Recommended order:
 |           | `docs/polyphony-conductor-directory.md` § 5)                            |
 | V-11/12/13| Before promoting to production SDLC use; defaults work meanwhile       |
 
+### 5f · First-run quirk: twig silently rewrites `.twig/config`
+
+On the **first** twig invocation in a fresh worktree, twig opportunistically
+migrates the on-disk `.twig/config` to its current schema — without a prompt,
+warning, or log line. Symptoms an operator hits *immediately* after
+bootstrapping:
+
+```
+$ git status
+ M .twig/config
+```
+
+A `git diff` shows twig has added fields like `"semanticsLabel":"under"` to
+each `areaPathEntries` entry, added a new top-level `"areas":{"mode":"under"}`,
+stripped the `git` block down to `branchPattern` only, and removed the `flow`
+block entirely. The rewrite is deterministic for a given twig version, but it
+leaves a freshly-checked-out worktree dirty before any work begins.
+
+**What to do:**
+
+1. Treat the rewrite as expected on the first invocation. Inspect the diff to
+   confirm it's the schema migration (and not unrelated changes), then commit
+   it as a small standalone change before authoring anything else.
+2. If you `git checkout .twig/config` to revert, the next twig invocation
+   will re-rewrite it — accept the new schema and move on.
+3. Track resolution upstream:
+   [`PolyphonyRequiem/twig#166`](https://github.com/PolyphonyRequiem/twig/issues/166)
+   (filed; awaits a `twig migrate-config` verb or a load-time warning). Until
+   that lands, this quirk is part of every fresh onboarding.
+
 ---
 
 ## 6 · Bootstrap checklist (one screen)
