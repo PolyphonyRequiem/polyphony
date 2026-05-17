@@ -401,6 +401,81 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         result.Error.ShouldContain("https://dev.azure.com/org/proj/_workitems/edit/100");
     }
 
+    [Fact]
+    public async Task NextImpl_ApexRootTaggedImplMergedInMg_ReportsAllItemsDone()
+    {
+        // AB#3217 regression: when primary_completer has stamped the
+        // impl-merged-in-mg=<mg-path> marker on the apex root (because the
+        // apex root's terminal transition is deferred to
+        // close_mark_satisfied per AB#3169), next-impl MUST filter that
+        // item out and report all_items_done, not re-dispatch the same
+        // apex root for another empty squash that fails the coverage
+        // assertion. Apex 62286666 dogfood: same item came back from
+        // next-impl three times before the user killed the loop.
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+
+        var apexRoot = new WorkItemBuilder().WithId(100).WithType("Task").WithTitle("Apex")
+            .WithState("Doing").WithTags("polyphony:root; PG-1; polyphony:impl-merged-in-mg=pg-1");
+        await SeedAsync(apexRoot.Build());
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.NextImpl(workItem: 100, pgNumber: 1, mgPath: "pg-1"));
+        var result = Deserialize(output);
+
+        result.Action.ShouldBe("all_items_done", $"Output was: {output}");
+        result.PrimaryId.ShouldBe(0);
+        result.RemainingCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task NextImpl_ApexRootTaggedForDifferentMg_StillDispatches()
+    {
+        // Multi-MG hygiene: the marker is per-MG. An apex root that has
+        // completed its impl in pg-1 can still be the next implementable
+        // for pg-2 (e.g. apex root participates in two parallel MGs).
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+        StubBranch(runner, "");
+        ExpectStateTransition(runner, 100, "Doing");
+
+        var apexRoot = new WorkItemBuilder().WithId(100).WithType("Task").WithTitle("Apex")
+            .WithState("To Do").WithTags("polyphony:root; PG-2; polyphony:impl-merged-in-mg=pg-1");
+        await SeedAsync(apexRoot.Build());
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.NextImpl(workItem: 100, pgNumber: 2, mgPath: "pg-2"));
+        var result = Deserialize(output);
+
+        result.Action.ShouldBe("implement_item", $"Output was: {output}");
+        result.PrimaryId.ShouldBe(100);
+    }
+
+    [Fact]
+    public async Task NextImpl_MgPathCasingDiffersFromTag_StillFilters()
+    {
+        // Rev 4 mg_path is lower-case by grammar (`^[a-z][a-z0-9-]{0,30}$`),
+        // but pg-name flows in upper-case as PG-N from legacy callers.
+        // The marker normalizer lowercases both writer and reader so a
+        // mixed-case call still matches a lower-case stamped tag.
+        var (cmd, runner) = CreateCommand();
+        StubSync(runner);
+        StubConfig(runner);
+
+        var apexRoot = new WorkItemBuilder().WithId(100).WithType("Task").WithTitle("Apex")
+            .WithState("Doing").WithTags("polyphony:root; PG-1; polyphony:impl-merged-in-mg=pg-1");
+        await SeedAsync(apexRoot.Build());
+
+        var (_, output) = await CaptureConsoleAsync(
+            // Caller passes PG-1 (upper) — must still match the stamped pg-1 (lower).
+            () => cmd.NextImpl(workItem: 100, pgNumber: 1, mgPath: "PG-1"));
+        var result = Deserialize(output);
+
+        result.Action.ShouldBe("all_items_done", $"Output was: {output}");
+    }
+
     private static BranchNextImplResult Deserialize(string output)
         => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchNextImplResult)
             ?? throw new InvalidOperationException("Failed to deserialize next-impl output");

@@ -67,6 +67,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(MergeGroup))]
 [JsonSerializable(typeof(MergeGroupReconciliation))]
 [JsonSerializable(typeof(BranchNextImplResult))]
+[JsonSerializable(typeof(BranchImplMergedMarkerResult))]
 [JsonSerializable(typeof(PlanSeedChildrenResult))]
 [JsonSerializable(typeof(SeedReconciliation))]
 [JsonSerializable(typeof(SeedError))]
