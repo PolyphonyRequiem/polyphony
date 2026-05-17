@@ -106,7 +106,14 @@ public sealed partial class PrCommands
             // changes_requested gate after option B (issue #207). Failure
             // to fetch is non-fatal — surface a warning and fall back to
             // the native review decision.
+            //
+            // ADO models "top-level PR discussion" as threads with no file
+            // anchor (FilePath == null). We split those out into the
+            // platform-neutral top-level Comments collection so the
+            // analyzer can treat them like GitHub issue-comments; the
+            // remaining file-anchored threads go to Threads.
             List<PrPollThread> threads = [];
+            List<PrPollComment> topLevelComments = [];
             List<string>? warnings = null;
             try
             {
@@ -120,7 +127,25 @@ public sealed partial class PrCommands
                 }
                 else
                 {
-                    threads = rawThreads.Select(MapAdoThread).ToList();
+                    foreach (var rt in rawThreads)
+                    {
+                        if (rt.FilePath is null)
+                        {
+                            // Top-level PR discussion. Flatten the thread's
+                            // comment list — the analyzer treats each as a
+                            // separate signal (e.g. multi-comment threads
+                            // from the same author count as ongoing input,
+                            // not a single drive-by note).
+                            foreach (var c in rt.Comments)
+                            {
+                                topLevelComments.Add(MapAdoComment(c));
+                            }
+                        }
+                        else
+                        {
+                            threads.Add(MapAdoThread(rt));
+                        }
+                    }
                 }
             }
             catch (Exception threadEx) when (threadEx is not OperationCanceledException)
@@ -132,14 +157,23 @@ public sealed partial class PrCommands
 
             var reviewers = data.Reviews.Select(MapAdoReviewer).ToList();
 
-            // ADO PR authors CAN vote on their own PRs, so the magic-comment
-            // approve fallback is GitHub-only — never apply it on the ADO leg.
+            // Magic-comment routing is retired. Always pass false to keep
+            // the back-compat state field deterministic, then detect and
+            // warn on any lingering magic comments so operators with
+            // muscle memory realize they're silent no-ops.
             var state = PrPollStateDerivation.DeriveState(
                 data.State, data.ReviewDecision, threads, hasMagicApproveFromAuthor: false);
+
+            var magicCount = MagicCommentDetector.Count(topLevelComments.Select(c => c.Body));
+            if (magicCount > 0)
+            {
+                (warnings ??= []).Add(MagicCommentDetector.FormatWarning(magicCount));
+            }
 
             var mergeable = MapAdoMergeable(data.Mergeable);
             var policy = ComputePolicy(state, mergeable);
             var metadata = includeMetadata ? PlanPrFrontMatter.Parse(data.Body) : null;
+            var routing = PrPollTerminalRoute.Classify(state, reviewers, threads);
 
             var result = new PrPollStatusResult
             {
@@ -147,6 +181,8 @@ public sealed partial class PrCommands
                 PrNumber = data.Number,
                 RepoSlug = slug,
                 State = state,
+                Route = routing.Route,
+                RouteReason = routing.Reason,
                 HeadSha = data.HeadRefOid,
                 HeadRef = data.HeadRefName,
                 BaseRef = data.BaseRefName,
@@ -155,6 +191,8 @@ public sealed partial class PrCommands
                 MergedAt = data.MergedAt?.ToString("o", CultureInfo.InvariantCulture),
                 Reviewers = reviewers,
                 Threads = threads,
+                Comments = topLevelComments,
+                AuthorIdentity = data.AuthorIdentity,
                 Policy = policy,
                 Warnings = warnings,
                 Metadata = metadata,
@@ -196,7 +234,9 @@ public sealed partial class PrCommands
     /// <c>IsResolved</c> bit is already computed (status in {fixed,
     /// wontFix, closed, byDesign}); the raw status string is preserved
     /// in the <c>Status</c> field for diagnostics. ADO does not surface
-    /// an outdated bit so <c>IsOutdated</c> is null.
+    /// an outdated bit so <c>IsOutdated</c> is null. Comment bodies are
+    /// projected through <see cref="MapAdoComment"/> so the analyzer can
+    /// reason about full inline review content (with parsed markers).
     /// </summary>
     private static PrPollThread MapAdoThread(AdoPullRequestThread t)
     {
@@ -210,8 +250,25 @@ public sealed partial class PrCommands
             AuthorIdentity = string.IsNullOrEmpty(firstComment?.Author) ? null : firstComment.Author,
             CreatedAt = firstComment?.PublishedAt?.ToString("o", CultureInfo.InvariantCulture),
             CommentCount = t.Comments.Count,
+            Comments = t.Comments.Select(MapAdoComment).ToList(),
         };
     }
+
+    /// <summary>
+    /// Map a single ADO <see cref="AdoPullRequestComment"/> to the
+    /// platform-neutral <see cref="PrPollComment"/> shape. The body is
+    /// parsed through <see cref="PrCommentMarker.TryParse"/> so the
+    /// analyzer can distinguish polyphony-bot comments (which always
+    /// carry an HTML marker) from human comments — important on ADO
+    /// where a bot poster typically shares the operator's PAT.
+    /// </summary>
+    private static PrPollComment MapAdoComment(AdoPullRequestComment c) => new()
+    {
+        Author = c.Author,
+        Body = c.Body,
+        CreatedAt = c.PublishedAt?.ToString("o", CultureInfo.InvariantCulture),
+        Marker = PrCommentMarker.TryParse(c.Body),
+    };
 
     private static bool? MapAdoMergeable(string adoMergeable) => adoMergeable.ToUpperInvariant() switch
     {
@@ -278,12 +335,16 @@ public sealed partial class PrCommands
             PrNumber = prNumber,
             RepoSlug = slug,
             State = "error",
+            Route = string.Empty,
+            RouteReason = string.Empty,
             HeadSha = string.Empty,
             HeadRef = string.Empty,
             BaseRef = string.Empty,
             Mergeable = null,
             Reviewers = [],
             Threads = [],
+            Comments = [],
+            AuthorIdentity = string.Empty,
             Policy = new PrPollPolicy { MergeAllowed = false, BlockingReasons = [message] },
             Error = message,
             ErrorCode = errorCode,
