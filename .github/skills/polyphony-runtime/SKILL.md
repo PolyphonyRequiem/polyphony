@@ -38,7 +38,8 @@ Is `polyphony` on PATH?
 ├── No  → install (see § Install)
 └── Yes → polyphony --version
 
-Is `.polyphony-config/` in the repo root?
+Is `.polyphony-config/` in the **main worktree** (the `./<repo>/` checkout
+under the bare-repo + worktree layout — NOT the bare `<repo>.git/` root)?
 ├── No  → repo not onboarded; activate `polyphony-bootstrap`
 └── Yes → ready to run; see § Invocation
 ```
@@ -367,6 +368,14 @@ positional).
 ## Pre-flight checks
 
 Before invoking the launcher, verify:
+
+> **Run from the main worktree, not the bare-repo root.** Under the
+> canonical bare-repo + worktree layout (`<repo>.git/` bare repo +
+> `<repo>/` main worktree + `<repo>-runs/`), all polyphony commands
+> below — and the launcher itself — must run from inside `<repo>/`
+> (or a sibling per-apex worktree). `.polyphony-config/` lives in the
+> main worktree, not at the bare-repo root, so commands run from the
+> bare root won't find it.
 
 1. **Binary present and current:**
    ```powershell
