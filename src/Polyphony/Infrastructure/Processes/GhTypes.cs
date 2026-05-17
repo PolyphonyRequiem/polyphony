@@ -167,13 +167,28 @@ public sealed record GhPullRequestPollData(
 /// <param name="AuthorLogin">Login of the first comment's author; empty when the platform omits it.</param>
 /// <param name="CreatedAt">When the first comment was posted; null when the platform omits it.</param>
 /// <param name="CommentCount">Total comments in the thread (GraphQL <c>comments.totalCount</c> when available; otherwise the visible count).</param>
+/// <param name="Comments">All visible comments in the thread (oldest first per GraphQL ordering). Empty when the platform returned no nodes.</param>
 public sealed record GhReviewThread(
     string Id,
     bool IsResolved,
     bool IsOutdated,
     string AuthorLogin,
     DateTimeOffset? CreatedAt,
-    int CommentCount);
+    int CommentCount,
+    IReadOnlyList<GhReviewThreadComment> Comments);
+
+/// <summary>
+/// One comment inside a GitHub review thread, fetched alongside the
+/// thread metadata via the GraphQL <c>reviewThreads.nodes.comments</c>
+/// connection. The body is the raw markdown the reviewer posted.
+/// </summary>
+/// <param name="AuthorLogin">Comment author's GitHub login; empty when the platform omits it.</param>
+/// <param name="Body">Raw markdown body as posted.</param>
+/// <param name="CreatedAt">When the comment was posted; null when the platform omits it.</param>
+public sealed record GhReviewThreadComment(
+    string AuthorLogin,
+    string Body,
+    DateTimeOffset? CreatedAt);
 
 /// <summary>
 /// Result of <see cref="IGhClient.GetPullRequestReviewThreadsAsync"/>.

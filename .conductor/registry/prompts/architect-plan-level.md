@@ -41,18 +41,33 @@ revision before the cap fires.**{% endif %}
    which reviewer concerns you addressed and where (e.g. "Addressed reviewer
    concern about retry semantics in §Proposed Design").
 
-### How to read the reviewer feedback
+### Reviewer feedback (pre-digested by pr_feedback_analyzer)
 
-The reviewer left their comments on the plan PR itself, not in this prompt.
-Use the gh / az CLI from your toolset to fetch them:
+{% if pr_feedback_analyzer is defined and pr_feedback_analyzer.output is defined and pr_feedback_analyzer.output.feedback_summary %}
+The sentiment-driven analyzer has already triaged the PR comments,
+threads, and votes; you do NOT need to re-query the platform. Address
+the items in the brief below — that is the full set of negative
+feedback gating this revision cycle.
+
+```markdown
+{{ pr_feedback_analyzer.output.feedback_summary }}
+```
+
+{% if state_detector is defined and state_detector.output is defined and state_detector.output.pr_url is defined and state_detector.output.pr_url %}
+_Plan PR (for human cross-reference only): {{ state_detector.output.pr_url }}_
+{% endif %}
+{% else %}
+The analyzer summary is not available on this re-entry — fall back to
+fetching the comments yourself with the gh / az CLI from your toolset.
 
 {% if state_detector is defined and state_detector.output is defined and state_detector.output.pr_url is defined and state_detector.output.pr_url %}
 - **Plan PR:** {{ state_detector.output.pr_url }}
 {% endif %}
 - For GitHub: `gh pr view <pr_url> --json reviews,comments`
 - For ADO: `polyphony pr get-comments-ado --pr-url <pr_url>`
+{% endif %}
 
-Read every blocking comment and address each one in your revised plan.
+Read every flagged concern and address each one in your revised plan.
 
 {% if architect is defined and architect.output is defined and architect.output.plan is defined %}
 ### Prior plan (refine surgically, do not regenerate)

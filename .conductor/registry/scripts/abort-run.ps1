@@ -35,7 +35,8 @@
 param(
     [string]$Reason = 'operator-abort',
     [int]$WorkItemId = 0,
-    [string]$Stage = ''
+    [string]$Stage = '',
+    [string]$Detail = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -45,6 +46,7 @@ $envelope = [ordered]@{
     reason       = $Reason
     work_item_id = $WorkItemId
     stage        = $Stage
+    detail       = $Detail
     pid          = $PID
     timestamp    = (Get-Date -Format 'o')
 }
@@ -63,6 +65,9 @@ $url = "http://127.0.0.1:$port/api/stop"
 $envelope.target_url = $url
 
 Write-Host "[polyphony-abort] POST $url (Reason='$Reason', Stage='$Stage')" -ForegroundColor Yellow
+if ($Detail) {
+    Write-Host "[polyphony-abort] Detail: $Detail" -ForegroundColor Yellow
+}
 
 try {
     # 5-second timeout: conductor responds in milliseconds when alive; if

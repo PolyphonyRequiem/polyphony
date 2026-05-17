@@ -329,9 +329,9 @@ public sealed class GhClient : IGhClient
                     "reviewThreads(first:100){" +
                         "pageInfo{hasNextPage}" +
                         "nodes{id isResolved isOutdated " +
-                            "comments(first:1){" +
+                            "comments(first:50){" +
                                 "totalCount " +
-                                "nodes{author{login} createdAt}" +
+                                "nodes{author{login} body createdAt}" +
                             "}" +
                         "}" +
                     "}" +
@@ -989,18 +989,30 @@ public sealed class GhClient : IGhClient
             var commentCount = commentsObj?["totalCount"]?.GetValue<int>() ?? 0;
             string authorLogin = string.Empty;
             DateTimeOffset? createdAt = null;
-            if (commentsObj?["nodes"] is JsonArray commentNodes && commentNodes.Count > 0
-                && commentNodes[0] is JsonObject firstComment)
+            var threadComments = new List<GhReviewThreadComment>();
+            if (commentsObj?["nodes"] is JsonArray commentNodes)
             {
-                authorLogin = firstComment["author"]?["login"]?.GetValue<string>() ?? string.Empty;
-                var createdAtRaw = firstComment["createdAt"]?.GetValue<string>();
-                if (!string.IsNullOrEmpty(createdAtRaw)
-                    && DateTimeOffset.TryParse(createdAtRaw, out var parsedCreatedAt))
+                foreach (var commentNode in commentNodes)
                 {
-                    createdAt = parsedCreatedAt;
+                    if (commentNode is not JsonObject commentObj) continue;
+                    var commentAuthor = commentObj["author"]?["login"]?.GetValue<string>() ?? string.Empty;
+                    var commentBody = commentObj["body"]?.GetValue<string>() ?? string.Empty;
+                    DateTimeOffset? commentCreatedAt = null;
+                    var commentCreatedAtRaw = commentObj["createdAt"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(commentCreatedAtRaw)
+                        && DateTimeOffset.TryParse(commentCreatedAtRaw, out var parsedCommentCreatedAt))
+                    {
+                        commentCreatedAt = parsedCommentCreatedAt;
+                    }
+                    threadComments.Add(new GhReviewThreadComment(commentAuthor, commentBody, commentCreatedAt));
+                }
+                if (threadComments.Count > 0)
+                {
+                    authorLogin = threadComments[0].AuthorLogin;
+                    createdAt = threadComments[0].CreatedAt;
                 }
             }
-            threads.Add(new GhReviewThread(id, isResolved, isOutdated, authorLogin, createdAt, commentCount));
+            threads.Add(new GhReviewThread(id, isResolved, isOutdated, authorLogin, createdAt, commentCount, threadComments));
         }
         return new GhReviewThreadsRead(threads, hasMore);
     }

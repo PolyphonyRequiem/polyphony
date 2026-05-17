@@ -294,11 +294,14 @@ public sealed class AdoPullRequestRaw
     public AdoReferenceLinks? Links { get; set; }
 }
 
-/// <summary>Minimal identity reference used by ADO REST DTOs (we only read the display name).</summary>
+/// <summary>Minimal identity reference used by ADO REST DTOs.</summary>
 public sealed class AdoIdentityRef
 {
     [JsonPropertyName("displayName")]
     public string? DisplayName { get; set; }
+
+    [JsonPropertyName("uniqueName")]
+    public string? UniqueName { get; set; }
 }
 
 /// <summary>Subset of the ADO <c>_links</c> envelope; only the <c>web</c> entry is consumed.</summary>
@@ -360,6 +363,15 @@ public sealed record AdoPullRequestPollData
 
     /// <summary>PR description (Markdown). Empty when ADO returned null.</summary>
     public required string Body { get; init; }
+
+    /// <summary>
+    /// PR author identity in the same form as <see cref="AdoPullRequestReview.Identity"/> —
+    /// display name when available, falling back to unique name (UPN), empty
+    /// when ADO surfaced neither. Used by the <c>pr_feedback_analyzer</c>
+    /// agent to distinguish the PR author's own comments from third-party
+    /// reviewer comments.
+    /// </summary>
+    public string AuthorIdentity { get; init; } = string.Empty;
 
     /// <summary>All reviewers on the PR, ordered as ADO returned them.</summary>
     public required IReadOnlyList<AdoPullRequestReview> Reviews { get; init; }
@@ -424,6 +436,9 @@ public sealed class AdoPullRequestDetailRaw
 
     [JsonPropertyName("lastMergeCommit")]
     public AdoCommitRef? LastMergeCommit { get; set; }
+
+    [JsonPropertyName("createdBy")]
+    public AdoIdentityRef? CreatedBy { get; set; }
 }
 
 /// <summary>

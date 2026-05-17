@@ -51,29 +51,6 @@ namespace Polyphony.Commands;
 /// </summary>
 internal static class PrPollStateDerivation
 {
-    /// <summary>
-    /// Generic fallback warning surfaced when a bare <c>polyphony:approve</c>
-    /// magic comment contributed to the derived state but the head SHA is
-    /// unavailable for some reason. Prefer <see cref="FormatNoShaDeprecationWarning"/>
-    /// when the head SHA is known so the user gets the exact comment to paste.
-    /// </summary>
-    public const string MagicCommentDeprecationWarning =
-        "polyphony:approve magic comment without a commit SHA is deprecated — to self-invalidate on new commits, " +
-        "include the head SHA: 'polyphony:approve <head-sha>'. The SHA-bound form is canonical and does not emit this warning.";
-
-    /// <summary>
-    /// Format the bare-magic-approve deprecation warning with the current
-    /// head SHA so the user can copy-paste the canonical form. Falls back
-    /// to <see cref="MagicCommentDeprecationWarning"/> when <paramref name="headSha"/>
-    /// is empty.
-    /// </summary>
-    public static string FormatNoShaDeprecationWarning(string headSha)
-    {
-        if (string.IsNullOrEmpty(headSha)) return MagicCommentDeprecationWarning;
-        return $"polyphony:approve magic comment without a commit SHA is deprecated — to self-invalidate on new commits, " +
-               $"post 'polyphony:approve {headSha}' instead. The SHA-bound form is canonical and does not emit this warning.";
-    }
-
     /// <summary>Pagination warning surfaced when GitHub's reviewThreads connection has more pages than the verb fetched.</summary>
     public const string ThreadPaginationWarning =
         "PR has more than 100 review threads; only the first 100 were considered. " +
@@ -135,41 +112,5 @@ internal static class PrPollStateDerivation
         if (string.Equals(reviewDecision, "REJECTED", StringComparison.OrdinalIgnoreCase)) return "changes_requested";
         if (hasMagicApproveFromAuthor) return "approved";
         return "pending";
-    }
-
-    /// <summary>
-    /// True when the magic-comment fallback path actually contributed to the
-    /// derived state (caller uses this to decide whether to attach
-    /// <see cref="MagicCommentDeprecationWarning"/>). Returns false when
-    /// the magic vote was overridden by a thread, by a native APPROVED
-    /// decision, or by an author SHA-bound request-changes (which wins
-    /// over magic-approve on most-recent-vote).
-    /// </summary>
-    public static bool MagicApproveContributed(
-        string platformState,
-        string reviewDecision,
-        IReadOnlyList<PrPollThread> threads,
-        bool hasMagicApproveFromAuthor,
-        bool hasMagicChangesRequestedFromAuthor = false)
-    {
-        if (!hasMagicApproveFromAuthor) return false;
-        if (string.Equals(platformState, "MERGED", StringComparison.OrdinalIgnoreCase)) return false;
-        if (string.Equals(platformState, "CLOSED", StringComparison.OrdinalIgnoreCase)) return false;
-
-        var hasBlockingThread = false;
-        foreach (var t in threads)
-        {
-            if (!t.IsResolved && t.IsOutdated != true) { hasBlockingThread = true; break; }
-        }
-        if (hasBlockingThread) return false;
-
-        // If the author's most-recent magic vote was request-changes, the
-        // request-changes path took the derivation, not approve.
-        if (hasMagicChangesRequestedFromAuthor) return false;
-
-        // Magic only contributes when the threads-or-native path didn't
-        // already grant approval on its own.
-        var nativeApproved = string.Equals(reviewDecision, "APPROVED", StringComparison.OrdinalIgnoreCase);
-        return !nativeApproved;
     }
 }

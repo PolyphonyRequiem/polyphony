@@ -76,6 +76,71 @@ public sealed record PrPollThread
 
     /// <summary>Number of human-authored comments in the thread (after platform-side system-comment filtering).</summary>
     public required int CommentCount { get; init; }
+
+    /// <summary>
+    /// Bodies of the human-authored comments inside this thread, oldest
+    /// first. Always populated (may be empty when the upstream platform
+    /// fetch failed to include them). Consumed by the
+    /// <c>pr_feedback_analyzer</c> agent so it can judge whether an
+    /// unresolved thread represents a blocking concern or a resolved-by-
+    /// discussion non-issue.
+    /// </summary>
+    public required IReadOnlyList<PrPollComment> Comments { get; init; }
+}
+
+/// <summary>
+/// Single comment inside a PR — either a top-level PR comment (when
+/// listed in <see cref="PrPollStatusResult.Comments"/>) or a comment
+/// inside a review thread (when listed in <see cref="PrPollThread.Comments"/>).
+/// Platform-neutral; bodies are raw markdown as posted by the author.
+///
+/// <para>The <see cref="Marker"/> field is populated when the body
+/// contains an HTML comment of the form
+/// <c>&lt;!-- polyphony:agent-comment agent=X head_sha=Y run_id=Z --&gt;</c>.
+/// Polyphony's automated posters (e.g. <c>plan_reviewer_poster_ado</c>)
+/// inject this marker so downstream analyzers can reliably identify
+/// machine-authored comments regardless of which operator token posted
+/// them. See <c>PrCommentMarker</c>.</para>
+/// </summary>
+public sealed record PrPollComment
+{
+    /// <summary>Comment author identity (GitHub login, ADO display name, or unique name). Empty when the platform omitted it.</summary>
+    public required string Author { get; init; }
+
+    /// <summary>Comment body — raw markdown as posted. May contain the bot-identity marker; see <see cref="Marker"/>.</summary>
+    public required string Body { get; init; }
+
+    /// <summary>ISO-8601 timestamp of when the comment was posted; null when the platform omitted it.</summary>
+    public string? CreatedAt { get; init; }
+
+    /// <summary>
+    /// Parsed agent-identity marker when the body starts with a
+    /// recognized <c>&lt;!-- polyphony:agent-comment ... --&gt;</c>
+    /// HTML comment. Null when the body has no marker (the common
+    /// case for human-authored comments). Consumers use this to
+    /// distinguish bot feedback from human feedback even when both
+    /// were posted via the same operator token.
+    /// </summary>
+    public PrPollCommentMarker? Marker { get; init; }
+}
+
+/// <summary>
+/// Parsed contents of a <c>&lt;!-- polyphony:agent-comment ... --&gt;</c>
+/// HTML marker on the first line of a PR comment body. Polyphony's
+/// automated posters inject this marker; the
+/// <c>pr_feedback_analyzer</c> reads it to identify bot comments
+/// reliably even when bot and human use the same auth token.
+/// </summary>
+public sealed record PrPollCommentMarker
+{
+    /// <summary>The conductor agent that authored the comment (e.g. <c>plan_reviewer</c>, <c>feature_pr_updater</c>). Required — the marker is invalid without it.</summary>
+    public required string Agent { get; init; }
+
+    /// <summary>The PR head SHA at the time the marker was posted, when the poster captured it. Null when the poster did not provide one.</summary>
+    public string? HeadSha { get; init; }
+
+    /// <summary>The conductor run identifier that produced the comment, when the poster captured it. Null when the poster did not provide one.</summary>
+    public string? RunId { get; init; }
 }
 
 /// <summary>
@@ -155,6 +220,29 @@ public sealed record PrPollStatusResult
     /// <summary>Normalized status — see type summary for vocabulary.</summary>
     public required string State { get; init; }
 
+    /// <summary>
+    /// Deterministic terminal-route classifier output for the
+    /// sentiment-driven PR review loop. One of:
+    /// <list type="bullet">
+    ///   <item><c>merge_now</c> — all signals positive, no unresolved actionable threads; workflow should invoke the merger.</item>
+    ///   <item><c>already_merged</c> — PR is already merged on the platform; workflow should skip the merger.</item>
+    ///   <item><c>abort_unmerged</c> — PR is closed/abandoned, or any reviewer cast a rejecting vote (ADO -10); workflow should bail this leg.</item>
+    ///   <item><c>none</c> — mixed/partial signals; workflow should route to the LLM <c>pr_feedback_analyzer</c> agent to interpret comments.</item>
+    /// </list>
+    /// Computed by <see cref="PrPollTerminalRoute.Classify"/>. Empty on
+    /// the error envelope path. Workflow conditions should switch on
+    /// this field; <see cref="State"/> is retained for back-compat with
+    /// pre-sentiment workflows that have not yet been migrated.
+    /// </summary>
+    public required string Route { get; init; }
+
+    /// <summary>
+    /// Short human-readable explanation of how <see cref="Route"/> was
+    /// derived. For operator logs / dashboard display only — never
+    /// branch on this string.
+    /// </summary>
+    public required string RouteReason { get; init; }
+
     /// <summary>Current SHA of the head ref. May be empty when gh omits it.</summary>
     public required string HeadSha { get; init; }
 
@@ -185,6 +273,25 @@ public sealed record PrPollStatusResult
     /// drive state derivation.
     /// </summary>
     public required IReadOnlyList<PrPollThread> Threads { get; init; }
+
+    /// <summary>
+    /// Top-level PR comments (issue comments on GitHub; top-level
+    /// thread-zero comments on ADO). Empty (not null) when the PR has
+    /// none. Review (inline diff) comments are NOT included here — those
+    /// live inside <see cref="PrPollThread.Comments"/>. Consumed by the
+    /// <c>pr_feedback_analyzer</c> agent.
+    /// </summary>
+    public required IReadOnlyList<PrPollComment> Comments { get; init; }
+
+    /// <summary>
+    /// PR author's stable identity (GitHub login on the GitHub leg;
+    /// ADO unique name on the ADO leg). Empty when the upstream platform
+    /// omitted it. Consumed by the <c>pr_feedback_analyzer</c> to
+    /// exclude self-comments from the negative-feedback calculation
+    /// (PR authors explain their own work; that's not a request for
+    /// changes against themselves).
+    /// </summary>
+    public required string AuthorIdentity { get; init; }
 
     /// <summary>Local policy opinion — informational; not authoritative.</summary>
     public required PrPollPolicy Policy { get; init; }

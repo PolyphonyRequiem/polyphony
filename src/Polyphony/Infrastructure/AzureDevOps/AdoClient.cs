@@ -1262,6 +1262,9 @@ public sealed class AdoClient : IAdoClient
             MergedAt = isMerged ? detail.ClosedDate : null,
             MergeCommit = isMerged ? detail.LastMergeCommit?.CommitId : null,
             Body = detail.Description ?? string.Empty,
+            AuthorIdentity = !string.IsNullOrEmpty(detail.CreatedBy?.DisplayName)
+                ? detail.CreatedBy!.DisplayName!
+                : (detail.CreatedBy?.UniqueName ?? string.Empty),
             Reviews = reviews,
         };
     }

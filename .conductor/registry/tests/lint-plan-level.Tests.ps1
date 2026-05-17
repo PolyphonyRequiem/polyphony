@@ -263,8 +263,8 @@ agents:
         when: "{{ poll_status.output.state == 'approved' and workflow.input.child_scope_globs != '' }}"
       - to: merge_plan_pr
         when: "{{ poll_status.output.state == 'approved' }}"
-      - to: pending_poll_counter
-        when: "{{ poll_status.output.state == 'pending' }}"
+      - to: pr_feedback_analyzer
+        when: "{{ poll_status.output.route == 'none' }}"
   - name: poll_status_ado
     type: script
     command: polyphony
@@ -272,8 +272,22 @@ agents:
       - "pr"
       - "poll-status-ado"
     routes:
+      - to: pr_feedback_analyzer
+        when: "{{ poll_status_ado.output.route == 'none' }}"
+  - name: pr_feedback_analyzer
+    type: agent
+    model: claude-sonnet-4.6
+    description: stub for lint fixture
+    prompt: "stub"
+    output:
+      has_negative_feedback:
+        type: boolean
+      feedback_summary:
+        type: string
+      feedback_digest:
+        type: string
+    routes:
       - to: pending_poll_counter
-        when: "{{ poll_status_ado.output.state == 'pending' }}"
   - name: pending_poll_counter
     type: script
     command: pwsh
@@ -743,12 +757,12 @@ agents:
             $content | Should -Match 'name:\s*stuck_review_override_router'
         }
 
-        It 'Real plan-level.yaml routes both poll_status legs to the counter on pending' {
+        It 'Real plan-level.yaml routes both poll_status legs through pr_feedback_analyzer on route=none' {
             $content = Get-Content $script:RealYaml -Raw
-            # poll_status leg
-            $content | Should -Match "to:\s*pending_poll_counter[\s\S]{0,200}?poll_status\.output\.state\s*==\s*'pending'"
+            # poll_status leg (sentiment-driven model — route 'none' defers to analyzer)
+            $content | Should -Match "to:\s*pr_feedback_analyzer[\s\S]{0,200}?poll_status\.output\.route\s*==\s*'none'"
             # poll_status_ado leg
-            $content | Should -Match "to:\s*pending_poll_counter[\s\S]{0,200}?poll_status_ado\.output\.state\s*==\s*'pending'"
+            $content | Should -Match "to:\s*pr_feedback_analyzer[\s\S]{0,200}?poll_status_ado\.output\.route\s*==\s*'none'"
         }
 
         It 'Real plan-level.yaml routes from pending_poll_counter to stuck_review_gate on cap_reached' {

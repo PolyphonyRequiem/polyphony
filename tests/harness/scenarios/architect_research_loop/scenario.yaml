@@ -88,13 +88,13 @@ cli_scripts:
 
   - command: polyphony
     args: [pr, open-plan-pr]
-    stdout: '{"pr_url":"https://github.com/PolyphonyRequiem/polyphony/pull/999","pr_number":999,"created":true}'
+    stdout: '{"pr_url":"https://github.com/PolyphonyRequiem/polyphony/pull/999","pr_number":999,"head_branch":"plan/4242","base_branch":"main","repo_slug":"PolyphonyRequiem/polyphony","created":true}'
     exit_code: 0
 
   # ── Poll + merge + post-merge ───────────────────────────────────────
   - command: polyphony
     args: [pr, poll-status]
-    stdout: '{"state":"approved","pr_number":999}'
+    stdout: '{"state":"approved","route":"merge_now","route_reason":"approved-clean","pr_number":999}'
     exit_code: 0
 
   - command: polyphony
@@ -227,29 +227,22 @@ agent_scripts:
             relevance: "Source-generated JSON context"
         summary: "CLI commands follow ConsoleAppFramework + guard-clause + routing-style envelope pattern."
 
-  # ── Plan reviewer: advisory comment ─────────────────────────────────
+  # ── Plan reviewer: advisory comment (sentiment-driven schema) ────────
   plan_reviewer:
     - content:
-        posted: true
+        posted: false
         pr_number: 999
         summary: "Plan is well-structured and informed by research findings."
         strengths:
           - "Clear acceptance criteria"
           - "Research-backed design decisions"
-        concerns: []
+        blocking_concerns: []
+        non_blocking_suggestions: []
         comment_body: |
-          ### 🤖 Polyphony plan reviewer (advisory)
+          <!-- polyphony:agent-comment agent=plan_reviewer pr_number=999 -->
+          ### 🤖 Polyphony plan reviewer
 
-          **Summary:** Plan is well-structured and informed by research findings.
-
-          **Strengths**
-          - Clear acceptance criteria
-          - Research-backed design decisions
-
-          **Concerns**
-          - None
-
-          _This is an advisory comment from the polyphony plan_reviewer agent._
+          _No blocking concerns identified._
 
   # ── Researcher (sufficiency judge in research sub-workflow) ──────────
   # Declares cheap-tier findings sufficient — no deep_researcher escalation.

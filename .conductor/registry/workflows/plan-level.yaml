@@ -1117,95 +1117,114 @@ agents:
         value: abort
         route: terminal_abort_run
 
-  # ── Plan reviewer (LLM advisory — platform-aware) ─────────────────────
+  # ── Plan reviewer (LLM advisory — sentiment-driven model) ─────────────
   #
   # Single LLM reviewer per design doc Q2. Produces a critique using a
-  # rubric and either:
-  #   - github platform: posts directly via `gh pr review --comment --body`
-  #     (the LLM owns the post; same behavior as v2.0).
-  #   - ado platform: emits the rendered comment body via output.comment_body
-  #     and a downstream `plan_reviewer_poster_ado` script posts it via
-  #     `polyphony pr post-comment-ado` (no `polyphony` tool is registered
-  #     for LLM agents, so the post must be a separate script step).
+  # rubric and emits two fields the sentiment-driven loop consumes:
   #
-  # Either way the LLM does NOT vote approve/changes_requested — option 2
-  # from the P7-pre identity model decision: LLM is advisory, human
-  # approval is the gate. The rubric, comment shape, and re-review
-  # semantics are identical across platforms.
+  #   • `blocking_concerns` — issues that, in the reviewer's judgement,
+  #     would harm downstream implementation. Read by
+  #     `pr_feedback_analyzer` to decide whether to send the architect
+  #     back for revision. Only blocking_concerns gate merge.
+  #   • `non_blocking_suggestions` — polish / nice-to-have items. Kept
+  #     for audit but NOT considered by the analyzer and NOT posted on
+  #     the PR (to avoid noise).
+  #
+  # Posted comment shape: ONLY a marker line + the blocking_concerns
+  # list (or "No blocking concerns identified" when empty). Full audit
+  # (summary, strengths, non_blocking_suggestions) lives in the agent's
+  # output fields for logs / dashboard, never on the PR — per
+  # sentiment-driven design (the analyzer reads negative sentiment;
+  # everything else is noise to the architect).
+  #
+  # Marker contract: the first line of `comment_body` MUST be the
+  # `<!-- polyphony:agent-comment agent=plan_reviewer head_sha=... -->`
+  # marker so `pr_feedback_analyzer` can reliably identify this bot's
+  # comments across operator-token boundaries. The marker's head_sha
+  # pins the comment to a specific commit; the analyzer uses it to
+  # distinguish a fresh reviewer comment from a stale one across
+  # remediation pushes.
+  #
+  # Posting: both platforms post via downstream poster scripts
+  # (`plan_reviewer_poster` for github, `plan_reviewer_poster_ado` for
+  # ado) — the LLM does NOT call `gh` directly. This keeps the marker-
+  # prepend contract in one place (the LLM prompt) and removes the
+  # github-vs-ado asymmetry that confused the old design.
   #
   # Invariants:
   #   Pre:  open_plan_pr (github) or open_plan_pr_ado (ado) produced
   #         output.pr_url + output.pr_number.
-  #   Post: github → comment is posted on the PR; output.posted == true.
-  #         ado    → output.comment_body holds the markdown to be posted
-  #                  by plan_reviewer_poster_ado; output.posted == false
-  #                  (will flip to true after the poster script runs).
+  #   Post: output.comment_body holds the marker-prefixed markdown to
+  #         be posted by the platform-specific poster script;
+  #         output.posted == false (the poster flips it to true).
   - name: plan_reviewer
     type: agent
     model: claude-opus-4.7
-    description: Produce a single advisory plan review (post via gh on github; emit body for ado)
+    description: Produce a single advisory plan review (audit in output; minimal post via poster scripts)
     tools:
-      - gh
       - filesystem
     output:
       posted:
         type: boolean
-        description: Whether a comment was posted by THIS agent (true on github happy path; false on ado, where the downstream poster script is responsible)
+        description: Always false — the downstream poster script does the real posting.
       pr_number:
         type: number
         description: PR number that was reviewed
       summary:
         type: string
-        description: One-paragraph summary of the reviewer's overall assessment
+        description: One-paragraph summary of the reviewer's overall assessment (audit-only — not posted)
       strengths:
         type: array
-        description: Plan strengths (also included in the posted comment)
+        description: Plan strengths (audit-only — not posted)
         items:
           type: string
-      concerns:
+      blocking_concerns:
         type: array
-        description: Plan concerns (also included in the posted comment)
+        description: Issues that would harm downstream implementation. Read by pr_feedback_analyzer; only these gate merge.
+        items:
+          type: string
+      non_blocking_suggestions:
+        type: array
+        description: Polish / nice-to-have items (audit-only — not posted and never gating).
         items:
           type: string
       comment_body:
         type: string
         description: |
-          The fully-rendered markdown comment ready to be posted. On ado
-          this is consumed by plan_reviewer_poster_ado. On github it is
-          informational (the LLM has already posted it via gh) but is
-          still emitted for log parity.
+          The fully-rendered markdown comment ready to be posted by the
+          platform-specific poster. MUST start with the
+          `<!-- polyphony:agent-comment agent=plan_reviewer pr_number=... -->`
+          marker line. Body contains ONLY the blocking_concerns list
+          (or "No blocking concerns identified" when empty). The full
+          rubric assessment lives in this agent's other output fields.
     prompt: |
-      You are an advisory plan reviewer for an SDLC planning workflow.
+      You are an advisory plan reviewer for an SDLC planning workflow
+      under the sentiment-driven PR review model.
 
       ## Your Mission
 
-      Read the plan and produce **one** advisory comment using the rubric
-      and shape below. You do NOT vote `--approve` or `--request-changes`
-      — human review is the gate. Your job is to give the human reviewer
-      a useful starting point.
+      Read the plan, evaluate it against the rubric below, and emit
+      your assessment as structured output. A downstream agent
+      (`pr_feedback_analyzer`) reads your `blocking_concerns` to decide
+      whether to send the architect back for revision. You do NOT vote
+      `--approve` / `--request-changes`; you do NOT call `gh` or any
+      posting tool. A separate poster script handles the platform-
+      specific posting using your `comment_body` field.
 
-      {% if workflow.input.platform == 'ado' %}
-      **Platform: Azure DevOps.** You do NOT have a tool to post the
-      comment yourself. Render the comment body and emit it via
-      `output.comment_body` — a downstream script
-      (`plan_reviewer_poster_ado`) will post it via
-      `polyphony pr post-comment-ado`. Do NOT attempt to call `gh`; this
-      is an ADO PR and `gh` will fail.
+      ## Severity discipline (load-bearing)
 
-      Set `output.posted = false` (the poster script will record the real
-      post status when it runs).
-      {% else %}
-      **Platform: GitHub.** Post the comment directly using:
+      Be **conservative** with `blocking_concerns`. Every entry sends
+      the architect back to revise; chains of pedantic blocking concerns
+      cause revise-loop churn until the cap fires.
 
-      `gh pr review {{ open_plan_pr.output.pr_number }} --comment --body "..."`
-
-      Set `output.posted = true` after a successful post.
-
-      Do **not** post multiple comments. If you've already posted a review
-      on this PR (use `gh pr view {{ open_plan_pr.output.pr_number }}
-      --comments` to check), post a new comment that explicitly references
-      the prior one (e.g., "## Re-review (revision N)").
-      {% endif %}
+      - `blocking_concerns` — issues that would HARM downstream
+        implementation if shipped as-is. Examples: missing acceptance
+        criteria a coder cannot satisfy, decomposition that produces
+        unimplementable children, factual contradictions, scope that
+        conflicts with the type definition. If you are unsure, put it
+        in `non_blocking_suggestions` instead.
+      - `non_blocking_suggestions` — polish / phrasing / "would be
+        nicer if". Audit only — never posted, never gates merge.
 
       ## Context
 
@@ -1216,9 +1235,11 @@ agents:
       {% if workflow.input.platform == 'ado' -%}
       - **PR URL:** {{ open_plan_pr_ado.output.pr_url }}
       - **PR number:** {{ open_plan_pr_ado.output.pr_number }}
+      - **Head branch:** {{ open_plan_pr_ado.output.head_branch }}
       {% else -%}
       - **PR URL:** {{ open_plan_pr.output.pr_url }}
       - **PR number:** {{ open_plan_pr.output.pr_number }}
+      - **Head branch:** {{ open_plan_pr.output.head_branch }}
       {%- endif %}
       - **Plan file path:** plans/plan-{{ workflow.input.work_item_id }}.md
 
@@ -1235,27 +1256,30 @@ agents:
       | Clarity | 10% | Is the plan easy for a downstream agent or human to act on? |
       | Acceptance criteria | 10% | Are acceptance criteria present, testable, unambiguous? |
 
-      ## Comment shape
+      ## Comment body shape (load-bearing)
 
-      The comment body must use this structure (markdown):
+      The `comment_body` field MUST follow this exact structure. The
+      first line MUST be the marker (no leading whitespace, no preceding
+      content). Do NOT add strengths, summary, non-blocking suggestions,
+      or any other section — only the blocking-concerns list:
 
       ```
-      ### 🤖 Polyphony plan reviewer (advisory)
+      <!-- polyphony:agent-comment agent=plan_reviewer pr_number={{ open_plan_pr_ado.output.pr_number if workflow.input.platform == 'ado' else open_plan_pr.output.pr_number }} -->
+      ### 🤖 Polyphony plan reviewer
 
-      **Summary:** <one paragraph>
+      **Blocking concerns** (sentiment-driven loop reads this section):
 
-      **Strengths**
-      - …
+      - <blocking concern 1>
+      - <blocking concern 2>
 
-      **Concerns**
-      - …
-
-      **Suggested changes**
-      - … (only what would materially improve the plan; skip nits)
-
-      _This is an advisory comment from the polyphony plan_reviewer agent.
-      It does not vote — human review is the merge gate._
+      _Advisory only — pr_feedback_analyzer determines routing. Full
+      rubric audit available in the workflow logs._
       ```
+
+      When `blocking_concerns` is empty, replace the bulleted list with
+      the single line `_No blocking concerns identified._` — keep the
+      marker and the header. The analyzer needs a marker comment on
+      every poll to know the reviewer ran.
 
       {% if guidance_loader is defined and guidance_loader.output.agents.plan_reviewer is defined and guidance_loader.output.agents.plan_reviewer %}
       ## Repo-Specific Guidance — plan_reviewer (override)
@@ -1278,34 +1302,72 @@ agents:
       Return JSON:
       ```json
       {
-        "posted": {% if workflow.input.platform == 'ado' %}false{% else %}true{% endif %},
+        "posted": false,
         "pr_number": {% if workflow.input.platform == 'ado' %}{{ open_plan_pr_ado.output.pr_number }}{% else %}{{ open_plan_pr.output.pr_number }}{% endif %},
-        "summary": "<one paragraph>",
+        "summary": "<one paragraph — audit only, not posted>",
         "strengths": ["..."],
-        "concerns": ["..."],
-        "comment_body": "<full rendered markdown comment per the shape above>"
+        "blocking_concerns": ["..."],
+        "non_blocking_suggestions": ["..."],
+        "comment_body": "<full marker-prefixed markdown per the shape above>"
       }
       ```
     routes:
-      # On ADO platform, route to the poster script which actually posts
-      # the comment via `polyphony pr post-comment-ado`. On github the
-      # LLM already posted via the `gh` tool, so route straight to poll.
       - to: plan_reviewer_poster_ado
         when: "{{ workflow.input.platform == 'ado' }}"
+      - to: plan_reviewer_poster
+
+  # ── Plan reviewer poster (GitHub) ─────────────────────────────────────
+  #
+  # Posts plan_reviewer's rendered comment_body to the GitHub PR via
+  # `gh pr comment`. Mirrors plan_reviewer_poster_ado so both platforms
+  # have a single deterministic posting site (matters for the marker-
+  # prepend contract — the LLM does NOT call gh directly, so the
+  # marker discipline lives in plan_reviewer's prompt and the poster
+  # just emits the body verbatim).
+  - name: plan_reviewer_poster
+    type: script
+    description: Post plan_reviewer's rendered comment to the GitHub PR.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-NoLogo"
+      - "-Command"
+      - |
+        $ErrorActionPreference = 'Stop'
+        $prNumber = [int]'{{ open_plan_pr.output.pr_number }}'
+        $repoSlug = '{{ open_plan_pr.output.repo_slug }}'
+        $body     = @'
+        {{ plan_reviewer.output.comment_body }}
+        '@
+        try {
+          $null = gh pr comment $prNumber --repo $repoSlug --body $body 2>&1
+          @{ posted = $true; pr_number = $prNumber } | ConvertTo-Json -Compress
+        } catch {
+          @{ posted = $false; error = $_.Exception.Message; pr_number = $prNumber } | ConvertTo-Json -Compress
+          exit 1
+        }
+    routes:
       - to: poll_status
 
   # ── Poll status ───────────────────────────────────────────────────────
   #
-  # Single-shot poll of the plan PR's aggregated review state. With
-  # --include-metadata, also returns metadata.requests_parent_change
+  # Single-shot poll of the plan PR. Returns the platform-neutral
+  # envelope including the deterministic 4-way `route` field computed
+  # by PrPollTerminalRoute.Classify:
+  #
+  #   • `merge_now`       — approved, no unresolved actionable threads
+  #   • `already_merged`  — operator merged on the platform
+  #   • `abort_unmerged`  — PR closed (gh) / abandoned (ado) / -10 reject
+  #   • `none`            — mixed signals; defer to pr_feedback_analyzer
+  #
+  # With --include-metadata, also returns metadata.requests_parent_change
   # parsed from the PR body front-matter (used for the P8 deferred
   # parent-change-request handling).
   #
   # Invariants:
-  #   Pre:  open_plan_pr produced output.pr_url; plan_reviewer has posted (or
-  #         we're re-entering on awaiting_review and the prior reviewer comment
-  #         is already on the PR).
-  #   Post: output.state in {approved, changes_requested, pending, merged, closed}.
+  #   Pre:  open_plan_pr produced output.pr_url; plan_reviewer has posted
+  #         a marker comment so the analyzer can recognize it as the bot.
+  #   Post: output.route in {merge_now, already_merged, abort_unmerged, none}.
   - name: poll_status
     type: script
     description: Single-shot poll of plan PR review state (with metadata)
@@ -1319,25 +1381,25 @@ agents:
     routes:
       - to: poll_error_gate
         when: "{{ poll_status.output.error is defined and poll_status.output.error }}"
-      - to: extract_parent_patch
-        when: "{{ poll_status.output.state == 'approved' and poll_status.output.metadata is defined and poll_status.output.metadata is not none and poll_status.output.metadata.requests_parent_change == true }}"
-      - to: validate_scope
-        when: "{{ poll_status.output.state == 'approved' and workflow.input.child_scope_globs != '' }}"
-      - to: merge_plan_pr
-        when: "{{ poll_status.output.state == 'approved' }}"
-      - to: approvals_policy
-        when: "{{ poll_status.output.state == 'changes_requested' }}"
-      # Stuck-review timeout MVP — pending re-entries flow through
-      # pending_poll_counter so we can surface stuck_review_gate after
-      # POLL_CAP polls instead of looping into pending_review_gate forever.
-      - to: pending_poll_counter
-        when: "{{ poll_status.output.state == 'pending' }}"
+      # Terminal: operator merged through the platform UI.
       - to: seeder
-        when: "{{ poll_status.output.state == 'merged' }}"
+        when: "{{ poll_status.output.route == 'already_merged' }}"
+      # Terminal: operator closed (gh) or abandoned (ado) or voted -10 reject.
       - to: closed_unmerged_gate
-        when: "{{ poll_status.output.state == 'closed' }}"
-      # Catch-all per M4
-      - to: poll_error_gate
+        when: "{{ poll_status.output.route == 'abort_unmerged' }}"
+      # Terminal: approved, clean — but check for parent-change request
+      # or scope-violation gate before merging.
+      - to: extract_parent_patch
+        when: "{{ poll_status.output.route == 'merge_now' and poll_status.output.metadata is defined and poll_status.output.metadata is not none and poll_status.output.metadata.requests_parent_change == true }}"
+      - to: validate_scope
+        when: "{{ poll_status.output.route == 'merge_now' and workflow.input.child_scope_globs != '' }}"
+      - to: merge_plan_pr
+        when: "{{ poll_status.output.route == 'merge_now' }}"
+      # Mixed signals — defer to the sentiment analyzer.
+      - to: pr_feedback_analyzer
+        when: "{{ poll_status.output.route == 'none' }}"
+      # Catch-all per M4 — defensive; treat unknown as deferral to analyzer.
+      - to: pr_feedback_analyzer
 
   # ── Poll error gate ───────────────────────────────────────────────────
   - name: poll_error_gate
@@ -1409,15 +1471,153 @@ agents:
     routes:
       - to: architect
 
+  # ── PR feedback analyzer (sentiment-driven loop heart) ────────────────
+  #
+  # LLM agent that reads the poll envelope and decides whether the PR
+  # has actionable negative feedback that should send the architect
+  # back to revise, OR whether the workflow should throttle and wait
+  # for a human signal (positive vote / merge / explicit comment).
+  #
+  # Invoked on `poll_status[_ado].output.route == 'none'` — the
+  # deterministic classifier already handled merged / closed / approved-
+  # and-clean / rejected-vote terminals; this agent only judges the
+  # ambiguous middle.
+  #
+  # Identity policy (load-bearing — encoded in the prompt):
+  #   1. Comment with a `<!-- polyphony:agent-comment agent=... -->`
+  #      marker → bot reviewer. INCLUDE the comment's content.
+  #   2. Comment author matches the PR author → exclude (PR author
+  #      narrating their own work doesn't count as feedback to itself).
+  #   3. Otherwise → human reviewer. INCLUDE.
+  #
+  # Severity policy (also load-bearing):
+  #   - For polyphony's own bot reviewers (e.g. plan_reviewer), only
+  #     items under the `**Blocking concerns**` section count as
+  #     negative. `non_blocking_suggestions` are NEVER posted but if
+  #     a future bot emits a body with both, blocking-only is the rule.
+  #   - For human comments + unresolved threads, the analyzer judges
+  #     overall sentiment using natural-language reasoning. A vote of
+  #     `changes_requested` or `rejected` on its own qualifies as
+  #     negative even without an explanatory comment.
+  #
+  # Output digest contract: `feedback_digest` is a stable hash of
+  # (comment ids + thread ids + vote tuples + body sha) of everything
+  # the analyzer considered. `revise_counter` uses this to avoid
+  # incrementing on no-progress re-polls — see that node for details.
+  #
+  # Invariants:
+  #   Pre:  poll_status (or poll_status_ado) returned route == 'none'.
+  #   Post: output.has_negative_feedback bool drives routing;
+  #         output.feedback_summary is the architect's revision brief
+  #         (concise markdown — the analyzer summarizes; raw threads
+  #         are not pasted back); output.feedback_digest dedups
+  #         no-progress polls in revise_counter.
+  - name: pr_feedback_analyzer
+    type: agent
+    model: claude-sonnet-4.6
+    description: Read poll envelope; decide whether negative feedback requires architect revision.
+    tools:
+      - filesystem
+    output:
+      has_negative_feedback:
+        type: boolean
+        description: True when the analyzer judges that one or more in-scope reviewers requested changes the architect should address.
+      feedback_summary:
+        type: string
+        description: Markdown summary of the negative feedback for the architect prompt. Empty when has_negative_feedback is false.
+      feedback_digest:
+        type: string
+        description: Stable hash of all comments/threads/votes considered. revise_counter uses this to detect no-progress re-polls.
+      reasoning:
+        type: string
+        description: Short explanation of the decision (audit only — not posted, not consumed by routing).
+    prompt: |
+      You decide whether a plan PR currently has actionable negative
+      feedback that the architect should respond to.
+
+      ## Context — Poll envelope
+
+      - **PR URL:** {{ poll_status_ado.output.pr_url if (workflow.input.platform == 'ado' and poll_status_ado is defined) else poll_status.output.pr_url }}
+      - **PR author identity:** `{{ poll_status_ado.output.author_identity if (workflow.input.platform == 'ado' and poll_status_ado is defined) else poll_status.output.author_identity }}`
+      - **Head SHA:** `{{ poll_status_ado.output.head_sha if (workflow.input.platform == 'ado' and poll_status_ado is defined) else poll_status.output.head_sha }}`
+      - **Derived state:** `{{ poll_status_ado.output.state if (workflow.input.platform == 'ado' and poll_status_ado is defined) else poll_status.output.state }}`
+      - **Route reason (from terminal classifier):** {{ poll_status_ado.output.route_reason if (workflow.input.platform == 'ado' and poll_status_ado is defined) else poll_status.output.route_reason }}
+
+      ### Top-level PR comments (JSON, oldest first)
+
+      ```json
+      {{ (poll_status_ado.output.comments if (workflow.input.platform == 'ado' and poll_status_ado is defined) else poll_status.output.comments) | tojson }}
+      ```
+
+      ### Review threads (JSON, includes thread comments)
+
+      ```json
+      {{ (poll_status_ado.output.threads if (workflow.input.platform == 'ado' and poll_status_ado is defined) else poll_status.output.threads) | tojson }}
+      ```
+
+      ### Reviewer votes
+
+      ```json
+      {{ (poll_status_ado.output.reviewers if (workflow.input.platform == 'ado' and poll_status_ado is defined) else poll_status.output.reviewers) | tojson }}
+      ```
+
+      ## Identity & severity policy
+
+      For each comment / thread, classify the source:
+
+      1. If the comment body's `marker` field is non-null → **bot
+         reviewer** (the polyphony plan_reviewer or another marker-
+         posting agent). Only treat items under the `**Blocking
+         concerns**` section as negative; ignore everything else in the
+         bot's body.
+      2. Else if `author == PR author identity` → **author self-comment**.
+         Exclude entirely (the PR author narrating their own work is
+         not feedback to themselves).
+      3. Else → **human reviewer**. Use natural-language judgement of
+         the comment's sentiment and any embedded code-review concerns.
+
+      For reviewer **votes**: a `changes_requested` vote from a non-
+      author reviewer counts as negative feedback regardless of any
+      explanatory comment. A `rejected` vote was already terminated by
+      the deterministic classifier — you should not see it here.
+
+      Unresolved threads (`is_resolved == false && is_outdated != true`)
+      that contain at least one in-scope (non-author) comment count as
+      negative feedback even if the comment body is short.
+
+      ## Output
+
+      Return JSON:
+      ```json
+      {
+        "has_negative_feedback": <true|false>,
+        "feedback_summary": "<markdown brief for the architect; concise — summarize, do not paste raw threads; empty string when no negative feedback>",
+        "feedback_digest": "<short stable hash of everything you considered — comment ids + thread ids + vote tuples; same inputs MUST produce the same digest>",
+        "reasoning": "<≤500 chars audit explanation of the decision>"
+      }
+      ```
+
+      The `feedback_summary` is fed verbatim into the architect's
+      revision prompt — keep it actionable, focused on what to change
+      (not why the reviewer flagged it). The `feedback_digest` lets
+      revise_counter detect no-progress re-polls; use a stable
+      formulation like `sha256("comment-ids:thread-ids:votes:body-shas")`
+      computed from the input ids — DO NOT include timestamps or
+      run-specific fields.
+    routes:
+      - to: approvals_policy
+        when: "{{ pr_feedback_analyzer.output.has_negative_feedback == true }}"
+      - to: pending_poll_counter
+
   # ── Pending poll counter (stuck-review timeout MVP) ───────────────────
   #
-  # Increments each time poll_status / poll_status_ado returns 'pending'.
-  # Counter file is keyed by work_item_id so it persists across the
-  # poll → pending_review_gate → continue → re-poll loop. When the count
-  # reaches POLL_CAP, routes to stuck_review_gate so the operator can
-  # decide whether to keep waiting, override-approve, or abort. Below
-  # the cap, routes to the existing pending_review_gate (unchanged
-  # operator UX for the common case).
+  # Increments each time pr_feedback_analyzer concludes there is no
+  # actionable negative feedback. Counter file is keyed by work_item_id
+  # so it persists across the poll → throttle → continue → re-poll loop.
+  # When the count reaches POLL_CAP, routes to stuck_review_gate so the
+  # operator can decide whether to keep waiting, override-approve, or
+  # abort. Below the cap, routes to pending_review_gate (the throttle
+  # gate) for the unchanged operator UX in the common case.
   #
   # POLL_CAP is hard-coded to 60 at MVP. With human-driven re-polls
   # this represents 60 deliberate "is it ready yet?" clicks before the
@@ -1428,7 +1628,7 @@ agents:
   # when the policy schema lands. See docs/decisions/stuck-review-timeout.md.
   #
   # Invariants:
-  #   Pre:  poll_status (or poll_status_ado) returned state == 'pending'.
+  #   Pre:  pr_feedback_analyzer returned has_negative_feedback == false.
   #   Post: output.count is the current poll count (1-based);
   #         output.cap_reached indicates whether the cap was hit.
   - name: pending_poll_counter
@@ -1453,110 +1653,40 @@ agents:
         when: "{{ pending_poll_counter.output.cap_reached == true }}"
       - to: pending_review_gate_policy_router
 
-  # ── Pending-review gate policy router (AB#3104) ───────────────────────
+  # ── Pending-review gate policy router ─────────────────────────────────
   #
-  # Reads `policy.unattended.review_wait_mode`. Three modes:
-  #   • `auto`  → post `polyphony:approve <head_sha>` magic comment via
-  #               `auto_approve_plan_pr`, then re-poll. The next poll observes
-  #               the comment and returns `approved`. GitHub-only — falls back
-  #               to `skip` semantics on ADO (AB#3104 PR2 wires ADO).
-  #   • `skip`  → bypasses the `pending_review_gate` by routing directly to
-  #               `pr_poll_platform_router` (the same target the operator's
-  #               "Continue" option selects — re-poll the PR). Polls forever
-  #               until the cap, then surfaces `stuck_review_gate`.
-  #   • `wait`  → falls through to the human gate (default).
+  # Reads `policy.unattended.review_wait_mode`. Three modes, two behaviors:
+  #   • `wait` (default) → fall through to the human throttle gate.
+  #   • `skip`           → bypass the gate, route directly back to re-poll.
+  #   • `auto`           → REJECTED. The old `auto` mode self-approved via
+  #                        magic comments; that mechanism is gone in the
+  #                        sentiment-driven loop and reintroducing it
+  #                        requires calling the platform vote APIs with
+  #                        an operator-identity token. Until that PR
+  #                        lands, treat `auto` as a hard misconfiguration
+  #                        so it surfaces immediately rather than silently
+  #                        degrading to `skip` (which keeps polling forever
+  #                        with no human in the loop — an unattended
+  #                        operator might wait days for a PR they thought
+  #                        was being auto-merged).
   #
   # Invariants:
   #   Pre:  pending_poll_counter has been computed (cap not reached).
   #   Post: load_policy.output.unattended.review_wait_mode is
-  #         {wait, skip, auto} (validated by the loader).
+  #         {wait, skip} (validated by the loader; `auto` is rejected here).
   - name: pending_review_gate_policy_router
     type: script
-    description: Bypass pending_review_gate when policy.unattended.review_wait_mode is skip or auto
+    description: Bypass pending_review_gate when policy.unattended.review_wait_mode is skip; reject auto.
     command: polyphony
     args:
       - "policy"
       - "load"
     routes:
-      - to: auto_approve_plan_pr
-        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' and workflow.input.platform == 'github' }}"
+      - to: terminal_abort_auto_mode_unsupported
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
       - to: pr_poll_platform_router
-        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' or pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
       - to: pending_review_gate
-
-  # ── Auto-approve plan PR (AB#3104, fasttrack mode) ────────────────────
-  #
-  # Posts the SHA-bound `polyphony:approve <head_sha>` magic comment on the
-  # plan PR so the next poll observes the approval (per
-  # PrPollStateDerivation — the comment is recognized only from the PR
-  # author identity). After posting, routes back to `pr_poll_platform_router`
-  # to re-poll; the next poll returns `approved` and the workflow proceeds
-  # to merge.
-  #
-  # Idempotent: if a matching `polyphony:approve <head_sha>` comment from
-  # the PR author is already present, the script skips the post and routes
-  # straight back to re-poll. SHA-pinning means a new commit on the PR
-  # silently invalidates a stale approve comment — auto-approve will post
-  # a fresh one for the new SHA on the next iteration.
-  #
-  # Defensive: if the gh-authenticated identity differs from the PR author,
-  # GitHub will accept the comment but `PrPollStateDerivation` will not
-  # recognize it (only author-posted approves count). In that case the
-  # script falls back to the human `pending_review_gate` rather than
-  # silently looping forever.
-  #
-  # GitHub-only at MVP. The router gates this step on
-  # `workflow.input.platform == 'github'`; ADO falls through to skip
-  # semantics until AB#3104 PR2 wires the ADO equivalent.
-  #
-  # Invariants:
-  #   Pre:  poll_status returned state == 'pending' with pr_number, head_sha,
-  #         repo_slug populated; workflow.input.platform == 'github'.
-  #   Post: output.posted in {true, false}; output.fall_back is true when
-  #         the gh actor is not the PR author (workflow routes to
-  #         pending_review_gate to surface to a human).
-  - name: auto_approve_plan_pr
-    type: script
-    description: Post SHA-bound polyphony:approve magic comment from PR author identity (idempotent)
-    command: pwsh
-    args:
-      - "-NoProfile"
-      - "-NoLogo"
-      - "-Command"
-      - |
-        $ErrorActionPreference = 'Stop'
-        $prNumber = [int]'{{ poll_status.output.pr_number }}'
-        $headSha  = '{{ poll_status.output.head_sha }}'
-        $repoSlug = '{{ poll_status.output.repo_slug }}'
-        $body     = "polyphony:approve $headSha"
-
-        try {
-          $actor = (gh api user --jq '.login' 2>$null).Trim()
-          $author = (gh pr view $prNumber --repo $repoSlug --json author --jq '.author.login' 2>$null).Trim()
-          if (-not $actor -or -not $author) {
-            @{ posted = $false; fall_back = $true; reason = "could not resolve gh actor or PR author"; head_sha = $headSha; pr_number = $prNumber } | ConvertTo-Json -Compress
-            exit 0
-          }
-          if ($actor -ne $author) {
-            @{ posted = $false; fall_back = $true; reason = "gh actor '$actor' is not PR author '$author'; magic-approve only honored from author"; head_sha = $headSha; pr_number = $prNumber; actor = $actor; author = $author } | ConvertTo-Json -Compress
-            exit 0
-          }
-
-          $existing = gh pr view $prNumber --repo $repoSlug --json comments --jq "[.comments[] | select(.author.login == `"$author`" and .body == `"$body`")] | length" 2>$null
-          if ($existing -and [int]$existing -gt 0) {
-            @{ posted = $false; fall_back = $false; reason = "magic-approve already present for head_sha"; head_sha = $headSha; pr_number = $prNumber; body = $body } | ConvertTo-Json -Compress
-            exit 0
-          }
-
-          $null = gh pr comment $prNumber --repo $repoSlug --body $body 2>&1
-          @{ posted = $true; fall_back = $false; head_sha = $headSha; pr_number = $prNumber; body = $body; actor = $actor } | ConvertTo-Json -Compress
-        } catch {
-          @{ posted = $false; fall_back = $true; reason = "auto_approve_plan_pr exception: $($_.Exception.Message)"; head_sha = $headSha; pr_number = $prNumber } | ConvertTo-Json -Compress
-        }
-    routes:
-      - to: pending_review_gate
-        when: "{{ auto_approve_plan_pr.output.fall_back == true }}"
-      - to: pr_poll_platform_router
 
   # ── Pending-review gate (in-workflow human checkpoint) ────────────────
   #
@@ -1568,52 +1698,58 @@ agents:
   # use option (a) human_gate because the apex driver is being rebuilt
   # around the requirement+disposition model. Switch to option (b) lands
   # with Phase 2c (workflow YAML migration to requirement+disposition).
+  # ── Pending-review throttle gate (sentiment-driven loop) ──────────────
+  #
+  # Reached when `pr_feedback_analyzer` judged the current poll cycle
+  # as no-actionable-feedback (no negative bot concerns, no human
+  # changes_requested vote, no unresolved human threads). The PR may
+  # still be open and waiting for an explicit positive signal (merge,
+  # approve vote, comment that changes the analyzer's verdict). This
+  # gate is the throttle: continue to re-poll, or abort the run.
+  #
+  # Under the sentiment-driven model the analyzer — not the operator —
+  # is the source of truth for whether the architect needs to revise.
+  # Operators no longer need to dictate "approve" or "request changes"
+  # via magic comments; the natural platform UX (vote / comment /
+  # merge) drives the loop.
   - name: pending_review_gate
     type: human_gate
     prompt: |
-      ## ⏳ Plan PR Awaiting Review — Work Item {{ workflow.input.work_item_id }}
+      ## ⏳ Plan PR Awaiting Action — Work Item {{ workflow.input.work_item_id }}
 
-      The plan PR is open and the polyphony plan_reviewer has posted an
-      advisory comment. Human review is required before merging.
+      The plan PR is open. The polyphony bot reviewer has posted (see
+      the marker comment on the PR) and the sentiment-driven analyzer
+      did NOT find actionable negative feedback this poll.
 
       - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado is defined and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if (open_plan_pr is defined and open_plan_pr.output.pr_url is defined) else state_detector.output.pr_url) }}
       - **Branch:** `{{ ensure_plan_branch.output.branch if (ensure_plan_branch is defined and ensure_plan_branch.output.branch is defined) else state_detector.output.plan_branch }}`
 
       {% if workflow.input.platform == 'ado' %}
-      Review the PR in Azure DevOps. Vote **Approve** (or *Approve with
-      suggestions*) to proceed with merge + seeding, or vote **Wait for
-      author** / **Reject** to send the architect back for revision. Then
-      return here and click **Continue**.
+      To proceed, take one of these actions in Azure DevOps, then click
+      **Continue** to re-poll:
 
-      ADO does not block self-approval — you can vote on your own PR
-      through the standard PR UI, or via:
-
-          az repos pr set-vote --id <pr-id> --vote approve
-
-      The polyphony plan_reviewer leaves an advisory comment but does
-      NOT cast a vote — the operator's vote is what gates the merge.
+      - **Approve** (`+5` or `+10`) — workflow merges next poll.
+      - **Complete the PR** — workflow detects merged state next poll.
+      - **Wait for author** (`-5`) or a comment requesting changes —
+        the analyzer reads the comment on the next poll and routes the
+        architect back to revise.
+      - **Reject** (`-10`) or **Abandon** the PR — workflow aborts this
+        plan-leg on the next poll.
       {% else %}
-      Review the PR on GitHub. Approve to proceed with merge + seeding,
-      or request changes to send the architect back for revision. Then
-      return here and click **Continue**.
+      To proceed, take one of these actions on GitHub, then click
+      **Continue** to re-poll:
 
-      **GitHub note:** if you opened the PR yourself, GitHub blocks
-      self-approval AND blocks self-`REQUEST_CHANGES` (and a thread you
-      open as the author cannot block your own merge). Use a top-level
-      comment instead:
+      - **Merge the PR** — workflow detects merged state next poll.
+      - **Comment requesting changes** — the analyzer reads the
+        comment on the next poll and routes the architect back to
+        revise. (You can also formally `--request-changes` via review
+        if you have the permission; the analyzer sees both.)
+      - **Close the PR** — workflow aborts this plan-leg on the next
+        poll.
 
-          polyphony:approve {{ poll_status.output.head_sha if (poll_status is defined and poll_status.output.head_sha is defined) else "<head-sha>" }}
-
-      …to approve, OR:
-
-          polyphony:request-changes {{ poll_status.output.head_sha if (poll_status is defined and poll_status.output.head_sha is defined) else "<head-sha>" }}
-
-      …to block your own merge while you push fixes. The SHA pins the
-      vote to this specific commit — any new push silently invalidates
-      it (no review-loop bug; remediation pushes auto-clear a block).
-      A bare `polyphony:approve` (no SHA) still works as a deprecation
-      fallback but emits a warning; `polyphony:request-changes` REQUIRES
-      a SHA — there is no bare form. See issue #207 for context.
+      _Note: GitHub blocks PR-author self-approval. If you opened this
+      PR yourself, the merge happens once a second reviewer approves —
+      or you can simply use the **Merge** button directly._
       {% endif %}
 
       ---
@@ -1785,26 +1921,59 @@ agents:
 
   # ── Revise counter ────────────────────────────────────────────────────
   #
-  # Tracks the number of architect-revision cycles when reviewers request
-  # changes. Capped at policy.approvals.max_revision_cycles (AB#3181 wiring
-  # via approvals_policy above; falls back to 5 if the policy returned no
-  # value). On cap, escalates to a human gate that lets the operator
-  # approve the current plan, force a final revision, or abort.
+  # Tracks architect-revision cycles. Under the sentiment-driven model
+  # the counter is **digest-keyed**: it only increments when
+  # `pr_feedback_analyzer.output.feedback_digest` differs from the
+  # last-seen digest. This makes re-polls during CI / between architect
+  # pushes safe — they would otherwise consume budget without progress.
+  # When the digest is identical to the previously stored digest, the
+  # counter stays put and we route straight to the architect (the same
+  # feedback is still pending; the architect re-attempts).
+  #
+  # Cap reading is unchanged: policy.approvals.max_revision_cycles
+  # (AB#3181), falls back to 5.
   - name: revise_counter
     type: script
-    description: Track architect-revise loop iteration count (cap from policy.approvals.max_revision_cycles)
+    description: Track architect-revise loop iteration count (digest-keyed; cap from policy.approvals.max_revision_cycles)
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-plan-revise-{{ workflow.input.work_item_id }}"
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-plan-revise-{{ workflow.input.work_item_id }}.json"
+        $digestNow   = '{{ pr_feedback_analyzer.output.feedback_digest if (pr_feedback_analyzer is defined and pr_feedback_analyzer.output.feedback_digest is defined) else "" }}'
+
+        $count = 0
+        $digestPrev = ''
         if (Test-Path $counterFile) {
-            $count = [int](Get-Content $counterFile -Raw) + 1
-        } else {
-            $count = 1
+          try {
+            $state      = Get-Content $counterFile -Raw | ConvertFrom-Json
+            $count      = [int]$state.count
+            $digestPrev = [string]$state.digest
+          } catch {
+            # Fall back to a stale plaintext counter from the pre-digest
+            # implementation: treat the file content as the count and
+            # start digest tracking fresh.
+            try { $count = [int](Get-Content $counterFile -Raw) } catch { $count = 0 }
+            $digestPrev = ''
+          }
         }
-        Set-Content $counterFile $count
+
+        # Increment only when the analyzer found NEW feedback. An empty
+        # current digest (analyzer didn't run, or emitted no digest)
+        # is treated as "same as before" — defensive, avoids surprise
+        # increments from upstream skips.
+        if ($digestNow -ne '' -and $digestNow -ne $digestPrev) {
+          $count = $count + 1
+        } elseif ($count -eq 0) {
+          # First entry into the loop ever — start at 1 even if the
+          # digest is empty so we never run the architect on a count
+          # of 0 (off-by-one safety).
+          $count = 1
+        }
+
+        @{ count = $count; digest = $digestNow } | ConvertTo-Json -Compress | Set-Content $counterFile
+
         $policyMax = '{{ approvals_policy.output.max_revision_cycles }}'
         if ([string]::IsNullOrWhiteSpace($policyMax) -or $policyMax -eq 'None' -or $policyMax -eq '0') {
             $maxRevisions = 5
@@ -1812,7 +1981,8 @@ agents:
             $maxRevisions = [int]$policyMax
         }
         $capReached = $count -ge $maxRevisions
-        @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached } | ConvertTo-Json
+        $digestChanged = ($digestNow -ne '' -and $digestNow -ne $digestPrev)
+        @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached; digest = $digestNow; digest_changed = $digestChanged } | ConvertTo-Json
     routes:
       - to: revise_cap_gate
         when: "{{ revise_counter.output.cap_reached == true }}"
@@ -2528,12 +2698,9 @@ agents:
 
   # ── Poll status (ADO) ─────────────────────────────────────────────────
   #
-  # ADO analogue of poll_status. Same 6-way routing — approved →
-  # extract_parent_patch (when requests_parent_change) or merge_plan_pr_ado;
-  # changes_requested → revise_counter; pending → pending_review_gate;
-  # merged → seeder; closed → closed_unmerged_gate; error → poll_error_gate
-  # (the github-leg gate is reused — the prompt is platform-agnostic
-  # enough that we don't need a separate ADO version yet).
+  # ADO analogue of poll_status. Routes off the same envelope `route`
+  # field (PrPollTerminalRoute.Classify is platform-neutral) — see the
+  # poll_status counterpart for the 4-way vocabulary.
   - name: poll_status_ado
     type: script
     description: Single-shot poll of ADO plan PR review state (with metadata).
@@ -2553,21 +2720,18 @@ agents:
     routes:
       - to: poll_error_gate
         when: "{{ poll_status_ado.output.error is defined and poll_status_ado.output.error }}"
-      - to: extract_parent_patch
-        when: "{{ poll_status_ado.output.state == 'approved' and poll_status_ado.output.metadata is defined and poll_status_ado.output.metadata is not none and poll_status_ado.output.metadata.requests_parent_change == true }}"
-      - to: merge_plan_pr_ado
-        when: "{{ poll_status_ado.output.state == 'approved' }}"
-      - to: approvals_policy
-        when: "{{ poll_status_ado.output.state == 'changes_requested' }}"
-      # Stuck-review timeout MVP — see poll_status counterpart.
-      - to: pending_poll_counter
-        when: "{{ poll_status_ado.output.state == 'pending' }}"
       - to: seeder
-        when: "{{ poll_status_ado.output.state == 'merged' }}"
+        when: "{{ poll_status_ado.output.route == 'already_merged' }}"
       - to: closed_unmerged_gate
-        when: "{{ poll_status_ado.output.state == 'closed' }}"
-      # Catch-all per M4
-      - to: poll_error_gate
+        when: "{{ poll_status_ado.output.route == 'abort_unmerged' }}"
+      - to: extract_parent_patch
+        when: "{{ poll_status_ado.output.route == 'merge_now' and poll_status_ado.output.metadata is defined and poll_status_ado.output.metadata is not none and poll_status_ado.output.metadata.requests_parent_change == true }}"
+      - to: merge_plan_pr_ado
+        when: "{{ poll_status_ado.output.route == 'merge_now' }}"
+      - to: pr_feedback_analyzer
+        when: "{{ poll_status_ado.output.route == 'none' }}"
+      # Catch-all per M4 — defensive deferral to analyzer.
+      - to: pr_feedback_analyzer
 
   # ── Merge plan PR (ADO) ───────────────────────────────────────────────
   #
@@ -2729,6 +2893,35 @@ agents:
       - "{{ workflow.input.work_item_id }}"
       - "-Stage"
       - "plan-level"
+    routes:
+      - to: $end
+
+  # ── Auto-mode misconfiguration abort ──────────────────────────────────
+  #
+  # Reached when policy.unattended.review_wait_mode == 'auto'. The old
+  # auto path self-approved the plan PR via magic comments. That
+  # mechanism is gone in the sentiment-driven loop. Reintroducing it
+  # requires calling the platform vote/merge APIs with an operator
+  # identity. Until that work lands, refuse the misconfiguration loudly
+  # so an operator who set `auto` finds out at policy-load time instead
+  # of watching the run poll forever (or, worse, escalate to a stuck
+  # gate days later) under what looks like normal `skip` behavior.
+  - name: terminal_abort_auto_mode_unsupported
+    type: script
+    description: Abort — policy.unattended.review_wait_mode='auto' is unsupported under the sentiment-driven PR-review loop.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "auto-mode-unsupported"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Stage"
+      - "plan-level"
+      - "-Detail"
+      - "policy.unattended.review_wait_mode='auto' was honored by the magic-comment auto-approve path that this PR (sentiment-driven loop) deleted. Set it to 'skip' (silent unattended polling) or 'wait' (human throttle gate) and re-run; a future PR will reintroduce 'auto' on top of the platform vote APIs."
     routes:
       - to: $end
 
