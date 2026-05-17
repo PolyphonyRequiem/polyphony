@@ -230,6 +230,28 @@ public sealed partial class PlanCommands
 
         if (prState == "CLOSED")
         {
+            // When the source branch is gone on origin, the closed/abandoned
+            // PR is a historical artifact, not a current blocker. The operator
+            // has already performed the "delete plan branch and re-run"
+            // remediation the closed_unmerged_gate prompt asks for; honor
+            // that here so the next dispatch can proceed instead of looping
+            // back to the same gate. ADO can't delete PRs (only abandon
+            // them), so without this short-circuit any apex whose first
+            // plan PR was abandoned is poisoned forever — see the
+            // closed_unmerged_gate text in plan-level.yaml.
+            if (!branchExists)
+            {
+                EmitDetectState(new PlanDetectStateResult
+                {
+                    RootId = rootId,
+                    ItemId = itemId,
+                    PlanBranch = planBranch,
+                    State = "not_started",
+                    BranchExistsOnOrigin = false,
+                });
+                return ExitCodes.Success;
+            }
+
             EmitDetectState(new PlanDetectStateResult
             {
                 RootId = rootId,

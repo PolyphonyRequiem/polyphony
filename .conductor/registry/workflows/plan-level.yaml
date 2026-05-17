@@ -418,10 +418,14 @@ agents:
   # to decide which downstream path to take. Enables P3-style re-entry.
   #
   # States (see PlanDetectStateResult):
-  #   not_started       — no plan branch on origin
+  #   not_started       — no live plan PR (no PR, OR closed/abandoned PR
+  #                       whose source branch is gone from origin — operator
+  #                       remediation)
   #   awaiting_review   — branch + open PR exist; plan is current
   #   stale_generation  — branch + open PR exist; ancestor generations bumped
-  #   closed_unmerged   — PR exists but is closed without merge
+  #   closed_unmerged   — PR exists, closed without merge, AND the source
+  #                       branch is still present on origin (operator-rejected
+  #                       plan still in flight)
   #   merged_unseeded   — PR is merged but parent isn't tagged polyphony:planned
   #   complete          — PR is merged AND parent is tagged polyphony:planned
   #   error             — verb failed

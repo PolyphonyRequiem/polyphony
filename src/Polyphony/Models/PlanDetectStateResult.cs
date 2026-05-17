@@ -10,7 +10,12 @@ namespace Polyphony;
 /// <para>The state values form a small, plan-level state machine consumed
 /// by <c>plan-level.yaml</c> to decide what to do next:</para>
 /// <list type="bullet">
-///   <item><c>not_started</c> — no plan PR exists. Run the architect.</item>
+///   <item><c>not_started</c> — no live plan PR exists for this branch. Run
+///         the architect. Also emitted when a closed/abandoned plan PR
+///         exists but the source branch is gone from origin (the operator
+///         performed the "delete plan branch and re-run" remediation —
+///         <see cref="Polyphony.Commands.PlanCommands"/> treats the historical
+///         PR as no longer blocking).</item>
 ///   <item><c>awaiting_review</c> — plan PR is open. Poll for review status.</item>
 ///   <item><c>stale_generation</c> — open PR's <c>ancestor_plan_generations</c>
 ///         snapshot is behind the manifest. Re-run the architect against the

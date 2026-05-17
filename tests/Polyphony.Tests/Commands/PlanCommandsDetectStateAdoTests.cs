@@ -157,6 +157,106 @@ public sealed class PlanCommandsDetectStateAdoTests : CommandTestBase, IDisposab
         ado.LastRepository.ShouldBe("myrepo");
     }
 
+    // ─── closed_unmerged + recovery via branch deletion ───────────────────
+
+    [Fact]
+    public async Task DetectState_AdoAbandonedPrBranchExists_ClosedUnmerged()
+    {
+        // Parity coverage: ADO's "abandoned" status normalises to "CLOSED"
+        // (AdoClient.cs:1295). When the source branch is still on origin,
+        // the operator hasn't yet performed the documented remediation —
+        // surface the closed_unmerged_gate so the workflow stops instead of
+        // silently overwriting an in-flight rejected plan.
+        var (cmd, runner, ado) = CreateCommand();
+        StubAdoOrigin(runner);
+        StubLsRemote(runner, ChildPlanBranch, exists: true);
+        ado.ListResult = [new AdoPullRequest(
+            PullRequestId: 42,
+            Title: "plan",
+            Description: "",
+            SourceRefName: $"refs/heads/{ChildPlanBranch}",
+            TargetRefName: "refs/heads/feature/100",
+            Status: "abandoned",
+            MergeStatus: null,
+            CreatedBy: "user",
+            CreationDate: DateTime.UtcNow,
+            Url: "https://dev.azure.com/contoso/CloudVault/_git/repo/pullrequest/42")];
+        ado.PollResult = new AdoPullRequestPollData
+        {
+            Number = 42,
+            State = "CLOSED",
+            ReviewDecision = "REVIEW_REQUIRED",
+            Mergeable = "UNKNOWN",
+            HeadRefName = ChildPlanBranch,
+            HeadRefOid = "abc123",
+            BaseRefName = "feature/100",
+            MergedAt = null,
+            MergeCommit = null,
+            Body = "",
+            Reviews = [],
+        };
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.DetectState(RootId, ChildId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("closed_unmerged");
+        result.PrNumber.ShouldBe(42);
+        result.PrState.ShouldBe("CLOSED");
+        result.BranchExistsOnOrigin.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DetectState_AdoAbandonedPrBranchDeleted_NotStarted()
+    {
+        // Reproduces the abandoned-PR dead-end on ADO (cloudvault-service-api
+        // apex 62286666, polyphony-findings-2026-05-17.md §1). ADO has no
+        // delete-PR operation, so an abandoned PR sticks in PR history
+        // forever. Once the operator deletes the plan branch on origin (the
+        // remediation that closed_unmerged_gate's prompt asks for), the next
+        // detect-state call must classify the historical PR as no longer
+        // blocking and route to not_started so the architect can re-plan.
+        var (cmd, runner, ado) = CreateCommand();
+        StubAdoOrigin(runner);
+        StubLsRemote(runner, ChildPlanBranch, exists: false);
+        ado.ListResult = [new AdoPullRequest(
+            PullRequestId: 42,
+            Title: "plan",
+            Description: "",
+            SourceRefName: $"refs/heads/{ChildPlanBranch}",
+            TargetRefName: "refs/heads/feature/100",
+            Status: "abandoned",
+            MergeStatus: null,
+            CreatedBy: "user",
+            CreationDate: DateTime.UtcNow,
+            Url: "https://dev.azure.com/contoso/CloudVault/_git/repo/pullrequest/42")];
+        ado.PollResult = new AdoPullRequestPollData
+        {
+            Number = 42,
+            State = "CLOSED",
+            ReviewDecision = "REVIEW_REQUIRED",
+            Mergeable = "UNKNOWN",
+            HeadRefName = ChildPlanBranch,
+            HeadRefOid = "abc123",
+            BaseRefName = "feature/100",
+            MergedAt = null,
+            MergeCommit = null,
+            Body = "",
+            Reviews = [],
+        };
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.DetectState(RootId, ChildId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = Parse(output);
+        result.State.ShouldBe("not_started");
+        result.BranchExistsOnOrigin.ShouldBeFalse();
+        result.PrNumber.ShouldBeNull();
+        result.PrState.ShouldBeNull();
+    }
+
     // ─── Test fake ───────────────────────────────────────────────────────
 
     private sealed class FakeAdoClient : IAdoClient

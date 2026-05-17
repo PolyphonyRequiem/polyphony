@@ -808,6 +808,7 @@ $logDir = Join-Path ([System.IO.Path]::GetTempPath()) 'polyphony-sdlc-runs'
 [void](New-Item -ItemType Directory -Path $logDir -Force)
 $logTimestamp = (Get-Date -Format 'yyyyMMdd-HHmmss')
 $transcriptLog = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-transcript.log"
+$exitSidecar = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-exit.json"
 
 # Spawn conductor inside a new PowerShell console window. Pattern unchanged
 # from PR #302 — TTY-attached so gate agents can read stdin and the
@@ -817,22 +818,37 @@ $conductorCmd = 'conductor ' + (($conductorArgs | ForEach-Object {
     else { $_ }
 }) -join ' ')
 
+# Emit the conductor exit banner INSIDE the transcript's try block so
+# Stop-Transcript doesn't close the file before it lands (the earlier shape
+# put the Write-Host after `finally`, where it never reached the transcript
+# — see polyphony-findings-2026-05-17.md §3). Also drop a machine-readable
+# sidecar JSON so an operator returning to a dead window has a reliable
+# signal even if the transcript itself truncates for any other reason.
 $childCommand = @"
 Set-Location -LiteralPath '$($WorktreeRoot.Replace("'","''"))'
 `$Host.UI.RawUI.WindowTitle = 'polyphony-sdlc apex=$ApexId'
 Write-Host '[polyphony-sdlc] Worktree: $WorktreeRoot' -ForegroundColor Cyan
 Write-Host '[polyphony-sdlc] Command : $conductorCmd' -ForegroundColor Cyan
 Write-Host '[polyphony-sdlc] Transcript: $transcriptLog' -ForegroundColor Cyan
+Write-Host '[polyphony-sdlc] Exit sidecar: $exitSidecar' -ForegroundColor Cyan
 Write-Host ''
 Start-Transcript -LiteralPath '$transcriptLog' -Append | Out-Null
+`$exit = `$null
 try {
     $conductorCmd
     `$exit = `$LASTEXITCODE
+    Write-Host ''
+    Write-Host "[polyphony-sdlc] conductor exited with code: `$exit" -ForegroundColor Yellow
 } finally {
     Stop-Transcript | Out-Null
+    `$exitPayload = [ordered]@{
+        apex_id      = '$ApexId'
+        exit_code    = `$exit
+        completed_at = (Get-Date).ToString('o')
+        transcript   = '$transcriptLog'
+    } | ConvertTo-Json -Depth 3
+    Set-Content -LiteralPath '$exitSidecar' -Value `$exitPayload -Encoding UTF8
 }
-Write-Host ''
-Write-Host "[polyphony-sdlc] conductor exited with code: `$exit" -ForegroundColor Yellow
 Write-Host '[polyphony-sdlc] Window kept open (-NoExit). Close manually.' -ForegroundColor DarkGray
 "@
 
@@ -843,5 +859,6 @@ $proc = Start-Process -FilePath 'pwsh' `
 
 $resolved | Add-Member -NotePropertyName pid -NotePropertyValue $proc.Id
 $resolved | Add-Member -NotePropertyName transcript_log -NotePropertyValue $transcriptLog
-$resolved | Add-Member -NotePropertyName note -NotePropertyValue "Conductor launched in a new PowerShell window (TTY-attached). Dashboard URL appears in that window's first few lines. Tail transcript: Get-Content -Wait '$transcriptLog'"
+$resolved | Add-Member -NotePropertyName exit_sidecar -NotePropertyValue $exitSidecar
+$resolved | Add-Member -NotePropertyName note -NotePropertyValue "Conductor launched in a new PowerShell window (TTY-attached). Dashboard URL appears in that window's first few lines. Tail transcript: Get-Content -Wait '$transcriptLog'. Exit code lands in '$exitSidecar' when conductor terminates."
 $resolved | ConvertTo-Json -Depth 5
