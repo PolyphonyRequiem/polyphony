@@ -71,6 +71,7 @@ public static class PolicyResolver
             MaxRevisionCycles = specific?.MaxRevisionCycles ?? defaults.MaxRevisionCycles,
             MaxFixLoops = specific?.MaxFixLoops ?? defaults.MaxFixLoops,
             MaxRemediationCycles = specific?.MaxRemediationCycles ?? defaults.MaxRemediationCycles,
+            AllowAnyApprovalVote = specific?.AllowAnyApprovalVote ?? defaults.AllowAnyApprovalVote,
             MinSeverity = (specific?.MinSeverity ?? defaults.MinSeverity)?.ToString().ToLowerInvariant(),
             SeveritiesAtOrAbove = ComputeSeveritiesAtOrAbove(specific?.MinSeverity ?? defaults.MinSeverity),
             MaxQuestionLoops = specific?.MaxQuestionLoops ?? defaults.MaxQuestionLoops,
@@ -175,6 +176,16 @@ public sealed record ResolvedRule
     public int? MaxRevisionCycles { get; init; }
     public int? MaxFixLoops { get; init; }
     public int? MaxRemediationCycles { get; init; }
+
+    /// <summary>
+    /// PR-domain permissive-aggregation flag. When <c>true</c>, the
+    /// <c>pr poll-status-ado</c> verb treats any reviewer's positive vote
+    /// (+5 / +10) as APPROVED rather than requiring branch-policy required
+    /// reviewers. See <see cref="ScopeRule.AllowAnyApprovalVote"/> for
+    /// scope semantics and the stale-approval caveat.
+    /// </summary>
+    [JsonPropertyName("allow_any_approval_vote")]
+    public bool? AllowAnyApprovalVote { get; init; }
     public string? MinSeverity { get; init; }
 
     /// <summary>

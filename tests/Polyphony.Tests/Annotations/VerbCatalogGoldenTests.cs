@@ -191,9 +191,10 @@ public sealed class VerbCatalogGoldenTests
         // representative ADO verb against accidental signature drift —
         // the kind of drift PR #159's audit found across three call sites.
         //
-        // Authoritative signature (PrCommands.PollStatusAdo.cs:35-41):
+        // Authoritative signature (PrCommands.PollStatusAdo.cs):
         //   string organization, string project, string repositoryId,
-        //   int prNumber, bool includeMetadata = false, CancellationToken ct = default
+        //   int prNumber, bool includeMetadata = false,
+        //   bool allowAnyApprovalVote = false, CancellationToken ct = default
         var verb = Verbs["pr poll-status-ado"]?.AsObject();
         verb.ShouldNotBeNull("verb 'pr poll-status-ado' is missing from the catalog");
         var inputs = verb!["inputs"]!.AsArray();
@@ -203,7 +204,7 @@ public sealed class VerbCatalogGoldenTests
             i => i!.AsObject());
 
         byName.Keys.ShouldBe(
-            ["organization", "project", "repository-id", "pr-number", "include-metadata"],
+            ["organization", "project", "repository-id", "pr-number", "include-metadata", "allow-any-approval-vote"],
             ignoreOrder: false);
 
         // Move #2: organization/project/repository-id/pr-number use sentinel
@@ -220,6 +221,11 @@ public sealed class VerbCatalogGoldenTests
 
         byName["include-metadata"]["required"]!.GetValue<bool>().ShouldBeFalse();
         byName["include-metadata"]["default"]!.GetValue<bool>().ShouldBeFalse();
+
+        // v2.4.1: permissive aggregation defaults to false; workflows must
+        // opt in via --allow-any-approval-vote true.
+        byName["allow-any-approval-vote"]["required"]!.GetValue<bool>().ShouldBeFalse();
+        byName["allow-any-approval-vote"]["default"]!.GetValue<bool>().ShouldBeFalse();
 
         // CancellationToken must never appear as a CLI flag.
         byName.ShouldNotContainKey("ct");

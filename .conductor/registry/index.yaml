@@ -2,56 +2,56 @@ workflows:
   plan-level:
     description: "Recursive planning core — single hierarchy level (sub-workflow)"
     path: workflows/plan-level.yaml
-    versions: ["1.0.0", "1.0.1", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "1.0.1", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   implement-merge-group:
     description: "Implement a single merge group — coding, review, MG-PR open + merge (sub-workflow, called by apex-driver / feature-pr remediation)"
     path: workflows/implement-merge-group.yaml
-    versions: ["1.0.0", "1.1.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "1.1.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   feature-pr:
     description: "Feature PR lifecycle — review, fix loop, merge (sub-workflow)"
     path: workflows/feature-pr.yaml
-    versions: ["1.0.0", "1.0.1", "1.1.0", "1.2.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "1.0.1", "1.1.0", "1.2.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   github-pr:
     description: "GitHub PR lifecycle — review, fix loop, merge (sub-workflow)"
     path: workflows/github-pr.yaml
-    versions: ["1.0.0", "1.0.1", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "1.0.1", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   ado-pr:
     description: "ADO PR lifecycle — poll, human gates, merge with stuck-review escalation (sub-workflow)"
     path: workflows/ado-pr.yaml
-    versions: ["1.0.0", "1.0.1", "2.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "1.0.1", "2.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   close-out:
     description: "Post-implementation close-out and observation filing (sub-workflow)"
     path: workflows/close-out.yaml
-    versions: ["1.0.0", "1.0.1", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "1.0.1", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   actionable:
     description: "Actionable facet workflow — executor router, polyphony leg (evidence PR), or human leg (satisfaction gate)"
     path: workflows/actionable.yaml
-    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   root-fallback-gate:
     description: "Root fallback gate — resolves a sub-workflow invoked without a root work-item id (Phase 1 shared sub-workflow)"
     path: workflows/root-fallback-gate.yaml
-    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   apex-driver:
     description: "Apex SDLC driver — tree-walking dispatch over EdgeGraph waves with per-item worktree isolation, observable-state re-entry, renegotiation handling, and (PR #9) the iterate-until-stable outer loop that drives multi-facet items through plan→action→impl in a single invocation (Phase 7 keystone)"
     path: workflows/apex-driver.yaml
-    versions: ["1.0.0", "1.1.0", "1.2.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "1.1.0", "1.2.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   apex-wave-dispatch:
     description: "Per-wave inner sub-workflow invoked by apex-driver — for_each over wave items + integrate the wave; aggregates per-item progress counters for the outer loop (sub-workflow)"
     path: workflows/apex-wave-dispatch.yaml
-    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   apex-item-dispatch:
     description: "Per-item innermost sub-workflow invoked by apex-wave-dispatch — classify lifecycle, spawn/teardown worktree, dispatch lifecycle (sub-workflow)"
     path: workflows/apex-item-dispatch.yaml
-    versions: ["1.0.0", "1.1.0", "1.2.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "1.1.0", "1.2.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   cascade-remedy:
     description: "Cascade-remedy fan-out — runs remedy-stale-descendant per stale descendant of an integration root (sub-workflow)"
     path: workflows/cascade-remedy.yaml
-    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   remedy-stale-descendant:
     description: "Per-descendant stale-merge remedy — rebases or re-derives one descendant after an upstream PR merge (sub-workflow)"
     path: workflows/remedy-stale-descendant.yaml
-    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0"]
+    versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1"]
   research:
     description: "Archive-only research sub-workflow — synthesizes findings from the repo archive to answer architect research questions (sub-workflow)"
     path: workflows/research.yaml
-    versions: ["2.4.0"]
+    versions: ["2.4.0", "2.4.1"]

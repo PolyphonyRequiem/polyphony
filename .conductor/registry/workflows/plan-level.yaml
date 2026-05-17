@@ -34,10 +34,10 @@ workflow:
     the architect's plan to a plan branch, opening a plan PR, surfacing
     LLM advisory + human approval via native PR review, then merging and
     seeding child work items.
-  version: "2.4.0"
+  version: "2.4.1"
   entry_point: depth_guard
   metadata:
-    min_polyphony_version: "2.4.0"
+    min_polyphony_version: "2.4.1"
 
   limits:
     # Recursive planning: each level fans out plan_children_group (for_each)
@@ -1732,13 +1732,34 @@ agents:
       To proceed, take one of these actions in Azure DevOps, then click
       **Continue** to re-poll:
 
-      - **Approve** (`+5` or `+10`) — workflow merges next poll.
+      {% if pr_approval_policy_ado is defined and pr_approval_policy_ado.output.allow_any_approval_vote %}
+      _Permissive approval mode is **enabled** for this workspace
+      (`pr.allow_any_approval_vote: true`). Any reviewer's positive
+      vote counts._
+      {% else %}
+      _Permissive approval mode is **disabled** for this workspace
+      (default). Without an ADO branch policy that names required
+      reviewers, voluntary approvals do NOT satisfy the merge gate —
+      **Complete the PR** is the reliable way through. Set
+      `pr.allow_any_approval_vote: true` in `.polyphony-config/policy.yaml`
+      to make `+5`/`+10` votes merge on the next poll instead._
+      {% endif %}
+
+      - **Approve** (`+5` or `+10`) — merges next poll **only if**
+        permissive mode is on OR you are a required reviewer per ADO
+        branch policy.
       - **Complete the PR** — workflow detects merged state next poll.
+        (Works regardless of policy / required-reviewer config.)
       - **Wait for author** (`-5`) or a comment requesting changes —
         the analyzer reads the comment on the next poll and routes the
         architect back to revise.
       - **Reject** (`-10`) or **Abandon** the PR — workflow aborts this
-        plan-leg on the next poll.
+        plan-leg on the next poll. (Rejection still wins under
+        permissive mode.)
+
+      _Note: ADO does not invalidate reviewer votes when new commits
+      land. Under permissive mode an approval cast before a force-push
+      still counts after the push (see policy field doc)._
       {% else %}
       To proceed, take one of these actions on GitHub, then click
       **Continue** to re-poll:
@@ -2579,7 +2600,7 @@ agents:
     routes:
       - to: pr_inputs_missing_gate
         when: "{{ workflow.input.platform == 'ado' and (workflow.input.organization == '' or workflow.input.project == '' or workflow.input.repository == '') }}"
-      - to: poll_status_ado
+      - to: pr_approval_policy_ado
         when: "{{ workflow.input.platform == 'ado' }}"
       - to: poll_status
 
@@ -2699,6 +2720,36 @@ agents:
       - "--body"
       - "{{ plan_reviewer.output.comment_body }}"
     routes:
+      - to: pr_approval_policy_ado
+
+  # ── PR approval policy resolver (ADO leg) ─────────────────────────────
+  #
+  # Resolves the `pr` policy domain for the current work item type so
+  # `poll_status_ado` can honour `pr.allow_any_approval_vote` from
+  # policy.yaml. When true, any reviewer's positive vote (+5 / +10)
+  # counts as APPROVED — overriding ADO's strict required-reviewer
+  # aggregation that otherwise leaves polyphony-opened PRs stuck in
+  # REVIEW_REQUIRED forever (the typical case: no branch policy
+  # configures required reviewers, so no vote can satisfy the strict
+  # path).
+  #
+  # Default false preserves strict aggregation. See PolicyConfig.cs
+  # ScopeRule.AllowAnyApprovalVote for the full semantic + stale-approval
+  # caveat (ADO does not invalidate votes on new commits — operators
+  # enabling this flag accept that a pre-push approval still counts
+  # post-push).
+  - name: pr_approval_policy_ado
+    type: script
+    description: Resolve pr policy for permissive approval aggregation on ADO leg.
+    command: polyphony
+    args:
+      - "policy"
+      - "resolve"
+      - "--domain"
+      - "pr"
+      - "--scope"
+      - "type:{{ type_loader.output.type }}"
+    routes:
       - to: poll_status_ado
 
   # ── Poll status (ADO) ─────────────────────────────────────────────────
@@ -2722,6 +2773,8 @@ agents:
       - "--pr-number"
       - "{{ open_plan_pr_ado.output.pr_number if (open_plan_pr_ado is defined and open_plan_pr_ado.output.pr_number is defined) else state_detector.output.pr_number }}"
       - "--include-metadata"
+      - "--allow-any-approval-vote"
+      - "{{ pr_approval_policy_ado.output.allow_any_approval_vote | default(false) | string | lower }}"
     routes:
       - to: poll_error_gate
         when: "{{ poll_status_ado.output.error is defined and poll_status_ado.output.error }}"

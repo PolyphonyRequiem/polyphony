@@ -162,6 +162,7 @@ public static class PolicyLoader
         config.Pr.Defaults.Mode ??= PolicyMode.Warning;
         config.Pr.Defaults.MaxFixLoops ??= 10;
         config.Pr.Defaults.MaxRemediationCycles ??= 3;
+        config.Pr.Defaults.AllowAnyApprovalVote ??= false;
 
         config.OpenQuestions ??= new DomainPolicy();
         config.OpenQuestions.Defaults ??= new ScopeRule();

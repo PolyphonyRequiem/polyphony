@@ -325,6 +325,52 @@ public sealed class PolicyCommandsTests : CommandTestBase
     }
 
     [Fact]
+    public void Resolve_Pr_AllowAnyApprovalVote_DefaultsToFalseWhenAbsent()
+    {
+        // v2.4.1: when policy.yaml omits pr.defaults.allow_any_approval_vote,
+        // resolver surfaces the built-in default of false so workflows can
+        // unconditionally read pr_approval_policy_ado.output.allow_any_approval_vote.
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            pr:
+              defaults: { mode: warning, max_fix_loops: 10, max_remediation_cycles: 3 }
+            """);
+
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Resolve("default", "pr", fx.PolicyPath));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResolvedRule);
+        result.ShouldNotBeNull();
+        result.AllowAnyApprovalVote.ShouldBe(false);
+    }
+
+    [Fact]
+    public void Resolve_Pr_AllowAnyApprovalVote_RespectsDefaultsOverride()
+    {
+        // The dogfood scenario: cloudvault writes
+        // pr.defaults.allow_any_approval_vote: true to opt into permissive
+        // aggregation across all PR kinds in its repo.
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            pr:
+              defaults:
+                mode: warning
+                max_fix_loops: 10
+                max_remediation_cycles: 3
+                allow_any_approval_vote: true
+            """);
+
+        var cmd = CreateCommand();
+        var (_, output) = CaptureConsole(() => cmd.Resolve("default", "pr", fx.PolicyPath));
+
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResolvedRule);
+        result.ShouldNotBeNull();
+        result.AllowAnyApprovalVote.ShouldBe(true);
+    }
+
+    [Fact]
     public void Resolve_UnknownDomain_ReturnsConfigError()
     {
         using var fx = new PolicyFileFixture();

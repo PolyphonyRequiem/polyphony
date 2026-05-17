@@ -95,6 +95,41 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
         ado.LastPrId.ShouldBe(PrId);
     }
 
+    // ─── v2.4.1: --allow-any-approval-vote threading ──────────────────────
+
+    [Fact]
+    public async Task PollStatusAdo_DefaultFlag_PassesFalseToAdoClient()
+    {
+        // Strict aggregation is the default — workflows that don't opt in
+        // must continue to see ADO branch-policy semantics. Verifies that
+        // the verb does not silently flip to permissive mode.
+        var (cmd, ado) = CreateCommand();
+        ado.PollResult = OpenApprovedData();
+
+        var (exit, _) = await CaptureConsoleAsync(
+            () => cmd.PollStatusAdo(Org, Project, Repo, PrId));
+
+        exit.ShouldBe(ExitCodes.Success);
+        ado.LastAllowAnyApprovalVote.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task PollStatusAdo_AllowAnyApprovalVoteTrue_ThreadsThroughToAdoClient()
+    {
+        // The v2.4.1 fix: when the workflow passes --allow-any-approval-vote
+        // true (fed from pr.defaults.allow_any_approval_vote in policy.yaml),
+        // the verb must propagate the flag down to GetPullRequestPollDataAsync
+        // so the AggregateReviewDecision call inside it sees permissive mode.
+        var (cmd, ado) = CreateCommand();
+        ado.PollResult = OpenApprovedData();
+
+        var (exit, _) = await CaptureConsoleAsync(
+            () => cmd.PollStatusAdo(Org, Project, Repo, PrId, allowAnyApprovalVote: true));
+
+        exit.ShouldBe(ExitCodes.Success);
+        ado.LastAllowAnyApprovalVote.ShouldBeTrue();
+    }
+
     [Fact]
     public async Task PollStatusAdo_MergedState_NormalizesToMerged()
     {
@@ -471,6 +506,7 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
         public string? LastProject { get; private set; }
         public string? LastRepository { get; private set; }
         public int LastPrId { get; private set; }
+        public bool LastAllowAnyApprovalVote { get; private set; }
 
         public Task<AdoAuthStatus> GetAuthStatusAsync(CancellationToken ct = default)
             => throw new NotImplementedException();
@@ -504,6 +540,17 @@ public sealed class PrCommandsPollStatusAdoTests : CommandTestBase
             LastPrId = pullRequestId;
             if (ThrowOnPoll is not null) throw ThrowOnPoll;
             return Task.FromResult(PollResult);
+        }
+
+        public Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
+            string organization, string project, string repositoryId,
+            int pullRequestId, bool allowAnyApprovalVote, CancellationToken ct = default)
+        {
+            // Override the default-interface-method delegation so tests can
+            // observe whether the production call site threads the v2.4.1
+            // permissive-mode flag through correctly.
+            LastAllowAnyApprovalVote = allowAnyApprovalVote;
+            return GetPullRequestPollDataAsync(organization, project, repositoryId, pullRequestId, ct);
         }
 
         public Task<bool> SetPullRequestVoteAsync(

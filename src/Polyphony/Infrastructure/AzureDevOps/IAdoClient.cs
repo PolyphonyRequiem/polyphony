@@ -167,6 +167,30 @@ public interface IAdoClient
         CancellationToken ct = default);
 
     /// <summary>
+    /// Overload that opts the review-decision aggregator into permissive
+    /// mode — any reviewer's positive vote (+5 / +10) counts as APPROVED,
+    /// not just required-reviewer votes. See
+    /// <see cref="AdoClient.AggregateReviewDecision(IReadOnlyList{AdoReviewerRaw}, bool)"/>
+    /// for the full semantic + stale-approval caveat. Default
+    /// implementation delegates to the strict overload, so fakes and
+    /// callers that don't care about the flag get the original behaviour
+    /// for free.
+    /// </summary>
+    /// <param name="allowAnyApprovalVote">
+    /// When true, the aggregator returns APPROVED whenever ANY reviewer
+    /// cast a positive vote with no rejection present. Default false
+    /// preserves strict required-reviewer aggregation.
+    /// </param>
+    Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
+        string organization,
+        string project,
+        string repositoryId,
+        int pullRequestId,
+        bool allowAnyApprovalVote,
+        CancellationToken ct = default)
+        => GetPullRequestPollDataAsync(organization, project, repositoryId, pullRequestId, ct);
+
+    /// <summary>
     /// Submit (or update) a reviewer's vote on an ADO pull request.
     ///
     /// <para>

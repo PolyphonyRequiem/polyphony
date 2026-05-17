@@ -417,11 +417,21 @@ public sealed class AdoClient : IAdoClient
     }
 
     /// <inheritdoc />
+    public Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
+        string organization,
+        string project,
+        string repositoryId,
+        int pullRequestId,
+        CancellationToken ct = default)
+        => GetPullRequestPollDataAsync(organization, project, repositoryId, pullRequestId, allowAnyApprovalVote: false, ct);
+
+    /// <inheritdoc />
     public async Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
         string organization,
         string project,
         string repositoryId,
         int pullRequestId,
+        bool allowAnyApprovalVote,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(organization);
@@ -492,7 +502,7 @@ public sealed class AdoClient : IAdoClient
             }
         }
 
-        return ComposePollData(detail, reviewersRaw);
+        return ComposePollData(detail, reviewersRaw, allowAnyApprovalVote);
     }
 
     /// <inheritdoc />
@@ -1231,7 +1241,8 @@ public sealed class AdoClient : IAdoClient
     /// </summary>
     private static AdoPullRequestPollData ComposePollData(
         AdoPullRequestDetailRaw detail,
-        IReadOnlyList<AdoReviewerRaw> reviewersRaw)
+        IReadOnlyList<AdoReviewerRaw> reviewersRaw,
+        bool allowAnyApprovalVote)
     {
         var reviews = new AdoPullRequestReview[reviewersRaw.Count];
         for (int i = 0; i < reviewersRaw.Count; i++)
@@ -1254,7 +1265,7 @@ public sealed class AdoClient : IAdoClient
         {
             Number = detail.PullRequestId,
             State = state,
-            ReviewDecision = AggregateReviewDecision(reviewersRaw),
+            ReviewDecision = AggregateReviewDecision(reviewersRaw, allowAnyApprovalVote),
             Mergeable = AdoMergeStatus.Map(detail.MergeStatus),
             HeadRefName = StripRefsHeads(detail.SourceRefName) ?? string.Empty,
             HeadRefOid = detail.LastMergeSourceCommit?.CommitId ?? string.Empty,
@@ -1303,16 +1314,38 @@ public sealed class AdoClient : IAdoClient
     /// reviewer and every required reviewer voted approved (10) or approved
     /// with suggestions (5). All other shapes (no required reviewers, mixed
     /// votes, waiting-for-author) are <c>REVIEW_REQUIRED</c>.
+    ///
+    /// <para>When <paramref name="allowAnyApprovalVote"/> is <c>true</c>,
+    /// the aggregator additionally returns <c>APPROVED</c> whenever ANY
+    /// reviewer (required or voluntary) has cast a positive vote
+    /// (+5 or +10) and no rejection is present. This permissive mode is
+    /// opt-in via <c>pr.allow_any_approval_vote</c> in policy.yaml; it
+    /// exists because polyphony-opened ADO PRs typically have no branch
+    /// policy configured for required reviewers, leaving the default
+    /// strict path unsatisfiable. Rejection (-10) still shortcircuits to
+    /// <c>REJECTED</c> regardless of the flag — operators retain a hard
+    /// veto.</para>
+    ///
+    /// <para><b>Stale-approval caveat.</b> ADO does not invalidate
+    /// reviewer votes on new commits (unlike GitHub's
+    /// <c>dismiss_stale_reviews</c> branch protection). With
+    /// <paramref name="allowAnyApprovalVote"/> enabled, an approval cast
+    /// before a force push will still count after the push. SHA-bound
+    /// approval semantics are tracked under AB#3104 PR2.</para>
     /// </summary>
-    internal static string AggregateReviewDecision(IReadOnlyList<AdoReviewerRaw> reviewers)
+    internal static string AggregateReviewDecision(
+        IReadOnlyList<AdoReviewerRaw> reviewers,
+        bool allowAnyApprovalVote = false)
     {
         var anyRejection = false;
+        var anyApprovalVote = false;
         var requiredCount = 0;
         var requiredApproved = 0;
         for (int i = 0; i < reviewers.Count; i++)
         {
             var r = reviewers[i];
             if (r.Vote == -10) anyRejection = true;
+            if (r.Vote >= 5) anyApprovalVote = true;
             if (r.IsRequired)
             {
                 requiredCount++;
@@ -1321,6 +1354,7 @@ public sealed class AdoClient : IAdoClient
         }
         if (anyRejection) return "REJECTED";
         if (requiredCount > 0 && requiredApproved == requiredCount) return "APPROVED";
+        if (allowAnyApprovalVote && anyApprovalVote) return "APPROVED";
         return "REVIEW_REQUIRED";
     }
 
