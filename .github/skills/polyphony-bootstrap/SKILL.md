@@ -62,7 +62,11 @@ Pick **one real work item ID** to smoke-test against — list with
 
 Follow `docs/onboarding-guide.md` sections 3–9 to:
 
-- Verify (or migrate to) the bare-repo + per-run worktree layout (§ 2)
+- Verify (or create) the bare-repo + per-run worktree layout (§ 2)
+  - **Fresh clone** (no existing local clone): run
+    `~/.polyphony/bin/Bootstrap-BareRepo.ps1 -RemoteUrl <url> [-ParentDir <dir>] [-Commit]`
+    to produce the canonical `<parent>/<repo>.git/ + <parent>/<repo>/ + <parent>/<repo>-runs/` layout.
+  - **Existing operator clone**: run `Migrate-ToBareRepo.ps1` instead.
 - Select your process template (Basic / Agile / Scrum / CMMI / custom)
 - Run `bootstrap-conductor.ps1 -ProcessTemplate <template>` to scaffold
   `.polyphony-config/`

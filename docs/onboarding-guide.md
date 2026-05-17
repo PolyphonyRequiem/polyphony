@@ -144,6 +144,27 @@ git -C ~/projects/<repo> status   # → clean, on main
 
 The script is idempotent, dry-run by default, and never touches `~/projects/<repo>/` until you've explicitly moved it aside in step 1's printed instructions. See [`docs/per-run-worktree-layout.md`](per-run-worktree-layout.md) for the manual procedure if you need to migrate without the script.
 
+### Fresh clone (no existing local checkout)
+
+If you don't have the repo locally yet, use `Bootstrap-BareRepo.ps1` instead — it goes straight to the canonical bare-repo + worktree layout without any migration plumbing:
+
+```powershell
+# Dry-run (default): prints the plan, creates nothing.
+~/.polyphony/bin/Bootstrap-BareRepo.ps1 -RemoteUrl https://github.com/Org/<repo>.git
+
+# Execute:
+~/.polyphony/bin/Bootstrap-BareRepo.ps1 -RemoteUrl https://github.com/Org/<repo>.git -Commit
+
+# Optional overrides:
+#   -ParentDir D:\repos          (default: ~/projects)
+#   -RepoName custom-name        (default: derived from URL)
+#   -MainBranch develop          (default: remote's HEAD branch)
+```
+
+`Bootstrap-BareRepo.ps1` is idempotent: re-running on an existing canonical layout is a no-op. Partial-state recovery (bare present + main worktree missing) is supported as long as the bare's `origin` URL matches the `-RemoteUrl` you pass — identity mismatches refuse rather than overwrite.
+
+On Windows the script always probes via `git --git-dir=<bare>` so it works under `git config --global safe.bareRepository explicit`.
+
 ### Verifying the layout
 
 Two preflight probes confirm the layout is wired correctly:
