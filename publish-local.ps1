@@ -122,11 +122,24 @@ if (-not $resolved) {
 }
 
 $active = $resolved[0]
+# Apphost companion files. .NET's apphost (polyphony.exe) is a thin shim that
+# locates and loads polyphony.dll from the SAME directory. Mirroring only the
+# .exe leaves a stale .dll next to it, so the operator-facing binary silently
+# runs the previous build. .deps.json + .runtimeconfig.json are also required
+# at load time; .pdb is mirrored so stack traces stay symbolic.
+$apphostCompanions = @('polyphony.dll', 'polyphony.deps.json', 'polyphony.runtimeconfig.json', 'polyphony.pdb')
 foreach ($path in $resolved) {
     if ($path -ieq $primaryExe) { continue }
     Write-Host "Mirroring to PATH-resolvable location: $path" -ForegroundColor Cyan
+    $mirrorDir = Split-Path -Parent $path
     try {
         Copy-Item -Path $primaryExe -Destination $path -Force
+        foreach ($companion in $apphostCompanions) {
+            $src = Join-Path $primaryDest $companion
+            if (Test-Path $src) {
+                Copy-Item -Path $src -Destination (Join-Path $mirrorDir $companion) -Force
+            }
+        }
     } catch {
         Write-Warning "Failed to mirror $primaryExe -> $path : $($_.Exception.Message)"
     }

@@ -5,9 +5,9 @@ namespace Polyphony.Configuration;
 
 /// <summary>
 /// Validates a <see cref="ProcessConfig"/> against the rules family
-/// (V-1 through V-21, with V-17 and V-18 retired alongside the G2 PG removal).
+/// (V-1 through V-22, with V-17 and V-18 retired alongside the G2 PG removal).
 /// Rules V-1–V-8, V-15, V-16, V-19, V-20, V-21 produce errors (block execution).
-/// Rules V-9–V-14 produce warnings (informational, file-existence checks).
+/// Rules V-9–V-14 and V-22 produce warnings (informational, file-existence and content checks).
 /// </summary>
 public static class ConfigValidator
 {
@@ -238,10 +238,41 @@ public static class ConfigValidator
             }
 
             // V-14: profile.yaml
-            if (!File.Exists(Path.Combine(repoRoot, ".polyphony-config", "profile.yaml")))
+            var profilePath = Path.Combine(repoRoot, ".polyphony-config", "profile.yaml");
+            if (!File.Exists(profilePath))
             {
                 warnings.Add(Warning("V-14",
                     "Profile file missing: .polyphony-config/profile.yaml"));
+            }
+            else
+            {
+                // V-22: unresolved bootstrap TODO placeholders in profile.yaml.
+                // bootstrap-conductor.ps1 emits `<!-- TODO: ... -->` placeholders
+                // for fields the operator must fill in (project name, repository,
+                // tech stack, etc.). A profile that still carries these will
+                // parse cleanly and report `is_valid: true`, but the first agent
+                // run will produce nonsense because the architect/coder prompts
+                // inject the placeholder text verbatim. Advisory (warning, not
+                // error) so the bootstrap-emitted profile still validates.
+                string[] lines;
+                try
+                {
+                    lines = File.ReadAllLines(profilePath);
+                }
+                catch (IOException)
+                {
+                    lines = Array.Empty<string>();
+                }
+
+                for (var i = 0; i < lines.Length; i++)
+                {
+                    var idx = lines[i].IndexOf("<!-- TODO:", StringComparison.Ordinal);
+                    if (idx < 0) continue;
+
+                    var snippet = lines[i].Substring(idx).Trim();
+                    warnings.Add(Warning("V-22",
+                        $"Unresolved bootstrap TODO in .polyphony-config/profile.yaml:{i + 1}: {snippet}"));
+                }
             }
         }
 

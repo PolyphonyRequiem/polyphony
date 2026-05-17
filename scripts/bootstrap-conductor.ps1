@@ -33,8 +33,12 @@ $ErrorActionPreference = 'Stop'
 # ── Process template type registries ─────────────────────────────────────────
 # Each template maps to its ordered type list. The hierarchy is always:
 #   [0] = top-level plannable, [1] = mid-level plannable+implementable, [2] = leaf implementable
-# [P5] Hardcoded type-name registry removed. Type names must be injected at runtime from validator output.
-# For test compatibility, load legacy values for known templates from process-type-registry.json, but emit a deprecation warning and do not use in production.
+#
+# Loaded from process-type-registry.json (sibling of this script) so the
+# bootstrap CLI ships the canonical template→types mapping for every
+# supported template (Agile, Scrum, Basic, CMMI, …). The bootstrap step
+# generates `process-config.yaml` from this mapping; downstream
+# polyphony commands then read the generated config via `ConfigValidator`.
 $processTypeRegistryPath = Join-Path $PSScriptRoot 'process-type-registry.json'
 if (Test-Path $processTypeRegistryPath) {
     $script:TemplateTypes = @{}
@@ -42,10 +46,9 @@ if (Test-Path $processTypeRegistryPath) {
     foreach ($key in $raw.PSObject.Properties.Name) {
         $script:TemplateTypes[$key] = @($raw.$key)
     }
-    Write-Warning '[P5] $script:TemplateTypes is deprecated and loaded from process-type-registry.json. Use validator output for type names.'
 } else {
-    $script:TemplateTypes = @{}
-    Write-Warning '[P5] process-type-registry.json not found. $script:TemplateTypes is empty. Use validator output for type names.'
+    Write-Error "[bootstrap-conductor] process-type-registry.json not found next to bootstrap-conductor.ps1 (looked at: $processTypeRegistryPath). The bootstrap CLI cannot determine the template→types mapping without it. Reinstall polyphony (publish-local.ps1 / install.ps1) so the launcher scripts are mirrored alongside the binary."
+    exit 1
 }
 
 # State mappings per template for transitions.
