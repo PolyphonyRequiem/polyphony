@@ -1,9 +1,33 @@
-# github-pr — GitHub PR lifecycle: review, fix loop, and merge.
+# github-pr — GitHub PR lifecycle: bot review, sentiment-driven fix loop, and merge.
 #
-# Platform-specific PR sub-workflow for GitHub. Uses an Opus 1M reviewer
-# agent for thorough code review, a Sonnet fixer agent for addressing
-# feedback in a loop (capped at 10 iterations per P7), and a merger
-# agent to complete the merge.
+# Platform-specific PR sub-workflow for GitHub under the sentiment-driven
+# PR review model (mirrors plan-level.yaml's loop, scaled to the
+# implementer's PR).
+#
+# Loop shape:
+#   1. guidance_loader  — repo + per-type agent guidance for the prompts below.
+#   2. pr_initial_reviewer — Opus produces a single marker-prefixed comment
+#      body (NO `gh api ... event=APPROVE` — review verdict signals are
+#      reserved for humans). The bot's own comment is identified by the
+#      `polyphony:agent-comment agent=pr_initial_reviewer` marker.
+#   3. pr_initial_reviewer_poster — pwsh posts the body via `gh pr comment`.
+#   4. poll_status — deterministic 4-way `route` field
+#      ({merge_now | already_merged | abort_unmerged | none}).
+#        • merge_now      → pr_merger.
+#        • already_merged → emit merged=true, $end.
+#        • abort_unmerged → closed_unmerged_emitter (merged=false + reason).
+#        • none           → pr_feedback_analyzer.
+#   5. pr_feedback_analyzer (Sonnet) reads comments + threads + reviews and
+#      decides whether the implementer needs to revise:
+#        • has_negative_feedback=true  → approvals_policy → revise_counter
+#          → pr_fixer → push commits → back to poll_status.
+#        • has_negative_feedback=false → pending_poll_counter → either the
+#          pending throttle gate (poll cap not reached) or the stuck-review
+#          escalation (cap reached).
+#
+# revise_counter is digest-keyed: it only increments when the analyzer's
+# feedback_digest changes — re-polls during CI / between fixer pushes do
+# NOT consume budget.
 #
 # Interface contract: Accepts the same inputs and produces the same outputs
 # as ado-pr.yaml (pr_number, branch_name, target_branch, review_policy →
@@ -12,21 +36,24 @@
 #
 # Invariants:
 #   Pre:  PR exists (created by pr_submit); platform is 'github'.
-#   Post: PR is reviewed, fixed (if needed), and merged. Outputs merged
-#         and pr_url for downstream consumers.
+#   Post: PR is reviewed, fixed if needed, and merged — OR exits with
+#         merged=false + feedback_summary so the parent (feature-pr.yaml)
+#         can either accept the abandonment or run its remediation cycle.
 
 workflow:
   name: github-pr
   description: >-
-    GitHub PR lifecycle. Reviews the PR with Opus 1M, fixes issues via
-    Sonnet in a loop (max 10 iterations), and merges when approved.
+    GitHub PR lifecycle under the sentiment-driven review model. Posts a
+    single advisory bot review (marker-only — no native approval vote),
+    then loops poll → analyze → fix → push until the operator merges, the
+    operator closes the PR, or the revise cap fires.
   version: "2.4.0"
   entry_point: guidance_loader
   metadata:
     min_polyphony_version: "2.4.0"
 
   limits:
-    max_iterations: 50
+    max_iterations: 200
 
   input:
     pr_number:
@@ -51,9 +78,9 @@ workflow:
       required: true
       description: >-
         Work item id for the PR's owning scope. Drives agent-guidance
-        type-refinement lookup so pr_reviewer and pr_fixer get repo +
-        per-type guidance. Threaded by the parent workflow
-        (feature-pr.yaml uses workflow.input.work_item_id).
+        type-refinement lookup and is part of the composite counter
+        keys so the sentiment loop's pending-poll + revise counters
+        don't collide across siblings.
 
 tools:
   - gh
@@ -64,28 +91,37 @@ output:
   # 'true'/'false' rather than the capital 'True'/'False' Jinja produces
   # for Python booleans (see conductor-mechanics M7).
   #
-  # pr_merger may not run — review_router routes around it on
-  # changes_requested, on rev-cap exhaustion (force-abort), and on
-  # human-gate abort. Per M3 (StrictUndefined), guard `pr_merger is
-  # defined` first; without the guard, accessing pr_merger.output
-  # raises TemplateError on every non-merge terminal.
+  # pr_merger may not run — the workflow can exit without a merge via
+  # closed_unmerged_emitter (operator closed the PR). Per M3
+  # (StrictUndefined), guard `pr_merger is defined` first.
   merged: >-
     {%- if pr_merger is defined -%}{{ (pr_merger.output.merged | default(false)) | string | lower }}
+    {%- elif closed_unmerged_emitter is defined -%}false
     {%- else -%}false{%- endif -%}
   pr_url: >-
     {%- if pr_merger is defined -%}{{ pr_merger.output.pr_url | default('') }}
+    {%- elif closed_unmerged_emitter is defined -%}{{ closed_unmerged_emitter.output.pr_url | default('') }}
+    {%- else -%}{%- endif -%}
+  # When the PR exits unmerged with bot-analyzed negative feedback still
+  # outstanding (e.g. operator closed the PR after pushing back, or the
+  # revise cap fired and the operator chose abort), surface the analyzer's
+  # last feedback_summary so the parent feature-pr.yaml's remediation
+  # cycle can include it in the remediation_planner prompt. Empty string
+  # on clean merges or simple early-aborts.
+  feedback_summary: >-
+    {%- if pr_feedback_analyzer is defined and pr_feedback_analyzer.output.feedback_summary is defined -%}{{ pr_feedback_analyzer.output.feedback_summary }}
     {%- else -%}{%- endif -%}
 
 agents:
   # ── Guidance loader ────────────────────────────────────────────────────
   #
   # Loads repo-specific agent guidance for the PR's owning work item.
-  # Returns role-wide + per-type refinement; pr_reviewer reads
+  # Returns role-wide + per-type refinement; pr_initial_reviewer reads
   # `reviewer.*` and pr_fixer reads `coder.*` via Jinja2 conditionals so
   # prompts degrade gracefully when no guidance files exist.
   - name: guidance_loader
     type: script
-    description: Load agent guidance markdown files for pr_reviewer and pr_fixer prompts
+    description: Load agent guidance markdown files for pr_initial_reviewer and pr_fixer prompts
     command: polyphony
     args:
       - "plan"
@@ -93,79 +129,113 @@ agents:
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
     routes:
-      - to: pr_reviewer
+      - to: pr_initial_reviewer
 
-  # ── PR reviewer ────────────────────────────────────────────────────────
+  # ── PR initial reviewer (LLM advisory — sentiment-driven model) ───────
   #
-  # Reviews the PR using Opus 1M for thorough, large-context code review.
-  # Fetches the PR diff via gh api, evaluates code quality, correctness,
-  # and alignment with requirements. Routes to merger if approved, or to
-  # the review counter for iteration tracking before fixes.
+  # Single LLM reviewer that runs ONCE per workflow invocation, producing
+  # a marker-prefixed comment body containing only blocking_concerns.
+  # The downstream poster script handles posting; the LLM does NOT call
+  # `gh` directly (mirrors plan_reviewer + plan_reviewer_poster — single
+  # site for the marker-prepend contract).
   #
-  # Invariants:
-  #   Pre:  PR exists and is open on GitHub.
-  #   Post: output.verdict is 'approved' or 'changes_requested';
-  #         output.feedback contains detailed review comments.
-  - name: pr_reviewer
+  # NO native review vote (`gh api ... event=APPROVE/REQUEST_CHANGES`) —
+  # those are reserved for humans under the sentiment-driven model.
+  # Once posted, the bot's own comment is identified by the
+  # `polyphony:agent-comment agent=pr_initial_reviewer ...` marker so
+  # pr_feedback_analyzer can include / exclude it from "human feedback"
+  # consideration.
+  #
+  # Posted body shape (load-bearing — keep aligned with pr_feedback_analyzer
+  # and plan_reviewer):
+  #   - Line 1: marker
+  #   - Then: "Blocking concerns" header + bullets (or "_No blocking
+  #     concerns identified._" when empty).
+  # Strengths / non-blocking suggestions / summary stay in output fields
+  # for audit (dashboard, run logs) but are NEVER posted.
+  - name: pr_initial_reviewer
     type: agent
     model: claude-opus-4.6
-    description: Review PR for correctness, quality, and requirement alignment
+    description: Produce a single advisory PR review (audit in output; minimal post via poster script)
     tools:
       - gh
       - filesystem
     prompt: |
-      You are the PR reviewer for the twig SDLC workflow.
+      You are an advisory PR reviewer for the polyphony SDLC workflow
+      under the sentiment-driven PR review model.
 
       ## Your Mission
 
-      Perform a thorough code review of PR #{{ workflow.input.pr_number }} on
-      the `{{ workflow.input.branch_name }}` branch targeting
-      `{{ workflow.input.target_branch }}`.
+      Read the changes in PR #{{ workflow.input.pr_number }} on the
+      `{{ workflow.input.branch_name }}` branch targeting
+      `{{ workflow.input.target_branch }}`, evaluate them against the
+      rubric below, and emit your assessment as structured output. A
+      downstream agent (`pr_feedback_analyzer`) reads your
+      `blocking_concerns` to decide whether to send the implementer
+      back for revision. You do NOT vote `--approve` /
+      `--request-changes`; you do NOT post any comment yourself
+      (a downstream poster script handles posting using your
+      `comment_body` field).
 
       ## Instructions
 
       1. **Fetch the PR diff** — Use `gh pr diff {{ workflow.input.pr_number }}`
          to see all changes.
-
       2. **Read the PR description** — Use `gh pr view {{ workflow.input.pr_number }}`
          to understand the intent and linked work items.
+      3. **Review the changes** against the rubric.
+      4. **Populate the output fields** — including a marker-prefixed
+         `comment_body` per the shape below.
 
-      3. **Review the changes** for:
-         - **Correctness** — Does the code do what it claims?
-         - **Quality** — Is the code clean, idiomatic, and maintainable?
-         - **Tests** — Are changes adequately tested?
-         - **Regressions** — Could these changes break existing behavior?
-         - **Security** — Any security concerns (secrets, injection, etc.)?
+      ## Severity discipline (load-bearing)
 
-      4. **Post review comments** — Use `gh api` to submit a PR review with
-         your findings:
-         ```
-         gh api repos/{owner}/{repo}/pulls/{{ workflow.input.pr_number }}/reviews \
-           --method POST \
-           -f event="APPROVE" \
-           -f body="Review comments here"
-         ```
-         Use event `APPROVE` if the PR is ready to merge, or
-         `REQUEST_CHANGES` if issues need fixing.
+      Be **conservative** with `blocking_concerns`. Every entry sends
+      the implementer back to revise; chains of pedantic blocking
+      concerns cause revise-loop churn until the cap fires.
 
-      ## Output
+      - `blocking_concerns` — issues that would HARM the shipping change
+        if merged as-is. Examples: bug in the implementation, missing
+        test coverage for changed behavior, regression risk in untested
+        code paths, security concerns (secrets, injection, etc.),
+        unimplemented acceptance criteria. If you are unsure, put it
+        in `non_blocking_suggestions` instead.
+      - `non_blocking_suggestions` — polish, phrasing, "would be nicer
+        if". Audit only — never posted, never gates merge.
 
-      Return a JSON object:
-      ```json
-      {
-        "verdict": "approved | changes_requested",
-        "feedback": "Detailed review summary",
-        "issues": ["List of specific issues if changes_requested"],
-        "severity": "critical | major | minor"
-      }
+      ## Rubric
+
+      | Criterion | Notes |
+      |---|---|
+      | Correctness | Does the code do what it claims? Any logic errors? |
+      | Tests | Are changes adequately tested? Are tests meaningful? |
+      | Regressions | Could these changes break existing behavior? |
+      | Security | Any security concerns (secrets, injection, etc.)? |
+      | Acceptance criteria | Are the linked work item's ACs satisfied? |
+
+      ## Comment body shape (load-bearing)
+
+      The `comment_body` field MUST follow this exact structure. The
+      first line MUST be the marker (no leading whitespace, no preceding
+      content). Do NOT add strengths, summary, non-blocking suggestions,
+      or any other section — only the blocking-concerns list:
+
+      ```
+      <!-- polyphony:agent-comment agent=pr_initial_reviewer pr_number={{ workflow.input.pr_number }} -->
+      ### 🤖 Polyphony PR reviewer
+
+      **Blocking concerns** (sentiment-driven loop reads this section):
+
+      - <blocking concern 1>
+      - <blocking concern 2>
+
+      _Advisory only — pr_feedback_analyzer determines routing. Full
+      rubric audit available in the workflow logs._
       ```
 
-      ## Decision Criteria
-
-      - **Approve** if the code is correct, well-tested, and safe to merge
-      - **Request changes** for bugs, missing tests, security issues, or
-        broken requirements
-      - Do NOT request changes for style preferences or minor formatting
+      When `blocking_concerns` is empty, replace the bulleted list with
+      the single line `_No blocking concerns identified._` — keep the
+      marker and the header. The analyzer needs a marker comment on
+      every run to recognize the bot.
 
       {% if guidance_loader is defined and guidance_loader.output.agents.pr_reviewer is defined and guidance_loader.output.agents.pr_reviewer %}
       ## Repo-Specific Guidance — pr_reviewer (override)
@@ -182,126 +252,554 @@ agents:
 
       {{ guidance_loader.output.reviewer.type_refinement }}
       {% endif %}
+
+      ## Output
+
+      Return JSON:
+      ```json
+      {
+        "posted": false,
+        "pr_number": {{ workflow.input.pr_number }},
+        "summary": "<one paragraph — audit only, not posted>",
+        "strengths": ["..."],
+        "blocking_concerns": ["..."],
+        "non_blocking_suggestions": ["..."],
+        "comment_body": "<full marker-prefixed markdown per the shape above>"
+      }
+      ```
     output:
-      verdict:
+      posted:
+        type: boolean
+        description: Always false — the downstream poster script does the real posting.
+      pr_number:
+        type: number
+        description: PR number that was reviewed
+      summary:
         type: string
-        description: "Either 'approved' or 'changes_requested'"
-      feedback:
-        type: string
-        description: Detailed review summary
-      issues:
+        description: One-paragraph summary of the reviewer's overall assessment (audit-only — not posted)
+      strengths:
         type: array
-        description: Specific issues if changes_requested (empty array if approved)
+        description: Implementation strengths (audit-only — not posted)
         items:
           type: string
-      severity:
+      blocking_concerns:
+        type: array
+        description: Issues that would harm the shipping change. Read by pr_feedback_analyzer; only these gate merge.
+        items:
+          type: string
+      non_blocking_suggestions:
+        type: array
+        description: Polish / nice-to-have items (audit-only — not posted and never gating).
+        items:
+          type: string
+      comment_body:
         type: string
-        description: "One of 'critical', 'major', 'minor'"
+        description: |
+          The fully-rendered markdown comment ready to be posted by
+          pr_initial_reviewer_poster. MUST start with the
+          `<!-- polyphony:agent-comment agent=pr_initial_reviewer pr_number=... -->`
+          marker line. Body contains ONLY the blocking_concerns list
+          (or "No blocking concerns identified" when empty).
     routes:
-      - to: pr_merger
-        when: "{{ pr_reviewer.output.verdict == 'approved' }}"
-      - to: review_counter
-        when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
-      # Catch-all: any unrecognized verdict (model hallucination, missing
-      # field) is treated as changes_requested so the loop can recover via
-      # the iteration counter rather than failing with "no matching route".
-      - to: review_counter
+      - to: pr_initial_reviewer_poster
 
-  # ── Review iteration counter ───────────────────────────────────────────
+  # ── PR initial reviewer poster ────────────────────────────────────────
   #
-  # Tracks the number of review → fix iterations. Uses a counter file
-  # scoped to the PR number to persist state across loop iterations.
-  # Enforces the max 10 iteration cap per P7 (fail honestly, don't
-  # auto-approve). Routes to fixer if under limit, or to human gate
-  # if limit reached.
+  # Posts pr_initial_reviewer's rendered comment_body to the GitHub PR via
+  # `gh pr comment`. Mirrors plan_reviewer_poster — single deterministic
+  # posting site that owns the marker-prepend contract.
+  - name: pr_initial_reviewer_poster
+    type: script
+    description: Post pr_initial_reviewer's rendered comment to the GitHub PR.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-NoLogo"
+      - "-Command"
+      - |
+        $ErrorActionPreference = 'Stop'
+        $prNumber = [int]'{{ workflow.input.pr_number }}'
+        $body     = @'
+        {{ pr_initial_reviewer.output.comment_body }}
+        '@
+        try {
+          $null = gh pr comment $prNumber --body $body 2>&1
+          @{ posted = $true; pr_number = $prNumber } | ConvertTo-Json -Compress
+        } catch {
+          @{ posted = $false; error = $_.Exception.Message; pr_number = $prNumber } | ConvertTo-Json -Compress
+          exit 1
+        }
+    routes:
+      - to: poll_status
+
+  # ── Poll status ───────────────────────────────────────────────────────
+  #
+  # Single-shot poll of the implementer's PR. Returns the platform-neutral
+  # envelope including the deterministic 4-way `route` field computed by
+  # PrPollTerminalRoute.Classify:
+  #
+  #   • `merge_now`       — approved, no unresolved actionable threads
+  #   • `already_merged`  — operator merged on GitHub
+  #   • `abort_unmerged`  — PR closed (no merge) — operator rejection
+  #   • `none`            — mixed signals; defer to pr_feedback_analyzer
+  #
+  # No --include-metadata: implementer PRs don't carry parent-change
+  # front-matter (only plan PRs do).
+  #
+  # The PR URL is reconstructed from workflow inputs — gh resolves
+  # `owner/repo` from the remote, so passing the bare PR number is
+  # sufficient. The verb wants a full URL, so we synthesise it via gh:
+  # construct via `gh repo view` once and hand the verb the result.
   #
   # Invariants:
-  #   Pre:  pr_reviewer.output.verdict == 'changes_requested'.
-  #   Post: output.iteration is the current count (1-based);
-  #         output.under_limit indicates whether fixes may continue.
-  - name: review_counter
+  #   Pre:  pr_initial_reviewer_poster has posted a marker comment so the
+  #         analyzer can recognize the bot.
+  #   Post: output.route in {merge_now, already_merged, abort_unmerged, none}.
+  - name: poll_status
     type: script
-    description: Track review-fix iteration count (max 10 per P7)
+    description: Single-shot poll of GitHub PR review state (deterministic 4-way route)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-NoLogo"
+      - "-Command"
+      - |
+        $ErrorActionPreference = 'Stop'
+        $prNumber = [int]'{{ workflow.input.pr_number }}'
+        # gh resolves owner/repo from the current cwd's git remote.
+        # poll-status needs a full PR URL; build one via gh.
+        $repoJson = gh repo view --json owner,name 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $repoJson) {
+          @{ error = 'failed to resolve repo via gh repo view'; route = 'none' } | ConvertTo-Json -Compress
+          exit 0
+        }
+        $repo    = $repoJson | ConvertFrom-Json
+        $prUrl   = "https://github.com/$($repo.owner.login)/$($repo.name)/pull/$prNumber"
+        $json    = polyphony pr poll-status --pr-url $prUrl 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) {
+          @{ error = "polyphony pr poll-status failed: $json"; route = 'none' } | ConvertTo-Json -Compress
+          exit 0
+        }
+        $json.Trim()
+    routes:
+      - to: poll_error_gate
+        when: "{{ poll_status.output.error is defined and poll_status.output.error }}"
+      - to: closed_unmerged_emitter
+        when: "{{ poll_status.output.route == 'abort_unmerged' }}"
+      - to: already_merged_emitter
+        when: "{{ poll_status.output.route == 'already_merged' }}"
+      - to: pr_merger
+        when: "{{ poll_status.output.route == 'merge_now' }}"
+      - to: pr_feedback_analyzer
+        when: "{{ poll_status.output.route == 'none' }}"
+      # Catch-all per M4 — defensive deferral to analyzer.
+      - to: pr_feedback_analyzer
+
+  # ── Poll error gate ───────────────────────────────────────────────────
+  - name: poll_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ PR Poll Failed — PR #{{ workflow.input.pr_number }}
+
+      Could not read the PR review state for PR
+      **#{{ workflow.input.pr_number }}**.
+
+      **State:** `{{ poll_status.output.state if poll_status.output.state is defined else "unknown" }}`
+      **Error:** {{ poll_status.output.error if poll_status.output.error is defined else "Unexpected state — check polyphony pr poll-status output schema" }}
+
+      ---
+
+      Choose an action:
+      - **Retry** — re-poll the PR
+      - **Abort** — halt the entire run (terminates the conductor process)
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: poll_status
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
+
+  # ── Already-merged emitter ────────────────────────────────────────────
+  #
+  # Operator-merged the PR through the GitHub UI. Emit the canonical
+  # merged=true terminal without burning a pr_merger call (which would
+  # also succeed but emits a less clear log message). Mirrors
+  # ado-pr.yaml's ado_pr_already_merged_emitter.
+  - name: already_merged_emitter
+    type: script
+    description: Emit merged=true when poll_status saw operator already merged the PR
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          merged = $true;
+          pr_url = '{{ poll_status.output.pr_url | default("") }}';
+          reason = 'already_merged_idempotent_reentry'
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Closed-unmerged emitter ───────────────────────────────────────────
+  #
+  # Operator closed the GitHub PR without merging. Per the sentiment-
+  # driven design: "the ONLY valid 'continue' is user merged or user
+  # closed" — close == rejection on GitHub. Emit merged=false with the
+  # PR URL so feature-pr.yaml can either accept the abandonment or run
+  # its remediation cycle (the analyzer's last feedback_summary, if any,
+  # flows up via the workflow.output above).
+  - name: closed_unmerged_emitter
+    type: script
+    description: Emit merged=false when poll_status saw the operator closed the PR without merging.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          merged = $false;
+          pr_url = '{{ poll_status.output.pr_url | default("") }}';
+          reason = 'operator_closed_pr_unmerged'
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── PR feedback analyzer (sentiment-driven loop heart) ────────────────
+  #
+  # LLM agent that reads the poll envelope and decides whether the PR
+  # has actionable negative feedback that should send the implementer
+  # back to revise, OR whether the workflow should throttle and wait
+  # for a human signal (merge / close / new comment that changes the
+  # analyzer's verdict).
+  #
+  # Invoked on `poll_status.output.route == 'none'` — the deterministic
+  # classifier already handled merged / closed / approved-and-clean
+  # terminals; this agent only judges the ambiguous middle.
+  #
+  # Identity policy (load-bearing — encoded in the prompt):
+  #   1. Comment with a `<!-- polyphony:agent-comment agent=... -->`
+  #      marker → bot reviewer (probably pr_initial_reviewer). Only
+  #      treat items under the `**Blocking concerns**` section as
+  #      negative; ignore everything else in the bot's body.
+  #   2. Comment author matches the PR author → exclude (PR author
+  #      narrating their own work doesn't count as feedback to themselves).
+  #   3. Otherwise → human reviewer. Use natural-language judgement.
+  #
+  # Output digest contract: `feedback_digest` is a stable hash of
+  # (comment ids + thread ids + vote tuples + body sha) of everything
+  # the analyzer considered. `revise_counter` uses this to avoid
+  # incrementing on no-progress re-polls.
+  #
+  # Invariants:
+  #   Pre:  poll_status returned route == 'none'.
+  #   Post: output.has_negative_feedback bool drives routing;
+  #         output.feedback_summary is the implementer's revision brief;
+  #         output.feedback_digest dedups no-progress polls.
+  - name: pr_feedback_analyzer
+    type: agent
+    model: claude-sonnet-4.6
+    description: Read poll envelope; decide whether negative feedback requires implementer revision.
+    tools:
+      - filesystem
+    output:
+      has_negative_feedback:
+        type: boolean
+        description: True when the analyzer judges that one or more in-scope reviewers requested changes the implementer should address.
+      feedback_summary:
+        type: string
+        description: Markdown summary of the negative feedback for the implementer (pr_fixer) prompt. Empty when has_negative_feedback is false.
+      feedback_digest:
+        type: string
+        description: Stable hash of all comments/threads/votes considered. revise_counter uses this to detect no-progress re-polls.
+      reasoning:
+        type: string
+        description: Short explanation of the decision (audit only — not posted, not consumed by routing).
+    prompt: |
+      You decide whether a code-review PR currently has actionable
+      negative feedback that the implementer should respond to.
+
+      ## Context — Poll envelope
+
+      - **PR URL:** {{ poll_status.output.pr_url }}
+      - **PR author identity:** `{{ poll_status.output.author_identity }}`
+      - **Head SHA:** `{{ poll_status.output.head_sha }}`
+      - **Derived state:** `{{ poll_status.output.state }}`
+      - **Route reason (from terminal classifier):** {{ poll_status.output.route_reason }}
+
+      ### Top-level PR comments (JSON, oldest first)
+
+      ```json
+      {{ poll_status.output.comments | tojson }}
+      ```
+
+      ### Review threads (JSON, includes thread comments)
+
+      ```json
+      {{ poll_status.output.threads | tojson }}
+      ```
+
+      ### Reviewer votes
+
+      ```json
+      {{ poll_status.output.reviewers | tojson }}
+      ```
+
+      ## Identity & severity policy
+
+      For each comment / thread, classify the source:
+
+      1. If the comment body's `marker` field is non-null → **bot
+         reviewer** (the polyphony pr_initial_reviewer or another
+         marker-posting agent). Only treat items under the `**Blocking
+         concerns**` section as negative; ignore everything else in
+         the bot's body.
+      2. Else if `author == PR author identity` → **author self-comment**.
+         Exclude entirely (the PR author narrating their own work is
+         not feedback to themselves).
+      3. Else → **human reviewer**. Use natural-language judgement of
+         the comment's sentiment and any embedded code-review concerns.
+
+      For reviewer **votes**: a `changes_requested` vote from a non-
+      author reviewer counts as negative feedback regardless of any
+      explanatory comment. An `approved` vote with no unresolved
+      threads was already terminated by the deterministic classifier —
+      if you see it here it means the classifier returned `none` due
+      to mixed signals (e.g. approved AND unresolved threads), so the
+      threads still win.
+
+      Unresolved threads (`is_resolved == false && is_outdated != true`)
+      that contain at least one in-scope (non-author) comment count as
+      negative feedback even if the comment body is short.
+
+      ## Output
+
+      Return JSON:
+      ```json
+      {
+        "has_negative_feedback": <true|false>,
+        "feedback_summary": "<markdown brief for the implementer; concise — summarize, do not paste raw threads; empty string when no negative feedback>",
+        "feedback_digest": "<short stable hash of everything you considered — comment ids + thread ids + vote tuples; same inputs MUST produce the same digest>",
+        "reasoning": "<≤500 chars audit explanation of the decision>"
+      }
+      ```
+
+      The `feedback_summary` is fed verbatim into the pr_fixer's
+      revision prompt — keep it actionable, focused on what to change
+      (not why the reviewer flagged it). The `feedback_digest` lets
+      revise_counter detect no-progress re-polls; use a stable
+      formulation like `sha256("comment-ids:thread-ids:votes:body-shas")`
+      computed from the input ids — DO NOT include timestamps or
+      run-specific fields.
+    routes:
+      - to: approvals_policy
+        when: "{{ pr_feedback_analyzer.output.has_negative_feedback == true }}"
+      - to: pending_poll_counter
+
+  # ── Approvals policy resolver ─────────────────────────────────────────
+  #
+  # Resolves the `approvals` policy domain so revise_counter drives its
+  # cap from policy.approvals.max_revision_cycles instead of a hard-coded
+  # literal. Scope is `type:<guidance_loader.output.type>` — same key
+  # used by guidance_loader so per-type policy overrides take effect.
+  #
+  # Falls back to default scope (root/default) when the work item type
+  # is not in the policy file — that fallback is built into
+  # `polyphony policy resolve`.
+  - name: approvals_policy
+    type: script
+    description: Resolve approvals policy for revise-loop cap
+    command: polyphony
+    args:
+      - "policy"
+      - "resolve"
+      - "--domain"
+      - "approvals"
+      - "--scope"
+      - "type:{{ guidance_loader.output.type | default('') }}"
+    routes:
+      - to: revise_counter
+
+  # ── Revise counter ────────────────────────────────────────────────────
+  #
+  # Tracks pr_fixer revision cycles. Digest-keyed — only increments when
+  # `pr_feedback_analyzer.output.feedback_digest` differs from the
+  # last-seen digest. This makes re-polls during CI / between fixer
+  # pushes safe — they would otherwise consume budget without progress.
+  #
+  # Counter file key is composite (pr_number + work_item_id) so two
+  # sibling sub-workflows don't clobber each other's state if they run
+  # against the same PR for any reason.
+  #
+  # Cap reading: policy.approvals.max_revision_cycles, falls back to 5.
+  - name: revise_counter
+    type: script
+    description: Track pr_fixer revise loop iteration count (digest-keyed; cap from policy.approvals.max_revision_cycles)
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-pr-review-count-{{ workflow.input.pr_number }}"
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-github-pr-revise-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}.json"
+        $digestNow   = '{{ pr_feedback_analyzer.output.feedback_digest if (pr_feedback_analyzer is defined and pr_feedback_analyzer.output.feedback_digest is defined) else "" }}'
+
+        $count = 0
+        $digestPrev = ''
         if (Test-Path $counterFile) {
-            $count = [int](Get-Content $counterFile -Raw) + 1
-        } else {
-            $count = 1
+          try {
+            $state      = Get-Content $counterFile -Raw | ConvertFrom-Json
+            $count      = [int]$state.count
+            $digestPrev = [string]$state.digest
+          } catch {
+            try { $count = [int](Get-Content $counterFile -Raw) } catch { $count = 0 }
+            $digestPrev = ''
+          }
         }
-        Set-Content $counterFile $count
-        @{ iteration = $count; under_limit = ($count -le 10) } | ConvertTo-Json
+
+        if ($digestNow -ne '' -and $digestNow -ne $digestPrev) {
+          $count = $count + 1
+        } elseif ($count -eq 0) {
+          $count = 1
+        }
+
+        @{ count = $count; digest = $digestNow } | ConvertTo-Json -Compress | Set-Content $counterFile
+
+        $policyMax = '{{ approvals_policy.output.max_revision_cycles | default("") }}'
+        if ([string]::IsNullOrWhiteSpace($policyMax) -or $policyMax -eq 'None' -or $policyMax -eq '0') {
+            $maxRevisions = 5
+        } else {
+            $maxRevisions = [int]$policyMax
+        }
+        $capReached = $count -ge $maxRevisions
+        $digestChanged = ($digestNow -ne '' -and $digestNow -ne $digestPrev)
+        @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached; digest = $digestNow; digest_changed = $digestChanged } | ConvertTo-Json
     routes:
+      - to: revise_cap_gate
+        when: "{{ revise_counter.output.cap_reached == true }}"
       - to: pr_fixer
-        when: "{{ review_counter.output.under_limit == true }}"
-      - to: pr_fix_exhausted_gate
-        when: "{{ review_counter.output.under_limit == false }}"
-      # Catch-all: defensive against under_limit being missing/malformed.
-      - to: pr_fix_exhausted_gate
+
+  # ── Revise cap gate ───────────────────────────────────────────────────
+  #
+  # Fires when pr_fixer has hit the revise cap and the analyzer is still
+  # surfacing negative feedback. P7: do NOT auto-merge — surface the
+  # failure honestly and let the operator decide.
+  - name: revise_cap_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Revision Cap Hit — PR #{{ workflow.input.pr_number }}
+
+      pr_fixer has produced **{{ revise_counter.output.max_revisions }}**
+      revisions but reviewers / the bot analyzer are still requesting
+      changes.
+
+      - **PR:** {{ poll_status.output.pr_url }}
+      - **Branch:** `{{ workflow.input.branch_name }}`
+      - **Latest analyzer summary:**
+
+      ```markdown
+      {{ pr_feedback_analyzer.output.feedback_summary }}
+      ```
+
+      ---
+
+      Choose an action:
+
+      - **Re-poll** — perhaps reviewers approved since the last revision; check PR state again
+      - **Force one more revision** — send pr_fixer through one more cycle
+      - **Force merge** — bypass the review and merge anyway
+      - **Abort** — halt the entire run (terminates the conductor process)
+    options:
+      - label: "🔄 Re-poll PR"
+        value: repoll
+        route: poll_status
+      - label: "✏️ Force one more revision"
+        value: force
+        route: pr_fixer
+      - label: "⚡ Force merge"
+        value: force_merge
+        route: pr_merger
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
 
   # ── PR fixer ───────────────────────────────────────────────────────────
   #
-  # Addresses review feedback using Sonnet. Reads the reviewer's issues,
-  # makes targeted code fixes, and pushes updated commits. Routes back
-  # to pr_reviewer for re-review.
+  # Addresses analyzer-summarized review feedback. Reads
+  # pr_feedback_analyzer.output.feedback_summary (NOT the raw threads —
+  # the analyzer already triaged them) and makes targeted code fixes,
+  # then pushes updated commits. Routes back to `poll_status` so the
+  # loop re-evaluates platform state on the new head SHA.
+  #
+  # NOTE: does not route to pr_initial_reviewer — the bot reviewer only
+  # runs once per workflow invocation. Subsequent loops are driven by
+  # whatever humans + the analyzer surface.
   #
   # Invariants:
-  #   Pre:  pr_reviewer.output.verdict == 'changes_requested';
-  #         review_counter.output.under_limit == true.
+  #   Pre:  pr_feedback_analyzer.output.has_negative_feedback == true;
+  #         revise_counter.output.cap_reached == false (or operator
+  #         force-revised through the cap gate).
   #   Post: Fixes are committed and pushed to the PR branch.
   - name: pr_fixer
     type: agent
     model: claude-sonnet-4.6
-    description: Address PR review feedback with targeted code fixes
+    description: Address PR review feedback (analyzer-summarized) with targeted code fixes
     tools:
       - gh
       - filesystem
     prompt: |
-      You are the PR fixer for the twig SDLC workflow.
+      You are the PR fixer for the polyphony SDLC workflow.
 
       ## Your Mission
 
-      Address the review feedback for PR #{{ workflow.input.pr_number }} on
-      the `{{ workflow.input.branch_name }}` branch.
+      Address the review feedback for PR #{{ workflow.input.pr_number }}
+      on the `{{ workflow.input.branch_name }}` branch.
 
       ## Context
 
       - **PR number:** {{ workflow.input.pr_number }}
       - **Branch:** {{ workflow.input.branch_name }}
-      - **Review iteration:** {{ review_counter.output.iteration }} of 10
-      - **Reviewer feedback:** {{ pr_reviewer.output.feedback }}
-      - **Issues to fix:**
-      {% for issue in pr_reviewer.output.issues %}
-        - {{ issue }}
-      {% endfor %}
+      - **Revision iteration:** {{ revise_counter.output.iteration }} of {{ revise_counter.output.max_revisions }}
+
+      ### Reviewer feedback (pre-digested by pr_feedback_analyzer)
+
+      The sentiment-driven analyzer has already triaged the PR comments,
+      threads, and votes; you do NOT need to re-query the platform.
+      Address the items in the brief below — that is the full set of
+      negative feedback gating this revision cycle.
+
+      ```markdown
+      {{ pr_feedback_analyzer.output.feedback_summary }}
+      ```
 
       ## Instructions
 
-      1. **Read the review comments** — Use `gh pr view {{ workflow.input.pr_number }}`
-         and `gh api` to fetch detailed review comments and inline suggestions.
+      1. **Read the relevant source files** for each item in the brief
+         above. If you need additional platform context (full thread
+         bodies, line-level positions), `gh pr view {{ workflow.input.pr_number }}`
+         and `gh api repos/{owner}/{repo}/pulls/{{ workflow.input.pr_number }}/comments`
+         are available.
 
-      2. **Fix each issue** — For each issue identified by the reviewer:
-         - Read the relevant source files
+      2. **Fix each issue** — For each item identified in the brief:
          - Make the targeted fix
          - Verify the fix doesn't introduce regressions
 
-      3. **Run tests** — Ensure the build passes and tests succeed after fixes.
+      3. **Run tests** — Ensure the build passes and tests succeed after
+         fixes.
 
-      4. **Commit and push** — Commit fixes with a descriptive message and push.
+      4. **Commit and push** — Commit fixes with a descriptive message
+         and push.
 
          Stage **only** the files you modified for this fix — never use
-         `git add -A`, `git add .`, or `git add --all`. The working tree may
-         contain unrelated dirty files from concurrent human work or earlier
-         workflow iterations; sweeping them in pollutes the commit, breaks
-         AB# traceability, and creates phantom changes in the PR.
+         `git add -A`, `git add .`, or `git add --all`. The working tree
+         may contain unrelated dirty files from concurrent human work or
+         earlier workflow iterations; sweeping them in pollutes the
+         commit, breaks AB# traceability, and creates phantom changes in
+         the PR.
 
          ```
          git add <path1> <path2>   # explicit paths, one per modified file
-         git commit -m "fix: address PR review feedback (iteration {{ review_counter.output.iteration }})"
+         git commit -m "fix: address PR review feedback (iteration {{ revise_counter.output.iteration }})"
          git push
          ```
 
@@ -318,7 +816,7 @@ agents:
 
       ## Constraints
 
-      - Fix ONLY the issues identified by the reviewer
+      - Fix ONLY the issues identified in the analyzer brief
       - Do NOT refactor code beyond what's needed for the fix
       - Do NOT change unrelated files
       - Every fix must be tested
@@ -339,87 +837,191 @@ agents:
       {{ guidance_loader.output.coder.type_refinement }}
       {% endif %}
     routes:
-      - to: pr_reviewer
+      - to: poll_status
 
-  # ── Fix exhaustion gate ────────────────────────────────────────────────
+  # ── Pending poll counter (stuck-review timeout MVP) ───────────────────
   #
-  # Human decision point when the review-fix loop has reached the maximum
-  # iteration cap (10). Per P7, the workflow does NOT auto-approve — it
-  # surfaces the failure honestly and lets the human decide. Options:
-  # force-merge (override), continue fixing (extend cap), or abort (P6).
+  # Increments each time pr_feedback_analyzer concludes there is no
+  # actionable negative feedback. Counter file is keyed by composite
+  # (pr_number + work_item_id) so siblings don't collide.
   #
-  # Invariants:
-  #   Pre:  review_counter.output.iteration > 10.
-  #   Post: Human has chosen to force-merge, continue, or abort.
-  - name: pr_fix_exhausted_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ PR Fix Loop Exhausted — PR #{{ workflow.input.pr_number }}
-
-      The review → fix loop for PR **#{{ workflow.input.pr_number }}** has
-      reached the maximum of **10 iterations** without achieving approval.
-
-      ### PR Details
-
-      | Field | Value |
-      |-------|-------|
-      | PR Number | `{{ workflow.input.pr_number }}` |
-      | Branch | `{{ workflow.input.branch_name }}` |
-      | Target | `{{ workflow.input.target_branch }}` |
-      | Iterations | {{ review_counter.output.iteration }} |
-
-      ### Latest Review Feedback
-
-      {{ pr_reviewer.output.feedback }}
-
-      ### Remaining Issues
-
-      {% for issue in pr_reviewer.output.issues %}
-      - {{ issue }}
-      {% endfor %}
-
-      ---
-
-      The automated fix cycle has not resolved all review issues after
-      **{{ review_counter.output.iteration }}** attempts.
-
-      Choose an action:
-      - **Force Merge** — merge the PR despite unresolved issues
-      - **Continue** — reset the counter and try 10 more fix iterations
-      - **Abort** — close the PR and stop the workflow
-    options:
-      - label: "⚡ Force Merge"
-        value: force_merge
-        route: pr_merger
-      - label: "🔄 Continue"
-        value: continue
-        route: review_counter_reset
-      - label: "🛑 Abort"
-        value: abort
-        route: terminal_abort_run
-
-  # ── Review counter reset ───────────────────────────────────────────────
-  #
-  # Resets the iteration counter when the human chooses to continue
-  # fixing after exhaustion. Routes back to the fixer to resume the
-  # review-fix loop for another 10 iterations.
-  #
-  # Invariants:
-  #   Pre:  Human chose 'continue' at pr_fix_exhausted_gate.
-  #   Post: Counter file is reset to 0; loop resumes with fresh budget.
-  - name: review_counter_reset
+  # When the count reaches POLL_CAP (60), routes to
+  # stuck_review_gate_policy_router so the operator can decide whether
+  # to keep waiting, override-approve, or abort. Below the cap, routes
+  # to pending_review_gate_policy_router (the throttle gate) for the
+  # unchanged operator UX in the common case.
+  - name: pending_poll_counter
     type: script
-    description: Reset review-fix iteration counter for continued fixing
+    description: Track pending-review poll count (cap 60 — stuck-review timeout MVP)
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-pr-review-count-{{ workflow.input.pr_number }}"
-        Set-Content $counterFile 0
-        @{ iteration = 0; reset = $true } | ConvertTo-Json
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-github-pr-pending-poll-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        $cap = 60
+        @{ count = $count; cap = $cap; cap_reached = ($count -ge $cap) } | ConvertTo-Json
     routes:
-      - to: pr_fixer
+      - to: stuck_review_gate_policy_router
+        when: "{{ pending_poll_counter.output.cap_reached == true }}"
+      - to: pending_review_gate_policy_router
+
+  # ── Pending-review gate policy router ─────────────────────────────────
+  #
+  # Reads `policy.unattended.review_wait_mode`. Three modes:
+  #   • `wait` (default) → fall through to the human throttle gate.
+  #   • `skip`           → bypass the gate, route directly back to re-poll.
+  #   • `auto`           → REJECTED. The old `auto` mode self-approved via
+  #                        magic comments; that mechanism is gone in the
+  #                        sentiment-driven loop. Treated as a hard
+  #                        misconfiguration so it surfaces immediately
+  #                        instead of silently degrading to `skip` (which
+  #                        keeps polling forever with no human in the
+  #                        loop — an unattended operator might wait days
+  #                        for a PR they thought was being auto-merged).
+  - name: pending_review_gate_policy_router
+    type: script
+    description: Bypass pending_review_gate when policy.unattended.review_wait_mode is skip; reject auto.
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+    routes:
+      - to: terminal_abort_auto_mode_unsupported
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
+      - to: poll_status
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
+      - to: pending_review_gate
+
+  # ── Pending-review gate (throttle in the sentiment-driven loop) ───────
+  #
+  # Reached when pr_feedback_analyzer found no actionable negative
+  # feedback this poll. The PR is open and awaiting an explicit positive
+  # signal (operator merges) or a negative one (operator closes the PR,
+  # or new comments that change the analyzer's verdict next poll).
+  - name: pending_review_gate
+    type: human_gate
+    prompt: |
+      ## ⏳ PR Awaiting Action — PR #{{ workflow.input.pr_number }}
+
+      The PR is open. The polyphony bot reviewer has posted (see the
+      marker comment on the PR) and the sentiment-driven analyzer did
+      NOT find actionable negative feedback this poll.
+
+      - **PR:** {{ poll_status.output.pr_url }}
+      - **Branch:** `{{ workflow.input.branch_name }}`
+
+      To proceed, take one of these actions on GitHub, then click
+      **Continue** to re-poll:
+
+      - **Merge the PR** — workflow detects merged state next poll.
+      - **Comment requesting changes** — the analyzer reads the comment
+        on the next poll and routes pr_fixer back to revise.
+      - **Close the PR** — workflow exits this PR leg as unmerged on the
+        next poll. The parent feature-pr.yaml decides whether to accept
+        the abandonment or run its remediation cycle.
+
+      _Note: GitHub blocks PR-author self-approval. If you opened this
+      PR yourself, the merge happens once a second reviewer approves —
+      or you can simply use the **Merge** button directly._
+
+      ---
+
+      Choose an action:
+      - **Continue** — re-poll the PR for the updated state
+      - **Abort** — halt the entire run (terminates the conductor process)
+    options:
+      - label: "🔄 Continue"
+        value: continue
+        route: poll_status
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
+
+  # ── Stuck-review gate policy router ───────────────────────────────────
+  #
+  # Reads `policy.unattended.review_wait_mode`. Three modes:
+  #   • `auto`  → falls through to the human stuck gate (auto self-merge
+  #               via magic comments is gone in the sentiment-driven loop).
+  #   • `skip`  → bypasses the gate and routes to stuck_review_reset
+  #               (resets the counter; keeps polling).
+  #   • `wait`  → falls through to the human gate (default).
+  - name: stuck_review_gate_policy_router
+    type: script
+    description: Bypass stuck_review_gate when policy.unattended.review_wait_mode=skip; auto escalates to human
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+    routes:
+      - to: stuck_review_reset
+        when: "{{ stuck_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
+      - to: stuck_review_gate
+
+  # ── Stuck-review gate (poll-cap escalation) ───────────────────────────
+  #
+  # Fires when pending_poll_counter hits POLL_CAP (60). The reviewer has
+  # gone silent — surface that fact rather than letting the operator keep
+  # clicking "Continue" on pending_review_gate forever.
+  - name: stuck_review_gate
+    type: human_gate
+    description: PR review pending past poll cap — operator decides wait, override, or abort.
+    prompt: |
+      ## ⏰ Stuck Review — Poll Cap Reached for PR #{{ workflow.input.pr_number }}
+
+      The PR has been awaiting reviewer action for
+      **{{ pending_poll_counter.output.count }}** polls
+      (cap: **{{ pending_poll_counter.output.cap }}**).
+
+      The reviewer may be unavailable or unblocked but silent. You can
+      keep waiting (the counter resets), bypass review and merge anyway,
+      or abort.
+
+      - **PR:** {{ poll_status.output.pr_url }}
+      - **Branch:** `{{ workflow.input.branch_name }}`
+
+      ---
+
+      Choose an action:
+      - **Continue waiting** — reset the poll counter and return to the pending-review gate
+      - **Override approved** — treat the PR as approved and proceed to merge
+      - **Abort** — halt the entire run (terminates the conductor process)
+    options:
+      - label: "⏳ Continue waiting"
+        value: continue_waiting
+        route: stuck_review_reset
+      - label: "✅ Override approved"
+        value: override_approved
+        route: pr_merger
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
+
+  # ── Stuck-review reset ────────────────────────────────────────────────
+  #
+  # Zeros the pending poll counter file when the operator chose
+  # "Continue waiting" at stuck_review_gate, then routes back to
+  # pending_review_gate_policy_router so the operator gets the regular
+  # pending UX again with a fresh cap budget.
+  - name: stuck_review_reset
+    type: script
+    description: Reset pending-poll counter after stuck-review continue-waiting choice
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-github-pr-pending-poll-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}"
+        Set-Content $counterFile 0
+        @{ count = 0; reset = $true } | ConvertTo-Json
+    routes:
+      - to: pending_review_gate_policy_router
 
   # ── PR merger ──────────────────────────────────────────────────────────
   #
@@ -428,8 +1030,8 @@ agents:
   # for downstream consumers (scope_closer in implement-merge-group.yaml).
   #
   # Invariants:
-  #   Pre:  pr_reviewer.output.verdict == 'approved', OR human chose
-  #         'force_merge' at pr_fix_exhausted_gate.
+  #   Pre:  poll_status returned route == 'merge_now', OR operator chose
+  #         'force_merge' / 'override_approved' at one of the gates.
   #   Post: PR is merged; output.merged and output.pr_url are set.
   - name: pr_merger
     type: agent
@@ -438,7 +1040,7 @@ agents:
     tools:
       - gh
     prompt: |
-      You are the PR merger for the twig SDLC workflow.
+      You are the PR merger for the polyphony SDLC workflow.
 
       ## Your Mission
 
@@ -512,5 +1114,31 @@ agents:
       - "operator-abort"
       - "-Stage"
       - "github-pr"
+    routes:
+      - to: $end
+
+  # ── Auto-mode misconfiguration abort ──────────────────────────────────
+  #
+  # Reached when policy.unattended.review_wait_mode == 'auto'. The old
+  # auto path self-approved via magic comments; that mechanism is gone
+  # in the sentiment-driven loop. Refuse the misconfiguration loudly so
+  # an operator who set `auto` finds out at policy-load time instead of
+  # watching the run poll forever.
+  - name: terminal_abort_auto_mode_unsupported
+    type: script
+    description: Abort — policy.unattended.review_wait_mode='auto' is unsupported under the sentiment-driven PR-review loop.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "auto-mode-unsupported"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Stage"
+      - "github-pr"
+      - "-Detail"
+      - "policy.unattended.review_wait_mode='auto' was honored by the magic-comment auto-approve path that the sentiment-driven loop deleted. Set it to 'skip' (silent unattended polling) or 'wait' (human throttle gate) and re-run; a future PR will reintroduce 'auto' on top of the platform vote APIs."
     routes:
       - to: $end

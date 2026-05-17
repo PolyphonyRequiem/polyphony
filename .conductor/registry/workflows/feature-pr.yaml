@@ -631,6 +631,27 @@ agents:
 
       ## Instructions
 
+      ### Reviewer feedback (pre-digested by the PR sub-workflow's analyzer)
+
+      The github-pr / ado-pr sub-workflow ran its sentiment-driven analyzer
+      on the most recent poll before exiting unmerged. When the analyzer
+      saw actionable negative feedback, it surfaces a markdown summary
+      below — treat this as authoritative for what the reviewers want
+      changed. When empty, fall back to the platform-direct sources in
+      step 1.
+
+      ```markdown
+      {%- if workflow.input.platform == 'ado' and pr_lifecycle_ado is defined and pr_lifecycle_ado.output.feedback_summary is defined and pr_lifecycle_ado.output.feedback_summary %}
+      {{ pr_lifecycle_ado.output.feedback_summary }}
+      {%- elif workflow.input.platform != 'ado' and pr_lifecycle_github is defined and pr_lifecycle_github.output.feedback_summary is defined and pr_lifecycle_github.output.feedback_summary %}
+      {{ pr_lifecycle_github.output.feedback_summary }}
+      {%- else %}
+      (no analyzer summary available — the PR likely exited unmerged
+      without negative feedback, e.g. operator closed/abandoned the PR
+      with no review threads; gather context yourself in step 1)
+      {%- endif %}
+      ```
+
       {% if workflow.input.platform == 'ado' -%}
       1. **Read the PR review context** — Polyphony does not yet ship a
          verb that returns ADO PR thread/comment text. You have these

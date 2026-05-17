@@ -1,42 +1,64 @@
-# ado-pr — Azure DevOps PR lifecycle: poll → merge.
+# ado-pr — Azure DevOps PR lifecycle: bot review, sentiment-driven fix loop, and merge.
 #
-# Platform-specific PR sub-workflow for Azure DevOps. Polyphony does NOT
-# auto-review on ADO; reviewers vote natively in the ADO UI. This workflow
-# polls PR status (single-shot) and acts on the platform-aggregated
-# decision:
+# Platform-specific PR sub-workflow for Azure DevOps under the
+# sentiment-driven PR review model (mirrors github-pr.yaml).
 #
-#   merged            → emit merged=true (idempotent re-entry path)
-#   approved          → ado_pr_merger (calls `pr merge-feature-ado`)
-#   changes_requested → human gate (operator triages)
-#   pending           → human gate (operator waits / re-polls)
-#   closed            → human gate (operator triages)
-#   error             → human gate (operator retries / aborts)
+# Loop shape:
+#   1. ado_inputs_validator — fail fast if any of org/project/repo/root_id
+#      are missing.
+#   2. guidance_loader  — repo + per-type agent guidance for the prompts.
+#   3. pr_initial_reviewer — Opus produces a single marker-prefixed comment
+#      body (no native vote — review verdict signals are reserved for
+#      humans). The bot's own comment is identified by the
+#      `polyphony:agent-comment agent=pr_initial_reviewer` marker.
+#   4. pr_initial_reviewer_poster — calls `polyphony pr post-comment-ado`
+#      to post the body as a closed advisory thread on the PR.
+#   5. poll_status — deterministic 4-way `route` field
+#      ({merge_now | already_merged | abort_unmerged | none}).
+#        • merge_now      → pr_merger.
+#        • already_merged → emit merged=true, $end.
+#        • abort_unmerged → closed_unmerged_emitter (merged=false + reason).
+#        • none           → pr_feedback_analyzer.
+#   6. pr_feedback_analyzer (Sonnet) reads comments + threads + votes and
+#      decides whether the implementer needs to revise:
+#        • has_negative_feedback=true  → approvals_policy → revise_counter
+#          → pr_fixer → push commits → back to poll_status.
+#        • has_negative_feedback=false → pending_poll_counter → either the
+#          pending throttle gate (poll cap not reached) or the stuck-review
+#          escalation (cap reached).
 #
-# Interface contract: same inputs and outputs as github-pr.yaml plus
-# (organization, project, repository, root_id) for the ADO REST verbs.
+# ADO terminal signals (encoded in PrPollTerminalRoute.Classify):
+#   - status == "completed"             → already_merged
+#   - status == "abandoned"             → abort_unmerged
+#   - any reviewer vote == -10 (reject) → abort_unmerged
+#   - approved AND no unresolved threads AND merge_allowed → merge_now
+#   - otherwise (mixed signals, no votes yet, etc.) → none
 #
-# This is the FIRST workflow that uses platform-native review (no
-# in-workflow LLM verdict). Per Phase 5 design, github-pr.yaml's LLM
-# reviewer model is the legacy pattern; ado-pr.yaml v2 is the canonical
-# platform-native pattern. Future enhancement: optional advisory LLM
-# reviewer that posts via `pr vote-ado` (deferred — needs `pr post-comment-ado`
-# which doesn't exist yet).
+# revise_counter is digest-keyed: it only increments when the analyzer's
+# feedback_digest changes — re-polls during CI / between fixer pushes do
+# NOT consume budget.
+#
+# Interface contract: Accepts the same inputs and produces the same outputs
+# as github-pr.yaml (pr_number, branch_name, target_branch, review_policy,
+# work_item_id → merged, pr_url, feedback_summary) plus the ADO connection
+# inputs (organization, project, repository, root_id) required by the
+# ADO REST verbs.
 #
 # Invariants:
 #   Pre:  PR exists (created upstream by feature-pr.yaml's
 #         feature_pr_creator_ado); platform is 'ado'; ADO connection
-#         inputs (organization, project, repository) are non-empty.
-#   Post: PR is merged (merged=true) — or operator-driven exit (merged=false
-#         triggers remediation cycle in feature-pr.yaml; abort exits with
-#         merged=false and no remediation).
+#         inputs (organization, project, repository, root_id) are non-empty.
+#   Post: PR is reviewed, fixed if needed, and merged — OR exits with
+#         merged=false + feedback_summary so the parent (feature-pr.yaml)
+#         can either accept the abandonment or run its remediation cycle.
 
 workflow:
   name: ado-pr
   description: >-
-    ADO PR lifecycle. Polls PR status via `pr poll-status-ado`; routes on
-    the platform-aggregated decision. When approved, merges via
-    `pr merge-feature-ado`. Operator-driven human gates for changes_requested,
-    pending, closed, error, and merge-failed states.
+    ADO PR lifecycle under the sentiment-driven review model. Posts a
+    single advisory bot review (marker-only — no native approval vote),
+    then loops poll → analyze → fix → push until the operator completes,
+    abandons, votes -10, or the revise cap fires.
   version: "2.4.0"
   entry_point: ado_inputs_validator
   metadata:
@@ -44,7 +66,8 @@ workflow:
 
   limits:
     # Generous cap — operator may re-poll many times via the pending /
-    # changes_requested gates while human reviewers work.
+    # stuck-review gates while human reviewers work; pr_fixer loops are
+    # bounded by revise_counter cap, not max_iterations.
     max_iterations: 200
 
   input:
@@ -63,18 +86,24 @@ workflow:
     review_policy:
       type: string
       required: false
-      default: "manual"
+      default: "auto"
+      description: "Review policy: auto (agent-reviewed) or manual (human gate)"
+    work_item_id:
+      type: number
+      required: true
       description: >-
-        Review policy. ADO has only one mode today (`manual` — humans review
-        natively). Reserved for future LLM-advisory mode.
+        Work item id for the PR's owning scope. Drives agent-guidance
+        type-refinement lookup and is part of the composite counter
+        keys so the sentiment loop's pending-poll + revise counters
+        don't collide across siblings.
     organization:
       type: string
       required: false
       default: ""
       description: >-
-        ADO organization name (e.g. `contoso`). Required by `pr poll-status-ado`
-        and `pr merge-feature-ado`. When blank, ado_inputs_validator routes to
-        the inputs-missing gate.
+        ADO organization name (e.g. `contoso`). Required by `pr poll-status-ado`,
+        `pr post-comment-ado`, and `pr merge-feature-ado`. When blank,
+        ado_inputs_validator routes to the inputs-missing gate.
     project:
       type: string
       required: false
@@ -105,14 +134,24 @@ output:
   # `| string | lower` so the parent receives a real bool rather than
   # capital "True"/"False".
   merged: >-
-    {%- if ado_pr_merger is defined and ado_pr_merger.output.merged == true -%}true
-    {%- elif ado_pr_already_merged_emitter is defined -%}true
-    {%- elif ado_pr_treat_as_merged_emitter is defined -%}true
-    {%- else -%}false
-    {%- endif %}
+    {%- if pr_merger is defined -%}{{ (pr_merger.output.merged | default(false)) | string | lower }}
+    {%- elif already_merged_emitter is defined -%}true
+    {%- elif treat_as_merged_emitter is defined -%}true
+    {%- elif closed_unmerged_emitter is defined -%}false
+    {%- else -%}false{%- endif -%}
   pr_url: >-
-    {%- if ado_pr_status_check is defined -%}{{ ado_pr_status_check.output.pr_url | default('') }}
-    {%- else -%}{% endif -%}
+    {%- if pr_merger is defined -%}{{ pr_merger.output.pr_url | default('') }}
+    {%- elif poll_status is defined -%}{{ poll_status.output.pr_url | default('') }}
+    {%- else -%}{%- endif -%}
+  # When the PR exits unmerged with bot-analyzed negative feedback still
+  # outstanding (e.g. operator abandoned the PR after pushing back, or the
+  # revise cap fired and the operator chose abort), surface the analyzer's
+  # last feedback_summary so the parent feature-pr.yaml's remediation
+  # cycle can include it in the remediation_planner prompt. Empty string
+  # on clean merges or simple early-aborts.
+  feedback_summary: >-
+    {%- if pr_feedback_analyzer is defined and pr_feedback_analyzer.output.feedback_summary is defined -%}{{ pr_feedback_analyzer.output.feedback_summary }}
+    {%- else -%}{%- endif -%}
 
 agents:
   # ── ADO connection-inputs validator ─────────────────────────────────────
@@ -128,7 +167,7 @@ agents:
   # Invariants:
   #   Pre:  Workflow inputs are present (default-empty for the optional
   #         ADO connection inputs).
-  #   Post: Routes to ado_pr_status_check (inputs ready) or
+  #   Post: Routes to guidance_loader (inputs ready) or
   #         ado_inputs_missing_gate (any of the four blank/zero).
   - name: ado_inputs_validator
     type: script
@@ -150,28 +189,285 @@ agents:
         $ready = ($missing.Count -eq 0);
         @{ ado_inputs_ready = $ready; missing = ($missing -join ',') } | ConvertTo-Json -Compress
     routes:
-      - to: ado_pr_status_check
+      - to: guidance_loader
         when: "{{ ado_inputs_validator.output.ado_inputs_ready == true }}"
       - to: ado_inputs_missing_gate
         when: "{{ ado_inputs_validator.output.ado_inputs_ready == false }}"
       # Catch-all per M4: malformed validator output -> inputs-missing gate.
       - to: ado_inputs_missing_gate
 
-  # ── ADO PR status check ─────────────────────────────────────────────────
+  # ── ADO connection-inputs missing gate ──────────────────────────────────
   #
-  # Single-shot poll of the ADO PR via `polyphony pr poll-status-ado`.
-  # Returns a platform-neutral `state` (merged | closed | approved |
-  # changes_requested | pending | error). Routes per state.
+  # Fires when the validator detected at least one of organization,
+  # project, repository, root_id was blank. Surfaces a clear remediation
+  # path (re-invoke the workflow with the missing inputs) without burning
+  # an ADO API call.
+  - name: ado_inputs_missing_gate
+    type: human_gate
+    description: ADO connection inputs missing — workflow cannot proceed
+    prompt: |
+      ## ADO connection inputs missing
+
+      `ado-pr.yaml` was invoked but the following required inputs are blank
+      or zero: **{{ ado_inputs_validator.output.missing }}**
+
+      `polyphony pr poll-status-ado`, `pr post-comment-ado`, and
+      `pr merge-feature-ado` require `--organization`, `--project`,
+      `--repository`, and `--root-id`. Re-invoke `feature-pr.yaml` (or this
+      workflow directly) with all four threaded.
+
+      PR: `{{ workflow.input.pr_number }}` on
+      `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
+    options:
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
+
+  # ── Guidance loader ────────────────────────────────────────────────────
   #
-  # No automatic polling loop — operator drives re-polling via the
-  # human gates (re-poll routes back to this agent).
+  # Loads repo-specific agent guidance for the PR's owning work item.
+  # Returns role-wide + per-type refinement; pr_initial_reviewer reads
+  # `reviewer.*` and pr_fixer reads `coder.*` via Jinja2 conditionals so
+  # prompts degrade gracefully when no guidance files exist.
+  - name: guidance_loader
+    type: script
+    description: Load agent guidance markdown files for pr_initial_reviewer and pr_fixer prompts
+    command: polyphony
+    args:
+      - "plan"
+      - "load-agent-guidance"
+      - "--work-item"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: pr_initial_reviewer
+
+  # ── PR initial reviewer (LLM advisory — sentiment-driven model) ───────
+  #
+  # Single LLM reviewer that runs ONCE per workflow invocation, producing
+  # a marker-prefixed comment body containing only blocking_concerns.
+  # The downstream poster step handles posting via the polyphony verb.
+  #
+  # NO native review vote — those are reserved for humans under the
+  # sentiment-driven model. Once posted, the bot's own comment is
+  # identified by the `polyphony:agent-comment agent=pr_initial_reviewer ...`
+  # marker so pr_feedback_analyzer can include / exclude it from "human
+  # feedback" consideration.
+  #
+  # ADO has no `gh pr diff` equivalent verb today, so the reviewer reads
+  # the diff via the local git checkout (the workflow runs in the apex
+  # worktree on the PR's source branch — `git diff origin/<target>...HEAD`
+  # gives the change set without any platform API call).
+  #
+  # Posted body shape (load-bearing — keep aligned with pr_feedback_analyzer
+  # and plan_reviewer):
+  #   - Line 1: marker
+  #   - Then: "Blocking concerns" header + bullets (or "_No blocking
+  #     concerns identified._" when empty).
+  # Strengths / non-blocking suggestions / summary stay in output fields
+  # for audit (dashboard, run logs) but are NEVER posted.
+  - name: pr_initial_reviewer
+    type: agent
+    model: claude-opus-4.6
+    description: Produce a single advisory PR review (audit in output; minimal post via poster script)
+    tools:
+      - filesystem
+    prompt: |
+      You are an advisory PR reviewer for the polyphony SDLC workflow
+      under the sentiment-driven PR review model.
+
+      ## Your Mission
+
+      Read the changes on the `{{ workflow.input.branch_name }}` branch
+      targeting `{{ workflow.input.target_branch }}` (this is ADO PR
+      `{{ workflow.input.pr_number }}`), evaluate them against the
+      rubric below, and emit your assessment as structured output. A
+      downstream agent (`pr_feedback_analyzer`) reads your
+      `blocking_concerns` to decide whether to send the implementer
+      back for revision. You do NOT cast an ADO vote; you do NOT post
+      any comment yourself (a downstream poster script handles posting
+      using your `comment_body` field).
+
+      ## Instructions
+
+      1. **Fetch the latest target branch:**
+         ```
+         git fetch origin {{ workflow.input.target_branch }}
+         ```
+      2. **Read the PR diff** — use git, not any platform CLI:
+         ```
+         git diff origin/{{ workflow.input.target_branch }}...HEAD
+         git log origin/{{ workflow.input.target_branch }}..HEAD --pretty=fuller
+         ```
+      3. **Review the changes** against the rubric.
+      4. **Populate the output fields** — including a marker-prefixed
+         `comment_body` per the shape below.
+
+      ## Severity discipline (load-bearing)
+
+      Be **conservative** with `blocking_concerns`. Every entry sends
+      the implementer back to revise; chains of pedantic blocking
+      concerns cause revise-loop churn until the cap fires.
+
+      - `blocking_concerns` — issues that would HARM the shipping change
+        if merged as-is. Examples: bug in the implementation, missing
+        test coverage for changed behavior, regression risk in untested
+        code paths, security concerns (secrets, injection, etc.),
+        unimplemented acceptance criteria. If you are unsure, put it
+        in `non_blocking_suggestions` instead.
+      - `non_blocking_suggestions` — polish, phrasing, "would be nicer
+        if". Audit only — never posted, never gates merge.
+
+      ## Rubric
+
+      | Criterion | Notes |
+      |---|---|
+      | Correctness | Does the code do what it claims? Any logic errors? |
+      | Tests | Are changes adequately tested? Are tests meaningful? |
+      | Regressions | Could these changes break existing behavior? |
+      | Security | Any security concerns (secrets, injection, etc.)? |
+      | Acceptance criteria | Are the linked work item's ACs satisfied? |
+
+      ## Comment body shape (load-bearing)
+
+      The `comment_body` field MUST follow this exact structure. The
+      first line MUST be the marker (no leading whitespace, no preceding
+      content). Do NOT add strengths, summary, non-blocking suggestions,
+      or any other section — only the blocking-concerns list:
+
+      ```
+      <!-- polyphony:agent-comment agent=pr_initial_reviewer pr_number={{ workflow.input.pr_number }} -->
+      ### 🤖 Polyphony PR reviewer
+
+      **Blocking concerns** (sentiment-driven loop reads this section):
+
+      - <blocking concern 1>
+      - <blocking concern 2>
+
+      _Advisory only — pr_feedback_analyzer determines routing. Full
+      rubric audit available in the workflow logs._
+      ```
+
+      When `blocking_concerns` is empty, replace the bulleted list with
+      the single line `_No blocking concerns identified._` — keep the
+      marker and the header. The analyzer needs a marker comment on
+      every run to recognize the bot.
+
+      {% if guidance_loader is defined and guidance_loader.output.agents.pr_reviewer is defined and guidance_loader.output.agents.pr_reviewer %}
+      ## Repo-Specific Guidance — pr_reviewer (override)
+
+      {{ guidance_loader.output.agents.pr_reviewer }}
+      {% elif guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.reviewer.role }}
+      {% endif %}
+
+      {% if guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.reviewer.type_refinement }}
+      {% endif %}
+
+      ## Output
+
+      Return JSON:
+      ```json
+      {
+        "posted": false,
+        "pr_number": {{ workflow.input.pr_number }},
+        "summary": "<one paragraph — audit only, not posted>",
+        "strengths": ["..."],
+        "blocking_concerns": ["..."],
+        "non_blocking_suggestions": ["..."],
+        "comment_body": "<full marker-prefixed markdown per the shape above>"
+      }
+      ```
+    output:
+      posted:
+        type: boolean
+        description: Always false — the downstream poster script does the real posting.
+      pr_number:
+        type: number
+        description: PR number that was reviewed
+      summary:
+        type: string
+        description: One-paragraph summary of the reviewer's overall assessment (audit-only — not posted)
+      strengths:
+        type: array
+        description: Implementation strengths (audit-only — not posted)
+        items:
+          type: string
+      blocking_concerns:
+        type: array
+        description: Issues that would harm the shipping change. Read by pr_feedback_analyzer; only these gate merge.
+        items:
+          type: string
+      non_blocking_suggestions:
+        type: array
+        description: Polish / nice-to-have items (audit-only — not posted and never gating).
+        items:
+          type: string
+      comment_body:
+        type: string
+        description: |
+          The fully-rendered markdown comment ready to be posted by
+          pr_initial_reviewer_poster. MUST start with the
+          `<!-- polyphony:agent-comment agent=pr_initial_reviewer pr_number=... -->`
+          marker line. Body contains ONLY the blocking_concerns list
+          (or "No blocking concerns identified" when empty).
+    routes:
+      - to: pr_initial_reviewer_poster
+
+  # ── PR initial reviewer poster (ADO) ──────────────────────────────────
+  #
+  # Posts pr_initial_reviewer's rendered comment_body to the ADO PR via
+  # `polyphony pr post-comment-ado` (creates a closed advisory thread).
+  # Single deterministic posting site that owns the marker-prepend
+  # contract. Mirrors plan_reviewer_poster_ado.
+  - name: pr_initial_reviewer_poster
+    type: script
+    description: Post pr_initial_reviewer's rendered comment to the ADO PR.
+    command: polyphony
+    args:
+      - "pr"
+      - "post-comment-ado"
+      - "--organization"
+      - "{{ workflow.input.organization }}"
+      - "--project"
+      - "{{ workflow.input.project }}"
+      - "--repository"
+      - "{{ workflow.input.repository }}"
+      - "--pr-number"
+      - "{{ workflow.input.pr_number }}"
+      - "--body"
+      - "{{ pr_initial_reviewer.output.comment_body }}"
+    routes:
+      - to: poll_status
+
+  # ── Poll status ───────────────────────────────────────────────────────
+  #
+  # Single-shot poll of the implementer's ADO PR. Returns the
+  # platform-neutral envelope including the deterministic 4-way `route`
+  # field computed by PrPollTerminalRoute.Classify:
+  #
+  #   • `merge_now`       — approved (+5/+10), no -5/-10, no unresolved
+  #                         actionable threads, ADO says merge_allowed.
+  #   • `already_merged`  — status == completed.
+  #   • `abort_unmerged`  — status == abandoned, OR any vote == -10.
+  #   • `none`            — mixed signals (e.g. +5 with unresolved threads,
+  #                         -5 waiting-for-author, no votes yet); defer to
+  #                         pr_feedback_analyzer.
+  #
+  # No --include-metadata: implementer PRs don't carry parent-change
+  # front-matter (only plan PRs do).
   #
   # Invariants:
-  #   Pre:  ADO inputs validated; PR exists.
-  #   Post: Routes per output.state to merger / emitter / human gate.
-  - name: ado_pr_status_check
+  #   Pre:  pr_initial_reviewer_poster has posted a marker comment so the
+  #         analyzer can recognize the bot.
+  #   Post: output.route in {merge_now, already_merged, abort_unmerged, none}.
+  - name: poll_status
     type: script
-    description: Poll ADO PR status (single shot) — routes on platform-aggregated decision
+    description: Single-shot poll of ADO PR review state (deterministic 4-way route)
     command: polyphony
     args:
       - "pr"
@@ -185,35 +481,676 @@ agents:
       - "--pr-number"
       - "{{ workflow.input.pr_number }}"
     routes:
-      - to: ado_pr_already_merged_emitter
-        when: "{{ ado_pr_status_check.output.state == 'merged' }}"
-      # Approved AND ADO says merge is allowed (no conflicts, all required
-      # reviewers signed off, etc.). Merger forwards head_sha as the ADO
-      # `lastMergeSourceCommit.commitId` for stale-head safety.
-      - to: ado_pr_merger
-        when: "{{ ado_pr_status_check.output.state == 'approved' and ado_pr_status_check.output.policy.merge_allowed == true }}"
-      # Approved but ADO blocks merge (typically conflicts or
-      # mergeability not yet computed). Surface to operator with the
-      # blocking reasons rather than failing the merge call.
-      - to: ado_pr_blocked_gate
-        when: "{{ ado_pr_status_check.output.state == 'approved' and ado_pr_status_check.output.policy.merge_allowed == false }}"
-      - to: ado_pr_changes_requested_gate
-        when: "{{ ado_pr_status_check.output.state == 'changes_requested' }}"
-      # Stuck-review timeout MVP — pending re-entries flow through
-      # ado_pending_poll_counter so we can surface ado_stuck_review_gate
-      # after POLL_CAP polls instead of letting the operator click
-      # "Re-poll" on ado_pr_pending_gate forever.
-      - to: ado_pending_poll_counter
-        when: "{{ ado_pr_status_check.output.state == 'pending' }}"
-      - to: ado_pr_closed_gate
-        when: "{{ ado_pr_status_check.output.state == 'closed' }}"
-      - to: ado_pr_failed_gate
-        when: "{{ ado_pr_status_check.output.state == 'error' }}"
-      # Catch-all per M4: any unrecognized state -> failed gate so the
-      # operator can decide rather than silently advancing.
-      - to: ado_pr_failed_gate
+      - to: poll_error_gate
+        when: "{{ poll_status.output.error is defined and poll_status.output.error }}"
+      - to: closed_unmerged_emitter
+        when: "{{ poll_status.output.route == 'abort_unmerged' }}"
+      - to: already_merged_emitter
+        when: "{{ poll_status.output.route == 'already_merged' }}"
+      - to: pr_merger
+        when: "{{ poll_status.output.route == 'merge_now' }}"
+      - to: pr_feedback_analyzer
+        when: "{{ poll_status.output.route == 'none' }}"
+      # Catch-all per M4 — defensive deferral to analyzer.
+      - to: pr_feedback_analyzer
 
-  # ── ADO PR merger ───────────────────────────────────────────────────────
+  # ── Poll error gate ───────────────────────────────────────────────────
+  - name: poll_error_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ PR Poll Failed — ADO PR #{{ workflow.input.pr_number }}
+
+      Could not read the PR review state for ADO PR
+      **#{{ workflow.input.pr_number }}**.
+
+      **State:** `{{ poll_status.output.state if poll_status.output.state is defined else "unknown" }}`
+      **Error:** {{ poll_status.output.error if poll_status.output.error is defined else "Unexpected state — check polyphony pr poll-status-ado output schema" }}
+
+      Common causes: missing/invalid PAT, ADO timeout, transient API
+      failure. Retry is safe (single read).
+
+      ---
+
+      Choose an action:
+      - **Retry** — re-poll the PR
+      - **Abort** — halt the entire run (terminates the conductor process)
+    options:
+      - label: "🔄 Retry"
+        value: retry
+        route: poll_status
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
+
+  # ── Already-merged emitter ────────────────────────────────────────────
+  #
+  # Operator completed the PR through the ADO UI (or it was completed via
+  # `pr merge-feature-ado` in a prior run). Emit the canonical merged=true
+  # terminal without re-calling the merger (which IS idempotent but burns
+  # an ADO API call and emits a less clear log message).
+  - name: already_merged_emitter
+    type: script
+    description: Emit merged=true when poll_status saw the operator already completed the PR
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          merged = $true;
+          pr_url = '{{ poll_status.output.pr_url | default("") }}';
+          reason = 'already_merged_idempotent_reentry'
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Treat-as-merged emitter (operator override) ───────────────────────
+  #
+  # Operator-driven terminal: when a human gate's "I manually verified
+  # merge" option is selected (e.g., the PR was completed externally and
+  # ADO is slow to reflect, or the operator confirmed merge via another
+  # means), emit merged=true and exit. Records `override=true` and a
+  # reason so downstream logs reflect that this was NOT platform-confirmed
+  # at the time of decision.
+  - name: treat_as_merged_emitter
+    type: script
+    description: Operator override — emit merged=true (manually verified)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          merged = $true;
+          pr_url = '{{ poll_status.output.pr_url | default("") }}';
+          override = $true;
+          reason = 'operator_manually_verified_merge'
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Closed-unmerged emitter ───────────────────────────────────────────
+  #
+  # poll_status saw abort_unmerged — either status == abandoned OR any
+  # reviewer cast a -10 (reject) vote. Per the sentiment-driven design
+  # (user-locked decision): `-10` on ADO = abort, no remediation. Emit
+  # merged=false with the PR URL so feature-pr.yaml can either accept the
+  # abandonment or run its remediation cycle (the analyzer's last
+  # feedback_summary, if any, flows up via the workflow.output above).
+  - name: closed_unmerged_emitter
+    type: script
+    description: Emit merged=false when poll_status saw the PR abandoned or vetoed (-10).
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          merged = $false;
+          pr_url = '{{ poll_status.output.pr_url | default("") }}';
+          reason = 'pr_abandoned_or_rejected'
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── PR feedback analyzer (sentiment-driven loop heart) ────────────────
+  #
+  # LLM agent that reads the poll envelope and decides whether the PR
+  # has actionable negative feedback that should send the implementer
+  # back to revise, OR whether the workflow should throttle and wait
+  # for a human signal (operator completes / abandons / votes / new
+  # comment that changes the analyzer's verdict).
+  #
+  # Invoked on `poll_status.output.route == 'none'` — the deterministic
+  # classifier already handled completed / abandoned / approved-and-clean
+  # terminals; this agent only judges the ambiguous middle.
+  #
+  # Identity policy (load-bearing — encoded in the prompt):
+  #   1. Comment with a `<!-- polyphony:agent-comment agent=... -->`
+  #      marker → bot reviewer (probably pr_initial_reviewer). Only
+  #      treat items under the `**Blocking concerns**` section as
+  #      negative; ignore everything else in the bot's body.
+  #   2. Comment author matches the PR author → exclude (PR author
+  #      narrating their own work doesn't count as feedback to themselves).
+  #   3. Otherwise → human reviewer. Use natural-language judgement.
+  #
+  # Output digest contract: `feedback_digest` is a stable hash of
+  # (comment ids + thread ids + vote tuples + body sha) of everything
+  # the analyzer considered. `revise_counter` uses this to avoid
+  # incrementing on no-progress re-polls.
+  #
+  # Invariants:
+  #   Pre:  poll_status returned route == 'none'.
+  #   Post: output.has_negative_feedback bool drives routing;
+  #         output.feedback_summary is the implementer's revision brief;
+  #         output.feedback_digest dedups no-progress polls.
+  - name: pr_feedback_analyzer
+    type: agent
+    model: claude-sonnet-4.6
+    description: Read poll envelope; decide whether negative feedback requires implementer revision.
+    tools:
+      - filesystem
+    output:
+      has_negative_feedback:
+        type: boolean
+        description: True when the analyzer judges that one or more in-scope reviewers requested changes the implementer should address.
+      feedback_summary:
+        type: string
+        description: Markdown summary of the negative feedback for the implementer (pr_fixer) prompt. Empty when has_negative_feedback is false.
+      feedback_digest:
+        type: string
+        description: Stable hash of all comments/threads/votes considered. revise_counter uses this to detect no-progress re-polls.
+      reasoning:
+        type: string
+        description: Short explanation of the decision (audit only — not posted, not consumed by routing).
+    prompt: |
+      You decide whether a code-review PR currently has actionable
+      negative feedback that the implementer should respond to.
+
+      ## Context — Poll envelope
+
+      - **PR URL:** {{ poll_status.output.pr_url }}
+      - **PR author identity:** `{{ poll_status.output.author_identity }}`
+      - **Head SHA:** `{{ poll_status.output.head_sha }}`
+      - **Derived state:** `{{ poll_status.output.state }}`
+      - **Route reason (from terminal classifier):** {{ poll_status.output.route_reason }}
+
+      ### Top-level PR comments (JSON, oldest first)
+
+      ```json
+      {{ poll_status.output.comments | tojson }}
+      ```
+
+      ### Review threads (JSON, includes thread comments)
+
+      ```json
+      {{ poll_status.output.threads | tojson }}
+      ```
+
+      ### Reviewer votes
+
+      ```json
+      {{ poll_status.output.reviewers | tojson }}
+      ```
+
+      ## Identity & severity policy
+
+      For each comment / thread, classify the source:
+
+      1. If the comment body's `marker` field is non-null → **bot
+         reviewer** (the polyphony pr_initial_reviewer or another
+         marker-posting agent). Only treat items under the `**Blocking
+         concerns**` section as negative; ignore everything else in
+         the bot's body.
+      2. Else if `author == PR author identity` → **author self-comment**.
+         Exclude entirely (the PR author narrating their own work is
+         not feedback to themselves).
+      3. Else → **human reviewer**. Use natural-language judgement of
+         the comment's sentiment and any embedded code-review concerns.
+
+      For reviewer **votes** on ADO: a `-5` (waiting for author) vote
+      counts as negative feedback. A `+5` (approved with suggestions)
+      vote ALONE does not — but if it's paired with unresolved actionable
+      threads, the threads still win and you should treat the unresolved
+      threads as negative feedback. A `+10` or `-10` was already terminated
+      by the deterministic classifier; if you see one here it means
+      mixed signals — defer to the threads / comments to decide.
+
+      Unresolved threads (status active / pending — anything that is NOT
+      resolved / fixed / closed / by-design / won-fix) that contain at
+      least one in-scope (non-author) comment count as negative feedback
+      even if the comment body is short.
+
+      ## Output
+
+      Return JSON:
+      ```json
+      {
+        "has_negative_feedback": <true|false>,
+        "feedback_summary": "<markdown brief for the implementer; concise — summarize, do not paste raw threads; empty string when no negative feedback>",
+        "feedback_digest": "<short stable hash of everything you considered — comment ids + thread ids + vote tuples; same inputs MUST produce the same digest>",
+        "reasoning": "<≤500 chars audit explanation of the decision>"
+      }
+      ```
+
+      The `feedback_summary` is fed verbatim into the pr_fixer's
+      revision prompt — keep it actionable, focused on what to change
+      (not why the reviewer flagged it). The `feedback_digest` lets
+      revise_counter detect no-progress re-polls; use a stable
+      formulation like `sha256("comment-ids:thread-ids:votes:body-shas")`
+      computed from the input ids — DO NOT include timestamps or
+      run-specific fields.
+    routes:
+      - to: approvals_policy
+        when: "{{ pr_feedback_analyzer.output.has_negative_feedback == true }}"
+      - to: pending_poll_counter
+
+  # ── Approvals policy resolver ─────────────────────────────────────────
+  #
+  # Resolves the `approvals` policy domain so revise_counter drives its
+  # cap from policy.approvals.max_revision_cycles instead of a hard-coded
+  # literal. Scope is `type:<guidance_loader.output.type>` — same key
+  # used by guidance_loader so per-type policy overrides take effect.
+  #
+  # Falls back to default scope (root/default) when the work item type
+  # is not in the policy file — that fallback is built into
+  # `polyphony policy resolve`.
+  - name: approvals_policy
+    type: script
+    description: Resolve approvals policy for revise-loop cap
+    command: polyphony
+    args:
+      - "policy"
+      - "resolve"
+      - "--domain"
+      - "approvals"
+      - "--scope"
+      - "type:{{ guidance_loader.output.type | default('') }}"
+    routes:
+      - to: revise_counter
+
+  # ── Revise counter ────────────────────────────────────────────────────
+  #
+  # Tracks pr_fixer revision cycles. Digest-keyed — only increments when
+  # `pr_feedback_analyzer.output.feedback_digest` differs from the
+  # last-seen digest. This makes re-polls during CI / between fixer
+  # pushes safe — they would otherwise consume budget without progress.
+  #
+  # Counter file key is composite (pr_number + work_item_id) so two
+  # sibling sub-workflows don't clobber each other's state if they run
+  # against the same PR for any reason.
+  #
+  # Cap reading: policy.approvals.max_revision_cycles, falls back to 5.
+  - name: revise_counter
+    type: script
+    description: Track pr_fixer revise loop iteration count (digest-keyed; cap from policy.approvals.max_revision_cycles)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-ado-pr-revise-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}.json"
+        $digestNow   = '{{ pr_feedback_analyzer.output.feedback_digest if (pr_feedback_analyzer is defined and pr_feedback_analyzer.output.feedback_digest is defined) else "" }}'
+
+        $count = 0
+        $digestPrev = ''
+        if (Test-Path $counterFile) {
+          try {
+            $state      = Get-Content $counterFile -Raw | ConvertFrom-Json
+            $count      = [int]$state.count
+            $digestPrev = [string]$state.digest
+          } catch {
+            try { $count = [int](Get-Content $counterFile -Raw) } catch { $count = 0 }
+            $digestPrev = ''
+          }
+        }
+
+        if ($digestNow -ne '' -and $digestNow -ne $digestPrev) {
+          $count = $count + 1
+        } elseif ($count -eq 0) {
+          $count = 1
+        }
+
+        @{ count = $count; digest = $digestNow } | ConvertTo-Json -Compress | Set-Content $counterFile
+
+        $policyMax = '{{ approvals_policy.output.max_revision_cycles | default("") }}'
+        if ([string]::IsNullOrWhiteSpace($policyMax) -or $policyMax -eq 'None' -or $policyMax -eq '0') {
+            $maxRevisions = 5
+        } else {
+            $maxRevisions = [int]$policyMax
+        }
+        $capReached = $count -ge $maxRevisions
+        $digestChanged = ($digestNow -ne '' -and $digestNow -ne $digestPrev)
+        @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached; digest = $digestNow; digest_changed = $digestChanged } | ConvertTo-Json
+    routes:
+      - to: revise_cap_gate
+        when: "{{ revise_counter.output.cap_reached == true }}"
+      - to: pr_fixer
+
+  # ── Revise cap gate ───────────────────────────────────────────────────
+  #
+  # Fires when pr_fixer has hit the revise cap and the analyzer is still
+  # surfacing negative feedback. P7: do NOT auto-merge — surface the
+  # failure honestly and let the operator decide.
+  - name: revise_cap_gate
+    type: human_gate
+    prompt: |
+      ## ⚠️ Revision Cap Hit — ADO PR #{{ workflow.input.pr_number }}
+
+      pr_fixer has produced **{{ revise_counter.output.max_revisions }}**
+      revisions but reviewers / the bot analyzer are still requesting
+      changes.
+
+      - **PR:** {{ poll_status.output.pr_url }}
+      - **Branch:** `{{ workflow.input.branch_name }}`
+      - **Latest analyzer summary:**
+
+      ```markdown
+      {{ pr_feedback_analyzer.output.feedback_summary }}
+      ```
+
+      ---
+
+      Choose an action:
+
+      - **Re-poll** — perhaps reviewers approved since the last revision; check PR state again
+      - **Force one more revision** — send pr_fixer through one more cycle
+      - **Force merge** — bypass the review and merge anyway
+      - **Abort** — halt the entire run (terminates the conductor process)
+    options:
+      - label: "🔄 Re-poll PR"
+        value: repoll
+        route: poll_status
+      - label: "✏️ Force one more revision"
+        value: force
+        route: pr_fixer
+      - label: "⚡ Force merge"
+        value: force_merge
+        route: pr_merger
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
+
+  # ── PR fixer ───────────────────────────────────────────────────────────
+  #
+  # Addresses analyzer-summarized review feedback. Reads
+  # pr_feedback_analyzer.output.feedback_summary (NOT the raw threads —
+  # the analyzer already triaged them) and makes targeted code fixes,
+  # then pushes updated commits. Routes back to `poll_status` so the
+  # loop re-evaluates platform state on the new head SHA.
+  #
+  # NOTE: does not route to pr_initial_reviewer — the bot reviewer only
+  # runs once per workflow invocation. Subsequent loops are driven by
+  # whatever humans + the analyzer surface.
+  #
+  # Invariants:
+  #   Pre:  pr_feedback_analyzer.output.has_negative_feedback == true;
+  #         revise_counter.output.cap_reached == false (or operator
+  #         force-revised through the cap gate).
+  #   Post: Fixes are committed and pushed to the PR branch.
+  - name: pr_fixer
+    type: agent
+    model: claude-sonnet-4.6
+    description: Address PR review feedback (analyzer-summarized) with targeted code fixes
+    tools:
+      - filesystem
+    prompt: |
+      You are the PR fixer for the polyphony SDLC workflow.
+
+      ## Your Mission
+
+      Address the review feedback for ADO PR #{{ workflow.input.pr_number }}
+      on the `{{ workflow.input.branch_name }}` branch.
+
+      ## Context
+
+      - **PR number:** {{ workflow.input.pr_number }}
+      - **Branch:** {{ workflow.input.branch_name }}
+      - **Revision iteration:** {{ revise_counter.output.iteration }} of {{ revise_counter.output.max_revisions }}
+
+      ### Reviewer feedback (pre-digested by pr_feedback_analyzer)
+
+      The sentiment-driven analyzer has already triaged the PR comments,
+      threads, and votes; you do NOT need to re-query the platform.
+      Address the items in the brief below — that is the full set of
+      negative feedback gating this revision cycle.
+
+      ```markdown
+      {{ pr_feedback_analyzer.output.feedback_summary }}
+      ```
+
+      ## Instructions
+
+      1. **Read the relevant source files** for each item in the brief
+         above.
+
+      2. **Fix each issue** — For each item identified in the brief:
+         - Make the targeted fix
+         - Verify the fix doesn't introduce regressions
+
+      3. **Run tests** — Ensure the build passes and tests succeed after
+         fixes.
+
+      4. **Commit and push** — Commit fixes with a descriptive message
+         and push.
+
+         Stage **only** the files you modified for this fix — never use
+         `git add -A`, `git add .`, or `git add --all`. The working tree
+         may contain unrelated dirty files from concurrent human work or
+         earlier workflow iterations; sweeping them in pollutes the
+         commit, breaks AB# traceability, and creates phantom changes in
+         the PR.
+
+         ```
+         git add <path1> <path2>   # explicit paths, one per modified file
+         git commit -m "fix: address PR review feedback (iteration {{ revise_counter.output.iteration }})"
+         git push
+         ```
+
+      ## Output
+
+      Return a JSON object:
+      ```json
+      {
+        "fixes_applied": ["Description of each fix"],
+        "files_modified": ["List of modified files"],
+        "tests_passed": true
+      }
+      ```
+
+      ## Constraints
+
+      - Fix ONLY the issues identified in the analyzer brief
+      - Do NOT refactor code beyond what's needed for the fix
+      - Do NOT change unrelated files
+      - Every fix must be tested
+
+      {% if guidance_loader is defined and guidance_loader.output.agents.pr_fixer is defined and guidance_loader.output.agents.pr_fixer %}
+      ## Repo-Specific Guidance — pr_fixer (override)
+
+      {{ guidance_loader.output.agents.pr_fixer }}
+      {% elif guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.role %}
+      ## Repo-Specific Guidance
+
+      {{ guidance_loader.output.coder.role }}
+      {% endif %}
+
+      {% if guidance_loader is defined and guidance_loader.output.coder is defined and guidance_loader.output.coder.type_refinement %}
+      ## Repo-Specific Guidance — {{ guidance_loader.output.type }} refinement
+
+      {{ guidance_loader.output.coder.type_refinement }}
+      {% endif %}
+    routes:
+      - to: poll_status
+
+  # ── Pending poll counter (stuck-review timeout MVP) ───────────────────
+  #
+  # Increments each time pr_feedback_analyzer concludes there is no
+  # actionable negative feedback. Counter file is keyed by composite
+  # (pr_number + work_item_id) so siblings don't collide.
+  #
+  # When the count reaches POLL_CAP (60), routes to
+  # stuck_review_gate_policy_router so the operator can decide whether
+  # to keep waiting, override-approve, or abort. Below the cap, routes
+  # to pending_review_gate_policy_router (the throttle gate) for the
+  # unchanged operator UX in the common case.
+  - name: pending_poll_counter
+    type: script
+    description: Track pending-review poll count (cap 60 — stuck-review timeout MVP)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-ado-pr-pending-poll-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}"
+        if (Test-Path $counterFile) {
+            $count = [int](Get-Content $counterFile -Raw) + 1
+        } else {
+            $count = 1
+        }
+        Set-Content $counterFile $count
+        $cap = 60
+        @{ count = $count; cap = $cap; cap_reached = ($count -ge $cap) } | ConvertTo-Json
+    routes:
+      - to: stuck_review_gate_policy_router
+        when: "{{ pending_poll_counter.output.cap_reached == true }}"
+      - to: pending_review_gate_policy_router
+
+  # ── Pending-review gate policy router ─────────────────────────────────
+  #
+  # Reads `policy.unattended.review_wait_mode`. Three modes:
+  #   • `wait` (default) → fall through to the human throttle gate.
+  #   • `skip`           → bypass the gate, route directly back to re-poll.
+  #   • `auto`           → REJECTED. The old `auto` mode self-approved via
+  #                        magic comments; that mechanism is gone in the
+  #                        sentiment-driven loop. Treated as a hard
+  #                        misconfiguration so it surfaces immediately
+  #                        instead of silently degrading to `skip`.
+  - name: pending_review_gate_policy_router
+    type: script
+    description: Bypass pending_review_gate when policy.unattended.review_wait_mode is skip; reject auto.
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+    routes:
+      - to: terminal_abort_auto_mode_unsupported
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
+      - to: poll_status
+        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
+      - to: pending_review_gate
+
+  # ── Pending-review gate (throttle in the sentiment-driven loop) ───────
+  #
+  # Reached when pr_feedback_analyzer found no actionable negative
+  # feedback this poll. The PR is open and awaiting an explicit positive
+  # signal (operator completes, +5 or +10 vote) or a negative one
+  # (operator abandons, -10 vote, or new comments that change the
+  # analyzer's verdict next poll).
+  - name: pending_review_gate
+    type: human_gate
+    prompt: |
+      ## ⏳ PR Awaiting Action — ADO PR #{{ workflow.input.pr_number }}
+
+      The PR is open. The polyphony bot reviewer has posted (see the
+      marker comment thread on the PR) and the sentiment-driven analyzer
+      did NOT find actionable negative feedback this poll.
+
+      - **PR:** {{ poll_status.output.pr_url }}
+      - **Branch:** `{{ workflow.input.branch_name }}`
+
+      To proceed, take one of these actions in ADO, then click
+      **Continue** to re-poll:
+
+      - **Complete the PR** — workflow detects already_merged next poll.
+      - **Vote +5 or +10** — workflow detects merge_now next poll
+        (assuming no unresolved blocking threads or -5/-10 votes).
+      - **Vote -10 (reject)** — workflow exits this PR leg as unmerged
+        on the next poll. The parent feature-pr.yaml decides whether to
+        accept the abandonment or run its remediation cycle.
+      - **Add a comment requesting changes** — the analyzer reads the
+        comment on the next poll and routes pr_fixer back to revise.
+      - **Abandon the PR** — workflow exits this PR leg as unmerged on
+        the next poll.
+
+      ---
+
+      Choose an action:
+      - **Continue** — re-poll the PR for the updated state
+      - **I manually verified merge** — rare; covers PRs completed
+        externally between poll and decision. Emits merged=true.
+      - **Abort** — halt the entire run (terminates the conductor process)
+    options:
+      - label: "🔄 Continue"
+        value: continue
+        route: poll_status
+      - label: "✅ I manually verified merge"
+        value: verified_merge
+        route: treat_as_merged_emitter
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
+
+  # ── Stuck-review gate policy router ───────────────────────────────────
+  #
+  # Reads `policy.unattended.review_wait_mode`. Three modes:
+  #   • `auto`  → falls through to the human stuck gate (auto self-merge
+  #               via magic comments is gone in the sentiment-driven loop).
+  #   • `skip`  → bypasses the gate and routes to stuck_review_reset
+  #               (resets the counter; keeps polling).
+  #   • `wait`  → falls through to the human gate (default).
+  - name: stuck_review_gate_policy_router
+    type: script
+    description: Bypass stuck_review_gate when policy.unattended.review_wait_mode=skip; auto escalates to human
+    command: polyphony
+    args:
+      - "policy"
+      - "load"
+    routes:
+      - to: stuck_review_reset
+        when: "{{ stuck_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
+      - to: stuck_review_gate
+
+  # ── Stuck-review gate (poll-cap escalation) ───────────────────────────
+  #
+  # Fires when pending_poll_counter hits POLL_CAP (60). Reviewers have
+  # gone silent — surface that fact rather than letting the operator keep
+  # clicking "Continue" on pending_review_gate forever.
+  - name: stuck_review_gate
+    type: human_gate
+    description: ADO PR review pending past poll cap — operator decides wait, override, or abort.
+    prompt: |
+      ## ⏰ Stuck Review — Poll Cap Reached for ADO PR #{{ workflow.input.pr_number }}
+
+      The PR has been awaiting reviewer action for
+      **{{ pending_poll_counter.output.count }}** polls
+      (cap: **{{ pending_poll_counter.output.cap }}**).
+
+      Reviewers may be unavailable or unblocked but silent. You can keep
+      waiting (the counter resets), bypass review and merge anyway, or
+      abort.
+
+      - **PR:** {{ poll_status.output.pr_url }}
+      - **Branch:** `{{ workflow.input.branch_name }}`
+
+      ---
+
+      Choose an action:
+      - **Continue waiting** — reset the poll counter and return to the pending-review gate
+      - **Override approved** — bypass review and proceed to merge via `pr merge-feature-ado`
+      - **Abort** — halt the entire run (terminates the conductor process)
+    options:
+      - label: "⏳ Continue waiting"
+        value: continue_waiting
+        route: stuck_review_reset
+      - label: "✅ Override approved"
+        value: override_approved
+        route: pr_merger
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
+
+  # ── Stuck-review reset ────────────────────────────────────────────────
+  #
+  # Zeros the pending poll counter file when the operator chose
+  # "Continue waiting" at stuck_review_gate, then routes back to
+  # pending_review_gate_policy_router so the operator gets the regular
+  # pending UX again with a fresh cap budget.
+  - name: stuck_review_reset
+    type: script
+    description: Reset pending-poll counter after stuck-review continue-waiting choice
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-ado-pr-pending-poll-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}"
+        Set-Content $counterFile 0
+        @{ count = 0; reset = $true } | ConvertTo-Json
+    routes:
+      - to: pending_review_gate_policy_router
+
+  # ── PR merger ─────────────────────────────────────────────────────────
   #
   # Merges the ADO PR via `polyphony pr merge-feature-ado` (hard-codes
   # `noFastForward` per the verb; head branch retained — sibling runs
@@ -227,10 +1164,10 @@ agents:
   # `lastMergeSourceCommit.commitId` for stale-head safety.
   #
   # Invariants:
-  #   Pre:  Status check returned `approved` (or operator chose retry-merge
-  #         from the merge-failed gate).
+  #   Pre:  poll_status returned route == 'merge_now' (or operator chose
+  #         Override approved / Force merge from a gate).
   #   Post: PR merged into target branch — or routed to merge-failed gate.
-  - name: ado_pr_merger
+  - name: pr_merger
     type: script
     description: Merge the ADO feature PR via `pr merge-feature-ado`
     command: polyphony
@@ -248,492 +1185,35 @@ agents:
       - "--target-branch"
       - "{{ workflow.input.target_branch }}"
       # Stale-head safety: pin the merge to the head SHA observed at
-      # status-check time. The verb forwards this as ADO's
+      # poll_status time. The verb forwards this as ADO's
       # `lastMergeSourceCommit.commitId` and refuses (`stale_head`) if
       # the PR head has moved server-side.
       - "--match-head-commit"
-      - "{{ ado_pr_status_check.output.head_sha }}"
+      - "{{ poll_status.output.head_sha | default('') }}"
     routes:
-      # Stale head: PR head moved between status-check and merge attempt.
-      # Re-poll to pick up the new head; status-check will route based on
-      # the fresh state (still approved → re-attempt merge with new SHA).
-      - to: ado_pr_status_check
-        when: "{{ ado_pr_merger.output.error_code is defined and ado_pr_merger.output.error_code == 'stale_head' }}"
-      - to: ado_pr_merge_failed_gate
-        when: "{{ ado_pr_merger.output.error_code is defined and ado_pr_merger.output.error_code != '' }}"
+      # Stale head: PR head moved between poll and merge attempt.
+      # Re-poll to pick up the new head; the terminal classifier will
+      # route based on the fresh state (still merge_now → re-attempt
+      # merge with new SHA).
+      - to: poll_status
+        when: "{{ pr_merger.output.error_code is defined and pr_merger.output.error_code == 'stale_head' }}"
+      - to: merge_failed_gate
+        when: "{{ pr_merger.output.error_code is defined and pr_merger.output.error_code != '' }}"
       - to: $end
-        when: "{{ ado_pr_merger.output.merged == true }}"
+        when: "{{ pr_merger.output.merged == true }}"
       # Catch-all per M4: not merged + no error_code -> merge-failed gate
       # so the operator can decide rather than silently advancing.
-      - to: ado_pr_merge_failed_gate
+      - to: merge_failed_gate
 
-  # ── ADO PR already-merged emitter ───────────────────────────────────────
-  #
-  # Idempotent re-entry path. When status_check finds the PR is already
-  # merged (e.g., parent workflow re-invoked ado-pr.yaml after a previous
-  # run merged it), emit a successful terminal output and exit. Avoids
-  # re-calling `pr merge-feature-ado` (which IS idempotent but burns an
-  # ADO API call and emits a less clear log message).
-  #
-  # Invariants:
-  #   Pre:  status_check.output.state == 'merged'.
-  #   Post: Workflow output.merged is true; exits.
-  - name: ado_pr_already_merged_emitter
-    type: script
-    description: Emit merged=true when status_check found the PR already merged
-    command: pwsh
-    args:
-      - "-NoProfile"
-      - "-Command"
-      - >-
-        @{
-          merged = $true;
-          pr_url = '{{ ado_pr_status_check.output.pr_url }}';
-          reason = 'already_merged_idempotent_reentry'
-        } | ConvertTo-Json -Compress
-    routes:
-      - to: $end
-
-  # ── Treat-as-merged emitter ─────────────────────────────────────────────
-  #
-  # Operator-driven terminal: when a human gate's "I manually verified
-  # merge" option is selected (e.g., the PR was merged externally and ADO
-  # is slow to reflect, or the operator confirmed merge via another
-  # means), emit merged=true and exit. Records `override=true` and a
-  # reason so downstream logs reflect that this was NOT platform-confirmed
-  # at the time of decision.
-  #
-  # Invariants:
-  #   Pre:  Operator chose "manually verified merge" at one of the gates.
-  #   Post: Workflow output.merged is true; exits.
-  - name: ado_pr_treat_as_merged_emitter
-    type: script
-    description: Operator override — emit merged=true (manually verified)
-    command: pwsh
-    args:
-      - "-NoProfile"
-      - "-Command"
-      - >-
-        @{
-          merged = $true;
-          pr_url = '{{ ado_pr_status_check.output.pr_url | default("") }}';
-          override = $true;
-          reason = 'operator_manually_verified_merge'
-        } | ConvertTo-Json -Compress
-    routes:
-      - to: $end
-
-  # ── Approved-but-blocked gate ───────────────────────────────────────────
-  #
-  # `pr poll-status-ado` returned `state: approved` but
-  # `policy.merge_allowed` is false. ADO knows the PR is approved by
-  # reviewers but considers merge currently disallowed — typically due to
-  # conflicts or mergeability not yet computed (`mergeable` is null on
-  # ADO until a background merge probe completes).
-  #
-  # Per M3, the prompt guards `policy.blocking_reasons` with `is defined`
-  # since status_check IS defined when we reach this gate (route
-  # precondition).
-  #
-  # Operator can:
-  # - Re-poll: ADO may have computed mergeability / conflicts may be
-  #   resolved.
-  # - Manually verified merge: rare; covers cases where the merge happened
-  #   externally between poll and decision.
-  # - Abort: exit merged=false. PR remains approved-but-blocked.
-  #
-  # Invariants:
-  #   Pre:  status_check.output.state == 'approved' AND
-  #         status_check.output.policy.merge_allowed == false.
-  #   Post: Operator chose re-poll, manually-verified-merge, or abort.
-  - name: ado_pr_blocked_gate
-    type: human_gate
-    description: ADO PR is approved but not mergeable — operator triages
-    prompt: |
-      ## ⚠️ ADO PR — Approved but Blocked from Merging
-
-      PR: `{{ workflow.input.pr_number }}` on
-      `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
-      ({{ ado_pr_status_check.output.pr_url | default('') }})
-
-      The PR is approved by reviewers, but ADO considers merge currently
-      disallowed. Typical causes: branch conflicts, mergeability not yet
-      computed, or build policy waiting.
-
-      {% if ado_pr_status_check is defined and ado_pr_status_check.output.policy is defined and ado_pr_status_check.output.policy.blocking_reasons -%}
-      **Blocking reasons:**
-      {% for reason in ado_pr_status_check.output.policy.blocking_reasons -%}
-      - {{ reason }}
-      {% endfor %}
-      {%- endif %}
-
-      Choose an action:
-      - **Re-poll** — ADO may have re-computed mergeability or conflicts
-        may have been resolved.
-      - **I manually verified merge** — rare; covers PRs merged externally
-        between poll and decision. Records `override=true`.
-      - **Abort** — exit with `merged=false`. PR remains approved-but-blocked
-        for manual resolution.
-    options:
-      - label: "🔁 Re-poll status"
-        value: repoll
-        route: ado_pr_status_check
-      - label: "✅ I manually verified merge"
-        value: verified_merge
-        route: ado_pr_treat_as_merged_emitter
-      - label: "🛑 Abort"
-        value: abort
-        route: terminal_abort_run
-
-  # ── ADO connection-inputs missing gate ──────────────────────────────────
-  #
-  # Fires when the validator detected at least one of organization,
-  # project, repository, root_id was blank. Surfaces a clear remediation
-  # path (re-invoke the workflow with the missing inputs) without burning
-  # an ADO API call.
-  #
-  # Per M3, only this gate's prompt references
-  # `ado_inputs_validator.output.missing` — the validator IS defined when
-  # we reach this gate (route precondition).
-  #
-  # Invariants:
-  #   Pre:  ado_inputs_validator.output.ado_inputs_ready == false.
-  #   Post: Operator informed; workflow exits with merged=false.
-  - name: ado_inputs_missing_gate
-    type: human_gate
-    description: ADO connection inputs missing — workflow cannot proceed
-    prompt: |
-      ## ADO connection inputs missing
-
-      `ado-pr.yaml` was invoked but the following required inputs are blank
-      or zero: **{{ ado_inputs_validator.output.missing }}**
-
-      `polyphony pr poll-status-ado` and `pr merge-feature-ado` require
-      `--organization`, `--project`, `--repository`, and `--root-id`.
-      Re-invoke `feature-pr.yaml` (or this workflow directly) with all four
-      threaded.
-
-      PR: `{{ workflow.input.pr_number }}` on
-      `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
-    options:
-      - label: "🛑 Abort"
-        value: abort
-        route: terminal_abort_run
-
-  # ── Changes-requested gate ──────────────────────────────────────────────
-  #
-  # One or more reviewers voted for changes (ADO -10 / -5). Operator
-  # decides:
-  # - Re-poll: reviewer may have re-voted. Re-runs status_check.
-  # - Treat-as-not-merged: exit merged=false. Triggers remediation cycle
-  #   in feature-pr.yaml.
-  # - Abort: exit merged=false without further action.
-  #
-  # Invariants:
-  #   Pre:  status_check.output.state == 'changes_requested'.
-  #   Post: Operator chose re-poll, treat-as-not-merged, or abort.
-  - name: ado_pr_changes_requested_gate
-    type: human_gate
-    description: ADO PR has reviewer-requested changes — operator triages
-    prompt: |
-      ## 🔄 ADO PR — Changes Requested
-
-      PR: `{{ workflow.input.pr_number }}` on
-      `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
-      ({{ ado_pr_status_check.output.pr_url | default('') }})
-
-      One or more reviewers requested changes. Polyphony does not
-      auto-remediate ADO PRs in this workflow; remediation runs in the
-      parent `feature-pr.yaml` workflow.
-
-      Choose an action:
-      - **Re-poll** — reviewer may have updated their vote. Re-runs the
-        status check.
-      - **Trigger remediation** — exit with `merged=false`. The parent
-        `feature-pr.yaml` workflow will start a remediation cycle
-        (planner → seeder → implementer → re-request review). As of
-        feature-pr.yaml v1.2.0 this is fully wired on ADO — the planner
-        uses reviewer identity + vote from `pr poll-status-ado`, and the
-        updater posts the re-review comment via `pr post-comment-ado`.
-      - **Abort** — exit with `merged=false` and no remediation. PR
-        remains open for manual resolution.
-    options:
-      - label: "🔁 Re-poll status"
-        value: repoll
-        route: ado_pr_status_check
-      - label: "🛠️ Trigger remediation (exit merged=false)"
-        value: trigger_remediation
-        route: $end
-      - label: "🛑 Abort"
-        value: abort
-        route: terminal_abort_run
-
-  # ── Pending poll counter (stuck-review timeout MVP) ─────────────────────
-  #
-  # Increments each time ado_pr_status_check returns 'pending'. Counter
-  # file is keyed by pr_number so it persists across the
-  # status_check → pending_gate → re-poll → status_check loop. When the
-  # count reaches POLL_CAP, routes to ado_stuck_review_gate so the
-  # operator can decide whether to keep waiting, override-approve, or
-  # abort. Below the cap, routes to the existing ado_pr_pending_gate
-  # (unchanged operator UX for the common case).
-  #
-  # POLL_CAP is hard-coded to 60 at MVP. With operator-driven re-polls
-  # this represents 60 deliberate "is it ready yet?" clicks before the
-  # workflow surfaces the stuck-review escalation.
-  #
-  # TODO(stuck-review-policy): elevate to policy.yaml > timeouts:
-  #   { review_pending: { by_pr_kind: { feature: 60, ... } } }
-  # when the policy schema lands. See docs/decisions/stuck-review-timeout.md.
-  #
-  # Invariants:
-  #   Pre:  ado_pr_status_check.output.state == 'pending'.
-  #   Post: output.count is the current poll count (1-based);
-  #         output.cap_reached indicates whether the cap was hit.
-  - name: ado_pending_poll_counter
-    type: script
-    description: Track ADO pending-review poll count (cap 60 — stuck-review timeout MVP)
-    command: pwsh
-    args:
-      - "-NoProfile"
-      - "-Command"
-      - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-ado-pr-pending-poll-{{ workflow.input.pr_number }}"
-        if (Test-Path $counterFile) {
-            $count = [int](Get-Content $counterFile -Raw) + 1
-        } else {
-            $count = 1
-        }
-        Set-Content $counterFile $count
-        $cap = 60
-        @{ count = $count; cap = $cap; cap_reached = ($count -ge $cap) } | ConvertTo-Json
-    routes:
-      - to: ado_stuck_review_gate
-        when: "{{ ado_pending_poll_counter.output.cap_reached == true }}"
-      - to: ado_pr_pending_gate
-
-  # ── Pending gate ────────────────────────────────────────────────────────
-  #
-  # No reviewer has voted yet (or reviewers required but none submitted).
-  # Operator decides:
-  # - Re-poll: reviewers may have voted since last check.
-  # - Treat-as-merged: PR was merged outside polyphony's view (rare).
-  # - Treat-as-not-merged: exit merged=false → remediation.
-  # - Abort: exit without action.
-  #
-  # Invariants:
-  #   Pre:  status_check.output.state == 'pending'.
-  #   Post: Operator chose re-poll, treat-as-merged, treat-as-not-merged,
-  #         or abort.
-  - name: ado_pr_pending_gate
-    type: human_gate
-    description: ADO PR awaiting reviewer votes — operator waits or re-polls
-    prompt: |
-      ## ⏳ ADO PR — Pending Reviewer Votes
-
-      PR: `{{ workflow.input.pr_number }}` on
-      `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
-      ({{ ado_pr_status_check.output.pr_url | default('') }})
-
-      No reviewer has voted yet. Wait for required reviewers to vote in
-      ADO, then choose **Re-poll**.
-
-      Choose an action:
-      - **Re-poll** — re-run the status check (use after reviewers vote).
-      - **I manually verified merge** — PR was merged outside polyphony's
-        view (rare — e.g., an admin force-merged). Records `override=true`.
-      - **Trigger remediation** — exit with `merged=false`. The parent
-        `feature-pr.yaml` workflow will run a remediation cycle (wired
-        end-to-end on ADO as of feature-pr.yaml v1.2.0).
-      - **Abort** — exit with `merged=false` and no remediation.
-    options:
-      - label: "🔁 Re-poll status"
-        value: repoll
-        route: ado_pr_status_check
-      - label: "✅ I manually verified merge"
-        value: verified_merge
-        route: ado_pr_treat_as_merged_emitter
-      - label: "🛠️ Trigger remediation (exit merged=false)"
-        value: trigger_remediation
-        route: $end
-      - label: "🛑 Abort"
-        value: abort
-        route: terminal_abort_run
-
-  # ── Stuck-review gate (poll-cap escalation) ─────────────────────────────
-  #
-  # Fires when ado_pending_poll_counter hits POLL_CAP (60). The reviewers
-  # have gone silent — surface that fact rather than letting the operator
-  # keep clicking "Re-poll" on ado_pr_pending_gate forever.
-  #
-  # Three operator options (per task spec):
-  #   continue_waiting  → reset the counter, return to ado_pr_pending_gate.
-  #                       Gives the operator another full cap budget.
-  #   override_approved → bypass review, route to ado_pr_merger.
-  #   abort             → exit the workflow.
-  #
-  # TODO(stuck-review-policy): elevate to policy.yaml > timeouts: when
-  # the policy schema lands. See docs/decisions/stuck-review-timeout.md.
-  #
-  # P6 qualification: this is a genuine multi-option decision (wait /
-  # override / abort) that requires the operator to know whether the
-  # silence is recoverable — not a routine checkpoint.
-  - name: ado_stuck_review_gate
-    type: human_gate
-    description: ADO PR review pending past poll cap — operator decides wait, override, or abort.
-    prompt: |
-      ## ⏰ Stuck Review — Poll Cap Reached for ADO PR #{{ workflow.input.pr_number }}
-
-      The PR has been awaiting reviewer votes for
-      **{{ ado_pending_poll_counter.output.count }}** polls
-      (cap: **{{ ado_pending_poll_counter.output.cap }}**).
-
-      Reviewers may be unavailable or unblocked but silent. You can keep
-      waiting (the counter resets), bypass review and merge anyway, or
-      abort.
-
-      PR: `{{ workflow.input.pr_number }}` on
-      `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
-      ({{ ado_pr_status_check.output.pr_url | default('') }})
-
-      ---
-
-      Choose an action:
-      - **Continue waiting** — reset the poll counter and return to the pending gate
-      - **Override approved** — bypass review and proceed to merge via `pr merge-feature-ado`
-      - **Abort** — exit with `merged=false`
-    options:
-      - label: "⏳ Continue waiting"
-        value: continue_waiting
-        route: ado_stuck_review_reset
-      - label: "✅ Override approved"
-        value: override_approved
-        route: ado_pr_merger
-      - label: "🛑 Abort"
-        value: abort
-        route: terminal_abort_run
-
-  # ── Stuck-review reset ──────────────────────────────────────────────────
-  #
-  # Zeros the poll counter file when the operator chose "Continue waiting"
-  # at ado_stuck_review_gate, then routes back to ado_pr_pending_gate so
-  # the operator gets the regular pending UX again with a fresh cap budget.
-  - name: ado_stuck_review_reset
-    type: script
-    description: Reset ADO pending-poll counter after stuck-review continue-waiting choice
-    command: pwsh
-    args:
-      - "-NoProfile"
-      - "-Command"
-      - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-ado-pr-pending-poll-{{ workflow.input.pr_number }}"
-        Set-Content $counterFile 0
-        @{ count = 0; reset = $true } | ConvertTo-Json
-    routes:
-      - to: ado_pr_pending_gate
-
-  # ── Closed gate ─────────────────────────────────────────────────────────
-  #
-  # PR was closed without merging. Likely manually abandoned. Operator
-  # decides:
-  # - Re-poll: rare — PR was reopened.
-  # - Treat-as-merged: PR was merged via a different PR (unusual).
-  # - Abort: exit merged=false.
-  #
-  # Invariants:
-  #   Pre:  status_check.output.state == 'closed'.
-  #   Post: Operator chose re-poll, treat-as-merged, or abort.
-  - name: ado_pr_closed_gate
-    type: human_gate
-    description: ADO PR closed without merging — operator triages
-    prompt: |
-      ## 🚪 ADO PR — Closed Without Merge
-
-      PR: `{{ workflow.input.pr_number }}` on
-      `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
-      ({{ ado_pr_status_check.output.pr_url | default('') }})
-
-      The PR was closed without being merged. This is unusual — typically
-      the PR was abandoned manually.
-
-      Choose an action:
-      - **Re-poll** — rare (PR was reopened).
-      - **I manually verified merge** — work was merged via a different
-        PR. Records `override=true`.
-      - **Abort** — exit with `merged=false`. PR is closed; no remediation.
-    options:
-      - label: "🔁 Re-poll status"
-        value: repoll
-        route: ado_pr_status_check
-      - label: "✅ I manually verified merge"
-        value: verified_merge
-        route: ado_pr_treat_as_merged_emitter
-      - label: "🛑 Abort"
-        value: abort
-        route: terminal_abort_run
-
-  # ── Status-check failed gate ────────────────────────────────────────────
-  #
-  # `pr poll-status-ado` returned `state: error` (or unrecognized state).
-  # Most likely causes: missing PAT, ADO timeout, transient API failure.
-  # Operator can:
-  # - Retry: re-runs status_check.
-  # - Abort: exit merged=false.
-  #
-  # Per M3, the prompt guards `error_code` and `error` references with
-  # `is defined` because status_check IS defined when we reach this gate
-  # (route precondition).
-  #
-  # Invariants:
-  #   Pre:  status_check.output.state == 'error' (or unrecognized).
-  #   Post: Operator chose retry or abort.
-  - name: ado_pr_failed_gate
-    type: human_gate
-    description: ADO PR status check failed — operator retries or aborts
-    prompt: |
-      ## ❌ ADO PR — Status Check Failed
-
-      PR: `{{ workflow.input.pr_number }}` on
-      `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
-
-      `pr poll-status-ado` returned an error or unrecognized state.
-
-      {% if ado_pr_status_check is defined and ado_pr_status_check.output.error_code is defined and ado_pr_status_check.output.error_code != '' -%}
-      **Error code:** `{{ ado_pr_status_check.output.error_code }}`
-      **Detail:** {{ ado_pr_status_check.output.error | default('(no detail)') }}
-      {%- else -%}
-      **State:** `{{ ado_pr_status_check.output.state | default('unknown') }}`
-      {%- endif %}
-
-      Common causes: missing/invalid PAT, ADO timeout, transient API
-      failure. Retry is safe (single read).
-
-      Choose an action:
-      - **Retry** — re-runs the status check.
-      - **Abort** — exit with `merged=false`.
-    options:
-      - label: "🔁 Retry status check"
-        value: retry
-        route: ado_pr_status_check
-      - label: "🛑 Abort"
-        value: abort
-        route: terminal_abort_run
-
-  # ── Merge-failed gate ───────────────────────────────────────────────────
+  # ── Merge-failed gate ─────────────────────────────────────────────────
   #
   # `pr merge-feature-ado` returned an error_code or merged=false. Common
   # causes: stale_head (PR head moved between poll and merge), missing
-  # PAT, ADO timeout. Operator can:
+  # PAT, ADO timeout, branch conflicts. Operator can:
   # - Retry merge: idempotent (recognises already-merged).
   # - Treat-as-merged: PR was merged externally between attempts.
   # - Abort: exit merged=false.
-  #
-  # Per M3, the prompt guards merger output references with `is defined`.
-  #
-  # Invariants:
-  #   Pre:  ado_pr_merger ran and returned error_code OR merged=false.
-  #   Post: Operator chose retry-merge, treat-as-merged, or abort.
-  - name: ado_pr_merge_failed_gate
+  - name: merge_failed_gate
     type: human_gate
     description: ADO merge failed — operator retries merge, treats as merged, or aborts
     prompt: |
@@ -741,35 +1221,36 @@ agents:
 
       PR: `{{ workflow.input.pr_number }}` on
       `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
+      ({{ poll_status.output.pr_url | default('') }})
 
-      `pr merge-feature-ado` did not complete the merge.
+      `pr merge-feature-ado` returned an error or did not merge.
 
-      {% if ado_pr_merger is defined and ado_pr_merger.output.error_code is defined and ado_pr_merger.output.error_code != '' -%}
-      **Error code:** `{{ ado_pr_merger.output.error_code }}`
-      **Detail:** {{ ado_pr_merger.output.error | default('(no detail)') }}
-      {%- elif ado_pr_merger is defined and ado_pr_merger.output.merged == false -%}
-      **Detail:** Merge verb returned `merged=false` with no error code; PR
-      may still be open or in an unexpected state.
-      {%- else -%}
-      **Detail:** Routed to gate without an explicit error code.
+      {% if pr_merger is defined and pr_merger.output.error_code is defined and pr_merger.output.error_code != '' -%}
+      **Error code:** `{{ pr_merger.output.error_code }}`
+      **Detail:** {{ pr_merger.output.error | default('(no detail)') }}
       {%- endif %}
 
-      **Retry** is safe: `pr merge-feature-ado` is idempotent — recognises
-      an already-merged PR and respects stale-head guards (`stale_head`
-      result code surfaces explicitly).
+      Common causes: stale head (PR head moved), missing/invalid PAT,
+      ADO timeout, transient API failure, branch conflicts.
 
       Choose an action:
-      - **Retry merge** — re-runs `pr merge-feature-ado`.
-      - **I manually verified merge** — PR was merged externally between
+      - **Retry merge** — re-runs the merge (idempotent: recognises
+        already-merged).
+      - **I manually verified merge** — PR was completed externally between
         attempts. Records `override=true`.
-      - **Abort** — exit with `merged=false`. PR remains in current state.
+      - **Re-poll** — fresh status check (use when you've fixed the
+        underlying cause, e.g., resolved conflicts).
+      - **Abort** — exit with `merged=false`.
     options:
       - label: "🔁 Retry merge"
-        value: retry
-        route: ado_pr_merger
+        value: retry_merge
+        route: pr_merger
       - label: "✅ I manually verified merge"
         value: verified_merge
-        route: ado_pr_treat_as_merged_emitter
+        route: treat_as_merged_emitter
+      - label: "🔄 Re-poll status"
+        value: repoll
+        route: poll_status
       - label: "🛑 Abort"
         value: abort
         route: terminal_abort_run
@@ -790,7 +1271,35 @@ agents:
       - "{{ workflow.dir }}/../scripts/abort-run.ps1"
       - "-Reason"
       - "operator-abort"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
       - "-Stage"
       - "ado-pr"
+    routes:
+      - to: $end
+
+  # ── Auto-mode misconfiguration abort ──────────────────────────────────
+  #
+  # Reached when policy.unattended.review_wait_mode == 'auto'. The old
+  # auto path self-approved via magic comments; that mechanism is gone
+  # in the sentiment-driven loop. Refuse the misconfiguration loudly so
+  # an operator who set `auto` finds out at policy-load time instead of
+  # watching the run poll forever.
+  - name: terminal_abort_auto_mode_unsupported
+    type: script
+    description: Abort — policy.unattended.review_wait_mode='auto' is unsupported under the sentiment-driven PR-review loop.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "auto-mode-unsupported"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Stage"
+      - "ado-pr"
+      - "-Detail"
+      - "policy.unattended.review_wait_mode='auto' was honored by the magic-comment auto-approve path that the sentiment-driven loop deleted. Set it to 'skip' (silent unattended polling) or 'wait' (human throttle gate) and re-run; a future PR will reintroduce 'auto' on top of the platform vote APIs."
     routes:
       - to: $end
