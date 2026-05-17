@@ -189,6 +189,20 @@ polyphony worktree gc --commit
 
 `worktree gc` only ever considers worktrees under `~/projects/<repo>-runs/` — your main worktree and any sibling worktrees outside the runs root are never touched.
 
+### After merging a PR — reconcile main + prune stale branches
+
+When a PR merges on the remote (especially an ADO squash-merge), the operator's main worktree ends up 1-ahead/N-behind `origin/main` with identical content and the just-merged local branch is left orphaned. The `Sync-BareRepo.ps1` launcher (installed to `~/.polyphony/bin/`) reconciles both:
+
+```powershell
+# Dry-run from anywhere inside the main worktree (safe default — prints the plan):
+Sync-BareRepo.ps1
+
+# Execute:
+Sync-BareRepo.ps1 -Commit
+```
+
+It fast-forwards a behind-only `main`, hard-resets a squash-divergent `main` (only when the content trees are identical), and deletes local branches whose upstream is `[gone]` AND whose tip is merged into reconciled `main`. Refuses on dirty worktree, multiple worktrees on `main`, or any case where data could be lost. Pass `-NoPrune` to skip the cleanup phase.
+
 ### What this means for day-to-day work
 
 - **Edit code in `~/projects/<repo>/`.** That's your main worktree, always on `main`. The SDLC orchestrator never dispatches into it.
