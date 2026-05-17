@@ -53,14 +53,14 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
     private static PrCreateFeatureAdoResult Parse(string output)
         => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrCreateFeatureAdoResult)!;
 
-    private static AdoPullRequest MakePr(int id, string url, string sourceRef, string targetRef)
+    private static AdoPullRequest MakePr(int id, string url, string sourceRef, string targetRef, string status = "active")
         => new(
             PullRequestId: id,
             Title: "title",
             Description: "",
             SourceRefName: sourceRef,
             TargetRefName: targetRef,
-            Status: "active",
+            Status: status,
             MergeStatus: null,
             CreatedBy: "user",
             CreationDate: DateTime.UtcNow,
@@ -246,6 +246,29 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
         result.Created.ShouldBeFalse();
         result.PrNumber.ShouldBe(50);
         result.PrUrl.ShouldEndWith("/pullrequest/50");
+        ado.CreatePrCallCount.ShouldBe(0);
+    }
+
+    // AB#3228: completed PR for same source/target is reused on retry
+    // (rather than opening a degenerate no-op duplicate).
+    [Fact]
+    public async Task CreateFeatureAdo_OnlyCompletedPrForSameHeadBase_Reuses()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        StubBranchesExist(runner, "feature/100", "main");
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 50, url: "https://example.invalid/50",
+                sourceRef: "refs/heads/feature/100",
+                targetRef: "refs/heads/main",
+                status: "completed"),
+        };
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.CreateFeatureAdo(Org, Project, Repo, rootId: 100));
+        var result = Parse(output);
+        result.ErrorCode.ShouldBeEmpty();
+        result.Created.ShouldBeFalse();
+        result.PrNumber.ShouldBe(50);
         ado.CreatePrCallCount.ShouldBe(0);
     }
 

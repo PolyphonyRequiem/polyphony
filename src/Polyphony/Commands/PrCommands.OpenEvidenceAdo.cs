@@ -165,11 +165,14 @@ public sealed partial class PrCommands
 
         try
         {
-            var activePrs = await ado.ListPullRequestsAsync(
+            // Includes Completed PRs so a retry after a successful merge reuses
+            // the real merged PR rather than opening a degenerate no-op
+            // duplicate (AB#3228). Active PRs win over Completed.
+            var allPrs = await ado.ListPullRequestsAsync(
                 organization, project, repository,
-                AdoPullRequestStatus.Active, sourceBranch: headBranch, ct).ConfigureAwait(false);
+                AdoPullRequestStatus.All, sourceBranch: headBranch, ct).ConfigureAwait(false);
 
-            if (activePrs is null)
+            if (allPrs is null)
             {
                 return EvidenceAdoOutcome.Failure(headBranch, resolvedBase,
                     "pr_not_found",
@@ -177,15 +180,26 @@ public sealed partial class PrCommands
             }
 
             var expectedTargetRef = "refs/heads/" + resolvedBase;
-            AdoPullRequest? existing = null;
-            foreach (var pr in activePrs)
+            AdoPullRequest? activeMatch = null;
+            AdoPullRequest? completedMatch = null;
+            foreach (var pr in allPrs)
             {
-                if (string.Equals(pr.TargetRefName, expectedTargetRef, StringComparison.Ordinal))
+                if (!string.Equals(pr.TargetRefName, expectedTargetRef, StringComparison.Ordinal))
                 {
-                    existing = pr;
+                    continue;
+                }
+                if (string.Equals(pr.Status, "active", StringComparison.OrdinalIgnoreCase))
+                {
+                    activeMatch = pr;
                     break;
                 }
+                if (completedMatch is null
+                    && string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    completedMatch = pr;
+                }
             }
+            var existing = activeMatch ?? completedMatch;
 
             if (existing is not null)
             {

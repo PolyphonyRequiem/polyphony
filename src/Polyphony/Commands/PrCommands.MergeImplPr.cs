@@ -279,7 +279,14 @@ public sealed partial class PrCommands
             RepoSlug = adoResult.RepoSlug,
             Error = string.IsNullOrEmpty(adoResult.Error) ? null : adoResult.Error,
         });
-        return string.IsNullOrEmpty(adoResult.Error) ? ExitCodes.Success : ExitCodes.RoutingFailure;
+        // Routing-style verb: always exit 0. Workflow YAML routes on the JSON
+        // envelope's `error` / `merged` / `already_merged` fields, not on the
+        // exit code. Returning RoutingFailure on `adoResult.Error` here
+        // misroutes a recoverable gate condition (e.g. AB#3227 / AB#3228
+        // missing_merge_commit) into a verb-level crash. See the
+        // polyphony-workflow-author skill's "Routing-style verb envelope
+        // convention" section.
+        return ExitCodes.Success;
     }
 
     private static void EmitMergeImplError(
