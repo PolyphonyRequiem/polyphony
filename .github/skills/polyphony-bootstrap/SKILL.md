@@ -298,6 +298,25 @@ polyphony worktree gc --commit
 
 Run it monthly (or whenever your runs root looks crowded). The verb is idempotent — re-running on a clean tree is a no-op.
 
+### After merging a PR — reconcile main + prune stale branches
+
+When a PR merges on the remote (especially an ADO squash-merge), the operator's main worktree ends up 1-ahead/N-behind `origin/main` with identical content, and the just-merged local branch is left orphaned. `Sync-BareRepo.ps1` (shipped via `install.ps1` to `~/.polyphony/bin/`) reconciles both in one shot:
+
+```powershell
+# Dry-run from anywhere inside the main worktree (safe default — prints the plan):
+Sync-BareRepo.ps1
+
+# Execute:
+Sync-BareRepo.ps1 -Commit
+```
+
+Behavior:
+
+- Fast-forwards local `main` when behind.
+- Hard-resets local `main` to `origin/main` ONLY when histories diverge but the content trees are identical (the squash-merge case).
+- Refuses on dirty main worktree, multiple worktrees on `main`, local-ahead with real commits, or diverged content. No `--force` flag exists — fix the condition first.
+- Deletes local branches that are BOTH `[gone]` upstream AND merged into reconciled `main`. Unmerged work is preserved; checked-out branches are skipped. Pass `-NoPrune` to skip the cleanup phase.
+
 ---
 
 ## 8 · Guidance authoring: where does this rule live?
