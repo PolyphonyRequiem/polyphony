@@ -270,19 +270,30 @@ if ($content -notmatch 'name:\s*pending_poll_counter\b') {
     }
 }
 
-# ── Check 19: poll_status routes 'pending' through pending_poll_counter ─
-# Both poll_status and poll_status_ado must redirect their 'pending' case
-# to pending_poll_counter rather than directly to pending_review_gate.
-if ($content -notmatch "to:\s*pending_poll_counter[\s\S]{0,200}?poll_status\.output\.state\s*==\s*'pending'") {
+# ── Check 19: poll_status routes 'none' through pr_feedback_analyzer ────
+# Under the sentiment-driven model both poll_status and poll_status_ado
+# must defer the ambiguous-middle case (route == 'none') to the
+# pr_feedback_analyzer agent — that node is what decides whether the
+# pending_poll_counter throttle path runs vs sending the architect to
+# revise.
+if ($content -notmatch "to:\s*pr_feedback_analyzer[\s\S]{0,200}?poll_status\.output\.route\s*==\s*'none'") {
     $violations += [PSCustomObject]@{
-        Rule   = 'missing-poll-status-pending-route'
-        Detail = "poll_status does not route 'pending' through pending_poll_counter"
+        Rule   = 'missing-poll-status-none-route'
+        Detail = "poll_status does not route 'none' through pr_feedback_analyzer"
     }
 }
-if ($content -notmatch "to:\s*pending_poll_counter[\s\S]{0,200}?poll_status_ado\.output\.state\s*==\s*'pending'") {
+if ($content -notmatch "to:\s*pr_feedback_analyzer[\s\S]{0,200}?poll_status_ado\.output\.route\s*==\s*'none'") {
     $violations += [PSCustomObject]@{
-        Rule   = 'missing-poll-status-ado-pending-route'
-        Detail = "poll_status_ado does not route 'pending' through pending_poll_counter"
+        Rule   = 'missing-poll-status-ado-none-route'
+        Detail = "poll_status_ado does not route 'none' through pr_feedback_analyzer"
+    }
+}
+
+# ── Check 19b: pr_feedback_analyzer node exists ─────────────────────────
+if ($content -notmatch 'name:\s*pr_feedback_analyzer\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-pr-feedback-analyzer'
+        Detail = "No pr_feedback_analyzer agent node found (sentiment-driven loop)"
     }
 }
 
