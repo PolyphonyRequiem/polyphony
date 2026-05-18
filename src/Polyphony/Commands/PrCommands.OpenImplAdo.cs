@@ -192,9 +192,11 @@ public sealed partial class PrCommands
                     activeMatch = pr;
                     break;
                 }
-                if (completedMatch is null
-                    && string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase)
+                    && (completedMatch is null || pr.CreationDate < completedMatch.CreationDate))
                 {
+                    // Prefer the OLDEST completed match — see PrCommands.OpenMergeGroupAdo.cs
+                    // for rationale (AB#3228 newer-phantom guard).
                     completedMatch = pr;
                 }
             }
