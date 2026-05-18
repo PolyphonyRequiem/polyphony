@@ -322,6 +322,83 @@ Describe 'Invoke-PolyphonySdlc — intent semantics' {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
+# Phase 6.5: -Intent reset diversion
+# ════════════════════════════════════════════════════════════════════════════
+
+Describe 'Invoke-PolyphonySdlc — reset intent' {
+
+    BeforeEach { $script:fx = New-BareRepoFixture }
+    AfterEach  { Remove-BareRepoFixture $script:fx }
+
+    It 'Diverts to reset-apex@polyphony workflow' {
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -Intent reset -DryRun | ConvertFrom-Json
+            $r.workflow | Should -Be 'reset-apex@polyphony'
+            $r.intent | Should -Be 'reset'
+            $r.args | Should -Contain 'reset-apex@polyphony'
+            # Reset-apex inputs (not apex-driver inputs).
+            $r.args | Should -Contain 'apex_id=9999'
+            $r.args | Should -Contain 'execute=false'
+            $r.args | Should -Contain 'auto_confirm=false'
+            $r.args | Should -Contain 'skip_state=false'
+            $r.args | Should -Contain 'comment='
+            # Apex-driver inputs should NOT be present.
+            ($r.args -join ' ') | Should -Not -Match '\bintent=reset\b'
+        } finally { Pop-Location }
+    }
+
+    It '-Execute toggles execute=true' {
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -Intent reset -Execute -DryRun | ConvertFrom-Json
+            $r.execute | Should -BeTrue
+            $r.args | Should -Contain 'execute=true'
+        } finally { Pop-Location }
+    }
+
+    It '-AutoConfirm + -SkipState + -Comment forward as inputs' {
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -ApexId 9999 -Intent reset -Execute -AutoConfirm `
+                -SkipState -Comment 'hand-curated reset' -DryRun | ConvertFrom-Json
+            $r.auto_confirm | Should -BeTrue
+            $r.skip_state | Should -BeTrue
+            $r.comment | Should -Be 'hand-curated reset'
+            $r.args | Should -Contain 'auto_confirm=true'
+            $r.args | Should -Contain 'skip_state=true'
+            $r.args | Should -Contain 'comment=hand-curated reset'
+        } finally { Pop-Location }
+    }
+
+    It 'Reset-only params throw with non-reset intent' {
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -Execute -DryRun } |
+                Should -Throw -ExpectedMessage '*only valid with -Intent reset*'
+            { & $script:ScriptPath -ApexId 9999 -SkipState -DryRun } |
+                Should -Throw -ExpectedMessage '*only valid with -Intent reset*'
+            { & $script:ScriptPath -ApexId 9999 -AutoConfirm -DryRun } |
+                Should -Throw -ExpectedMessage '*only valid with -Intent reset*'
+            { & $script:ScriptPath -ApexId 9999 -Comment 'x' -DryRun } |
+                Should -Throw -ExpectedMessage '*only valid with -Intent reset*'
+        } finally { Pop-Location }
+    }
+
+    It 'Apex-driver-only params throw with reset intent' {
+        Push-Location $script:fx.Main
+        try {
+            { & $script:ScriptPath -ApexId 9999 -Intent reset -WorktreeRoot 'foo' -DryRun } |
+                Should -Throw -ExpectedMessage '*not valid with -Intent reset*'
+            { & $script:ScriptPath -ApexId 9999 -Intent reset -GitRepo 'foo' -DryRun } |
+                Should -Throw -ExpectedMessage '*not valid with -Intent reset*'
+            { & $script:ScriptPath -ApexId 9999 -Intent reset -Repository 'a/b' -DryRun } |
+                Should -Throw -ExpectedMessage '*not valid with -Intent reset*'
+        } finally { Pop-Location }
+    }
+}
+
+# ════════════════════════════════════════════════════════════════════════════
 # Command construction (preserved from prior tests)
 # ════════════════════════════════════════════════════════════════════════════
 

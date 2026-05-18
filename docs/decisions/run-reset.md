@@ -304,3 +304,108 @@ Tracked as future work; not blocking PR 2.
 - `tests/Polyphony.Tests/Locking/LockCommandsTests.cs` +
   `tests/Polyphony.Tests/Infrastructure/Paths/PolyphonyStatePathsTests.cs` —
   stub updates for the two new `IGitClient` methods
+
+
+---
+
+## PR 3 implementation notes (workflow + launcher + skill collapse)
+
+Closes the redispatch dead-end documented at the top of this ADR. The
+verbs in PR 2 are now reachable from an operator-friendly path:
+`./scripts/Invoke-PolyphonySdlc.ps1 -ApexId N -Intent reset [-Execute]`.
+
+### `reset-apex@polyphony` workflow
+
+`.conductor/registry/workflows/reset-apex.yaml` — 5-terminal shallow
+workflow that drives `polyphony reset apex` through a preview → confirm
+→ execute pipeline. Inputs: `apex_id` (required), `execute` (default
+`false`), `auto_confirm` (default `false`), `skip_state` (default
+`false`), `comment` (default empty string).
+
+Flow:
+
+1. `preview` — always dry-run. Routes to `terminal_failure_preview` if
+   `preview.output.success == false` (operator must investigate before
+   mutation), `terminal_success_preview_only` when `execute=false`,
+   `execute` step when `auto_confirm=true`, or the confirmation gate
+   otherwise.
+2. `confirm_gate` — human gate showing the preview's per-leg counts.
+   Operator picks **Execute** (→ execute step) or **Abort** (→
+   `terminal_success_aborted` with no mutations).
+3. `execute` — re-invokes `polyphony reset apex --execute`. Routes to
+   `terminal_failure_execute` on chain failure,
+   `terminal_success_executed` otherwise.
+
+The dry-run-by-default contract is enforced at three layers — verb
+default, workflow input default, launcher switch — so an operator who
+forgets `-Execute` cannot accidentally mutate state.
+
+The `preview` and `execute` steps shell out via a small pwsh wrapper
+(rather than calling `polyphony` directly via the `command:`/`args:`
+shape) so optional flags can be conditionally appended without leaking
+empty-string argv elements (CAF rejects those as unrecognized args).
+
+### `Invoke-PolyphonySdlc.ps1 -Intent reset`
+
+Added `'reset'` to the `-Intent` ValidateSet plus four reset-only
+parameters: `-Execute`, `-AutoConfirm`, `-SkipState`, `-Comment`.
+Reset-only parameters throw when supplied with any other intent;
+reset intent rejects `-WorktreeRoot` / `-GitRepo` / `-Repository` /
+`-RepoOrganization` / `-RepoProject` (the reset workflow operates from
+the operator's cwd and resolves apex state internally — silently
+ignoring those would mask what the workflow actually does).
+
+The reset path diverts immediately after Phase 2 (bare-repo preflight)
+and skips every subsequent phase: terminal-state refusal (we WANT to
+operate on completed items), init-apex (we are tearing down worktrees,
+not creating them), worktree hydration, assert-clean, and the
+destination-worktree preflight. Conductor runs from the operator's
+current cwd with the same web-port pinning + new-window + transcript +
+exit-sidecar shape as the apex-driver path, so the operator's UX
+(dashboard URL banner, tail-friendly transcript, machine-readable exit
+JSON) is unchanged.
+
+`gh` identity is still pinned (`Resolve-GhIdentity.ps1`) when the
+detected platform is github — the PR-abandonment leg of the reset
+chain needs `GH_TOKEN` exported to the conductor child process.
+
+### Recovery skill collapsed
+
+`.github/skills/polyphony-dogfood-recovery/SKILL.md` collapsed from
+309 lines (5-axis manual ceremony) to ~150 lines. New shape:
+
+1. **The one-liner.** Dry-run, execute, unattended variants.
+2. **Halt the run first.** `/api/kill` + process-kill fallback for
+   in-flight conductor processes — reset is safe against quiescent
+   state, not against open file handles.
+3. **Residual gotchas.** Operator-introduced edge cases the automation
+   cannot handle: uncommitted edits in worktrees, twig.config drift,
+   manually-curated work-item state, completed-PR irreversibility.
+4. **Post-reset smoke test.** `validate-config`, validate apex, branch
+   / worktree enumeration, re-launch.
+
+The deleted sections (5-axis state inventory, cleanup ordering, per-
+type re-entry state table) are subsumed by the verb chain in PR 2 —
+the operator no longer needs to know the ordering because the workflow
++ the composite verb own it.
+
+### Files touched
+
+- `.conductor/registry/workflows/reset-apex.yaml` — NEW (workflow)
+- `scripts/Invoke-PolyphonySdlc.ps1` — added 4 reset-only params,
+  reset-only param guard, and the reset-intent diversion block
+- `.github/skills/polyphony-dogfood-recovery/SKILL.md` — full rewrite
+  (309 → ~150 lines)
+- `docs/decisions/run-reset.md` — this addendum
+
+### Deferred / out of scope
+
+- Branch deletion on PR merge (proactive hygiene) — separate PR; the
+  reset workflow handles it for the historical case.
+- `apex_completion_gate` vestige removal — separate small PR; the
+  reset workflow lets us redispatch past it but does not delete it.
+- `feature-pr` abandon propagation to apex state — separate PR.
+- Lint coverage for reset workflow YAML — relying on
+  `conductor validate` for now; will revisit if false-positive
+  regressions surface in dogfood.
+

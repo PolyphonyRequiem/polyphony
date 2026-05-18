@@ -1,0 +1,366 @@
+# reset-apex — First-class redispatch reset (PR 3/3 of run-reset).
+#
+# Closes the redispatch dead-end documented in
+# docs/decisions/run-reset.md. Drives the `polyphony reset apex` verb
+# (PR 2/3) through a preview → confirm → execute pipeline so an operator
+# can wipe an apex's prior-run state and start fresh without the
+# 400-line dogfood-recovery ceremony.
+#
+# Concrete instance the design closed:
+#   apex 62286666 ("Document polyphony usage for cloudvault-service-api")
+#   ran v2.4.6, hit the apex-completion-gate vestige then a 4000-char ADO
+#   description error, and we wanted to redo it on v2.4.8. The merged
+#   plan + impl PRs satisfy the observers permanently; without an apex-
+#   scoped reset the workflow refuses to redispatch.
+#
+# Flow:
+#   preview       → polyphony reset apex --apex N            (always dry-run)
+#   execute_gate  → confirm destructive op (skipped when auto_confirm=true)
+#   execute       → polyphony reset apex --apex N --execute  (run when confirmed)
+#   terminal_*    → emit a structured envelope for the launcher to read
+#
+# Failure handling:
+#   `polyphony reset apex` exits 0 on routing-style envelopes; per-step
+#   failures surface as `steps_failed`. The workflow routes to
+#   terminal_failure when result.success == false (either in preview or
+#   execute). A failed preview means the operator should investigate
+#   before opting into mutation; a failed execute means the chain
+#   halted mid-cleanup and the operator needs to consult the envelope.
+#
+# Invariants:
+#   Pre:  apex_id is a positive integer; the operator is running from a
+#         polyphony-onboarded repo's main worktree (per the launcher's
+#         `-Intent reset` codepath).
+#   Post: When auto_confirm OR the operator picks "execute", reset has
+#         actually run and the apex is in a re-dispatchable state.
+#         When the operator picks "abort", no mutations occurred and
+#         the operator can re-launch with `-Intent new` later.
+
+workflow:
+  name: reset-apex
+  description: >-
+    Apex-scoped redispatch reset. Drives `polyphony reset apex` through
+    a preview → confirm → execute pipeline so an operator can wipe a
+    prior run's PRs, branches, worktrees, manifest, and watermark
+    without the 400-line dogfood-recovery ceremony. Used by the
+    `Invoke-PolyphonySdlc.ps1 -Intent reset` launcher mode.
+  version: "2.4.8"
+  entry_point: preview
+  metadata:
+    min_polyphony_version: "2.4.8"
+  limits:
+    # Shallow workflow — preview, gate, execute, terminal. No loops.
+    max_iterations: 10
+
+  input:
+    apex_id:
+      type: number
+      required: true
+      description: >-
+        Apex (run-root feature) work-item ID to reset. The chain wipes
+        every polyphony-scoped branch / PR / worktree / manifest for
+        this apex and stamps a fresh run-started-at watermark.
+    execute:
+      type: boolean
+      required: false
+      default: false
+      description: >-
+        When false (default), the workflow runs preview only and exits
+        with executed=false — useful for CI smoke-tests and operator
+        dry-runs. When true, the workflow routes through the
+        confirmation gate (unless auto_confirm=true) and then mutates.
+    auto_confirm:
+      type: boolean
+      required: false
+      default: false
+      description: >-
+        When true, skip the confirmation human gate and proceed
+        directly from preview to execute. Use only for unattended
+        runs (e.g., a recovery script that has already obtained
+        operator consent out-of-band). Has no effect when
+        execute=false.
+    skip_state:
+      type: boolean
+      required: false
+      default: false
+      description: >-
+        Forwarded to `polyphony reset apex --skip-state`. When true,
+        the cleanup chain runs but the per-apex run-started-at
+        watermark is NOT advanced. Use for hygiene sweeps that should
+        not flip the satisfaction floor.
+    comment:
+      type: string
+      required: false
+      default: ""
+      description: >-
+        Optional override for the closing comment posted on each
+        abandoned PR. Empty string uses the default polyphony reset
+        comment (auditable from the platform's PR history).
+
+tools:
+  - twig
+
+# Workflow-level output map. Per M3 every reference to a verb's output
+# is guarded with `is defined`; per M7 booleans are piped through
+# `| string | lower` so the parent / launcher receives a real bool.
+output:
+  apex_id: "{{ workflow.input.apex_id }}"
+  # Was the chain actually executed (vs. dry-run-only / aborted)?
+  executed: >-
+    {%- if terminal_success_executed is defined -%}true
+    {%- else -%}false{%- endif -%}
+  # Did the (executed or preview) chain succeed end-to-end?
+  success: >-
+    {%- if terminal_success_executed is defined -%}true
+    {%- elif terminal_success_preview_only is defined -%}true
+    {%- elif terminal_success_aborted is defined -%}true
+    {%- else -%}false{%- endif -%}
+  # Operator chose to abort at the gate.
+  aborted: >-
+    {%- if terminal_success_aborted is defined -%}true
+    {%- else -%}false{%- endif -%}
+  # Per-step rollup from the preview pass (always populated).
+  preview_steps_completed: >-
+    {%- if preview is defined -%}{{ preview.output.steps_completed | default('[]') }}
+    {%- else -%}[]{%- endif -%}
+  preview_steps_failed: >-
+    {%- if preview is defined -%}{{ preview.output.steps_failed | default('[]') }}
+    {%- else -%}[]{%- endif -%}
+  # Per-step rollup from the execute pass (populated only when executed).
+  execute_steps_completed: >-
+    {%- if execute is defined -%}{{ execute.output.steps_completed | default('[]') }}
+    {%- else -%}[]{%- endif -%}
+  execute_steps_failed: >-
+    {%- if execute is defined -%}{{ execute.output.steps_failed | default('[]') }}
+    {%- else -%}[]{%- endif -%}
+
+agents:
+  # ── Preview ────────────────────────────────────────────────────────────
+  #
+  # Always dry-run. Computes the would-be reset plan so the operator
+  # (or the auto_confirm caller) can see what's about to be torn down
+  # before committing. Routes based on the preview's success + the
+  # caller's execute / auto_confirm posture.
+  #
+  # Invariants:
+  #   Pre:  apex_id resolves to a real apex work-item in twig's cache.
+  #   Post: preview.output exposes the polyphony reset apex envelope:
+  #         success, dry_run=true, steps_completed[], steps_failed[],
+  #         prs/worktrees/branches/manifest/state per-leg details.
+  - name: preview
+    type: script
+    description: Preview the reset chain (always dry-run)
+    # Shell-out via pwsh so optional flags can be conditionally appended
+    # without leaking empty-string argv elements (CAF rejects those as
+    # unrecognized args). The polyphony envelope is the ONLY thing
+    # written to stdout — pwsh's `&` operator passes the child's stdout
+    # straight through.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $ErrorActionPreference = 'Stop';
+        $a = @('reset','apex','--apex','{{ workflow.input.apex_id }}');
+        if ('{{ workflow.input.skip_state | string | lower }}' -eq 'true') { $a += '--skip-state' };
+        $comment = @'
+        {{ workflow.input.comment }}
+        '@;
+        $comment = $comment.Trim();
+        if ($comment -ne '') { $a += @('--comment', $comment) };
+        & polyphony @a
+    routes:
+      # Preview chain failed → operator must investigate before mutation.
+      - to: terminal_failure_preview
+        when: "{{ not preview.output.success }}"
+      # Caller asked for dry-run-only.
+      - to: terminal_success_preview_only
+        when: "{{ not workflow.input.execute }}"
+      # Caller pre-confirmed (unattended path) → straight to execute.
+      - to: execute
+        when: "{{ workflow.input.auto_confirm }}"
+      # Otherwise: surface the gate.
+      - to: confirm_gate
+
+  # ── Confirm gate ───────────────────────────────────────────────────────
+  #
+  # Human gate showing the preview's per-leg counts so the operator can
+  # decide whether to commit. Fires only when execute=true AND
+  # auto_confirm=false AND the preview succeeded.
+  #
+  # Invariants:
+  #   Pre:  preview.output.success == true; workflow.input.execute == true.
+  #   Post: Operator chose execute (-> execute) or abort
+  #         (-> terminal_success_aborted).
+  - name: confirm_gate
+    type: human_gate
+    description: Confirm the destructive reset before mutating
+    prompt: |
+      ## ⚠️ Confirm apex reset — `polyphony reset apex --apex {{ workflow.input.apex_id }} --execute`
+
+      About to perform a **destructive** reset of apex
+      **#{{ workflow.input.apex_id }}**. This is reversible from the
+      platform UI (PRs can be reopened) but the local + remote branches,
+      worktrees, and the per-apex run-started-at watermark will be
+      mutated immediately.
+
+      ### Preview (dry-run)
+
+      The preview chain reported `success=true`. Per-leg counts:
+
+      - **PRs to abandon**:
+        `{{ (preview.output.prs.get('abandoned_prs', [])) | length }}`
+        ({{ (preview.output.prs.get('failed_prs', [])) | length }} would fail)
+      - **Worktrees to remove**:
+        `{{ (preview.output.worktrees.get('removed_worktrees', [])) | length }}`
+      - **Branches to delete**:
+        `{{ (preview.output.branches.get('deleted_branches', [])) | length }}`
+      - **Manifest**: `{{ preview.output.manifest.get('deferral_reason', 'inspected') }}`
+      - **State watermark**:
+        {% if workflow.input.skip_state %}skipped (--skip-state){% else %}will advance from
+        `{{ preview.output.state.get('previous_watermark', 'none') }}`
+        to a fresh stamp{% endif %}
+
+      ### Options
+
+      - **Execute** — run `polyphony reset apex --apex
+        {{ workflow.input.apex_id }} --execute`. The chain halts on
+        first per-step failure; the operator must redo from the failed
+        step.
+      - **Abort** — return to the operator with no mutations. The
+        preview output remains in the workflow's envelope for triage.
+
+      ### Bypassing this gate
+
+      Pass `--input auto_confirm=true` to skip this gate (unattended /
+      scripted recovery paths only — every other invocation should see
+      the preview first).
+    options:
+      - label: "✅ Execute reset for apex #{{ workflow.input.apex_id }}"
+        value: execute
+        route: execute
+      - label: "🛑 Abort (no mutations)"
+        value: abort
+        route: terminal_success_aborted
+
+  # ── Execute ────────────────────────────────────────────────────────────
+  #
+  # Runs the reset chain for real. Halt-on-step-failure ordering lives
+  # in the verb (`prs → worktrees → branches → manifest → state`); a
+  # failed step surfaces in steps_failed[] and the workflow routes to
+  # terminal_failure_execute.
+  #
+  # Invariants:
+  #   Pre:  Caller pre-confirmed (auto_confirm) OR operator confirmed
+  #         at the gate. preview.output.success == true.
+  #   Post: Apex's prior-run state is wiped on success. On failure the
+  #         chain halted at the failing step; operator must reconcile
+  #         before re-running (the verb is idempotent on retry).
+  - name: execute
+    type: script
+    description: Execute the reset chain (mutating)
+    # Shell-out via pwsh — see `preview` for rationale.
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        $ErrorActionPreference = 'Stop';
+        $a = @('reset','apex','--apex','{{ workflow.input.apex_id }}','--execute');
+        if ('{{ workflow.input.skip_state | string | lower }}' -eq 'true') { $a += '--skip-state' };
+        $comment = @'
+        {{ workflow.input.comment }}
+        '@;
+        $comment = $comment.Trim();
+        if ($comment -ne '') { $a += @('--comment', $comment) };
+        & polyphony @a
+    routes:
+      - to: terminal_failure_execute
+        when: "{{ not execute.output.success }}"
+      - to: terminal_success_executed
+
+  # ── Terminals ──────────────────────────────────────────────────────────
+  #
+  # Four terminals: success-executed, success-preview-only, success-aborted,
+  # failure-preview, failure-execute. Each emits a single-line JSON
+  # envelope so the launcher can route on it from PowerShell.
+
+  - name: terminal_success_executed
+    type: script
+    description: Terminal — reset chain executed successfully
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          outcome = 'executed';
+          success = $true;
+          apex_id = {{ workflow.input.apex_id }}
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: terminal_success_preview_only
+    type: script
+    description: Terminal — preview-only request (execute=false)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          outcome = 'preview_only';
+          success = $true;
+          apex_id = {{ workflow.input.apex_id }}
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: terminal_success_aborted
+    type: script
+    description: Terminal — operator aborted at the confirmation gate
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          outcome = 'aborted';
+          success = $true;
+          apex_id = {{ workflow.input.apex_id }}
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: terminal_failure_preview
+    type: script
+    description: Terminal — preview chain reported success=false
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          outcome = 'preview_failed';
+          success = $false;
+          apex_id = {{ workflow.input.apex_id }}
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: terminal_failure_execute
+    type: script
+    description: Terminal — execute chain reported success=false
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          outcome = 'execute_failed';
+          success = $false;
+          apex_id = {{ workflow.input.apex_id }}
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
