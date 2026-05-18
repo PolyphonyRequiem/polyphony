@@ -153,6 +153,25 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
         return await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<string>> ListLocalBranchesAsync(string pattern, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(pattern);
+        var result = await runner.RunAsync(
+            Exe, ["for-each-ref", "--format=%(refname:short)", $"refs/heads/{pattern}"], ct).ConfigureAwait(false);
+        if (!result.Succeeded) return [];
+        return result.Stdout
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+    }
+
+    public async Task<ProcessResult> DeleteLocalBranchAsync(string branch, bool force, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(branch);
+        // -D = force delete (even if not merged); -d = safe.
+        string[] args = ["branch", force ? "-D" : "-d", branch];
+        return await runner.RunAsync(Exe, args, ct).ConfigureAwait(false);
+    }
+
     public async Task FetchAsync(string remote, string refspec, CancellationToken ct = default)
     {
         string[] args = ["fetch", remote, refspec];

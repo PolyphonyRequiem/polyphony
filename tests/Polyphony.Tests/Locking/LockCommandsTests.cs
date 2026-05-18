@@ -324,6 +324,8 @@ public sealed class LockCommandsTests : IDisposable
         public Task CheckoutTrackingAsync(string branch, string remote = "origin", CancellationToken ct = default) => Task.CompletedTask;
         public Task PushAsync(string branch, string remote = "origin", CancellationToken ct = default) => Task.CompletedTask;
         public Task<ProcessResult> DeleteRemoteBranchAsync(string remote, string branch, CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
+        public Task<IReadOnlyList<string>> ListLocalBranchesAsync(string pattern, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
+        public Task<ProcessResult> DeleteLocalBranchAsync(string branch, bool force, CancellationToken ct = default) => Task.FromResult(new ProcessResult(0, "", ""));
         public Task FetchAsync(string remote, string refspec, CancellationToken ct = default) => Task.CompletedTask;
         public Task<IReadOnlyList<string>> GetStatusAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
         public Task<IReadOnlyList<string>> GetStatusAsync(string workingDirectory, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
