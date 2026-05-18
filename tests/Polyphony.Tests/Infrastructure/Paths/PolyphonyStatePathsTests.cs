@@ -127,6 +127,8 @@ public sealed class PolyphonyStatePathsTests
         public Task CheckoutTrackingAsync(string branch, string remote = "origin", CancellationToken ct = default) => throw new NotSupportedException();
         public Task PushAsync(string branch, string remote = "origin", CancellationToken ct = default) => throw new NotSupportedException();
         public Task<ProcessResult> DeleteRemoteBranchAsync(string remote, string branch, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<string>> ListLocalBranchesAsync(string pattern, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ProcessResult> DeleteLocalBranchAsync(string branch, bool force, CancellationToken ct = default) => throw new NotSupportedException();
         public Task FetchAsync(string remote, string refspec, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> GetStatusAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> GetStatusAsync(string workingDirectory, CancellationToken ct = default) => throw new NotSupportedException();
