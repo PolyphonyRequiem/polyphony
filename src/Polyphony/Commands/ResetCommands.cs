@@ -72,7 +72,13 @@ public sealed partial class ResetCommands(
         var apexStr = apex.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return [
             $"plan/{apexStr}",
-            $"mg/{apexStr}-*",
+            // MG branches use `_` between root_id and mg_path (see
+            // docs/decisions/branch-model.md §Branch names: `mg/{root_id}_{mg_path}`).
+            // The `_` is unambiguous because mg_id segments match
+            // `^[a-z][a-z0-9-]{0,30}$`, which excludes `_`. Earlier
+            // revisions used `-` here, which silently failed to match
+            // any MG branch and left mg/* refs on origin after reset.
+            $"mg/{apexStr}_*",
             $"impl/{apexStr}-*",
             $"evidence/{apexStr}-*",
             $"feature/{apexStr}",

@@ -221,6 +221,57 @@ public sealed class ResetCommandsTests : CommandTestBase
             && (i.Arguments[0] == "branch" || (i.Arguments[0] == "push" && i.Arguments.Contains("--delete"))));
     }
 
+    /// <summary>
+    /// Regression for the MG branch-pattern delimiter bug: the apex
+    /// branch-pattern table must use `_` between root_id and mg_path
+    /// (per docs/decisions/branch-model.md §Branch names —
+    /// `mg/{root_id}_{mg_path}`), not `-`. An earlier revision used `-`,
+    /// which silently failed to match any real MG branch and left
+    /// mg/* refs on origin after reset — so apex redispatch detected
+    /// the stale merged MG state and short-circuited the run.
+    /// </summary>
+    [Fact]
+    public async Task ResetBranches_DiscoversMgBranchesWithUnderscoreDelimiter()
+    {
+        var (cmd, runner) = CreateCommand();
+
+        // Stub ls-remote to mimic an apex (root_id=100) with the canonical
+        // branch shapes: plan/, feature/, mg/{root}_{mg_path}, impl/{root}-{item}.
+        runner.WhenAsync(
+            (e, a) => e == "git" && a.Count >= 4 && a[0] == "ls-remote" && a[1] == "--heads",
+            (a, _) =>
+            {
+                var pattern = a[3];
+                return pattern switch
+                {
+                    "refs/heads/plan/100" => Task.FromResult(new ProcessResult(0,
+                        "sha\trefs/heads/plan/100\n", "")),
+                    "refs/heads/feature/100" => Task.FromResult(new ProcessResult(0,
+                        "sha\trefs/heads/feature/100\n", "")),
+                    "refs/heads/mg/100_*" => Task.FromResult(new ProcessResult(0,
+                        "sha\trefs/heads/mg/100_pg-100\nsha\trefs/heads/mg/100_data-layer_migrations\n", "")),
+                    "refs/heads/impl/100-*" => Task.FromResult(new ProcessResult(0,
+                        "sha\trefs/heads/impl/100-100\n", "")),
+                    _ => Task.FromResult(new ProcessResult(0, "", "")),
+                };
+            });
+        runner.WhenAsync(
+            (e, a) => e == "git" && a.Count >= 1 && a[0] == "for-each-ref",
+            (_, _) => Task.FromResult(new ProcessResult(0, "", "")));
+
+        var (exit, output) = await CaptureConsoleAsync(
+            () => cmd.ResetBranches(apex: 100, execute: false));
+
+        exit.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetBranchesResult);
+        result.ShouldNotBeNull();
+        var branches = result.DeletedBranches.Select(b => b.Branch).ToList();
+        branches.ShouldContain("mg/100_pg-100",
+            customMessage: "top-level MG branch (mg/{root_id}_{mg_id}) must be discovered by the apex-pattern enumerator");
+        branches.ShouldContain("mg/100_data-layer_migrations",
+            customMessage: "nested MG branch (mg/{root_id}_{parent_mg_id}_{nested_mg_id}) must be discovered too");
+    }
+
     // ---------- reset worktrees -------------------------------------------
 
     [Fact]
