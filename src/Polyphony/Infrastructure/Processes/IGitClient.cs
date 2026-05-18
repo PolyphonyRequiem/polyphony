@@ -147,6 +147,25 @@ public interface IGitClient
     Task<ProcessResult> DeleteRemoteBranchAsync(string remote, string branch, CancellationToken ct = default);
 
     /// <summary>
+    /// <c>git for-each-ref --format=%(refname:short) refs/heads/{pattern}</c>.
+    /// Returns the local branch names matching <paramref name="pattern"/>
+    /// (glob — empty list when none). Used by reset-family verbs that
+    /// need to sweep apex-scoped local branches in addition to the
+    /// origin-side enumeration.
+    /// </summary>
+    Task<IReadOnlyList<string>> ListLocalBranchesAsync(string pattern, CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git branch -D {branch}</c> (force) or <c>git branch -d {branch}</c>
+    /// (safe). Returns the <see cref="ProcessResult"/> so callers can
+    /// classify failure (branch checked out, not fully merged, etc.)
+    /// without an exception. Caller is responsible for ensuring no
+    /// worktree currently has the branch checked out — git refuses
+    /// otherwise.
+    /// </summary>
+    Task<ProcessResult> DeleteLocalBranchAsync(string branch, bool force, CancellationToken ct = default);
+
+    /// <summary>
     /// <c>git fetch {remote} {refspec}</c>. Fetches a specific branch/ref from
     /// the remote. Throws <see cref="ExternalToolException"/> on failure.
     /// </summary>

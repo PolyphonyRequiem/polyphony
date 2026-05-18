@@ -210,3 +210,97 @@ populated by the server — no per-PR write needed.
   mode.
 - Default `--delete-branch true` for merge-group and plan PR merges.
 - Recovery skill collapse.
+
+
+## PR 2 implementation notes — reset verb family
+
+Ships six verbs under the `polyphony reset` verb group:
+
+| Verb                  | Role                                                     |
+| --------------------- | -------------------------------------------------------- |
+| `reset state`         | **Sole** writer of the `polyphony:run-started-at=*` tag. |
+| `reset prs`           | Abandon every open PR in the apex's polyphony scope.     |
+| `reset branches`      | Delete every apex-scoped branch on origin and locally.   |
+| `reset worktrees`     | Remove every git worktree under `{runs_root}/apex-{N}/`. |
+| `reset manifest`      | Read-only inspection (clearing deferred — see below).    |
+| `reset apex`          | Composite: `prs → worktrees → branches → manifest → state`. |
+
+### Convention divergence: dry-run by default, `--execute` opt-in
+
+Every reset verb defaults to **dry-run**; the operator must pass
+`--execute` to mutate state. This diverges from the existing
+`WorktreeCommands.InitApex` convention (`--dry-run` opt-in). The reset
+family is failsafe because the per-verb actions are destructive across
+multiple boundaries simultaneously (ADO PRs, git branches, filesystem
+worktrees) and partial damage is hard to undo. Rubber-duck flagged this
+as a design risk in flags 6/7 of the PR 1 critique; defaulting to
+dry-run lets operators preview the chain's full impact in a single
+envelope before committing.
+
+### Composite ordering rationale
+
+`prs → worktrees → branches → manifest → state`:
+
+1. **prs first** — close open PRs before deleting their branches so the
+   platform's "branch deleted" notice never races with the abandon
+   action; the resulting audit log reads PR-by-PR rather than
+   intermingled branch/PR events.
+2. **worktrees before branches** — git refuses to delete a checked-out
+   branch. Tearing down worktrees first guarantees no local branch is
+   pinned.
+3. **manifest after branches** — the manifest lives on `feature/{N}`,
+   so deleting that branch clears the manifest as a side-effect. The
+   manifest verb is read-only and runs purely as an inspection step.
+4. **state last** — the watermark stamp is the signal that the
+   observers consult for "is this run current?". Advancing it on top of
+   a half-done cleanup would leak ghost satisfaction signals past the
+   new watermark. Halt-on-step-failure means a crash anywhere upstream
+   leaves the system "still mid-reset" rather than "watermark advanced
+   but ghosts remain."
+
+### Manifest is read-only in PR 2
+
+`reset manifest` inspects `origin/feature/{N}:.polyphony/run.yaml` and
+emits the would-be state alongside a `DeferralReason` field. The actual
+clearing happens implicitly via `reset branches` (which deletes
+`feature/{N}`). The verb is wired here so a future partial-reset mode
+that preserves `feature/{N}` while clearing the manifest in-place has a
+natural home — and so the workflow surface in PR 3 can route on the
+manifest's observed state without a separate primitive.
+
+### Known refactor opportunity: `BranchSide` flags enum + capture-and-reparse
+
+Two implementation patterns are deliberately non-obvious:
+
+- `ResetCommands.Branches.cs` uses a private `[Flags] enum BranchSide`
+  to track whether a discovered branch lives on origin, locally, or
+  both. This lets a single per-branch loop emit the right delete
+  command on each side without doubling up the enumeration.
+- `ResetCommands.Apex.cs` uses a `Console.SetOut` **capture-and-reparse**
+  pattern to call each public sub-verb from the composite. The verbs
+  emit their own JSON envelope as the last step, so the composite swaps
+  in a `StringWriter`, invokes the verb, and parses its output back
+  into a typed record. The wrapping is narrow (per-verb) so it nests
+  cleanly inside the outer `Program.cs` capture used by ConsoleAppFramework.
+
+The capture-and-reparse is the correct contract today (composite sees
+exactly what an operator would see standalone) but is a known
+opportunity to refactor toward thin `[Command]` wrappers around
+internal `*Async` methods that return the result record directly.
+Tracked as future work; not blocking PR 2.
+
+### Files touched
+
+- `src/Polyphony/Commands/ResetCommands*.cs` — 7 partial files (shell + 6 verbs)
+- `src/Polyphony/Models/Reset*Result.cs` — 6 result-type files
+- `src/Polyphony/PolyphonyJsonContext.cs` — 13 new `[JsonSerializable]` entries
+- `src/Polyphony/Program.cs` — `app.Add<ResetCommands>("reset")` + `knownVerbRoots`
+- `src/Polyphony/Infrastructure/Processes/IGitClient.cs` + `GitClient.cs` —
+  added `ListLocalBranchesAsync(pattern)` (via `git for-each-ref`) and
+  `DeleteLocalBranchAsync(branch, force)` (via `git branch -D/-d`)
+- `tests/Polyphony.Tests/Commands/ResetCommandsTests.cs` — round-trip
+  coverage for each verb's halt path, dry-run path, and the composite
+  step ordering
+- `tests/Polyphony.Tests/Locking/LockCommandsTests.cs` +
+  `tests/Polyphony.Tests/Infrastructure/Paths/PolyphonyStatePathsTests.cs` —
+  stub updates for the two new `IGitClient` methods
