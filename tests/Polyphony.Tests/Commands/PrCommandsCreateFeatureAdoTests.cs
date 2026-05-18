@@ -66,6 +66,24 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
             CreationDate: DateTime.UtcNow,
             Url: url);
 
+    private static AdoPullRequestPollData MakePoll(
+        int number, string state, string headRef, string baseRef,
+        string headOid = "abc", string? mergeCommit = null)
+        => new()
+        {
+            Number = number,
+            State = state,
+            ReviewDecision = "APPROVED",
+            Mergeable = "MERGEABLE",
+            HeadRefName = headRef,
+            HeadRefOid = headOid,
+            BaseRefName = baseRef,
+            MergedAt = state == "MERGED" ? DateTime.UtcNow : null,
+            MergeCommit = mergeCommit,
+            Body = "",
+            Reviews = Array.Empty<AdoPullRequestReview>(),
+        };
+
     // ─── Input validation ────────────────────────────────────────────────
 
     [Theory]
@@ -263,6 +281,9 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
                 targetRef: "refs/heads/main",
                 status: "completed"),
         };
+        // Validity clause 1 (AB#3211): poll's HeadRefOid matches StubBranchesExist's "abc".
+        ado.PollData = MakePoll(50, "MERGED", "feature/100", "main",
+            headOid: "abc123", mergeCommit: "feature-merge");
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.CreateFeatureAdo(Org, Project, Repo, rootId: 100));
         var result = Parse(output);
@@ -270,6 +291,33 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
         result.Created.ShouldBeFalse();
         result.PrNumber.ShouldBe(50);
         ado.CreatePrCallCount.ShouldBe(0);
+    }
+
+    // AB#3211: a stale completed PR (PR's recorded source SHA != origin/{head})
+    // is NOT reused; the verb creates a fresh active PR.
+    [Fact]
+    public async Task CreateFeatureAdo_StaleCompletedPr_CreatesFreshActivePr()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        StubBranchesExist(runner, "feature/100", "main");
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 50, url: "https://example.invalid/50",
+                sourceRef: "refs/heads/feature/100",
+                targetRef: "refs/heads/main",
+                status: "completed"),
+        };
+        ado.PollData = MakePoll(50, "MERGED", "feature/100", "main",
+            headOid: "yesterday-sha", mergeCommit: "yesterday-merge");
+        ado.CreatedPr = MakePr(id: 99, url: "https://example.invalid/99",
+            sourceRef: "refs/heads/feature/100",
+            targetRef: "refs/heads/main");
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.CreateFeatureAdo(Org, Project, Repo, rootId: 100));
+        var result = Parse(output);
+        result.Created.ShouldBeTrue();
+        result.PrNumber.ShouldBe(99);
+        ado.CreatePrCallCount.ShouldBe(1);
     }
 
     [Fact]
@@ -560,6 +608,7 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
         public AdoPullRequest? CreatedPr { get; set; }
         public int CreatePrCallCount { get; private set; }
         public string? LastCreateDescription { get; private set; }
+        public AdoPullRequestPollData? PollData { get; set; }
 
         public Task<AdoAuthStatus> GetAuthStatusAsync(CancellationToken ct = default)
             => throw new NotImplementedException();
@@ -593,7 +642,7 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
         public Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
             string organization, string project, string repositoryId,
             int pullRequestId, CancellationToken ct = default)
-            => throw new NotImplementedException();
+            => Task.FromResult(PollData);
 
         public Task<bool> SetPullRequestVoteAsync(
             string organization, string project, string repository,

@@ -52,6 +52,24 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
     private static AdoPullRequest MakePr(int id, string url, string sourceRef, string targetRef, string status = "active")
         => new(id, "title", "", sourceRef, targetRef, status, null, "user", DateTime.UtcNow, url);
 
+    private static AdoPullRequestPollData MakePoll(
+        int number, string state, string headRef, string baseRef,
+        string headOid = "abc", string? mergeCommit = null)
+        => new()
+        {
+            Number = number,
+            State = state,
+            ReviewDecision = "APPROVED",
+            Mergeable = "MERGEABLE",
+            HeadRefName = headRef,
+            HeadRefOid = headOid,
+            BaseRefName = baseRef,
+            MergedAt = state == "MERGED" ? DateTime.UtcNow : null,
+            MergeCommit = mergeCommit,
+            Body = "",
+            Reviews = Array.Empty<AdoPullRequestReview>(),
+        };
+
     [Theory]
     [InlineData("", "p", "r", "--organization")]
     [InlineData("o", "", "r", "--project")]
@@ -176,12 +194,44 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
                 targetRef: "refs/heads/main",
                 status: "completed"),
         };
+        // Validity clause 1 (AB#3211): PR's recorded source matches origin/{head}.
+        // StubBranchesExist seeds head SHA = "abc"; align the poll's HeadRefOid.
+        ado.PollData = MakePoll(50, "MERGED", "evidence/100", "main",
+            headOid: "abc", mergeCommit: "evidence-merge");
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.OpenEvidenceAdo(Org, Project, Repo, workItem: 100));
         var result = Parse(output);
         result.Created.ShouldBeFalse();
         result.PrNumber.ShouldBe(50);
         ado.CreatePrCallCount.ShouldBe(0);
+    }
+
+    // AB#3211: yesterday's completed PR with a now-stale recorded source
+    // SHA must NOT short-circuit the verb. We create a fresh PR instead.
+    [Fact]
+    public async Task OpenEvidenceAdo_StaleCompletedPr_CreatesFreshActivePr()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        StubBranchesExist(runner, "evidence/100", "main");
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 50, url: "https://example.invalid/50",
+                sourceRef: "refs/heads/evidence/100",
+                targetRef: "refs/heads/main",
+                status: "completed"),
+        };
+        // PR recorded "yesterday-sha"; today's branch (StubBranchesExist) is at "abc".
+        ado.PollData = MakePoll(50, "MERGED", "evidence/100", "main",
+            headOid: "yesterday-sha", mergeCommit: "yesterday-merge");
+        ado.CreatedPr = MakePr(id: 99, url: "https://example.invalid/99",
+            sourceRef: "refs/heads/evidence/100",
+            targetRef: "refs/heads/main");
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.OpenEvidenceAdo(Org, Project, Repo, workItem: 100));
+        var result = Parse(output);
+        result.Created.ShouldBeTrue();
+        result.PrNumber.ShouldBe(99);
+        ado.CreatePrCallCount.ShouldBe(1);
     }
 
     [Fact]
@@ -201,6 +251,7 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
         public Exception? ThrowOnList { get; set; }
         public AdoPullRequest? CreatedPr { get; set; }
         public int CreatePrCallCount { get; private set; }
+        public AdoPullRequestPollData? PollData { get; set; }
 
         public Task<AdoAuthStatus> GetAuthStatusAsync(CancellationToken ct = default)
             => throw new NotImplementedException();
@@ -231,7 +282,7 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
         public Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
             string organization, string project, string repositoryId,
             int pullRequestId, CancellationToken ct = default)
-            => throw new NotImplementedException();
+            => Task.FromResult(PollData);
 
         public Task<bool> SetPullRequestVoteAsync(
             string organization, string project, string repository,

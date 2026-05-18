@@ -201,6 +201,19 @@ public sealed partial class PrCommands
                     completedMatch = pr;
                 }
             }
+
+            // Branch-recycle staleness check (AB#3211 root cause): if the
+            // branch name was reused by a later run, the completed PR's
+            // recorded source SHA no longer matches origin/{head}. Drop the
+            // stale match so we create a fresh active PR.
+            if (activeMatch is null && completedMatch is not null)
+            {
+                var validity = await ValidateCompletedAdoPrAsync(
+                    organization, project, repository,
+                    completedMatch.PullRequestId, headBranch, resolvedBase, ct).ConfigureAwait(false);
+                if (!validity.IsValid) completedMatch = null;
+            }
+
             var existing = activeMatch ?? completedMatch;
 
             if (existing is not null)

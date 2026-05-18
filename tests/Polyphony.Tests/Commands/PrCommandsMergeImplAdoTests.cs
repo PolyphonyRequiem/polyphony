@@ -44,6 +44,24 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
     private static AdoPullRequest MakePr(int id, string status, string sourceRef, string targetRef)
         => new(id, "title", "", sourceRef, targetRef, status, null, "user", DateTime.UtcNow, "");
 
+    // ─── Branch-recycle staleness check helpers (AB#3211) ────────────────
+    // ValidateCompletedAdoPrAsync (PrCommands.MergeShared.cs) calls
+    // `git ls-remote --heads origin refs/heads/{head}` and, when the head
+    // is gone, `git merge-base --is-ancestor {mergeSha} origin/{base}`.
+    // FakeProcessRunner throws on unmatched invocations, so any test that
+    // exercises the completed-PR short-circuit MUST stub these.
+    private static void StubOriginBranchSha(FakeProcessRunner runner, string branch, string sha)
+        => runner.WhenExact("git", ["ls-remote", "--heads", "origin", $"refs/heads/{branch}"],
+            new ProcessResult(0, $"{sha}\trefs/heads/{branch}\n", ""));
+
+    private static void StubOriginBranchMissing(FakeProcessRunner runner, string branch)
+        => runner.WhenExact("git", ["ls-remote", "--heads", "origin", $"refs/heads/{branch}"],
+            new ProcessResult(0, "", ""));
+
+    private static void StubIsAncestor(FakeProcessRunner runner, string maybeAncestor, string descendant, bool isAncestor)
+        => runner.WhenExact("git", ["merge-base", "--is-ancestor", maybeAncestor, descendant],
+            new ProcessResult(isAncestor ? 0 : 1, "", ""));
+
     private static AdoPullRequestPollData MakePoll(string state, string headOid, string? mergeCommit = null)
         => new()
         {
@@ -132,7 +150,7 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
     [Fact]
     public async Task MergeImplAdo_AlreadyCompletedPr_RoutesAlreadyMerged()
     {
-        var (cmd, _, ado) = CreateCommand();
+        var (cmd, runner, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(id: 77, status: "completed",
@@ -140,6 +158,8 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
                 targetRef: "refs/heads/mg/100_core"),
         };
         ado.PollData = MakePoll(state: "MERGED", headOid: "deadbeef", mergeCommit: "merge-sha-7");
+        // Validity clause 1: origin/{head} matches PR's recorded source SHA.
+        StubOriginBranchSha(runner, "impl/100-200", "deadbeef");
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergeImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core"));
         var result = Parse(output);
@@ -149,6 +169,75 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
         result.MergeCommit.ShouldBe("merge-sha-7");
         result.Method.ShouldBe("squash");
         result.DeleteBranch.ShouldBeTrue();
+    }
+
+    // AB#3211: yesterday's completed PR for the same branch pair must NOT
+    // short-circuit today's verb when origin/{head} now points at a
+    // different commit (post-reset branch reuse). The verb falls through
+    // to the "no active PR" arm and reports pr_not_found so the workflow
+    // proceeds to open a fresh PR.
+    [Fact]
+    public async Task MergeImplAdo_CompletedPrSourceShaStale_FallsThroughToPrNotFound()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 77, status: "completed",
+                sourceRef: "refs/heads/impl/100-200",
+                targetRef: "refs/heads/mg/100_core"),
+        };
+        ado.PollData = MakePoll(state: "MERGED", headOid: "yesterday-sha", mergeCommit: "yesterday-merge");
+        // Clause 1 fails: origin/{head} no longer points at the PR's recorded source SHA.
+        StubOriginBranchSha(runner, "impl/100-200", "today-sha");
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergeImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core"));
+        Parse(output).ErrorCode.ShouldBe("pr_not_found");
+    }
+
+    // AB#3211 clause 2: head was deleted on PR completion (typical), but
+    // the merge commit is reachable from origin/{base} -- still safe to
+    // short-circuit, because the merge actually landed.
+    [Fact]
+    public async Task MergeImplAdo_CompletedPrHeadDeletedMergeReachable_HonorsAlreadyMerged()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 77, status: "completed",
+                sourceRef: "refs/heads/impl/100-200",
+                targetRef: "refs/heads/mg/100_core"),
+        };
+        ado.PollData = MakePoll(state: "MERGED", headOid: "deleted-sha", mergeCommit: "real-merge");
+        StubOriginBranchMissing(runner, "impl/100-200");
+        StubIsAncestor(runner, "real-merge", "origin/mg/100_core", true);
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergeImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core"));
+        var result = Parse(output);
+        result.ErrorCode.ShouldBeEmpty();
+        result.AlreadyMerged.ShouldBeTrue();
+        result.MergeCommit.ShouldBe("real-merge");
+    }
+
+    // AB#3211 clause 2 negative: head was deleted AND merge commit isn't
+    // on origin/{base}. The most damaging case from apex 62286666: the
+    // PR was for a different run, the branch was recycled, and the
+    // recorded merge commit no longer lives on today's base branch.
+    [Fact]
+    public async Task MergeImplAdo_CompletedPrHeadDeletedMergeNotReachable_FallsThroughToPrNotFound()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 77, status: "completed",
+                sourceRef: "refs/heads/impl/100-200",
+                targetRef: "refs/heads/mg/100_core"),
+        };
+        ado.PollData = MakePoll(state: "MERGED", headOid: "deleted-sha", mergeCommit: "orphan-merge");
+        StubOriginBranchMissing(runner, "impl/100-200");
+        StubIsAncestor(runner, "orphan-merge", "origin/mg/100_core", false);
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergeImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core"));
+        Parse(output).ErrorCode.ShouldBe("pr_not_found");
     }
 
     [Fact]

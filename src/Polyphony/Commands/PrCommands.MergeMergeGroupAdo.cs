@@ -152,59 +152,61 @@ public sealed partial class PrCommands
             // Already-merged path: an existing completed PR matches the pair.
             if (activePr is null && completedPr is not null)
             {
-                var prUrlMerged = !string.IsNullOrEmpty(completedPr.Url)
-                    ? completedPr.Url
-                    : BuildAdoPrUrl(organization, project, repository, completedPr.PullRequestId);
+                // Branch-recycle staleness check (AB#3211 root cause):
+                // ADO never deletes PR records, so yesterday's completed
+                // PR for the same branch pair surfaces here even when
+                // today's branches contain entirely different work. The
+                // helper rejects PRs whose recorded source SHA doesn't
+                // match origin/{head} (or whose merge commit isn't on
+                // origin/{base} when the head branch was deleted).
+                var validity = await ValidateCompletedAdoPrAsync(
+                    organization, project, repository,
+                    completedPr.PullRequestId, headBranch, baseBranch, ct).ConfigureAwait(false);
 
-                // Read the merge commit from the poll-data composer (the list
-                // endpoint does not surface lastMergeCommit). Best-effort —
-                // if it fails, we still report the PR as already-merged but
-                // without a SHA, and the workflow can route on
-                // missing_merge_commit.
-                string? mergeSha = null;
-                try
+                if (!validity.IsValid)
                 {
-                    var pollMerged = await ado.GetPullRequestPollDataAsync(
-                        organization, project, repository, completedPr.PullRequestId, ct).ConfigureAwait(false);
-                    mergeSha = pollMerged?.MergeCommit;
+                    completedPr = null;
                 }
-                catch (Exception)
+                else
                 {
-                    // best-effort
-                }
+                    var prUrlMerged = !string.IsNullOrEmpty(completedPr.Url)
+                        ? completedPr.Url
+                        : BuildAdoPrUrl(organization, project, repository, completedPr.PullRequestId);
+                    var mergeSha = validity.MergeCommit;
 
-                if (string.IsNullOrEmpty(mergeSha))
-                {
-                    EmitMergeMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                        "missing_merge_commit",
-                        $"PR #{completedPr.PullRequestId} reports state completed but ADO did not return a merge commit SHA.",
-                        headBranch, baseBranch,
-                        prNumber: completedPr.PullRequestId, prUrl: prUrlMerged, prState: "MERGED",
-                        merged: true, alreadyMerged: true, mergeCommit: "");
+                    if (string.IsNullOrEmpty(mergeSha))
+                    {
+                        EmitMergeMgAdoError(rootId, mgPath, organization, project, repository, slug,
+                            "missing_merge_commit",
+                            $"PR #{completedPr.PullRequestId} reports state completed but ADO did not return a merge commit SHA.",
+                            headBranch, baseBranch,
+                            prNumber: completedPr.PullRequestId, prUrl: prUrlMerged, prState: "MERGED",
+                            merged: true, alreadyMerged: true, mergeCommit: "");
+                        return ExitCodes.Success;
+                    }
+
+                    EmitMergeMgAdo(new PrMergeMergeGroupAdoResult
+                    {
+                        RootId = rootId,
+                        MgPath = canonicalMgPath,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = completedPr.PullRequestId,
+                        PrUrl = prUrlMerged,
+                        PrState = "MERGED",
+                        Method = MgMethod,
+                        Merged = true,
+                        AlreadyMerged = true,
+                        DeleteBranch = MgDeleteBranch,
+                        MergeCommit = mergeSha,
+                        ErrorCode = "",
+                    });
                     return ExitCodes.Success;
                 }
-
-                EmitMergeMgAdo(new PrMergeMergeGroupAdoResult
-                {
-                    RootId = rootId,
-                    MgPath = canonicalMgPath,
-                    HeadBranch = headBranch,
-                    BaseBranch = baseBranch,
-                    Organization = organization,
-                    Project = project,
-                    Repository = repository,
-                    RepoSlug = slug,
-                    PrNumber = completedPr.PullRequestId,
-                    PrUrl = prUrlMerged,
-                    PrState = "MERGED",
-                    Method = MgMethod,
-                    Merged = true,
-                    AlreadyMerged = true,
-                    DeleteBranch = MgDeleteBranch,
-                    MergeCommit = mergeSha,
-                    ErrorCode = "",
-                });
-                return ExitCodes.Success;
             }
 
             if (activePr is null)

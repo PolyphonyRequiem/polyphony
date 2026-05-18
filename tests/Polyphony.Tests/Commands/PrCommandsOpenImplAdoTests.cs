@@ -52,6 +52,24 @@ public sealed class PrCommandsOpenImplAdoTests : CommandTestBase
     private static AdoPullRequest MakePr(int id, string url, string sourceRef, string targetRef, string status = "active")
         => new(id, "title", "", sourceRef, targetRef, status, null, "user", DateTime.UtcNow, url);
 
+    private static AdoPullRequestPollData MakePoll(
+        int number, string state, string headRef, string baseRef,
+        string headOid = "abc", string? mergeCommit = null)
+        => new()
+        {
+            Number = number,
+            State = state,
+            ReviewDecision = "APPROVED",
+            Mergeable = "MERGEABLE",
+            HeadRefName = headRef,
+            HeadRefOid = headOid,
+            BaseRefName = baseRef,
+            MergedAt = state == "MERGED" ? DateTime.UtcNow : null,
+            MergeCommit = mergeCommit,
+            Body = "",
+            Reviews = Array.Empty<AdoPullRequestReview>(),
+        };
+
     [Theory]
     [InlineData("", "p", "r", "--organization")]
     [InlineData("o", "", "r", "--project")]
@@ -180,12 +198,43 @@ public sealed class PrCommandsOpenImplAdoTests : CommandTestBase
                 targetRef: "refs/heads/mg/100_core",
                 status: "completed"),
         };
+        // Validity clause 1 (AB#3211): PR's recorded source matches origin/{head}.
+        // StubBranchesExist seeds head SHA = "abc".
+        ado.PollData = MakePoll(50, "MERGED", "impl/100-200", "mg/100_core",
+            headOid: "abc", mergeCommit: "real-merge");
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.OpenImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core"));
         var result = Parse(output);
         result.Created.ShouldBeFalse();
         result.PrNumber.ShouldBe(50);
         ado.CreatePrCallCount.ShouldBe(0);
+    }
+
+    // AB#3211: yesterday's completed PR with a now-stale recorded source
+    // SHA must NOT short-circuit. We create a fresh PR instead.
+    [Fact]
+    public async Task OpenImplAdo_StaleCompletedPr_CreatesFreshActivePr()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        StubBranchesExist(runner, "impl/100-200", "mg/100_core");
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 50, url: "https://example.invalid/50",
+                sourceRef: "refs/heads/impl/100-200",
+                targetRef: "refs/heads/mg/100_core",
+                status: "completed"),
+        };
+        ado.PollData = MakePoll(50, "MERGED", "impl/100-200", "mg/100_core",
+            headOid: "yesterday-sha", mergeCommit: "yesterday-merge");
+        ado.CreatedPr = MakePr(id: 99, url: "https://example.invalid/99",
+            sourceRef: "refs/heads/impl/100-200",
+            targetRef: "refs/heads/mg/100_core");
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.OpenImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core"));
+        var result = Parse(output);
+        result.Created.ShouldBeTrue();
+        result.PrNumber.ShouldBe(99);
+        ado.CreatePrCallCount.ShouldBe(1);
     }
 
     [Fact]
@@ -240,6 +289,7 @@ public sealed class PrCommandsOpenImplAdoTests : CommandTestBase
         public Exception? ThrowOnList { get; set; }
         public AdoPullRequest? CreatedPr { get; set; }
         public int CreatePrCallCount { get; private set; }
+        public AdoPullRequestPollData? PollData { get; set; }
 
         public Task<AdoAuthStatus> GetAuthStatusAsync(CancellationToken ct = default)
             => throw new NotImplementedException();
@@ -270,7 +320,7 @@ public sealed class PrCommandsOpenImplAdoTests : CommandTestBase
         public Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
             string organization, string project, string repositoryId,
             int pullRequestId, CancellationToken ct = default)
-            => throw new NotImplementedException();
+            => Task.FromResult(PollData);
 
         public Task<bool> SetPullRequestVoteAsync(
             string organization, string project, string repository,

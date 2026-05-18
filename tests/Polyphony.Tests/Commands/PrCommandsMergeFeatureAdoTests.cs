@@ -25,7 +25,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     private const string Project = "myproj";
     private const string Repo = "myrepo";
 
-    private (PrCommands Command, FakeAdoClient Ado) CreateCommand(FakeAdoClient? ado = null)
+    private (PrCommands Command, FakeProcessRunner Runner, FakeAdoClient Ado) CreateCommand(FakeAdoClient? ado = null)
     {
         ado ??= new FakeAdoClient();
         var runner = new FakeProcessRunner();
@@ -38,11 +38,28 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
             new Polyphony.Locking.RunLockPathResolver(git),
             new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
             ado);
-        return (cmd, ado);
+        return (cmd, runner, ado);
     }
 
     private static PrMergeFeatureAdoResult Parse(string output)
         => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeFeatureAdoResult)!;
+
+    // ─── Branch-recycle staleness check helpers (AB#3211) ────────────────
+    // Tests that exercise the completed-PR short-circuit in
+    // MergeFeatureAdo must stub `git ls-remote --heads origin
+    // refs/heads/{head}` (and, when the head is gone, `git merge-base
+    // --is-ancestor`) -- see PrCommands.MergeShared.ValidateCompletedAdoPrAsync.
+    private static void StubOriginBranchSha(FakeProcessRunner runner, string branch, string sha)
+        => runner.WhenExact("git", ["ls-remote", "--heads", "origin", $"refs/heads/{branch}"],
+            new ProcessResult(0, $"{sha}\trefs/heads/{branch}\n", ""));
+
+    private static void StubOriginBranchMissing(FakeProcessRunner runner, string branch)
+        => runner.WhenExact("git", ["ls-remote", "--heads", "origin", $"refs/heads/{branch}"],
+            new ProcessResult(0, "", ""));
+
+    private static void StubIsAncestor(FakeProcessRunner runner, string maybeAncestor, string descendant, bool isAncestor)
+        => runner.WhenExact("git", ["merge-base", "--is-ancestor", maybeAncestor, descendant],
+            new ProcessResult(isAncestor ? 0 : 1, "", ""));
 
     private static AdoPullRequest MakePr(int id, string url, string sourceRef, string targetRef,
         string status = "active")
@@ -96,7 +113,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [InlineData("   ",  "p", "r")]
     public async Task MergeFeatureAdo_WhitespaceIdentifier_RoutesInvalidArgument(string organization, string project, string repository)
     {
-        var (cmd, _) = CreateCommand();
+        var (cmd, _, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.MergeFeatureAdo(organization, project, repository, rootId: 100));
         exit.ShouldBe(ExitCodes.Success);
@@ -111,7 +128,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [InlineData("o", "p", "",  "--repository")]
     public async Task MergeFeatureAdo_EmptyIdentifier_RoutesInvalidArgument(string organization, string project, string repository, string missingFlag)
     {
-        var (cmd, _) = CreateCommand();
+        var (cmd, _, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.MergeFeatureAdo(organization, project, repository, rootId: 100));
         exit.ShouldBe(ExitCodes.RoutingFailure);
@@ -128,7 +145,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [InlineData(-1)]
     public async Task MergeFeatureAdo_InvalidRootId_RoutesInvalidArgument(int rootId)
     {
-        var (cmd, _) = CreateCommand();
+        var (cmd, _, _) = CreateCommand();
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergeFeatureAdo(Org, Project, Repo, rootId));
         var result = Parse(output);
@@ -139,7 +156,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_EmptyTargetBranch_RoutesInvalidArgument()
     {
-        var (cmd, _) = CreateCommand();
+        var (cmd, _, _) = CreateCommand();
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergeFeatureAdo(Org, Project, Repo, rootId: 100, targetBranch: "  "));
         var result = Parse(output);
@@ -173,7 +190,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_NoActivePr_RoutesPrNotFound()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>();
 
         var (_, output) = await CaptureConsoleAsync(
@@ -186,7 +203,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_ListReturnsNull_RoutesPrNotFound()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ListPrsReturnsNull = true;
 
         var (_, output) = await CaptureConsoleAsync(
@@ -197,7 +214,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_OnlyUnrelatedPrs_RoutesPrNotFound()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(1, "u", "refs/heads/feature/999", "refs/heads/main"),
@@ -212,7 +229,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompletedPrInList_TreatedAsAlreadyMerged()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, runner, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(42, "https://dev.azure.com/myorg/myproj/_git/myrepo/pullrequest/42",
@@ -222,6 +239,8 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
         };
         ado.PollData = MakePoll(42, "MERGED", "feature/100", "main",
             mergeCommit: "preexisting-sha");
+        // Validity clause 1: origin/feature/100 matches the PR's recorded source SHA (MakePoll defaults headOid="abc123").
+        StubOriginBranchSha(runner, "feature/100", "abc123");
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergeFeatureAdo(Org, Project, Repo, rootId: 100));
@@ -234,10 +253,35 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
         ado.CompleteCallCount.ShouldBe(0);
     }
 
+    // AB#3211: when the completed PR is stale (origin/{head} now points
+    // at a different SHA after a reset+redispatch), the verb must NOT
+    // short-circuit -- it falls through to "no active PR" and reports
+    // pr_not_found so the workflow opens a fresh PR.
+    [Fact]
+    public async Task MergeFeatureAdo_CompletedPrSourceShaStale_FallsThroughToPrNotFound()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(42, "u",
+                sourceRef: "refs/heads/feature/100",
+                targetRef: "refs/heads/main",
+                status: "completed"),
+        };
+        ado.PollData = MakePoll(42, "MERGED", "feature/100", "main",
+            headOid: "yesterday-sha", mergeCommit: "yesterday-merge");
+        // Clause 1 fails: origin/{head} no longer matches PR's recorded source.
+        StubOriginBranchSha(runner, "feature/100", "today-sha");
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergeFeatureAdo(Org, Project, Repo, rootId: 100));
+        Parse(output).ErrorCode.ShouldBe("pr_not_found");
+    }
+
     [Fact]
     public async Task MergeFeatureAdo_CompletedPrButNoMergeSha_RoutesMissingMergeCommit()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, runner, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(42, "u",
@@ -247,6 +291,9 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
         };
         ado.PollData = MakePoll(42, "MERGED", "feature/100", "main",
             mergeCommit: null);
+        // Make the validity check accept clause 1 so we exercise the
+        // missing_merge_commit arm (rather than the new stale-PR fall-through).
+        StubOriginBranchSha(runner, "feature/100", "abc123");
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergeFeatureAdo(Org, Project, Repo, rootId: 100));
@@ -258,7 +305,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_PollReportsMerged_ReusesMergeShaWithoutComplete()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(42, "u", "refs/heads/feature/100", "refs/heads/main"),
@@ -279,7 +326,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_PollMergedButNoSha_RoutesMissingMergeCommit()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(42, "u", "refs/heads/feature/100", "refs/heads/main"),
@@ -295,7 +342,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_PollReportsClosed_RoutesPrStateInvalid()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(42, "u", "refs/heads/feature/100", "refs/heads/main"),
@@ -312,7 +359,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_PollReturnsNull_RoutesPrNotFound()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(42, "u", "refs/heads/feature/100", "refs/heads/main"),
@@ -331,7 +378,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_MatchHeadCommitMatches_ProceedsToComplete()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.PollData = MakePoll(42, "OPEN", "feature/100", "main", headOid: "matching-sha");
         ado.CompleteResult = new AdoCompletePullRequestResult(
@@ -351,7 +398,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_MatchHeadCommitMismatches_RoutesStaleHead()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.PollData = MakePoll(42, "OPEN", "feature/100", "main", headOid: "live-sha");
 
@@ -368,7 +415,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_NoMatchHeadCommit_UsesPolledHeadSha()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.PollData = MakePoll(42, "OPEN", "feature/100", "main", headOid: "polled-sha");
         ado.CompleteResult = new AdoCompletePullRequestResult(
@@ -385,7 +432,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_Default_SuccessfulMerge()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.CompleteResult = new AdoCompletePullRequestResult(
             Status: "completed", MergeCommitSha: "merge-sha-xyz", HttpStatus: 200, ErrorBody: null);
@@ -410,7 +457,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CustomTargetBranch_UsesProvidedBase()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(50, "u",
@@ -433,7 +480,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_AdoReturnsEmptyUrl_SynthesisesCanonicalUrl()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ListPrs = new List<AdoPullRequest>
         {
             MakePr(42, "",
@@ -454,7 +501,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompleteStaleHead_RoutesStaleHead()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.CompleteResult = new AdoCompletePullRequestResult(
             Status: "stale_head", MergeCommitSha: null, HttpStatus: 409,
@@ -470,7 +517,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompleteNotFound_RoutesPrNotFound()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.CompleteResult = new AdoCompletePullRequestResult(
             Status: "not_found", MergeCommitSha: null, HttpStatus: 404, ErrorBody: null);
@@ -483,7 +530,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompleteNotMergeable_RoutesAdoCompleteFailed()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.CompleteResult = new AdoCompletePullRequestResult(
             Status: "not_mergeable", MergeCommitSha: null, HttpStatus: 400,
@@ -499,7 +546,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompleteAdoError_RoutesAdoCompleteFailed()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.CompleteResult = new AdoCompletePullRequestResult(
             Status: "ado_error", MergeCommitSha: null, HttpStatus: 500, ErrorBody: "boom");
@@ -512,7 +559,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompleteSuccessButNoMergeSha_RoutesMissingMergeCommit()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.CompleteResult = new AdoCompletePullRequestResult(
             Status: "completed", MergeCommitSha: null, HttpStatus: 200, ErrorBody: null);
@@ -529,7 +576,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_ListNoPat_RoutesNoPat()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ThrowOnList = new InvalidOperationException("PAT required (set AZURE_DEVOPS_EXT_PAT)");
 
         var (_, output) = await CaptureConsoleAsync(
@@ -540,7 +587,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_ListHttp401_RoutesNoPat()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ThrowOnList = new HttpRequestException("unauthorized", null, HttpStatusCode.Unauthorized);
 
         var (_, output) = await CaptureConsoleAsync(
@@ -551,7 +598,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_ListHttp403_RoutesNoPat()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ThrowOnList = new HttpRequestException("forbidden", null, HttpStatusCode.Forbidden);
 
         var (_, output) = await CaptureConsoleAsync(
@@ -562,7 +609,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_ListHttp5xx_RoutesAdoFailed()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ThrowOnList = new HttpRequestException("server died", null, HttpStatusCode.BadGateway);
 
         var (_, output) = await CaptureConsoleAsync(
@@ -573,7 +620,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_ListTimeout_RoutesAdoTimeout()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ThrowOnList = new TimeoutException("attempts exhausted");
 
         var (_, output) = await CaptureConsoleAsync(
@@ -586,7 +633,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_PollNoPat_RoutesNoPat()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.ThrowOnPoll = new InvalidOperationException("PAT required");
 
@@ -598,7 +645,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_PollHttp401_RoutesNoPat()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.ThrowOnPoll = new HttpRequestException("unauthorized", null, HttpStatusCode.Unauthorized);
 
@@ -610,7 +657,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_PollHttp5xx_RoutesAdoFailed()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.ThrowOnPoll = new HttpRequestException("boom", null, HttpStatusCode.InternalServerError);
 
@@ -622,7 +669,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_PollTimeout_RoutesAdoTimeout()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.ThrowOnPoll = new TimeoutException("timeout");
 
@@ -636,7 +683,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompleteNoPat_RoutesNoPat()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.ThrowOnComplete = new InvalidOperationException("PAT required");
 
@@ -648,7 +695,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompleteHttp401_RoutesNoPat()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.ThrowOnComplete = new HttpRequestException("unauthorized", null, HttpStatusCode.Unauthorized);
 
@@ -660,7 +707,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompleteHttp5xx_RoutesAdoCompleteFailed()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.ThrowOnComplete = new HttpRequestException("boom", null, HttpStatusCode.BadGateway);
 
@@ -672,7 +719,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CompleteTimeout_RoutesAdoTimeout()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.ThrowOnComplete = new TimeoutException("timeout");
 
@@ -686,7 +733,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CancellationOnList_Propagates()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         ado.ThrowOnList = new OperationCanceledException();
 
         await Should.ThrowAsync<OperationCanceledException>(
@@ -696,7 +743,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_CancellationOnComplete_Propagates()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.ThrowOnComplete = new OperationCanceledException();
 
@@ -709,7 +756,7 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     [Fact]
     public async Task MergeFeatureAdo_JsonContract_PreservesSnakeCaseKeys()
     {
-        var (cmd, ado) = CreateCommand();
+        var (cmd, _, ado) = CreateCommand();
         SeedActivePr(ado);
         ado.CompleteResult = new AdoCompletePullRequestResult(
             Status: "completed", MergeCommitSha: "x", HttpStatus: 200, ErrorBody: null);
