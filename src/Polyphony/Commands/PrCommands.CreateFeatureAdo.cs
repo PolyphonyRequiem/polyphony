@@ -127,12 +127,15 @@ public sealed partial class PrCommands
 
         try
         {
-            // ── 3. Reuse check: scan active PRs for a matching source/target. ─
-            var activePrs = await ado.ListPullRequestsAsync(
+            // ── 3. Reuse check: scan PRs for a matching source/target.
+            //      Includes Completed PRs so a retry after a successful merge
+            //      reuses the real merged PR rather than opening a degenerate
+            //      no-op duplicate (AB#3228). Active PRs win over Completed.
+            var allPrs = await ado.ListPullRequestsAsync(
                 organization, project, repository,
-                AdoPullRequestStatus.Active, null, ct).ConfigureAwait(false);
+                AdoPullRequestStatus.All, null, ct).ConfigureAwait(false);
 
-            if (activePrs is null)
+            if (allPrs is null)
             {
                 EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
                     "pr_not_found",
@@ -143,16 +146,27 @@ public sealed partial class PrCommands
 
             var expectedSourceRef = "refs/heads/" + headBranch;
             var expectedTargetRef = "refs/heads/" + baseBranch;
-            AdoPullRequest? existing = null;
-            foreach (var pr in activePrs)
+            AdoPullRequest? activeMatch = null;
+            AdoPullRequest? completedMatch = null;
+            foreach (var pr in allPrs)
             {
-                if (string.Equals(pr.SourceRefName, expectedSourceRef, StringComparison.Ordinal)
-                    && string.Equals(pr.TargetRefName, expectedTargetRef, StringComparison.Ordinal))
+                if (!string.Equals(pr.SourceRefName, expectedSourceRef, StringComparison.Ordinal)
+                    || !string.Equals(pr.TargetRefName, expectedTargetRef, StringComparison.Ordinal))
                 {
-                    existing = pr;
+                    continue;
+                }
+                if (string.Equals(pr.Status, "active", StringComparison.OrdinalIgnoreCase))
+                {
+                    activeMatch = pr;
                     break;
                 }
+                if (completedMatch is null
+                    && string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    completedMatch = pr;
+                }
             }
+            var existing = activeMatch ?? completedMatch;
 
             if (existing is not null)
             {

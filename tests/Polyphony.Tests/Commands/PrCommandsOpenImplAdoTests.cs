@@ -166,6 +166,28 @@ public sealed class PrCommandsOpenImplAdoTests : CommandTestBase
         ado.CreatePrCallCount.ShouldBe(0);
     }
 
+    // AB#3228: completed PR for same source/target is reused on retry
+    // (rather than opening a degenerate no-op duplicate).
+    [Fact]
+    public async Task OpenImplAdo_OnlyCompletedPrForSameHeadBase_Reuses()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        StubBranchesExist(runner, "impl/100-200", "mg/100_core");
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 50, url: "https://example.invalid/50",
+                sourceRef: "refs/heads/impl/100-200",
+                targetRef: "refs/heads/mg/100_core",
+                status: "completed"),
+        };
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.OpenImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core"));
+        var result = Parse(output);
+        result.Created.ShouldBeFalse();
+        result.PrNumber.ShouldBe(50);
+        ado.CreatePrCallCount.ShouldBe(0);
+    }
+
     [Fact]
     public async Task OpenImplAdo_NoPat_RoutesNoPat()
     {

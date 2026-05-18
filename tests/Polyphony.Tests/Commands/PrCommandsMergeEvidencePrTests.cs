@@ -160,7 +160,7 @@ public sealed class PrCommandsMergeEvidencePrTests : CommandTestBase
                 prNumber: PrNumber, prUrl: "",
                 platform: "ado", organization: "o", project: "p", repository: "r"));
 
-        exit.ShouldBe(ExitCodes.RoutingFailure);
+        exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Merged.ShouldBeFalse();
         result.Error.ShouldNotBeNullOrEmpty();

@@ -49,8 +49,8 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
     private static PrOpenEvidenceAdoResult Parse(string output)
         => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceAdoResult)!;
 
-    private static AdoPullRequest MakePr(int id, string url, string sourceRef, string targetRef)
-        => new(id, "title", "", sourceRef, targetRef, "active", null, "user", DateTime.UtcNow, url);
+    private static AdoPullRequest MakePr(int id, string url, string sourceRef, string targetRef, string status = "active")
+        => new(id, "title", "", sourceRef, targetRef, status, null, "user", DateTime.UtcNow, url);
 
     [Theory]
     [InlineData("", "p", "r", "--organization")]
@@ -153,6 +153,28 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
                 url: "https://dev.azure.com/myorg/myproj/_git/myrepo/pullrequest/50",
                 sourceRef: "refs/heads/evidence/100",
                 targetRef: "refs/heads/main"),
+        };
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.OpenEvidenceAdo(Org, Project, Repo, workItem: 100));
+        var result = Parse(output);
+        result.Created.ShouldBeFalse();
+        result.PrNumber.ShouldBe(50);
+        ado.CreatePrCallCount.ShouldBe(0);
+    }
+
+    // AB#3228: completed PR for same source/target is reused on retry
+    // (rather than opening a degenerate no-op duplicate).
+    [Fact]
+    public async Task OpenEvidenceAdo_OnlyCompletedPrForSameHeadBase_Reuses()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        StubBranchesExist(runner, "evidence/100", "main");
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 50, url: "https://example.invalid/50",
+                sourceRef: "refs/heads/evidence/100",
+                targetRef: "refs/heads/main",
+                status: "completed"),
         };
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.OpenEvidenceAdo(Org, Project, Repo, workItem: 100));

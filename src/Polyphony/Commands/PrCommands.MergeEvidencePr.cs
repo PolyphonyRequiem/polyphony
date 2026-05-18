@@ -168,7 +168,9 @@ public sealed partial class PrCommands
             RepoSlug = adoResult.RepoSlug,
             Error = string.IsNullOrEmpty(adoResult.Error) ? null : adoResult.Error,
         });
-        return string.IsNullOrEmpty(adoResult.ErrorCode) ? ExitCodes.Success : ExitCodes.RoutingFailure;
+        // Routing-style verb: always exit 0. See PrCommands.MergeImplPr.cs
+        // counterpart and the polyphony-workflow-author skill for rationale.
+        return ExitCodes.Success;
     }
 
     private static void EmitMergeEvidence(PrMergeEvidenceResult result)

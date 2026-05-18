@@ -640,11 +640,88 @@ public sealed class AdoClient : IAdoClient
             stream, PolyphonyJsonContext.Default.AdoPullRequestDetailRaw, ct).ConfigureAwait(false);
         var mergeCommit = detail?.LastMergeCommit?.CommitId;
 
+        // ADO's complete-PR PATCH is async on the server: it returns 200 OK
+        // as soon as the merge request is accepted, but the actual ref
+        // update runs on the CompletionQueueWorker and lastMergeCommit is
+        // routinely empty in the PATCH response body. Poll the PR detail
+        // endpoint with bounded exponential backoff until the SHA appears
+        // (typical real-world latency is sub-second). See AB#3227 — the
+        // verb-layer "missing_merge_commit" error is now reserved for the
+        // truly-degenerate case where the poll budget exhausts.
+        if (string.IsNullOrEmpty(mergeCommit) && _policy.CompletionMergePollAttempts > 0)
+        {
+            mergeCommit = await PollPullRequestForMergeCommitShaAsync(
+                organization, project, repository, pullRequestId, pat, ct).ConfigureAwait(false);
+        }
+
         return new AdoCompletePullRequestResult(
             Status: "completed",
             MergeCommitSha: mergeCommit,
             HttpStatus: (int)response.StatusCode,
             ErrorBody: null);
+    }
+
+    /// <summary>
+    /// Bounded poll loop for the post-PATCH merge-commit SHA. Returns the
+    /// populated SHA on the first GET that carries it, or <c>null</c> after
+    /// the configured budget exhausts. The 4xx/5xx behavior matches the
+    /// outer PATCH: 404 is structured (null), 401/403 propagate as
+    /// <see cref="HttpRequestException"/>, timeouts propagate as
+    /// <see cref="TimeoutException"/>. Cancellation propagates immediately.
+    /// </summary>
+    private async Task<string?> PollPullRequestForMergeCommitShaAsync(
+        string organization,
+        string project,
+        string repository,
+        int pullRequestId,
+        string pat,
+        CancellationToken ct)
+    {
+        var url = $"https://dev.azure.com/{Uri.EscapeDataString(organization)}/{Uri.EscapeDataString(project)}" +
+                  $"/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{pullRequestId}" +
+                  $"?api-version=7.1";
+
+        for (int attempt = 1; attempt <= _policy.CompletionMergePollAttempts; attempt++)
+        {
+            // Backoff before each GET (including the first) so the
+            // CompletionQueueWorker has a chance to land the ref update.
+            // No jitter — single-process CLI.
+            if (_policy.CompletionMergePollInitialDelay > TimeSpan.Zero)
+            {
+                var multiplier = 1L << (attempt - 1);
+                var delay = TimeSpan.FromTicks(
+                    _policy.CompletionMergePollInitialDelay.Ticks * multiplier);
+                await Task.Delay(delay, ct).ConfigureAwait(false);
+            }
+
+            using var response = await SendWithRetryAsync(() =>
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, url);
+                AddAuthHeaders(req, pat);
+                return req;
+            }, ct).ConfigureAwait(false);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                // The PR vanished between the PATCH and this poll. Treat as
+                // "we don't know" — the caller will surface the empty SHA
+                // and the verb layer will route accordingly. Don't keep
+                // polling a PR that no longer exists.
+                return null;
+            }
+            await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+
+            await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            var detail = await JsonSerializer.DeserializeAsync(
+                stream, PolyphonyJsonContext.Default.AdoPullRequestDetailRaw, ct).ConfigureAwait(false);
+            var sha = detail?.LastMergeCommit?.CommitId;
+            if (!string.IsNullOrEmpty(sha))
+            {
+                return sha;
+            }
+        }
+
+        return null;
     }
 
     /// <inheritdoc />

@@ -289,6 +289,10 @@ public sealed class AdoClientCompletePullRequestTests
         // successful complete, but the verb's "missing_merge_commit" error
         // code exists for the case where the wire shape disagrees. The
         // client surfaces null and lets the verb decide.
+        //
+        // NoRetry policy has CompletionMergePollAttempts=0, so the
+        // post-PATCH poll loop introduced in AB#3227 is disabled here —
+        // this test pins the pre-poll wire-shape contract.
         var bodyMissingMerge = $$"""
             {
               "pullRequestId": {{PrId}},
@@ -305,6 +309,141 @@ public sealed class AdoClientCompletePullRequestTests
 
         result.Status.ShouldBe("completed");
         result.MergeCommitSha.ShouldBeNull();
+        handler.RequestCount.ShouldBe(1);
+    }
+
+    // ─── AB#3227: post-PATCH merge-commit poll loop ──────────────────────
+
+    private const string MergeShaPolled = "abc1234567890def1234567890abcdef12345678";
+
+    private static string BodyMissingMerge() => $$"""
+        {
+          "pullRequestId": {{PrId}},
+          "status": "completed",
+          "sourceRefName": "refs/heads/feature/x",
+          "targetRefName": "refs/heads/main",
+          "lastMergeSourceCommit": { "commitId": "{{HeadSha}}" }
+        }
+        """;
+
+    /// <summary>
+    /// Test policy that exercises the AB#3227 poll loop without sleeping —
+    /// 8 poll attempts at zero delay so the loop is instantaneous.
+    /// </summary>
+    private static AdoClientPolicy PollPolicyZeroDelay(int pollAttempts = 8) => new(
+        maxAttempts: 1,
+        perAttemptTimeout: TimeSpan.FromSeconds(30),
+        initialBackoff: TimeSpan.Zero,
+        completionMergePollAttempts: pollAttempts,
+        completionMergePollInitialDelay: TimeSpan.Zero);
+
+    [Fact]
+    public async Task CompletePullRequestAsync_PatchEmptySha_PollsAndReturnsPopulatedSha()
+    {
+        // Regression for AB#3227: ADO's complete-PR PATCH returns 200 OK
+        // with an empty lastMergeCommit while the CompletionQueueWorker
+        // populates the ref asynchronously. The client must poll the PR
+        // detail endpoint until the SHA appears (or the budget exhausts).
+        var handler = StubHandler.ReturnsInSequence(
+            (HttpStatusCode.OK, BodyMissingMerge()),                       // PATCH
+            (HttpStatusCode.OK, SuccessBody(mergeSha: MergeShaPolled)));   // First GET
+        var client = NewClient(handler, policy: PollPolicyZeroDelay());
+
+        var result = await client.CompletePullRequestAsync(
+            Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
+
+        result.Status.ShouldBe("completed");
+        result.MergeCommitSha.ShouldBe(MergeShaPolled);
+        handler.RequestCount.ShouldBe(2);
+        handler.Requests[0].Method.ShouldBe(HttpMethod.Patch);
+        handler.Requests[1].Method.ShouldBe(HttpMethod.Get);
+        handler.Requests[1].RequestUri!.AbsoluteUri.ShouldBe(
+            $"https://dev.azure.com/myorg/myproj/_apis/git/repositories/myrepo/pullRequests/{PrId}?api-version=7.1");
+    }
+
+    [Fact]
+    public async Task CompletePullRequestAsync_PollExhausts_ReturnsNullMergeSha()
+    {
+        // Pathological case: ADO never populates lastMergeCommit. After the
+        // budget exhausts, the client surfaces null and the verb layer's
+        // missing_merge_commit error path fires legitimately.
+        const int pollAttempts = 3;
+        var responses = new (HttpStatusCode, string)[1 + pollAttempts];
+        responses[0] = (HttpStatusCode.OK, BodyMissingMerge());
+        for (int i = 1; i <= pollAttempts; i++)
+        {
+            responses[i] = (HttpStatusCode.OK, BodyMissingMerge());
+        }
+        var handler = StubHandler.ReturnsInSequence(responses);
+        var client = NewClient(handler, policy: PollPolicyZeroDelay(pollAttempts: pollAttempts));
+
+        var result = await client.CompletePullRequestAsync(
+            Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
+
+        result.Status.ShouldBe("completed");
+        result.MergeCommitSha.ShouldBeNull();
+        handler.RequestCount.ShouldBe(1 + pollAttempts); // PATCH + N GETs
+    }
+
+    [Fact]
+    public async Task CompletePullRequestAsync_PollGet404_BailsImmediatelyWithNull()
+    {
+        // If the PR vanishes between the PATCH and the poll (operator
+        // abandoned it, race with deletion, etc.), don't keep polling a
+        // ghost. Surface null and let the verb layer route accordingly.
+        var handler = StubHandler.ReturnsInSequence(
+            (HttpStatusCode.OK, BodyMissingMerge()),    // PATCH
+            (HttpStatusCode.NotFound, "{\"message\":\"gone\"}"));  // First poll GET
+        var client = NewClient(handler, policy: PollPolicyZeroDelay());
+
+        var result = await client.CompletePullRequestAsync(
+            Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
+
+        result.Status.ShouldBe("completed");
+        result.MergeCommitSha.ShouldBeNull();
+        handler.RequestCount.ShouldBe(2); // PATCH + 1 poll (no further polls after 404)
+    }
+
+    [Fact]
+    public async Task CompletePullRequestAsync_PollGet401_ThrowsHttpRequestException()
+    {
+        // Auth failures on the poll are NOT swallowed — the PAT is the
+        // same one that succeeded on the PATCH, so a 401 here is a real
+        // signal worth bubbling.
+        var handler = StubHandler.ReturnsInSequence(
+            (HttpStatusCode.OK, BodyMissingMerge()),
+            (HttpStatusCode.Unauthorized, ""));
+        var client = NewClient(handler, policy: PollPolicyZeroDelay());
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(
+            () => client.CompletePullRequestAsync(
+                Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false));
+        ex.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task CompletePullRequestAsync_PollHonorsCancellation()
+    {
+        // Cancellation must propagate through the poll loop's Task.Delay
+        // and abort cleanly without exhausting the budget.
+        var handler = StubHandler.ReturnsInSequence(
+            (HttpStatusCode.OK, BodyMissingMerge()),
+            (HttpStatusCode.OK, BodyMissingMerge()),
+            (HttpStatusCode.OK, BodyMissingMerge()));
+        var policy = new AdoClientPolicy(
+            maxAttempts: 1,
+            perAttemptTimeout: TimeSpan.FromSeconds(30),
+            initialBackoff: TimeSpan.Zero,
+            completionMergePollAttempts: 8,
+            completionMergePollInitialDelay: TimeSpan.FromMilliseconds(200));
+        var client = NewClient(handler, policy: policy);
+
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(50));
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => client.CompletePullRequestAsync(
+                Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false, cts.Token));
     }
 
     // ─── Argument validation ─────────────────────────────────────────────
@@ -375,6 +514,30 @@ public sealed class AdoClientCompletePullRequestTests
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             }));
+
+        /// <summary>
+        /// Replays the supplied (status, body) responses in order, one per
+        /// incoming request. Throws <see cref="InvalidOperationException"/>
+        /// if more requests arrive than responses queued — the test must
+        /// account for every HTTP interaction.
+        /// </summary>
+        public static StubHandler ReturnsInSequence(params (HttpStatusCode Status, string Body)[] responses)
+        {
+            var queue = new Queue<(HttpStatusCode Status, string Body)>(responses);
+            return new((_, _) =>
+            {
+                if (queue.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        "StubHandler.ReturnsInSequence: more requests arrived than queued responses.");
+                }
+                var (status, body) = queue.Dequeue();
+                return Task.FromResult(new HttpResponseMessage(status)
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                });
+            });
+        }
 
         public static StubHandler Hangs() =>
             new(async (_, ct) =>
