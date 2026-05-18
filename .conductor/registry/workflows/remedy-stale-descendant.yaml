@@ -39,11 +39,10 @@ workflow:
     human gate to a single stale plan PR. Composed by cascade-remedy.yaml's
     for_each. Returns outcome via run-level output for the parent loop's
     error/success aggregation.
-  version: "2.4.3"
+  version: "2.4.8"
   entry_point: rebase_attempt
   metadata:
-    min_polyphony_version: "2.4.3"
-
+    min_polyphony_version: "2.4.8"
   limits:
     # Each invocation runs at most: rebase → (recreate) → (human gate).
     # 25 leaves headroom for retry routes from the human gate.

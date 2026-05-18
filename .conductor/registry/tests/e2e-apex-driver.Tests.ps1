@@ -183,7 +183,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ApexYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ApexYaml.workflow.name        | Should -Be 'apex-driver'
         $script:ApexYaml.workflow.entry_point | Should -Be 'preflight_sync'
-        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.3'
+        $script:ApexYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.8'
         $script:ApexYaml.tools                | Should -Contain 'twig'
         $script:ApexYaml.agents.Count         | Should -BeGreaterThan 10
     }
@@ -192,7 +192,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:WaveYaml.workflow | Should -Not -BeNullOrEmpty
         $script:WaveYaml.workflow.name        | Should -Be 'apex-wave-dispatch'
         $script:WaveYaml.workflow.entry_point | Should -Be 'check_prior_wave_status'
-        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.3'
+        $script:WaveYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.8'
         $script:WaveYaml.tools                | Should -Contain 'twig'
         # Per-M8 the workflow exposes 2 agents (aggregate_renegotiation,
         # integrate_wave) and 1 top-level for_each entry (dispatch_items).
@@ -204,7 +204,7 @@ Describe 'apex-driver e2e — three-YAML chain loads cleanly' {
         $script:ItemYaml.workflow | Should -Not -BeNullOrEmpty
         $script:ItemYaml.workflow.name        | Should -Be 'apex-item-dispatch'
         $script:ItemYaml.workflow.entry_point | Should -Be 'classify_lifecycle'
-        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.3'
+        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.8'
         $script:ItemYaml.agents.Count         | Should -BeGreaterThan 8
     }
 
@@ -445,12 +445,49 @@ Describe 'apex-driver e2e — outer loop reachability' {
         $argLine | Should -Match 'needs_promotion'
     }
 
-    It 'promote_feature_to_main routes to feature-pr dispatch when needed, else close_mark_satisfied' {
+    It 'promote_feature_to_main routes to strip_planning_artifacts when needed, else close_mark_satisfied' {
+        # AB#3236: a strip step is interposed between promote_feature_to_main and
+        # promote_feature_pr_dispatch — see strip_planning_artifacts tests below.
         $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'promote_feature_to_main')
         $routes.Count | Should -Be 2
-        $routes[0].Target | Should -Be 'promote_feature_pr_dispatch'
+        $routes[0].Target | Should -Be 'strip_planning_artifacts'
         $routes[0].When   | Should -Match 'needs_promotion'
         $routes[1].Target | Should -Be 'close_mark_satisfied'
+    }
+
+    It 'strip_planning_artifacts invokes strip-planning-artifacts.ps1 with the apex id + feature branch' {
+        $node = $script:ApexAgents['strip_planning_artifacts']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'strip-planning-artifacts\.ps1'
+        $argLine | Should -Match '-ApexId'
+        $argLine | Should -Match 'workflow\.input\.apex_id'
+        $argLine | Should -Match '-FeatureBranch'
+        $argLine | Should -Match 'promote_feature_to_main\.output\.feature_branch'
+    }
+
+    It 'strip_planning_artifacts routes errors to the gate, success to promote_feature_pr_dispatch (M4 catch-all)' {
+        $routes = @(Get-NodeRoutes -Agents $script:ApexAgents -NodeName 'strip_planning_artifacts')
+        $routes.Count | Should -Be 2
+        $routes[0].Target | Should -Be 'strip_planning_artifacts_failed_gate'
+        $routes[0].When   | Should -Match "error_code != ''"
+        # M4 catch-all
+        $routes[1].Target | Should -Be 'promote_feature_pr_dispatch'
+    }
+
+    It 'strip_planning_artifacts_failed_gate exposes retry/skip/abort with the documented routes' {
+        $node = $script:ApexAgents['strip_planning_artifacts_failed_gate']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'human_gate'
+        $values = @($node.options.value | Sort-Object)
+        $values | Should -Be @('abort', 'retry', 'skip')
+        $optByValue = @{}
+        foreach ($opt in $node.options) { $optByValue[$opt.value] = $opt }
+        $optByValue['retry'].route | Should -Be 'strip_planning_artifacts'
+        $optByValue['skip'].route  | Should -Be 'promote_feature_pr_dispatch'
+        $optByValue['abort'].route | Should -Be 'terminal_apex_abandoned'
     }
 
     It 'promote_feature_pr_dispatch invokes feature-pr.yaml with the apex root inputs' {

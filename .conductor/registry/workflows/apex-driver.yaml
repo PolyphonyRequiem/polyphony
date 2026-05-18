@@ -131,11 +131,10 @@ workflow:
     (plannable+implementable, etc.) traverse plan → impl → close in a
     single invocation rather than requiring per-facet re-invocation.
     Replaces the deleted polyphony-full.yaml.
-  version: "2.4.3"
+  version: "2.4.8"
   entry_point: preflight_sync
   metadata:
-    min_polyphony_version: "2.4.3"
-
+    min_polyphony_version: "2.4.8"
   limits:
     # The dispatch loop is a for_each over waves; each wave is itself a
     # for_each over items; each item invocation is a sub-workflow. The
@@ -1285,10 +1284,88 @@ agents:
           feature_missing  = $featureMissing;
         } | ConvertTo-Json -Compress
     routes:
-      - to: promote_feature_pr_dispatch
+      - to: strip_planning_artifacts
         when: "{{ promote_feature_to_main.output.needs_promotion }}"
       # No promotion needed (already in sync, or no feature branch to promote).
       - to: close_mark_satisfied
+
+  # ── Strip polyphony planning artifacts ───────────────────────────────────
+  #
+  # Removes the polyphony-managed working files from the apex feature
+  # branch BEFORE the feature PR is opened against main, so the PR diff
+  # is focused on the actual deliverable rather than the cascade of plan
+  # files that drove the work.
+  #
+  # The strip is conservative — only files matching polyphony's own
+  # naming convention are removed:
+  #   * plans/plan-*.children.json — always vestigial (planner runtime
+  #     scratch; only used by `polyphony plan seed-children`).
+  #   * plans/plan-*.md            — default-stripped. ADRs and other
+  #     planning byproducts that land in docs/ are not touched.
+  #
+  # Files outside that convention (e.g. plans/strategy.md authored by
+  # humans) are preserved. Idempotent: a re-run after a successful strip
+  # (or a fast-pathed apex with no plan files) routes through with
+  # already_clean=true.
+  #
+  # The script is routing-style (always exits 0); failures surface via
+  # `error_code` on the envelope and route to strip_planning_artifacts_failed_gate.
+  - name: strip_planning_artifacts
+    type: script
+    description: Strip polyphony planning artifacts (plans/plan-*.{md,children.json}) from feature branch before PR
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/strip-planning-artifacts.ps1"
+      - "-ApexId"
+      - "{{ workflow.input.apex_id }}"
+      - "-FeatureBranch"
+      - "{{ promote_feature_to_main.output.feature_branch }}"
+    routes:
+      - to: strip_planning_artifacts_failed_gate
+        when: "{{ strip_planning_artifacts.output.error_code != '' }}"
+      - to: promote_feature_pr_dispatch
+
+  # ── Strip failure gate ───────────────────────────────────────────────────
+  #
+  # The strip step failed (rm, commit, or push error). Operator decides
+  # whether to retry the strip, skip it (and ship the PR with plan files
+  # in the diff), or abort the apex without opening the feature PR.
+  - name: strip_planning_artifacts_failed_gate
+    type: human_gate
+    description: Plan-strip step failed — operator decides retry, skip, or abort
+    prompt: |
+      ## ⚠️ Plan-strip step failed
+
+      Could not strip polyphony planning artifacts from
+      `{{ promote_feature_to_main.output.feature_branch }}` before
+      opening the feature PR.
+
+      **Error code:** `{{ strip_planning_artifacts.output.error_code }}`
+      **Detail:** {{ strip_planning_artifacts.output.error_message }}
+
+      ### Options
+
+      - **Retry** — re-run the strip step. Use this for transient
+        errors (push race with another writer, etc.).
+      - **Skip** — proceed straight to feature-PR creation with the
+        plan files still in the diff. Use this if the strip is
+        permanently blocked (e.g. branch protection on
+        `{{ promote_feature_to_main.output.feature_branch }}`) and
+        you'd rather ship the PR than block the apex.
+      - **Abort** — halt the apex without opening the feature PR.
+        The feature branch is left as-is for manual cleanup.
+    options:
+      - label: "🔁 Retry — re-run the strip step"
+        value: retry
+        route: strip_planning_artifacts
+      - label: "⏭️ Skip — ship PR with plan files included"
+        value: skip
+        route: promote_feature_pr_dispatch
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_apex_abandoned
 
   # ── Promote feature → target via feature-pr.yaml ─────────────────────────
   #
