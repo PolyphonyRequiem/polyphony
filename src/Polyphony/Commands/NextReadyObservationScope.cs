@@ -140,6 +140,30 @@ internal sealed class NextReadyObservationScope
     /// <see cref="RootId"/> or <see cref="ItemId"/> are non-positive.</summary>
     public required string PlanBranch { get; init; }
 
+    // ── Run-watermark signal (shared across all PR-based composers) ─────
+
+    /// <summary>Value of the <c>polyphony:run-started-at</c> tag on the
+    /// apex root, parsed as a UTC <see cref="DateTimeOffset"/>. Used by
+    /// every PR-state composer to filter merged PRs that pre-date the
+    /// current run — they're artifacts of a prior run and don't count
+    /// towards current-run satisfaction (see
+    /// <c>docs/decisions/run-reset.md</c>). Null when the tag is absent
+    /// OR unparseable — composers MUST treat null as "no filter"
+    /// (legacy behavior) rather than "filter from epoch zero".</summary>
+    public DateTimeOffset? RunStartedAt { get; set; }
+
+    /// <summary>Captured error message from the <c>twig show</c> call
+    /// used to read the run-started-at tag, or null on success.
+    /// Distinguishing "fetch failed" from "tag absent" matters: a fresh
+    /// apex legitimately has no tag (no filter, legacy behavior); a
+    /// reset apex whose tag we couldn't read MUST NOT silently fall back
+    /// to no-filter, because that re-introduces the stuck-state bug the
+    /// reset is meant to solve. When non-null, every PR-state composer
+    /// forces a Needed disposition with the error surfaced in the
+    /// reason — same posture as <see cref="PlanPrFetchError"/>.</summary>
+    public string? RunStartedAtFetchError { get; set; }
+
+
     // ── Plan-kind shared signals ────────────────────────────────────────
 
     /// <summary>The resolved <see cref="RepoIdentity"/> for the active

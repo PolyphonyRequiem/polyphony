@@ -372,4 +372,175 @@ public sealed class PlanObserverTests
         obs.Disposition.ShouldBe(Disposition.Satisfied);
         obs.TagPresent.ShouldBeTrue();
     }
+
+    // ─── ReadRunStartedAtAsync ────────────────────────────────────────────
+
+    [Fact]
+    public async Task ReadRunStartedAt_TagPresent_ReturnsParsedInstant()
+    {
+        var runner = new FakeProcessRunner();
+        StubTwigShowWithTags(runner, RootId, "polyphony;polyphony:root;polyphony:run-started-at=2026-05-17T22:00:00Z");
+
+        var instant = await CreateObserver(runner).ReadRunStartedAtAsync(RootId);
+
+        instant.ShouldNotBeNull();
+        instant!.Value.UtcDateTime.ShouldBe(new DateTime(2026, 5, 17, 22, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public async Task ReadRunStartedAt_TagAbsent_ReturnsNull()
+    {
+        var runner = new FakeProcessRunner();
+        StubTwigShowWithTags(runner, RootId, "polyphony;polyphony:root");
+
+        var instant = await CreateObserver(runner).ReadRunStartedAtAsync(RootId);
+
+        instant.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ReadRunStartedAt_TwigShowFails_PropagatesException()
+    {
+        // BLOCKER #3 fix: the reader MUST NOT swallow twig failures. A
+        // failed twig show is operationally distinct from an absent tag,
+        // and callers (FetchRunStartedAtAsync in next-ready,
+        // DetectState) need to distinguish them to force a Needed
+        // disposition rather than silently falling back to no-filter on
+        // a reset apex. TwigClient.ShowAsync itself returns null on
+        // process failure; the observer translates that into a thrown
+        // InvalidOperationException so the caller's catch fires.
+        // See docs/decisions/run-reset.md.
+        var runner = new FakeProcessRunner();
+        StubTwigShowError(runner, RootId);
+
+        var observer = CreateObserver(runner);
+
+        var act = async () => await observer.ReadRunStartedAtAsync(RootId);
+        await act.ShouldThrowAsync<InvalidOperationException>();
+    }
+
+    // ─── Map* run-watermark filter ────────────────────────────────────────
+
+    [Fact]
+    public void MapPlanAuthored_MergedBeforeFilter_DowngradesToNeeded()
+    {
+        var pr = new PullRequestSummary(7, ChildPlanBranch, "https://gh/pr/7", MergedAt: null);
+        var mergedAt = DateTimeOffset.Parse("2026-05-10T12:00:00Z");
+        var filter = DateTimeOffset.Parse("2026-05-15T00:00:00Z"); // newer
+
+        var obs = PlanObserver.MapPlanAuthored(
+            ChildPlanBranch, branchExists: true, pr, prState: "MERGED",
+            mergedAt: mergedAt, runStartedAtFilter: filter);
+
+        obs.Disposition.ShouldBe(Disposition.Needed);
+        obs.Reason.ShouldContain("prior run");
+        obs.PrNumber.ShouldBe(7); // surfaced for diagnostics
+        obs.PrState.ShouldBe("MERGED");
+    }
+
+    [Fact]
+    public void MapPlanAuthored_MergedAfterFilter_StaysSatisfied()
+    {
+        var pr = new PullRequestSummary(7, ChildPlanBranch, "https://gh/pr/7", MergedAt: null);
+        var mergedAt = DateTimeOffset.Parse("2026-05-20T12:00:00Z");
+        var filter = DateTimeOffset.Parse("2026-05-15T00:00:00Z"); // older
+
+        var obs = PlanObserver.MapPlanAuthored(
+            ChildPlanBranch, branchExists: true, pr, prState: "MERGED",
+            mergedAt: mergedAt, runStartedAtFilter: filter);
+
+        obs.Disposition.ShouldBe(Disposition.Satisfied);
+    }
+
+    [Fact]
+    public void MapPlanAuthored_FilterAbsent_LegacyBehaviorPreserved()
+    {
+        var pr = new PullRequestSummary(7, ChildPlanBranch, "https://gh/pr/7", MergedAt: null);
+
+        var obs = PlanObserver.MapPlanAuthored(
+            ChildPlanBranch, branchExists: true, pr, prState: "MERGED",
+            mergedAt: DateTimeOffset.Parse("2026-05-10T12:00:00Z"),
+            runStartedAtFilter: null);
+
+        obs.Disposition.ShouldBe(Disposition.Satisfied);
+    }
+
+    [Fact]
+    public void MapPlanAuthored_OpenPrWithFilter_NotFiltered()
+    {
+        // Open PRs are NOT filtered by the watermark — reset abandons them
+        // explicitly; if an open PR survives reset that's reset's bug, not
+        // the observer's. Verifies that filter has no effect on OPEN state.
+        var pr = new PullRequestSummary(7, ChildPlanBranch, "https://gh/pr/7", MergedAt: null);
+        var filter = DateTimeOffset.Parse("2026-05-15T00:00:00Z");
+
+        var obs = PlanObserver.MapPlanAuthored(
+            ChildPlanBranch, branchExists: true, pr, prState: "OPEN",
+            mergedAt: null, runStartedAtFilter: filter);
+
+        obs.Disposition.ShouldBe(Disposition.Fulfilling);
+    }
+
+    [Fact]
+    public void MapPlanPromoted_MergedBeforeFilter_DowngradesToNeeded()
+    {
+        var pr = new PullRequestSummary(8, ChildPlanBranch, "https://gh/pr/8", MergedAt: null);
+        var mergedAt = DateTimeOffset.Parse("2026-05-10T12:00:00Z");
+        var filter = DateTimeOffset.Parse("2026-05-15T00:00:00Z");
+
+        var obs = PlanObserver.MapPlanPromoted(pr, prState: "MERGED",
+            mergedAt: mergedAt, runStartedAtFilter: filter);
+
+        obs.Disposition.ShouldBe(Disposition.Needed);
+        obs.Reason.ShouldContain("prior run");
+    }
+
+    [Fact]
+    public void MapPlanReviewed_MergedBeforeFilter_DowngradesToNeeded()
+    {
+        var pr = new PullRequestSummary(9, ChildPlanBranch, "https://gh/pr/9", MergedAt: null);
+        var poll = new GhPullRequestPollData(
+            Number: 9, State: "MERGED", ReviewDecision: "APPROVED",
+            Mergeable: "MERGEABLE", HeadRefName: ChildPlanBranch, HeadRefOid: "abc",
+            BaseRefName: "feature/100", MergeCommitSha: "sha",
+            MergedAt: DateTimeOffset.Parse("2026-05-10T12:00:00Z"),
+            Body: "", Reviews: System.Array.Empty<GhPullRequestReview>(),
+            AuthorLogin: "", Comments: System.Array.Empty<GhPullRequestComment>());
+        var filter = DateTimeOffset.Parse("2026-05-15T00:00:00Z");
+
+        var obs = PlanObserver.MapPlanReviewed(pr, poll, runStartedAtFilter: filter);
+
+        obs.Disposition.ShouldBe(Disposition.Needed);
+        obs.Reason.ShouldContain("prior run");
+    }
+
+    [Fact]
+    public void MapImplementationMerged_MergedBeforeFilter_DowngradesToNeeded()
+    {
+        const string implBranch = "impl/100-200";
+        var pr = new PullRequestSummary(10, implBranch, "https://gh/pr/10", MergedAt: null);
+        var mergedAt = DateTimeOffset.Parse("2026-05-10T12:00:00Z");
+        var filter = DateTimeOffset.Parse("2026-05-15T00:00:00Z");
+
+        var obs = PlanObserver.MapImplementationMerged(implBranch, pr, prState: "MERGED",
+            mergedAt: mergedAt, runStartedAtFilter: filter);
+
+        obs.Disposition.ShouldBe(Disposition.Needed);
+        obs.Reason.ShouldContain("prior run");
+        obs.PrNumber.ShouldBe(10);
+    }
+
+    [Fact]
+    public void MapImplementationMerged_MergedAfterFilter_StaysSatisfied()
+    {
+        const string implBranch = "impl/100-200";
+        var pr = new PullRequestSummary(10, implBranch, "https://gh/pr/10", MergedAt: null);
+        var mergedAt = DateTimeOffset.Parse("2026-05-20T12:00:00Z");
+        var filter = DateTimeOffset.Parse("2026-05-15T00:00:00Z");
+
+        var obs = PlanObserver.MapImplementationMerged(implBranch, pr, prState: "MERGED",
+            mergedAt: mergedAt, runStartedAtFilter: filter);
+
+        obs.Disposition.ShouldBe(Disposition.Satisfied);
+    }
 }

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Polyphony.Tagging;
 
 /// <summary>
@@ -119,5 +121,69 @@ public static class PolyphonyTags
         var tag = ImplMergedInMg(mergeGroupKey);
         if (tag.Length == 0) return false;
         return tags.Contains(tag);
+    }
+
+    /// <summary>
+    /// Tag-name prefix for the "this apex's current run started at this
+    /// ISO-8601 UTC instant" marker, stamped on the apex root by
+    /// <c>polyphony reset state</c> (and re-stamped on every subsequent
+    /// reset). Observers consume it as a watermark — any merged PR whose
+    /// <c>MergedAt</c> is at or before this instant is treated as an
+    /// artifact of a prior run and is filtered out of satisfaction
+    /// observations. When the tag is ABSENT, no filter is applied —
+    /// preserves legacy behavior for apexes that have never been reset.
+    ///
+    /// Authoritative spec: <c>docs/decisions/run-reset.md</c>.
+    /// </summary>
+    public const string RunStartedAtPrefix = "polyphony:run-started-at";
+
+    /// <summary>
+    /// Compose the full <c>polyphony:run-started-at=&lt;value&gt;</c> tag for
+    /// <paramref name="instant"/>. Always serialised as ISO-8601 UTC with
+    /// millisecond precision (<c>yyyy-MM-ddTHH:mm:ss.fffZ</c>) so the
+    /// reader can disambiguate watermark equality from a PR that merged
+    /// in the same second — the boundary comparison in
+    /// <c>PlanObserver.IsPriorRunMergedPr</c> is <c>&lt;=</c>, so an
+    /// imprecise watermark could mis-filter current-run PRs that complete
+    /// in the same second as reset.
+    /// </summary>
+    public static string RunStartedAt(DateTimeOffset instant)
+    {
+        var utc = instant.ToUniversalTime();
+        return $"{RunStartedAtPrefix}={utc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>
+    /// Read the <c>polyphony:run-started-at</c> tag value from
+    /// <paramref name="tags"/>. Scans ALL matching prefix tags and
+    /// returns the MAX-valued parseable value — defensive against
+    /// duplicate stamps (PR 2's reset may briefly hold two prefix tags
+    /// during the read-write window, and manual operator edits can
+    /// introduce duplicates). Returns null when no tag is present OR
+    /// when every matching tag's value is unparseable — callers MUST
+    /// treat null as "no filter" rather than "filter from epoch zero".
+    /// </summary>
+    public static DateTimeOffset? ReadRunStartedAt(TagSet tags)
+    {
+        ArgumentNullException.ThrowIfNull(tags);
+        const string equalsSep = "=";
+        var prefixEq = RunStartedAtPrefix + equalsSep;
+        DateTimeOffset? max = null;
+        foreach (var tag in tags)
+        {
+            if (!tag.StartsWith(prefixEq, StringComparison.Ordinal))
+                continue;
+            var value = tag.Substring(prefixEq.Length);
+            if (!DateTimeOffset.TryParse(
+                    value,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var parsed))
+            {
+                continue;
+            }
+            if (max is null || parsed > max.Value) max = parsed;
+        }
+        return max;
     }
 }

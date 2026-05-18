@@ -188,6 +188,52 @@ public sealed partial class PlanCommands
         var prState = pollData.State.ToUpperInvariant();
         var prUrl = latestPr.Url ?? string.Empty;
 
+        // ── 6b. Run-watermark filter (apex-root tag). ─────────────────────
+        // Stamped by `polyphony reset state`; when present, merged PRs
+        // whose MergedAt <= watermark are artifacts of a prior run and
+        // must NOT count as "complete" — otherwise the redo dispatch
+        // sees the stale merged plan PR, declares the plan complete,
+        // and the apex driver flips next-ready back to Needed → infinite
+        // loop. Fail-closed posture: fetch errors force "not_started"
+        // with the error reason so the dispatch retries rather than
+        // silently falling back to the legacy lying-merged state.
+        // See docs/decisions/run-reset.md.
+        DateTimeOffset? runStartedAt = null;
+        string? runStartedAtError = null;
+        try
+        {
+            runStartedAt = await observer.ReadRunStartedAtAsync(rootId, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            runStartedAtError = $"run-watermark fetch failed: {ex.Message}";
+        }
+        if (prState == "MERGED" && runStartedAtError is not null)
+        {
+            EmitDetectStateError(rootId, itemId, planBranch, runStartedAtError);
+            return ExitCodes.Success;
+        }
+        if (prState == "MERGED"
+            && runStartedAt is { } watermark
+            && pollData.MergedAt is { } mergedAt
+            && mergedAt <= watermark)
+        {
+            // Treat a prior-run merged PR as "no PR for the current run"
+            // — symmetric to the closed-and-branch-deleted short-circuit
+            // below. The redo dispatch will then proceed through the
+            // not_started → planning path against a (presumably already
+            // reset) plan branch.
+            EmitDetectState(new PlanDetectStateResult
+            {
+                RootId = rootId,
+                ItemId = itemId,
+                PlanBranch = planBranch,
+                State = "not_started",
+                BranchExistsOnOrigin = branchExists,
+            });
+            return ExitCodes.Success;
+        }
+
         // ── 7. Branch on PR state. ────────────────────────────────────────
         if (prState == "OPEN")
         {
