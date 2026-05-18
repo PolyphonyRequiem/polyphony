@@ -345,6 +345,51 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         ado.CreatePrCallCount.ShouldBe(0);
     }
 
+    // AB#3228 newer-phantom guard: when multiple Completed PRs exist for the
+    // same source/target (e.g. a retry created a no-op duplicate of a real
+    // merge), prefer the OLDEST by CreationDate. The real merge is usually
+    // the first attempt; subsequent retries are phantoms with empty
+    // lastMergeCommit that would re-trip missing_merge_commit downstream.
+    [Fact]
+    public async Task OpenMgAdo_MultipleCompletedPrs_PrefersOldest()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        StubBranchesExist(runner, "mg/100_core", "feature/100");
+        var older = new AdoPullRequest(
+            PullRequestId: 40,
+            Title: "title",
+            Description: "",
+            SourceRefName: "refs/heads/mg/100_core",
+            TargetRefName: "refs/heads/feature/100",
+            Status: "completed",
+            MergeStatus: "succeeded",
+            CreatedBy: "user",
+            CreationDate: new DateTime(2026, 5, 1, 12, 0, 0, DateTimeKind.Utc),
+            Url: "https://example.invalid/40");
+        var newer = new AdoPullRequest(
+            PullRequestId: 50,
+            Title: "title",
+            Description: "",
+            SourceRefName: "refs/heads/mg/100_core",
+            TargetRefName: "refs/heads/feature/100",
+            Status: "completed",
+            MergeStatus: "succeeded",
+            CreatedBy: "user",
+            CreationDate: new DateTime(2026, 5, 2, 12, 0, 0, DateTimeKind.Utc),
+            Url: "https://example.invalid/50");
+        // List in newest-first order (the empirical ADO default) to exercise
+        // the tiebreaker.
+        ado.ListPrs = new List<AdoPullRequest> { newer, older };
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+        var result = Parse(output);
+        result.ErrorCode.ShouldBeEmpty();
+        result.Created.ShouldBeFalse();
+        result.PrNumber.ShouldBe(40);
+        ado.CreatePrCallCount.ShouldBe(0);
+    }
+
     // AB#3228 negative case: an Abandoned PR is NOT reused — its source/target
     // pair may be intentionally being re-opened with a fresh body. Falls
     // through to CreatePullRequestAsync.

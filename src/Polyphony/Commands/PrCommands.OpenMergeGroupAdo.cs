@@ -164,9 +164,14 @@ public sealed partial class PrCommands
                     activeMatch = pr;
                     break;
                 }
-                if (completedMatch is null
-                    && string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase)
+                    && (completedMatch is null || pr.CreationDate < completedMatch.CreationDate))
                 {
+                    // Prefer the OLDEST completed match: when a previous run
+                    // produced a real merge and a subsequent retry opened a
+                    // no-op duplicate (AB#3228 symptom), the older PR is the
+                    // one with the populated merge commit. The newer phantom
+                    // would re-trip `missing_merge_commit` on the merge verb.
                     completedMatch = pr;
                 }
             }
