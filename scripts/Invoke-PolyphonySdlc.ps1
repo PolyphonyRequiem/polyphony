@@ -30,9 +30,14 @@
     Apex (run-root) work item ID. Required.
 
 .PARAMETER Intent
-    Apex-driver intent enum: `new` | `resume` | `replan`. Default: `new`.
+    Apex-driver intent enum: `new` | `resume` | `replan` | `reset`. Default: `new`.
     `-Intent resume` refuses to dispatch when init-apex reports outcome=created
     (no prior state to resume).
+    `-Intent reset` invokes the apex-scoped redispatch reset
+    (`reset-apex@polyphony`) instead of the apex driver. The reset path skips
+    init-apex / worktree hydration / assert-clean / terminal-state checks
+    because the workflow's whole purpose is to tear down a completed run.
+    Combine with `-Execute` to mutate (defaults to dry-run preview).
 
 .PARAMETER WorktreeRoot
     OPTIONAL EXPERT OVERRIDE of the conductor's worktree path. When supplied,
@@ -102,6 +107,28 @@
     workflow YAMLs are deterministic (not policy-governed) and still fire;
     see policy-fasttrack.yaml for the list.
 
+.PARAMETER Execute
+    `-Intent reset` only. Forwarded to `reset-apex@polyphony` as
+    `execute=true`, which forwards to `polyphony reset apex --execute` and
+    mutates state. Default (omit the switch): dry-run preview only.
+
+.PARAMETER AutoConfirm
+    `-Intent reset` only. Skips the workflow's confirmation human gate
+    between preview and execute. Use only for unattended / scripted
+    recovery paths where operator consent has been obtained out-of-band.
+    Has no effect when `-Execute` is omitted.
+
+.PARAMETER SkipState
+    `-Intent reset` only. Forwarded to
+    `polyphony reset apex --skip-state` — runs the cleanup chain but does
+    NOT advance the per-apex `polyphony:run-started-at` watermark. Use for
+    hygiene sweeps that should not flip the satisfaction floor.
+
+.PARAMETER Comment
+    `-Intent reset` only. Optional override for the closing comment
+    posted on each abandoned PR. Empty string (default) uses
+    `polyphony reset apex`'s built-in reset comment.
+
 .EXAMPLE
     cd ~/projects/polyphony
     ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 -Intent new
@@ -119,13 +146,22 @@
     Launches apex-driver with the fast-track policy active for the entire
     conductor subtree (auto-approve, auto-merge, auto-resolve renegotiation
     and root-fallback).
+.EXAMPLE
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 62286666 -Intent reset
+    Dry-run preview of the apex-scoped reset chain (`reset-apex@polyphony`).
+    No mutations. Shows the operator what would be torn down.
+
+.EXAMPLE
+    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 62286666 -Intent reset -Execute
+    Same as above but surfaces a confirmation gate after preview, then
+    runs `polyphony reset apex --apex 62286666 --execute` (mutating).
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
     [int]$ApexId,
 
-    [ValidateSet('new', 'resume', 'replan')]
+    [ValidateSet('new', 'resume', 'replan', 'reset')]
     [string]$Intent = 'new',
 
     [string]$WorktreeRoot,
@@ -149,10 +185,32 @@ param(
 
     [switch]$SkipStateCheck,
 
-    [string]$PolicyPath
+    [string]$PolicyPath,
+
+    # ── -Intent reset only ───────────────────────────────────────────────
+    [switch]$Execute,
+
+    [switch]$AutoConfirm,
+
+    [switch]$SkipState,
+
+    [string]$Comment = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+# ─── Reset-only param guard for non-reset intents ─────────────────────────────
+#
+# Catch misuse: -Execute / -AutoConfirm / -SkipState / -Comment are reset-only.
+# Silently ignoring them on apex-driver dispatches would mask operator
+# intent (e.g. "I passed -Execute but nothing destructive happened").
+if ($Intent -ne 'reset') {
+    foreach ($resetOnly in @('Execute', 'AutoConfirm', 'SkipState', 'Comment')) {
+        if ($PSBoundParameters.ContainsKey($resetOnly)) {
+            throw "[polyphony-sdlc] -$resetOnly is only valid with -Intent reset."
+        }
+    }
+}
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -264,6 +322,186 @@ To bypass this gate (NOT recommended, transition period only):
     ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -SkipLayoutCheck
 "@
     }
+}
+
+# ─── Reset intent diversion ──────────────────────────────────────────────────
+#
+# When -Intent reset, we are NOT launching apex-driver and we want NONE of
+# the apex-worktree machinery (init-apex creates worktrees; the reset
+# workflow's job is to remove them). We also explicitly want to operate on
+# completed items — Phase 2.5's terminal-state refusal is the opposite of
+# what reset needs.
+#
+# We run conductor from the operator's current cwd (which Phase 1 already
+# verified is a worktree of the bare repo). polyphony reset apex resolves
+# the main worktree + git common-dir internally via the same helpers as
+# every other verb, so it does not matter which worktree of the bare repo
+# the operator launched from.
+#
+# Refused parameter combinations are caught here rather than silently
+# ignored, so an operator who accidentally passes apex-driver knobs to
+# reset gets a clear error instead of confusing behaviour.
+
+if ($Intent -eq 'reset') {
+    foreach ($incompatible in @('WorktreeRoot', 'GitRepo', 'Repository', 'RepoOrganization', 'RepoProject')) {
+        if ($PSBoundParameters.ContainsKey($incompatible)) {
+            throw "[polyphony-sdlc] -$incompatible is not valid with -Intent reset. The reset workflow operates from the operator's cwd and resolves the apex's branches/PRs internally."
+        }
+    }
+
+    # Auto-detect platform from origin for gh-identity pinning. The reset
+    # workflow itself does not take a platform input — the verbs resolve
+    # the platform per-leg (e.g. reset prs reads the manifest +
+    # .polyphony-config) — but we still need GH_TOKEN exported for the
+    # PR-abandonment leg when the workspace is on github.
+    $resetPlatform = if ($Platform) { $Platform } else {
+        $resetRemoteUrl = & git remote get-url origin 2>&1
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resetRemoteUrl)) {
+            $global:LASTEXITCODE = 0
+            'ado'
+        } elseif ($resetRemoteUrl -match 'github\.com') {
+            'github'
+        } else {
+            'ado'
+        }
+    }
+
+    # Pin a web port (consistent with apex-driver launches; lets abort
+    # scripts find /api/stop without scanning).
+    $resetWebPort = $null
+    $resetListener = $null
+    try {
+        $resetListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $resetListener.Start()
+        $resetWebPort = ([System.Net.IPEndPoint]$resetListener.LocalEndpoint).Port
+    } finally {
+        if ($resetListener) { $resetListener.Stop() }
+    }
+    $env:CONDUCTOR_WEB_PORT = $resetWebPort
+
+    $executeBool     = if ($Execute) { 'true' } else { 'false' }
+    $autoConfirmBool = if ($AutoConfirm) { 'true' } else { 'false' }
+    $skipStateBool   = if ($SkipState) { 'true' } else { 'false' }
+
+    $resetArgs = @(
+        'run', 'reset-apex@polyphony'
+        '--web'
+        '--web-port', "$resetWebPort"
+        '--input', "apex_id=$ApexId"
+        '--input', "execute=$executeBool"
+        '--input', "auto_confirm=$autoConfirmBool"
+        '--input', "skip_state=$skipStateBool"
+        '--input', "comment=$Comment"
+        '-m', "workitem_id=$ApexId"
+        '-m', "cwd=$cwd"
+    )
+
+    $resetResolved = [pscustomobject]@{
+        success      = $true
+        workflow     = 'reset-apex@polyphony'
+        intent       = 'reset'
+        apex_id      = $ApexId
+        execute      = [bool]$Execute
+        auto_confirm = [bool]$AutoConfirm
+        skip_state   = [bool]$SkipState
+        comment      = $Comment
+        platform     = $resetPlatform
+        cwd          = $cwd
+        web_port     = $resetWebPort
+        command      = "conductor $($resetArgs -join ' ')"
+        args         = $resetArgs
+        detached     = -not $NoDetach
+    }
+
+    if ($DryRun) {
+        $resetResolved | Add-Member -NotePropertyName dry_run -NotePropertyValue $true
+        $resetResolved | ConvertTo-Json -Depth 5
+        return
+    }
+
+    if (-not (Get-Command conductor -ErrorAction SilentlyContinue)) {
+        throw "[polyphony-sdlc] conductor is not on PATH. Install it before invoking reset-apex."
+    }
+
+    # gh identity pinning when on github — the PR-abandonment leg needs it.
+    if ($resetPlatform -eq 'github') {
+        . (Join-Path $PSScriptRoot 'Resolve-GhIdentity.ps1')
+        try {
+            $identity = Resolve-GhIdentity
+        } catch {
+            throw "[polyphony-sdlc] gh identity probe failed:`n$($_.Exception.Message)"
+        }
+        $env:GH_TOKEN = $identity.Token
+        $env:GH_HOST  = 'github.com'
+        Write-Host "[polyphony-sdlc] gh identity pinned: user='$($identity.User)' source=$($identity.Source) token_len=$($identity.TokenLength)" -ForegroundColor Cyan
+    }
+
+    if ($PolicyPath) {
+        $resolvedPolicyPath = Resolve-Path -LiteralPath $PolicyPath -ErrorAction Stop
+        $env:POLYPHONY_POLICY_PATH = $resolvedPolicyPath.ProviderPath
+        Write-Host "[polyphony-sdlc] policy override: POLYPHONY_POLICY_PATH=$($env:POLYPHONY_POLICY_PATH)" -ForegroundColor Cyan
+    }
+
+    if ($NoDetach) {
+        & conductor @resetArgs
+        $resetExit = $LASTEXITCODE
+        $resetResolved | Add-Member -NotePropertyName exit_code -NotePropertyValue $resetExit
+        $resetResolved | ConvertTo-Json -Depth 5
+        return
+    }
+
+    # Detached spawn — same transcript + exit-sidecar shape as apex-driver.
+    $resetLogDir = Join-Path ([System.IO.Path]::GetTempPath()) 'polyphony-sdlc-runs'
+    [void](New-Item -ItemType Directory -Path $resetLogDir -Force)
+    $resetTs = (Get-Date -Format 'yyyyMMdd-HHmmss')
+    $resetTranscript = Join-Path $resetLogDir "reset-apex-${ApexId}-${resetTs}-transcript.log"
+    $resetSidecar    = Join-Path $resetLogDir "reset-apex-${ApexId}-${resetTs}-exit.json"
+
+    $resetCmd = 'conductor ' + (($resetArgs | ForEach-Object {
+        if ($_ -match '[\s"'']') { "'" + ($_ -replace "'", "''") + "'" }
+        else { $_ }
+    }) -join ' ')
+
+    $resetChild = @"
+Set-Location -LiteralPath '$($cwd.Replace("'","''"))'
+`$Host.UI.RawUI.WindowTitle = 'polyphony-sdlc reset apex=$ApexId'
+Write-Host '[polyphony-sdlc] Cwd       : $cwd' -ForegroundColor Cyan
+Write-Host '[polyphony-sdlc] Command   : $resetCmd' -ForegroundColor Cyan
+Write-Host '[polyphony-sdlc] Transcript: $resetTranscript' -ForegroundColor Cyan
+Write-Host '[polyphony-sdlc] Exit sidecar: $resetSidecar' -ForegroundColor Cyan
+Write-Host ''
+Start-Transcript -LiteralPath '$resetTranscript' -Append | Out-Null
+`$exit = `$null
+try {
+    $resetCmd
+    `$exit = `$LASTEXITCODE
+    Write-Host ''
+    Write-Host "[polyphony-sdlc] conductor (reset) exited with code: `$exit" -ForegroundColor Yellow
+} finally {
+    Stop-Transcript | Out-Null
+    `$exitPayload = [ordered]@{
+        apex_id      = '$ApexId'
+        workflow     = 'reset-apex@polyphony'
+        exit_code    = `$exit
+        completed_at = (Get-Date).ToString('o')
+        transcript   = '$resetTranscript'
+    } | ConvertTo-Json -Depth 3
+    Set-Content -LiteralPath '$resetSidecar' -Value `$exitPayload -Encoding UTF8
+}
+Write-Host '[polyphony-sdlc] Window kept open (-NoExit). Close manually.' -ForegroundColor DarkGray
+"@
+
+    $resetProc = Start-Process -FilePath 'pwsh' `
+        -ArgumentList @('-NoExit', '-NoProfile', '-Command', $resetChild) `
+        -WorkingDirectory $cwd `
+        -PassThru
+
+    $resetResolved | Add-Member -NotePropertyName pid -NotePropertyValue $resetProc.Id
+    $resetResolved | Add-Member -NotePropertyName transcript_log -NotePropertyValue $resetTranscript
+    $resetResolved | Add-Member -NotePropertyName exit_sidecar -NotePropertyValue $resetSidecar
+    $resetResolved | Add-Member -NotePropertyName note -NotePropertyValue "Reset workflow launched in a new PowerShell window. Dry-run preview unless -Execute was passed. Tail transcript: Get-Content -Wait '$resetTranscript'."
+    $resetResolved | ConvertTo-Json -Depth 5
+    return
 }
 
 # ─── Phase 2.5: terminal-state pre-flight refusal (AB#3165 Item 2) ───────────
