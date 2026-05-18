@@ -265,6 +265,60 @@ public sealed class AdoClient : IAdoClient
             : "refs/heads/" + branch;
     }
 
+    /// <summary>
+    /// Visible marker appended to truncated PR descriptions so a reader can
+    /// see at a glance that content was elided. Kept ASCII-only to avoid any
+    /// surrogate/grapheme accounting ambiguity at the boundary
+    /// (AB#3228 v2.4.7).
+    /// </summary>
+    internal const string DescriptionTruncationMarker =
+        "\n\n---\n_Description truncated to ADO's 4000-character limit._\n";
+
+    /// <summary>
+    /// Defensive truncation for ADO PR description payloads, enforced at the
+    /// infrastructure boundary so every <see cref="IAdoClient"/> consumer is
+    /// protected. ADO rejects descriptions longer than
+    /// <see cref="AdoConstants.MaxPullRequestDescriptionLength"/> with HTTP
+    /// 400; v2.4.7 (AB#3228) wired this into <see cref="CreatePullRequestAsync"/>
+    /// and <see cref="EditPullRequestBodyAsync"/> after a live dogfood run
+    /// wedged on `pr create-feature-ado` for an apex with a deep work-item
+    /// tree.
+    ///
+    /// <para>
+    /// Idempotent: if the input already ends with the truncation marker it is
+    /// stripped before re-truncating, so repeated round-trips through this
+    /// helper do not stack markers. Splits at the marker boundary are
+    /// surrogate-pair-aware: if the trim point lands inside a UTF-16 surrogate
+    /// pair, it is rolled back one code unit so the output is a well-formed
+    /// .NET string.
+    /// </para>
+    /// </summary>
+    internal static string TruncateDescription(string? description)
+    {
+        if (string.IsNullOrEmpty(description)) return string.Empty;
+
+        // Idempotence: strip a trailing existing marker (with any trailing
+        // whitespace) so we don't compound markers across edit cycles.
+        var working = description.EndsWith(DescriptionTruncationMarker.TrimEnd(), StringComparison.Ordinal)
+            ? description[..description.LastIndexOf(DescriptionTruncationMarker.TrimEnd(), StringComparison.Ordinal)]
+            : description;
+
+        if (working.Length <= AdoConstants.MaxPullRequestDescriptionLength)
+        {
+            return working;
+        }
+
+        var budget = AdoConstants.MaxPullRequestDescriptionLength - DescriptionTruncationMarker.Length;
+        // Surrogate-pair guard: if budget lands on a high surrogate, the next
+        // index is the matching low surrogate; rolling back one keeps the
+        // string well-formed.
+        if (budget > 0 && char.IsHighSurrogate(working[budget - 1]))
+        {
+            budget--;
+        }
+        return working[..budget] + DescriptionTruncationMarker;
+    }
+
     /// <inheritdoc />
     public async Task<IReadOnlyList<AdoPullRequest>?> ListPullRequestsAsync(
         string organization,
@@ -389,7 +443,7 @@ public sealed class AdoClient : IAdoClient
             SourceRefName = NormalizeBranchRef(sourceBranch),
             TargetRefName = NormalizeBranchRef(targetBranch),
             Title = title,
-            Description = description,
+            Description = TruncateDescription(description),
         };
         var bodyJson = JsonSerializer.Serialize(
             body, PolyphonyJsonContext.Default.AdoCreatePullRequestRequest);
@@ -1079,7 +1133,7 @@ public sealed class AdoClient : IAdoClient
                       $"?api-version=7.1";
 
             var bodyJson = JsonSerializer.Serialize(
-                new AdoEditPullRequestRequest { Description = body },
+                new AdoEditPullRequestRequest { Description = TruncateDescription(body) },
                 PolyphonyJsonContext.Default.AdoEditPullRequestRequest);
 
             using var response = await SendWithRetryAsync(() =>

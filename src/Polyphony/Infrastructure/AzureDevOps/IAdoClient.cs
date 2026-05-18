@@ -112,6 +112,16 @@ public interface IAdoClient
     /// not exist (HTTP 404). Throws on other failures — see
     /// <see cref="ListPullRequestsAsync"/> for the failure shape.
     /// </para>
+    ///
+    /// <para>
+    /// <b>Description length.</b> ADO rejects descriptions longer than
+    /// <see cref="AdoConstants.MaxPullRequestDescriptionLength"/> (4000) with
+    /// HTTP 400. The implementation truncates oversize descriptions at the
+    /// infrastructure boundary (with a visible marker) so callers do not need
+    /// to. Callers that need overflow preserved (e.g. as a comment thread)
+    /// must trim before calling and post the remainder via
+    /// <see cref="CreatePullRequestCommentThreadAsync"/> themselves.
+    /// </para>
     /// </summary>
     /// <param name="sourceBranch">
     /// Source ref. Either a full ref (<c>refs/heads/feature/x</c>) or a short
@@ -449,9 +459,11 @@ public interface IAdoClient
     /// <para>
     /// <b>Length limit.</b> ADO rejects descriptions longer than
     /// <see cref="AdoConstants.MaxPullRequestDescriptionLength"/> characters
-    /// (4000) with HTTP 400. Callers that may exceed the limit should trim
-    /// to that length and post the overflow as a comment thread via
-    /// <see cref="CreatePullRequestCommentThreadAsync"/>.
+    /// (4000) with HTTP 400. The implementation truncates oversize
+    /// descriptions at the infrastructure boundary (with a visible marker) so
+    /// callers do not need to. Callers that need overflow preserved (e.g. as
+    /// a comment thread) must trim before calling and post the remainder via
+    /// <see cref="CreatePullRequestCommentThreadAsync"/> themselves.
     /// </para>
     /// </summary>
     Task<bool> EditPullRequestBodyAsync(
