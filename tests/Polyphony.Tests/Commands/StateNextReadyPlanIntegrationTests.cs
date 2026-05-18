@@ -35,8 +35,24 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     {
         var runner = new FakeProcessRunner();
         runner.WhenExact("git", ["remote", "get-url", "origin"], new ProcessResult(0, OriginUrl + "\n", ""));
+        // Default: apex root has no run-started-at tag → null watermark
+        // → "no filter" (legacy behavior). Tests that need a populated
+        // watermark should re-stub after NewRunnerWithRemote returns.
+        StubApexWatermarkAbsent(runner, ApexId);
         return runner;
     }
+
+    /// <summary>
+    /// Stub the apex-root <c>twig show</c> with an empty tag set so
+    /// next-ready's run-watermark fetch (PR 1 of the run-reset family)
+    /// returns null → "no filter" → legacy PR-state composer behavior.
+    /// Without this, the fetch fails closed (per
+    /// <c>docs/decisions/run-reset.md</c>) and every plan-kind
+    /// composer forces a Needed disposition with a fetch-error reason.
+    /// </summary>
+    private static void StubApexWatermarkAbsent(FakeProcessRunner runner, int apexId)
+        => runner.WhenExact("twig", ["show", apexId.ToString(), "--output", "json"],
+            new ProcessResult(0, $$"""{"id":{{apexId}},"title":"Apex","tags":"polyphony"}""", ""));
 
     private StateCommands CreateCommand(FakeProcessRunner runner, ProcessConfig? configOverride = null)
     {
@@ -254,6 +270,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         runner.WhenExact("git", ["remote", "get-url", "origin"],
             new ProcessResult(128, "", "fatal: No such remote 'origin'"));
         StubLsRemote(runner, PlanBranch, exists: false);
+        StubApexWatermarkAbsent(runner, ApexId);
 
         var cmd = CreateCommand(runner);
         var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));

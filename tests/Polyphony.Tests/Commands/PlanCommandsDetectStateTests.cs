@@ -104,6 +104,20 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
         => runner.WhenExact("twig", ["show", itemId.ToString(), "--output", "json"],
             new ProcessResult(0, $$"""{"id":{{itemId}},"title":"Item","tags":"{{tags}}"}""", ""));
 
+    /// <summary>
+    /// Stub the apex-root <c>twig show</c> with no run-started-at tag so
+    /// DetectState's run-watermark fetch (PR 1 of the run-reset family)
+    /// returns null → "no filter" → legacy MERGED-handling behavior.
+    /// Required in every test that exercises the <c>MERGED</c> PR-state
+    /// branch — without the stub, the run-watermark fetch raises a fetch
+    /// error and DetectState emits <c>state: "error"</c> per the
+    /// fail-closed posture documented in
+    /// <c>docs/decisions/run-reset.md</c>.
+    /// </summary>
+    private static void StubRootWatermarkAbsent(FakeProcessRunner runner)
+        => runner.WhenExact("twig", ["show", RootId.ToString(), "--output", "json"],
+            new ProcessResult(0, $$"""{"id":{{RootId}},"title":"Apex","tags":"polyphony"}""", ""));
+
     private void StubGitShowManifest(FakeProcessRunner runner, string yaml)
     {
         _ = runner;
@@ -402,6 +416,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
         StubLsRemote(runner, ChildPlanBranch, exists: true);
         StubPrListSingle(runner, 42, ChildPlanBranch);
         StubPrPoll(runner, 42, "MERGED");
+        StubRootWatermarkAbsent(runner);
         StubTwigShowWithTags(runner, ChildId, tags: "polyphony;something:else");
 
         var (exit, output) = await CaptureConsoleAsync(
@@ -421,6 +436,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
         StubLsRemote(runner, ChildPlanBranch, exists: true);
         StubPrListSingle(runner, 42, ChildPlanBranch);
         StubPrPoll(runner, 42, "MERGED");
+        StubRootWatermarkAbsent(runner);
         StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
 
         var (exit, output) = await CaptureConsoleAsync(
@@ -441,6 +457,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
         StubLsRemote(runner, ChildPlanBranch, exists: true);
         StubPrListSingle(runner, 42, ChildPlanBranch);
         StubPrPoll(runner, 42, "MERGED");
+        StubRootWatermarkAbsent(runner);
         runner.WhenExact("twig", ["show", ChildId.ToString(), "--output", "json"],
             new ProcessResult(1, "", "not found"));
 
@@ -543,6 +560,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
         StubLsRemote(runner, ChildPlanBranch, exists: true);
         StubPrListSingle(runner, 42, ChildPlanBranch);
         StubPrPoll(runner, 42, "MERGED");
+        StubRootWatermarkAbsent(runner);
         StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
         StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
         StubTwigShowTreeWithChildren(runner, ChildId);  // no children
@@ -572,6 +590,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
                 "--json", "number,headRefName,url,mergedAt"],
             new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
         StubPrPoll(runner, 42, "MERGED");
+        StubRootWatermarkAbsent(runner);
         StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
         StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
 
@@ -609,6 +628,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
                 "--json", "number,headRefName,url,mergedAt"],
             new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
         StubPrPoll(runner, 42, "MERGED");
+        StubRootWatermarkAbsent(runner);
         StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
         StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
 
@@ -645,6 +665,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
                 "--json", "number,headRefName,url,mergedAt"],
             new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
         StubPrPoll(runner, 42, "MERGED");
+        StubRootWatermarkAbsent(runner);
         StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
         // Manifest says parent gen=2; child snapshot says gen=1 → stale → not pending.
         StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 2 }));
@@ -681,6 +702,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
                 "--json", "number,headRefName,url,mergedAt"],
             new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
         StubPrPoll(runner, 42, "MERGED");
+        StubRootWatermarkAbsent(runner);
         StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
         StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
 
@@ -759,6 +781,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
                 "--json", "number,headRefName,url,mergedAt"],
             new ProcessResult(0, $$"""[{"number":42,"headRefName":"{{ChildPlanBranch}}","url":"https://gh/pr/42"}]""", ""));
         StubPrPoll(runner, 42, "MERGED");
+        StubRootWatermarkAbsent(runner);
         StubTwigShowWithTags(runner, ChildId, tags: "polyphony;polyphony:planned");
         StubGitShowManifest(runner, MakeManifest(new Dictionary<string, int> { [ChildId.ToString()] = 1 }));
 

@@ -374,6 +374,14 @@ public sealed partial class StateCommands
         // surfaces an observed children_seeded signal.
         await FetchPlannedTagAsync(scope, ct).ConfigureAwait(false);
 
+        // Run-reset watermark: the polyphony:run-started-at tag on the
+        // apex root (resolved above as RootId) bounds which merged PRs
+        // count for current-run satisfaction. Fetched alongside the
+        // planned-tag so it's available regardless of which early-return
+        // path we take below. Absent tag → null → no filter (legacy
+        // behavior for apexes that have never been reset).
+        await FetchRunStartedAtAsync(scope, ct).ConfigureAwait(false);
+
         // PR #4: implementation_merged is independent of plan branch /
         // plan PR existence — fetch the impl signal up-front, before the
         // plan-branch / identity early returns below. The impl PR query
@@ -480,6 +488,51 @@ public sealed partial class StateCommands
         {
             scope.PlannedTagPresent = false;
             scope.PlannedTagFetchError = $"twig show failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Fetch the run-watermark signal: the <c>polyphony:run-started-at</c>
+    /// tag value from the apex root (<see cref="NextReadyObservationScope.RootId"/>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinguishes two outcomes:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><b>Tag absent or unparseable</b> →
+    ///     <see cref="NextReadyObservationScope.RunStartedAt"/> stays
+    ///     null, <see cref="NextReadyObservationScope.RunStartedAtFetchError"/>
+    ///     stays null. PR-state composers treat this as "no filter"
+    ///     (legacy behavior — safe for fresh apexes that have never been
+    ///     reset).</description></item>
+    ///   <item><description><b>twig command failure</b> →
+    ///     <see cref="NextReadyObservationScope.RunStartedAt"/> stays
+    ///     null, <see cref="NextReadyObservationScope.RunStartedAtFetchError"/>
+    ///     captures the error. PR-state composers force a Needed
+    ///     disposition with the error in the reason — falling back to
+    ///     no-filter here would re-introduce the stuck-state bug on a
+    ///     reset apex whose tag we momentarily couldn't read.</description></item>
+    /// </list>
+    /// <para>
+    /// See <c>docs/decisions/run-reset.md</c> for the watermark
+    /// semantics and the rationale for fail-closed on fetch error.
+    /// </para>
+    /// </remarks>
+    private async Task FetchRunStartedAtAsync(
+        NextReadyObservationScope scope,
+        CancellationToken ct)
+    {
+        try
+        {
+            scope.RunStartedAt = await planObserver
+                .ReadRunStartedAtAsync(scope.RootId, ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            scope.RunStartedAt = null;
+            scope.RunStartedAtFetchError = $"run-watermark fetch failed: {ex.Message}";
         }
     }
 
@@ -606,6 +659,10 @@ public sealed partial class StateCommands
     /// </summary>
     private static (string Disposition, string Reason) ComposePlanAuthored(NextReadyObservationScope scope)
     {
+        if (scope.RunStartedAtFetchError is not null)
+        {
+            return (Disposition.Needed, scope.RunStartedAtFetchError);
+        }
         if (scope.PlanPrFetchError is not null)
         {
             return (Disposition.Needed, scope.PlanPrFetchError);
@@ -617,12 +674,17 @@ public sealed partial class StateCommands
 
         var prState = scope.PlanPrPoll?.State?.ToUpperInvariant();
         var observation = PlanObserver.MapPlanAuthored(
-            scope.PlanBranch, scope.BranchExistsOnOrigin, scope.LatestPlanPr, prState);
+            scope.PlanBranch, scope.BranchExistsOnOrigin, scope.LatestPlanPr, prState,
+            scope.PlanPrPoll?.MergedAt, scope.RunStartedAt);
         return ValidateDisposition(observation.Disposition, observation.Reason);
     }
 
     private static (string Disposition, string Reason) ComposePlanReviewed(NextReadyObservationScope scope)
     {
+        if (scope.RunStartedAtFetchError is not null)
+        {
+            return (Disposition.Needed, scope.RunStartedAtFetchError);
+        }
         if (scope.PlanPrFetchError is not null)
         {
             return (Disposition.Needed, scope.PlanPrFetchError);
@@ -632,12 +694,16 @@ public sealed partial class StateCommands
             return (Disposition.Needed, scope.PlanPrPollError);
         }
 
-        var observation = PlanObserver.MapPlanReviewed(scope.LatestPlanPr, scope.PlanPrPoll);
+        var observation = PlanObserver.MapPlanReviewed(scope.LatestPlanPr, scope.PlanPrPoll, scope.RunStartedAt);
         return ValidateDisposition(observation.Disposition, observation.Reason);
     }
 
     private static (string Disposition, string Reason) ComposePlanPromoted(NextReadyObservationScope scope)
     {
+        if (scope.RunStartedAtFetchError is not null)
+        {
+            return (Disposition.Needed, scope.RunStartedAtFetchError);
+        }
         if (scope.PlanPrFetchError is not null)
         {
             return (Disposition.Needed, scope.PlanPrFetchError);
@@ -648,7 +714,8 @@ public sealed partial class StateCommands
         }
 
         var prState = scope.PlanPrPoll?.State?.ToUpperInvariant();
-        var observation = PlanObserver.MapPlanPromoted(scope.LatestPlanPr, prState);
+        var observation = PlanObserver.MapPlanPromoted(
+            scope.LatestPlanPr, prState, scope.PlanPrPoll?.MergedAt, scope.RunStartedAt);
         return ValidateDisposition(observation.Disposition, observation.Reason);
     }
 
@@ -768,6 +835,10 @@ public sealed partial class StateCommands
     /// </summary>
     private static (string Disposition, string Reason) ComposeImplementationMergedSelf(NextReadyObservationScope scope)
     {
+        if (scope.RunStartedAtFetchError is not null)
+        {
+            return (Disposition.Needed, scope.RunStartedAtFetchError);
+        }
         if (scope.ImplPrFetchError is not null)
         {
             return (Disposition.Needed, scope.ImplPrFetchError);
@@ -779,7 +850,8 @@ public sealed partial class StateCommands
 
         var prState = scope.ImplPrPoll?.State?.ToUpperInvariant();
         var observation = PlanObserver.MapImplementationMerged(
-            scope.ImplBranch, scope.LatestImplPr, prState);
+            scope.ImplBranch, scope.LatestImplPr, prState,
+            scope.ImplPrPoll?.MergedAt, scope.RunStartedAt);
         return ValidateDisposition(observation.Disposition, observation.Reason);
     }
 

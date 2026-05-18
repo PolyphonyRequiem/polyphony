@@ -60,6 +60,18 @@ public sealed class PlanObserver(
     /// Observe the <c>plan_authored</c> requirement: does a plan branch
     /// exist on origin and has a PR been opened against it?
     /// </summary>
+    /// <remarks>
+    /// These <c>Observe*Async</c> wrappers do <b>not</b> apply the
+    /// run-watermark filter introduced in PR 1 of the run-reset family —
+    /// they predate the per-item scope plumbing and have no apex-root
+    /// context to read the <c>polyphony:run-started-at</c> tag from. The
+    /// production verbs (<c>state next-ready</c>, <c>plan detect-state</c>)
+    /// call the static <c>Map*</c> helpers directly with the watermark
+    /// passed in via their own scope, so the filter is in effect on the
+    /// hot path. The wrappers remain for legacy single-shot consumers
+    /// (and the test suite); new callers should prefer the scope-aware
+    /// next-ready pipeline. See <c>docs/decisions/run-reset.md</c>.
+    /// </remarks>
     public Task<PlanAuthoredObservation> ObservePlanAuthoredAsync(
         int rootId, int itemId, CancellationToken ct = default)
         => ObservePlanAuthoredAsync(rootId, itemId, identity: null, ct);
@@ -279,6 +291,42 @@ public sealed class PlanObserver(
     // ── Pure mappers (no I/O) ─────────────────────────────────────────────
 
     /// <summary>
+    /// Returns true when <paramref name="prState"/> is <c>MERGED</c> and
+    /// the PR's merge timestamp is at or before the run-started-at
+    /// watermark — i.e. the PR is an artifact of a prior run and must
+    /// not count towards satisfying the current run. Returns false when
+    /// any of the three inputs is null (no watermark ⇒ no filter; no
+    /// merge timestamp ⇒ cannot compare ⇒ pass through; non-merged PRs
+    /// are not filtered here — open PRs created before reset are
+    /// reset's responsibility to abandon, not the observer's).
+    /// </summary>
+    private static bool IsPriorRunMergedPr(
+        string? prState,
+        DateTimeOffset? mergedAt,
+        DateTimeOffset? runStartedAtFilter)
+    {
+        return prState == "MERGED"
+            && mergedAt is not null
+            && runStartedAtFilter is not null
+            && mergedAt.Value <= runStartedAtFilter.Value;
+    }
+
+    /// <summary>
+    /// Format the "this PR is from a prior run" diagnostic reason
+    /// surfaced on the observation. <paramref name="kind"/> is
+    /// <c>plan</c> or <c>impl</c> for the user-facing prefix; the two
+    /// timestamps are rendered with the round-trip ISO-8601 format so
+    /// they round-trip via the tag writer and across machines.
+    /// </summary>
+    private static string FormatPriorRunReason(
+        string kind, int prNumber, DateTimeOffset mergedAt, DateTimeOffset runStartedAt)
+    {
+        var merged = mergedAt.ToUniversalTime().ToString("o", System.Globalization.CultureInfo.InvariantCulture);
+        var started = runStartedAt.ToUniversalTime().ToString("o", System.Globalization.CultureInfo.InvariantCulture);
+        return $"{kind} PR #{prNumber} merged at {merged} is from a prior run (current run started at {started}); awaiting new {kind} PR";
+    }
+
+    /// <summary>
     /// Map already-fetched primitives into a
     /// <see cref="PlanAuthoredObservation"/>. Exposed so the verb can
     /// fetch each signal exactly once and still produce per-kind
@@ -288,7 +336,9 @@ public sealed class PlanObserver(
         string planBranch,
         bool branchExists,
         PullRequestSummary? latestPr,
-        string? prState)
+        string? prState,
+        DateTimeOffset? mergedAt = null,
+        DateTimeOffset? runStartedAtFilter = null)
     {
         if (latestPr is null)
         {
@@ -305,6 +355,19 @@ public sealed class PlanObserver(
         }
 
         var prUrl = latestPr.Url ?? string.Empty;
+
+        if (IsPriorRunMergedPr(prState, mergedAt, runStartedAtFilter))
+        {
+            return new PlanAuthoredObservation(
+                Disposition: Disposition.Needed,
+                Reason: FormatPriorRunReason("plan", latestPr.Number, mergedAt!.Value, runStartedAtFilter!.Value),
+                PlanBranch: planBranch,
+                BranchExistsOnOrigin: branchExists,
+                PrNumber: latestPr.Number,
+                PrUrl: prUrl,
+                PrState: prState);
+        }
+
         var disposition = prState switch
         {
             "MERGED" => Disposition.Satisfied,
@@ -336,7 +399,8 @@ public sealed class PlanObserver(
     /// </summary>
     public static PlanReviewedObservation MapPlanReviewed(
         PullRequestSummary? latestPr,
-        GhPullRequestPollData? poll)
+        GhPullRequestPollData? poll,
+        DateTimeOffset? runStartedAtFilter = null)
     {
         if (latestPr is null || poll is null)
         {
@@ -354,6 +418,17 @@ public sealed class PlanObserver(
         var prState = poll.State?.ToUpperInvariant();
         var review = poll.ReviewDecision ?? string.Empty;
         var prUrl = latestPr.Url ?? string.Empty;
+
+        if (IsPriorRunMergedPr(prState, poll.MergedAt, runStartedAtFilter))
+        {
+            return new PlanReviewedObservation(
+                Disposition: Disposition.Needed,
+                Reason: FormatPriorRunReason("plan", latestPr.Number, poll.MergedAt!.Value, runStartedAtFilter!.Value),
+                PrNumber: latestPr.Number,
+                PrUrl: prUrl,
+                PrState: prState,
+                ReviewDecision: review);
+        }
 
         // Merged ⇒ implicitly past review (a merged PR cannot be unreviewed).
         if (prState == "MERGED")
@@ -405,7 +480,9 @@ public sealed class PlanObserver(
     /// </summary>
     public static PlanPromotedObservation MapPlanPromoted(
         PullRequestSummary? latestPr,
-        string? prState)
+        string? prState,
+        DateTimeOffset? mergedAt = null,
+        DateTimeOffset? runStartedAtFilter = null)
     {
         if (latestPr is null)
         {
@@ -418,6 +495,17 @@ public sealed class PlanObserver(
         }
 
         var prUrl = latestPr.Url ?? string.Empty;
+
+        if (IsPriorRunMergedPr(prState, mergedAt, runStartedAtFilter))
+        {
+            return new PlanPromotedObservation(
+                Disposition: Disposition.Needed,
+                Reason: FormatPriorRunReason("plan", latestPr.Number, mergedAt!.Value, runStartedAtFilter!.Value),
+                PrNumber: latestPr.Number,
+                PrUrl: prUrl,
+                PrState: prState);
+        }
+
         var (disposition, reason) = prState switch
         {
             "MERGED" => (Disposition.Satisfied, $"plan PR #{latestPr.Number} merged"),
@@ -459,7 +547,9 @@ public sealed class PlanObserver(
     public static ImplementationMergedObservation MapImplementationMerged(
         string implBranch,
         PullRequestSummary? latestPr,
-        string? prState)
+        string? prState,
+        DateTimeOffset? mergedAt = null,
+        DateTimeOffset? runStartedAtFilter = null)
     {
         if (latestPr is null)
         {
@@ -473,6 +563,18 @@ public sealed class PlanObserver(
         }
 
         var prUrl = latestPr.Url ?? string.Empty;
+
+        if (IsPriorRunMergedPr(prState, mergedAt, runStartedAtFilter))
+        {
+            return new ImplementationMergedObservation(
+                Disposition: Disposition.Needed,
+                Reason: FormatPriorRunReason("impl", latestPr.Number, mergedAt!.Value, runStartedAtFilter!.Value),
+                ImplBranch: implBranch,
+                PrNumber: latestPr.Number,
+                PrUrl: prUrl,
+                PrState: prState);
+        }
+
         var (disposition, reason) = prState switch
         {
             "MERGED" => (Disposition.Satisfied, $"impl PR #{latestPr.Number} merged"),
@@ -787,5 +889,52 @@ public sealed class PlanObserver(
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Read the <c>polyphony:run-started-at</c> tag from
+    /// <paramref name="rootId"/>'s work item via <c>twig show</c>.
+    /// Returns null when the tag is absent OR the value is unparseable
+    /// — callers MUST treat null as "no run-watermark in force" (legacy
+    /// behavior; do not filter merged-PR observations).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Unlike <see cref="IsParentSeededAsync"/>, this method does NOT
+    /// swallow twig failures. A failed <c>twig show</c> (process error
+    /// → null JSON OR explicit exception) is rethrown as an
+    /// <see cref="ExternalToolException"/> so the caller can distinguish
+    /// "tag absent" (= no filter, legacy behavior, safe for fresh
+    /// apexes) from "could not read tags" (= unsafe to fall back to
+    /// no-filter on a reset apex — the caller MUST force observations
+    /// to Needed). See <c>docs/decisions/run-reset.md</c> for the
+    /// rationale.
+    /// </para>
+    /// <para>
+    /// The tag lives on the apex root (the only writer is
+    /// <c>polyphony reset state</c>). Reading via the same
+    /// <c>twig show</c> primitive that <see cref="IsParentSeededAsync"/>
+    /// uses keeps the two tag reads on a single twig surface.
+    /// </para>
+    /// </remarks>
+    public async Task<DateTimeOffset?> ReadRunStartedAtAsync(int rootId, CancellationToken ct = default)
+    {
+        var json = await twig.ShowAsync(rootId, ct).ConfigureAwait(false);
+        if (json is null)
+        {
+            // TwigClient.ShowAsync swallows process failures and returns
+            // null. We need to distinguish that from a successful read
+            // of a work item with no run-started-at tag — translate null
+            // back into an exception so the caller's catch block fires.
+            // The apex root must exist (next-ready already validated it
+            // via the local repository), so null here is operationally
+            // "twig is broken", not "no such item".
+            throw new InvalidOperationException(
+                $"twig show {rootId} returned no data (twig failure or unexpected empty response)");
+        }
+
+        var tagsRaw = json["tags"]?.GetValue<string?>() ?? string.Empty;
+        var tags = Polyphony.Tagging.TagSet.Parse(tagsRaw);
+        return Polyphony.Tagging.PolyphonyTags.ReadRunStartedAt(tags);
     }
 }
