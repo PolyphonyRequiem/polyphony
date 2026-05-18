@@ -66,6 +66,25 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
             CreationDate: DateTime.UtcNow,
             Url: url);
 
+    private static AdoPullRequestPollData MakePoll(
+        int number, string state, string headRef, string baseRef,
+        string headOid = "abc", string? mergeCommit = null)
+        => new()
+        {
+            Number = number,
+            State = state,
+            ReviewDecision = "APPROVED",
+            Mergeable = "MERGEABLE",
+            HeadRefName = headRef,
+            HeadRefOid = headOid,
+            BaseRefName = baseRef,
+            MergedAt = state == "MERGED" ? DateTime.UtcNow : null,
+            MergeCommit = mergeCommit,
+            Body = "",
+            Reviews = Array.Empty<AdoPullRequestReview>(),
+        };
+
+
     // ─── Input validation ────────────────────────────────────────────────
 
     [Theory]
@@ -306,6 +325,9 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
                 targetRef: "refs/heads/feature/100",
                 status: "completed")
         };
+        // Validity clause 1 (AB#3211): align poll's HeadRefOid with StubBranchesExist's "abc".
+        ado.PollData = MakePoll(50, "MERGED", "mg/100_core", "feature/100",
+            headOid: "abc123", mergeCommit: "mg-merge");
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
@@ -314,6 +336,33 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         result.Created.ShouldBeFalse();
         result.PrNumber.ShouldBe(50);
         ado.CreatePrCallCount.ShouldBe(0);
+    }
+
+    // AB#3211: a stale completed PR (PR's recorded source SHA no longer
+    // matches origin/{head}) is NOT reused; we create a fresh PR.
+    [Fact]
+    public async Task OpenMgAdo_StaleCompletedPr_CreatesFreshActivePr()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        StubBranchesExist(runner, "mg/100_core", "feature/100");
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 50, url: "https://example.invalid/50",
+                sourceRef: "refs/heads/mg/100_core",
+                targetRef: "refs/heads/feature/100",
+                status: "completed"),
+        };
+        ado.PollData = MakePoll(50, "MERGED", "mg/100_core", "feature/100",
+            headOid: "yesterday-sha", mergeCommit: "yesterday-merge");
+        ado.CreatedPr = MakePr(id: 99, url: "https://example.invalid/99",
+            sourceRef: "refs/heads/mg/100_core",
+            targetRef: "refs/heads/feature/100");
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+        var result = Parse(output);
+        result.Created.ShouldBeTrue();
+        result.PrNumber.ShouldBe(99);
+        ado.CreatePrCallCount.ShouldBe(1);
     }
 
     // AB#3228 tiebreaker: when both an Active and a Completed PR exist for
@@ -380,6 +429,9 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         // List in newest-first order (the empirical ADO default) to exercise
         // the tiebreaker.
         ado.ListPrs = new List<AdoPullRequest> { newer, older };
+        // Validity clause 1 keeps the oldest match alive.
+        ado.PollData = MakePoll(40, "MERGED", "mg/100_core", "feature/100",
+            headOid: "abc123", mergeCommit: "old-merge");
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
@@ -715,6 +767,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         public AdoPullRequest? CreatedPr { get; set; }
         public int CreatePrCallCount { get; private set; }
         public string? LastCreateDescription { get; private set; }
+        public AdoPullRequestPollData? PollData { get; set; }
 
         public Task<AdoAuthStatus> GetAuthStatusAsync(CancellationToken ct = default)
             => throw new NotImplementedException();
@@ -748,7 +801,7 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         public Task<AdoPullRequestPollData?> GetPullRequestPollDataAsync(
             string organization, string project, string repositoryId,
             int pullRequestId, CancellationToken ct = default)
-            => throw new NotImplementedException();
+            => Task.FromResult(PollData);
 
         public Task<bool> SetPullRequestVoteAsync(
             string organization, string project, string repository,
