@@ -132,8 +132,12 @@ public sealed partial class PrCommands
                     activePr = pr;
                     break;
                 }
-                if (string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase) && completedPr is null)
+                if (string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase)
+                    && (completedPr is null || pr.CreationDate < completedPr.CreationDate))
                 {
+                    // Prefer the OLDEST completed match (AB#3228): retries can
+                    // accumulate no-op phantom PRs; the real merge is the
+                    // first attempt.
                     completedPr = pr;
                 }
             }

@@ -43,7 +43,7 @@ public sealed class PrCommandsMergeMgAdoTests : CommandTestBase
         => JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrMergeMergeGroupAdoResult)!;
 
     private static AdoPullRequest MakePr(int id, string url, string sourceRef, string targetRef,
-        string status = "active")
+        string status = "active", DateTime? creationDate = null)
         => new(
             PullRequestId: id,
             Title: "title",
@@ -53,7 +53,7 @@ public sealed class PrCommandsMergeMgAdoTests : CommandTestBase
             Status: status,
             MergeStatus: null,
             CreatedBy: "user",
-            CreationDate: DateTime.UtcNow,
+            CreationDate: creationDate ?? DateTime.UtcNow,
             Url: url);
 
     private static AdoPullRequestPollData MakePoll(
@@ -246,6 +246,43 @@ public sealed class PrCommandsMergeMgAdoTests : CommandTestBase
         result.MergeCommit.ShouldBe("preexisting-sha");
         result.PrState.ShouldBe("MERGED");
         ado.CompleteCallCount.ShouldBe(0);  // already merged: no complete call
+    }
+
+    [Fact]
+    public async Task MergeMgAdo_MultipleCompletedPrs_PrefersOldest()
+    {
+        // AB#3228 regression — twin of v2.4.5 fix in open-mg-ado, but for the
+        // merge verb's own list-and-pick loop. The verb does its own PR lookup
+        // (does not consume pr_number from open-mg-ado), so the same bug
+        // recurred here even after v2.4.5. ADO's pullrequests list defaults
+        // to newest-first; pick the OLDEST so retries that produced phantom
+        // no-op duplicates don't re-trip missing_merge_commit.
+        var (cmd, ado) = CreateCommand();
+        var older = new DateTime(2026, 5, 17, 23, 14, 59, DateTimeKind.Utc);
+        var phantom1 = new DateTime(2026, 5, 17, 23, 40, 28, DateTimeKind.Utc);
+        var phantom2 = new DateTime(2026, 5, 17, 23, 47, 5, DateTimeKind.Utc);
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            // Newest-first order, mimicking ADO's default list-endpoint sort.
+            MakePr(15606182, "u", "refs/heads/mg/100_core", "refs/heads/feature/100",
+                status: "completed", creationDate: phantom2),
+            MakePr(15606171, "u", "refs/heads/mg/100_core", "refs/heads/feature/100",
+                status: "completed", creationDate: phantom1),
+            MakePr(15606143, "u", "refs/heads/mg/100_core", "refs/heads/feature/100",
+                status: "completed", creationDate: older),
+        };
+        ado.PollData = MakePoll(15606143, "MERGED", "mg/100_core", "feature/100",
+            mergeCommit: "real-merge-sha");
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergeMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core"));
+        var result = Parse(output);
+        result.ErrorCode.ShouldBeEmpty();
+        result.PrNumber.ShouldBe(15606143);
+        result.Merged.ShouldBeTrue();
+        result.AlreadyMerged.ShouldBeTrue();
+        result.MergeCommit.ShouldBe("real-merge-sha");
+        ado.CompleteCallCount.ShouldBe(0);
     }
 
     [Fact]
