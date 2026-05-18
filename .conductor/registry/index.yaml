@@ -55,3 +55,7 @@ workflows:
     description: "Archive-only research sub-workflow — synthesizes findings from the repo archive to answer architect research questions (sub-workflow)"
     path: workflows/research.yaml
     versions: ["2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
+  reset-apex:
+    description: "Reset an apex run — wipes prior state/PRs/branches/worktrees/manifest with operator confirmation gate, enabling -Intent new redispatch"
+    path: workflows/reset-apex.yaml
+    versions: ["2.4.8"]
