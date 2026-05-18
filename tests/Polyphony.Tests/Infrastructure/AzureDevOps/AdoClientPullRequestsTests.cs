@@ -342,6 +342,77 @@ public sealed class AdoClientPullRequestsTests
     }
 
     [Fact]
+    public async Task CreatePullRequestAsync_OversizeDescription_TruncatedAtBoundaryAndMarkerAppended()
+    {
+        // AB#3228 v2.4.7: live dogfood wedged at `pr create-feature-ado`
+        // because `BuildPrBodyAsync` embeds a full work-item-hierarchy JSON
+        // dump that exceeds ADO's 4000-char description limit. The
+        // infrastructure boundary now enforces the limit so every consumer
+        // is protected. Asserts the serialized wire payload.
+        var handler = StubHandler.Returns(HttpStatusCode.Created, SinglePrBody);
+        var client = NewClient(handler);
+        var oversize = new string('x', 5000);
+
+        await client.CreatePullRequestAsync(
+            Org, Project, Repo,
+            sourceBranch: "feature/x",
+            targetBranch: "main",
+            title: "T",
+            description: oversize);
+
+        var body = handler.LastRequestBody.ShouldNotBeNull();
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var sent = doc.RootElement.GetProperty("description").GetString();
+        sent.ShouldNotBeNull();
+        sent!.Length.ShouldBeLessThanOrEqualTo(AdoConstants.MaxPullRequestDescriptionLength);
+        sent.ShouldEndWith(AdoClient.DescriptionTruncationMarker);
+    }
+
+    [Fact]
+    public async Task CreatePullRequestAsync_UnderLimitDescription_PassesThroughUnchanged()
+    {
+        var handler = StubHandler.Returns(HttpStatusCode.Created, SinglePrBody);
+        var client = NewClient(handler);
+        var fits = new string('x', 100);
+
+        await client.CreatePullRequestAsync(
+            Org, Project, Repo, "feature/x", "main", "T", fits);
+
+        var body = handler.LastRequestBody.ShouldNotBeNull();
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        doc.RootElement.GetProperty("description").GetString().ShouldBe(fits);
+    }
+
+    [Fact]
+    public void TruncateDescription_HighSurrogateAtBoundary_RollsBackToWellFormedString()
+    {
+        // Astral-plane char (U+1F600 GRINNING FACE) is two UTF-16 code units
+        // (high + low surrogate). If the budget lands on the high surrogate,
+        // the substring would be invalid; the helper must roll back one to
+        // keep the output well-formed.
+        const string emoji = "\uD83D\uDE00"; // 😀
+        // Fill exactly up to the budget minus 1, place high surrogate at the
+        // boundary position, then pad past 4000.
+        var marker = AdoClient.DescriptionTruncationMarker;
+        var budget = AdoConstants.MaxPullRequestDescriptionLength - marker.Length;
+        // budget chars of 'x', then a surrogate pair, then padding so we
+        // exceed the cap. The boundary high-surrogate is at index budget-1
+        // when working[..budget] would cut between the pair.
+        var prefix = new string('x', budget - 1);
+        var input = prefix + emoji + new string('y', 100);
+
+        var truncated = AdoClient.TruncateDescription(input);
+
+        truncated.Length.ShouldBeLessThanOrEqualTo(AdoConstants.MaxPullRequestDescriptionLength);
+        // The dangerous failure mode would be a lone high surrogate just
+        // before the marker. Assert the char before the marker is NOT a high
+        // surrogate.
+        var beforeMarker = truncated.Length - marker.Length;
+        beforeMarker.ShouldBeGreaterThan(0);
+        char.IsHighSurrogate(truncated[beforeMarker - 1]).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task CreatePullRequestAsync_NormalizesShortBranchNames()
     {
         var handler = StubHandler.Returns(HttpStatusCode.Created, SinglePrBody);

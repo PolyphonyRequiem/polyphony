@@ -337,6 +337,52 @@ public sealed class AdoClientPullRequestExtensionsTests
     }
 
     [Fact]
+    public async Task EditBody_OversizeDescription_TruncatedAtBoundaryAndMarkerAppended()
+    {
+        // AB#3228 v2.4.7: ADO rejects descriptions > 4000 chars with HTTP
+        // 400. The infrastructure boundary truncates so callers don't have
+        // to. Verify the actual wire payload is <= 4000 chars and carries
+        // the visible marker so a reader can see content was elided.
+        var handler = StubHandler.Returns(HttpStatusCode.OK, "{}");
+        var client = NewClient(handler);
+        var oversize = new string('x', 5000);
+
+        var result = await client.EditPullRequestBodyAsync(Org, Project, Repo, PrId, oversize);
+
+        result.ShouldBeTrue();
+        var body = handler.RequestBodies[0];
+        using var doc = JsonDocument.Parse(body!);
+        var sent = doc.RootElement.GetProperty("description").GetString();
+        sent.ShouldNotBeNull();
+        sent!.Length.ShouldBeLessThanOrEqualTo(AdoConstants.MaxPullRequestDescriptionLength);
+        sent.ShouldEndWith(AdoClient.DescriptionTruncationMarker);
+    }
+
+    [Fact]
+    public async Task EditBody_AlreadyTruncated_DoesNotStackMarker()
+    {
+        // Idempotence: a body that already carries a marker (e.g. round-trip
+        // from a prior edit) must not get a second marker stacked on it.
+        var handler = StubHandler.Returns(HttpStatusCode.OK, "{}");
+        var client = NewClient(handler);
+        // Build an oversize body that already ends with the marker.
+        var preTruncated = new string('y', 4500) + AdoClient.DescriptionTruncationMarker;
+
+        var result = await client.EditPullRequestBodyAsync(Org, Project, Repo, PrId, preTruncated);
+
+        result.ShouldBeTrue();
+        var body = handler.RequestBodies[0];
+        using var doc = JsonDocument.Parse(body!);
+        var sent = doc.RootElement.GetProperty("description").GetString();
+        sent.ShouldNotBeNull();
+        sent!.Length.ShouldBeLessThanOrEqualTo(AdoConstants.MaxPullRequestDescriptionLength);
+        // Exactly one marker — count occurrences should be 1.
+        var markerCount = (sent.Length - sent.Replace(AdoClient.DescriptionTruncationMarker, "").Length)
+            / AdoClient.DescriptionTruncationMarker.Length;
+        markerCount.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task EditBody_404_ReturnsFalse()
     {
         var handler = StubHandler.Returns(HttpStatusCode.NotFound, """{"message":"PR gone"}""");
