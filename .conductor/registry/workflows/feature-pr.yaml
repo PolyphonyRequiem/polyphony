@@ -33,10 +33,10 @@ workflow:
     fails to merge. After each remediation, re-requests review via
     feature_pr_updater (gh on GitHub, `pr post-comment-ado` on ADO).
     Escalates to human gate after cap is exceeded.
-  version: "2.4.3"
+  version: "2.4.8"
   entry_point: pr_platform_router
   metadata:
-    min_polyphony_version: "2.4.3"
+    min_polyphony_version: "2.4.8"
 
   limits:
     max_iterations: 200
@@ -363,6 +363,13 @@ agents:
       branch_name: "{{ workflow.input.feature_branch }}"
       target_branch: "{{ workflow.input.target_branch }}"
       review_policy: "manual"
+      # work_item_id is declared required by ado-pr.yaml — drives the
+      # guidance_loader's `polyphony plan load-agent-guidance --work-item`
+      # call and is part of the composite counter keys (pending-poll,
+      # revise). Omitting it crashed guidance_loader with a Jinja
+      # 'work_item_id' undefined error against an empty workflow.input
+      # in ado-pr.yaml. Mirror what pr_lifecycle_github does above.
+      work_item_id: "{{ workflow.input.work_item_id }}"
       organization: "{{ workflow.input.organization }}"
       project: "{{ workflow.input.project }}"
       repository: "{{ workflow.input.repository }}"

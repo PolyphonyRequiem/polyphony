@@ -59,11 +59,10 @@ workflow:
     single advisory bot review (marker-only — no native approval vote),
     then loops poll → analyze → fix → push until the operator completes,
     abandons, votes -10, or the revise cap fires.
-  version: "2.4.3"
+  version: "2.4.8"
   entry_point: ado_inputs_validator
   metadata:
-    min_polyphony_version: "2.4.3"
-
+    min_polyphony_version: "2.4.8"
   limits:
     # Generous cap — operator may re-poll many times via the pending /
     # stuck-review gates while human reviewers work; pr_fixer loops are
