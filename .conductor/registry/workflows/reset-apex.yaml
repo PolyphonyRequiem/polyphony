@@ -159,15 +159,15 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
-        $ErrorActionPreference = 'Stop';
-        $a = @('reset','apex','--apex','{{ workflow.input.apex_id }}');
-        if ('{{ workflow.input.skip_state | string | lower }}' -eq 'true') { $a += '--skip-state' };
+      - |
+        $ErrorActionPreference = 'Stop'
+        $a = @('reset','apex','--apex','{{ workflow.input.apex_id }}')
+        if ('{{ workflow.input.skip_state | string | lower }}' -eq 'true') { $a += '--skip-state' }
         $comment = @'
         {{ workflow.input.comment }}
-        '@;
-        $comment = $comment.Trim();
-        if ($comment -ne '') { $a += @('--comment', $comment) };
+        '@
+        $comment = $comment.Trim()
+        if ($comment -ne '') { $a += @('--comment', $comment) }
         & polyphony @a
     routes:
       # Preview chain failed → operator must investigate before mutation.
@@ -264,15 +264,15 @@ agents:
     args:
       - "-NoProfile"
       - "-Command"
-      - >-
-        $ErrorActionPreference = 'Stop';
-        $a = @('reset','apex','--apex','{{ workflow.input.apex_id }}','--execute');
-        if ('{{ workflow.input.skip_state | string | lower }}' -eq 'true') { $a += '--skip-state' };
+      - |
+        $ErrorActionPreference = 'Stop'
+        $a = @('reset','apex','--apex','{{ workflow.input.apex_id }}','--execute')
+        if ('{{ workflow.input.skip_state | string | lower }}' -eq 'true') { $a += '--skip-state' }
         $comment = @'
         {{ workflow.input.comment }}
-        '@;
-        $comment = $comment.Trim();
-        if ($comment -ne '') { $a += @('--comment', $comment) };
+        '@
+        $comment = $comment.Trim()
+        if ($comment -ne '') { $a += @('--comment', $comment) }
         & polyphony @a
     routes:
       - to: terminal_failure_execute
