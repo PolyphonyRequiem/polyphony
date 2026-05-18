@@ -209,16 +209,16 @@ agents:
       The preview chain reported `success=true`. Per-leg counts:
 
       - **PRs to abandon**:
-        `{{ (preview.output.prs.abandoned_prs | default([])) | length }}`
-        ({{ (preview.output.prs.failed_prs | default([])) | length }} would fail)
+        `{{ (preview.output.prs.get('abandoned_prs', [])) | length }}`
+        ({{ (preview.output.prs.get('failed_prs', [])) | length }} would fail)
       - **Worktrees to remove**:
-        `{{ (preview.output.worktrees.removed_worktrees | default([])) | length }}`
+        `{{ (preview.output.worktrees.get('removed_worktrees', [])) | length }}`
       - **Branches to delete**:
-        `{{ (preview.output.branches.deleted_branches | default([])) | length }}`
-      - **Manifest**: `{{ preview.output.manifest.deferral_reason | default('inspected') }}`
+        `{{ (preview.output.branches.get('deleted_branches', [])) | length }}`
+      - **Manifest**: `{{ preview.output.manifest.get('deferral_reason', 'inspected') }}`
       - **State watermark**:
         {% if workflow.input.skip_state %}skipped (--skip-state){% else %}will advance from
-        `{{ preview.output.state.previous_watermark | default('none') }}`
+        `{{ preview.output.state.get('previous_watermark', 'none') }}`
         to a fresh stamp{% endif %}
 
       ### Options
