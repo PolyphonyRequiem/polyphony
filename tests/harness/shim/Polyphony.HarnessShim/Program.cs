@@ -10,9 +10,17 @@ namespace Polyphony.HarnessShim;
 /// The shim looks up a scripted response in a JSON manifest pointed at by
 /// POLYPHONY_HARNESS_MANIFEST and replays its stdout / stderr / exit code.
 ///
-/// Matching: first entry whose `command` equals the invoked program name
-/// (basename, no extension) AND whose `args` is a prefix of the actual argv
-/// wins. Specific entries should appear before general ones.
+/// Matching: walks the manifest in order; the first entry whose <c>command</c>
+/// equals the invoked program name (basename, no extension), whose <c>args</c>
+/// is a prefix of the actual argv, and whose consumption count has not yet
+/// reached its <c>times</c> cap (if any) wins. Specific entries should appear
+/// before general ones.
+///
+/// Per-call sequencing is expressed by listing the same (command, args)
+/// matcher multiple times with <c>times: 1</c> on each — the first selection
+/// burns the first entry, the next selection burns the second, etc. Counter
+/// state is persisted in a sibling <c>&lt;manifest&gt;.counters.json</c> file
+/// across shim invocations.
 ///
 /// No match → exit 99 with a structured JSON error on stderr so authors
 /// notice missing manifest entries immediately.
@@ -50,14 +58,24 @@ internal static class Program
             return ManifestErrorExitCode;
         }
 
+        var counterPath = CounterPathForManifest(manifestPath);
+        var counters = LoadCounters(counterPath);
+
         var commandName = ResolveCommandName();
         AppendAudit(manifest.AuditLog, commandName, args);
 
-        var match = FindMatch(manifest.Responses, commandName, args);
+        var (match, matchIndex) = FindMatchWithIndex(manifest.Responses, commandName, args, counters);
         if (match is null)
         {
             EmitError($"no manifest entry for: {commandName} {string.Join(' ', args)}");
             return NoMatchExitCode;
+        }
+
+        if (match.Times.HasValue)
+        {
+            var key = matchIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            counters[key] = counters.GetValueOrDefault(key, 0) + 1;
+            SaveCounters(counterPath, counters);
         }
 
         if (!string.IsNullOrEmpty(match.Stdout))
@@ -92,13 +110,38 @@ internal static class Program
         return Path.GetFileNameWithoutExtension(argv0);
     }
 
+    /// <summary>
+    /// Legacy first-match-wins matcher with no consumption tracking. Retained
+    /// for the existing xUnit tests that exercise prefix-matching semantics
+    /// directly without needing a counters dictionary.
+    /// </summary>
     internal static ManifestResponse? FindMatch(
         IReadOnlyList<ManifestResponse> responses,
         string commandName,
         IReadOnlyList<string> args)
     {
-        foreach (var entry in responses)
+        var (match, _) = FindMatchWithIndex(responses, commandName, args, counters: null);
+        return match;
+    }
+
+    /// <summary>
+    /// First-match-wins with optional per-entry consumption caps. Walks
+    /// <paramref name="responses"/> in order; an entry matches when its
+    /// command equals <paramref name="commandName"/>, its args are a prefix
+    /// of <paramref name="args"/>, AND (when <c>times</c> is set) its
+    /// counter has not yet reached <c>times</c>. Returns the matched entry
+    /// and its index into <paramref name="responses"/>.
+    /// </summary>
+    internal static (ManifestResponse? Entry, int Index) FindMatchWithIndex(
+        IReadOnlyList<ManifestResponse> responses,
+        string commandName,
+        IReadOnlyList<string> args,
+        IReadOnlyDictionary<string, int>? counters)
+    {
+        for (var i = 0; i < responses.Count; i++)
         {
+            var entry = responses[i];
+
             if (!string.Equals(entry.Command, commandName, StringComparison.Ordinal))
             {
                 continue;
@@ -111,22 +154,71 @@ internal static class Program
             }
 
             var prefixMatches = true;
-            for (var i = 0; i < entryArgs.Count; i++)
+            for (var j = 0; j < entryArgs.Count; j++)
             {
-                if (!string.Equals(entryArgs[i], args[i], StringComparison.Ordinal))
+                if (!string.Equals(entryArgs[j], args[j], StringComparison.Ordinal))
                 {
                     prefixMatches = false;
                     break;
                 }
             }
 
-            if (prefixMatches)
+            if (!prefixMatches)
             {
-                return entry;
+                continue;
             }
+
+            if (entry.Times is int cap)
+            {
+                var key = i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var used = counters is not null && counters.TryGetValue(key, out var c) ? c : 0;
+                if (used >= cap)
+                {
+                    continue;
+                }
+            }
+
+            return (entry, i);
         }
 
-        return null;
+        return (null, -1);
+    }
+
+    internal static string CounterPathForManifest(string manifestPath)
+    {
+        return manifestPath + ".counters.json";
+    }
+
+    internal static Dictionary<string, int> LoadCounters(string counterPath)
+    {
+        if (!File.Exists(counterPath))
+        {
+            return new Dictionary<string, int>();
+        }
+
+        try
+        {
+            using var stream = File.OpenRead(counterPath);
+            var state = JsonSerializer.Deserialize(stream, ShimJsonContext.Default.CounterState);
+            return state?.Counters ?? new Dictionary<string, int>();
+        }
+        catch
+        {
+            // A malformed counter file shouldn't crash the shim — treat as
+            // empty so the scenario runs cleanly and any sequencing bug
+            // surfaces as a stable off-by-one in the audit log.
+            return new Dictionary<string, int>();
+        }
+    }
+
+    internal static void SaveCounters(string counterPath, IReadOnlyDictionary<string, int> counters)
+    {
+        var state = new CounterState
+        {
+            Counters = new Dictionary<string, int>(counters),
+        };
+        var json = JsonSerializer.Serialize(state, ShimJsonContext.Default.CounterState);
+        File.WriteAllText(counterPath, json);
     }
 
     private static void AppendAudit(string? auditLogPath, string commandName, IReadOnlyList<string> args)

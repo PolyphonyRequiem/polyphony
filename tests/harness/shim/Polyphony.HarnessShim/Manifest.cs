@@ -27,6 +27,28 @@ internal sealed class ManifestResponse
 
     [JsonPropertyName("exit_code")]
     public int ExitCode { get; init; }
+
+    /// <summary>
+    /// Optional consumption cap. When set, this entry stops matching after
+    /// it has been selected <c>Times</c> times in the current run (subsequent
+    /// matchers, if any, get a chance to fire). When null, the entry is
+    /// unlimited — the legacy first-match-wins behavior. Authors expressing
+    /// per-call sequencing list the same (command, args) entry multiple
+    /// times with <c>Times: 1</c> on each, in invocation order.
+    /// </summary>
+    [JsonPropertyName("times")]
+    public int? Times { get; init; }
+}
+
+/// <summary>
+/// Per-matcher-index consumption counter, persisted alongside the manifest
+/// between shim invocations. Keys are decimal indices into
+/// <see cref="Manifest.Responses"/>.
+/// </summary>
+internal sealed class CounterState
+{
+    [JsonPropertyName("counters")]
+    public Dictionary<string, int> Counters { get; init; } = new();
 }
 
 internal sealed class ShimError
@@ -40,6 +62,7 @@ internal sealed class ShimError
 
 [JsonSerializable(typeof(Manifest))]
 [JsonSerializable(typeof(ManifestResponse))]
+[JsonSerializable(typeof(CounterState))]
 [JsonSerializable(typeof(ShimError))]
 [JsonSourceGenerationOptions(WriteIndented = false)]
 internal sealed partial class ShimJsonContext : JsonSerializerContext;

@@ -1,0 +1,212 @@
+# Issue #442 — github-pr revise_counter no-commit fast-fail cap.
+#
+# pr_fixer reports success but commits nothing for two consecutive
+# iterations: poll_status returns the same head_sha each pass. revise_counter
+# detects the stuck SHA (no_commit_count >= no_commit_cap = 2) and routes
+# to revise_cap_gate with cap_reason='no_commit_stuck'. The gate's first
+# option (under --skip-gates) is "🔁 Re-poll PR" → poll_status. The
+# fourth poll returns abort_unmerged so the workflow terminates with
+# merged=false rather than looping forever.
+#
+# Counter walk (file at $env:TMP/conductor-github-pr-revise-442003-442.json):
+#   iter 1: count=1, sha=X, shaPrev='',  no_commit=0,   cap=false → fixer
+#   iter 2: count=2, sha=X, shaPrev=X,   no_commit=1,   cap=false → fixer
+#   iter 3: count=3, sha=X, shaPrev=X,   no_commit=2,   cap=true (no_commit_stuck) → revise_cap_gate
+#   gate (re-poll) → poll #4 (abort_unmerged) → closed_unmerged_emitter
+#
+# Exercises Phase A's shim sequencing (4 poll responses), the
+# per-scenario tmp dir isolation (revise_counter tempfile), and the
+# gates_presented assertion.
+
+workflow: .conductor/registry/workflows/github-pr.yaml
+
+inputs:
+  pr_number: 442
+  branch_name: feature/issue-442
+  target_branch: main
+  work_item_id: "442003"
+
+agent_scripts:
+  pr_initial_reviewer:
+    - content:
+        posted: false
+        pr_number: 442
+        summary: "Harness fixture review — one blocking concern."
+        strengths: []
+        blocking_concerns:
+          - "TestThing.cs:42 swallows the exception silently."
+        non_blocking_suggestions: []
+        comment_body: |
+          <!-- polyphony:agent-comment agent=pr_initial_reviewer pr_number=442 -->
+          ### Blocking concerns
+          - TestThing.cs:42 swallows the exception silently.
+
+  # 3 analyzer calls, all negative with the same digest (analyzer sees
+  # the same feedback every time because the bot comment is unchanged
+  # and the fixer made no observable progress).
+  pr_feedback_analyzer:
+    - content:
+        has_negative_feedback: true
+        feedback_summary: "Fix TestThing.cs:42 — log + rethrow."
+        feedback_digest: "harness-digest-442003-stuck"
+        reasoning: "Bot reviewer surfaced 1 blocking concern; fixer iteration 1."
+    - content:
+        has_negative_feedback: true
+        feedback_summary: "Fix TestThing.cs:42 — log + rethrow."
+        feedback_digest: "harness-digest-442003-stuck"
+        reasoning: "Same feedback; fixer iteration 2 didn't commit."
+    - content:
+        has_negative_feedback: true
+        feedback_summary: "Fix TestThing.cs:42 — log + rethrow."
+        feedback_digest: "harness-digest-442003-stuck"
+        reasoning: "Same feedback; fixer iteration 3 still no commit — cap should fire."
+
+  # 2 fixer calls (the 3rd analyzer pass routes to the cap gate, not the
+  # fixer). Both report success without changing head_sha.
+  pr_fixer:
+    - content:
+        fixes_applied:
+          - "Attempted to fix TestThing.cs:42 (iteration 1)."
+        files_modified: []
+        tests_passed: true
+    - content:
+        fixes_applied:
+          - "Attempted to fix TestThing.cs:42 (iteration 2)."
+        files_modified: []
+        tests_passed: true
+
+cli_scripts:
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {
+        "type": "deliverable",
+        "architect": {"role": "", "type_refinement": ""},
+        "reviewer":  {"role": "", "type_refinement": ""},
+        "coder":     {"role": "", "type_refinement": ""},
+        "agents": {}
+      }
+    exit_code: 0
+
+  - command: gh
+    args: [pr, comment]
+    stdout: '{"posted":true,"pr_number":442}'
+    exit_code: 0
+
+  - command: gh
+    args: [repo, view]
+    stdout: '{"owner":{"login":"polyphony"},"name":"polyphony"}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [policy, resolve, --domain, approvals]
+    stdout: |
+      {
+        "domain": "approvals",
+        "scope": "type:deliverable",
+        "mode": "warning",
+        "max_revision_cycles": 5
+      }
+    exit_code: 0
+
+  # ── Sequenced poll-status: 3× route=none with identical head_sha=stuckSHA,
+  # then the 4th poll (after the cap gate's re-poll first-option) returns
+  # abort_unmerged to terminate the workflow.
+  - command: polyphony
+    args: [pr, poll-status]
+    times: 1
+    stdout: |
+      {
+        "route": "none",
+        "route_reason": "bot reviewer surfaced blocking concerns; no merge signal",
+        "state": "OPEN",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "stuckSHA",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+  - command: polyphony
+    args: [pr, poll-status]
+    times: 1
+    stdout: |
+      {
+        "route": "none",
+        "route_reason": "no commit since last revise",
+        "state": "OPEN",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "stuckSHA",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+  - command: polyphony
+    args: [pr, poll-status]
+    times: 1
+    stdout: |
+      {
+        "route": "none",
+        "route_reason": "no commit since last revise (2nd time)",
+        "state": "OPEN",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "stuckSHA",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+  - command: polyphony
+    args: [pr, poll-status]
+    times: 1
+    stdout: |
+      {
+        "route": "abort_unmerged",
+        "route_reason": "operator closed the PR after no-commit cap fired",
+        "state": "CLOSED",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "stuckSHA",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+expected_trace:
+  agents_executed:
+    - guidance_loader
+    - pr_initial_reviewer
+    - pr_initial_reviewer_poster
+    - poll_status
+    - pr_feedback_analyzer
+    - revise_counter
+    - pr_fixer
+    - pr_feedback_analyzer
+    - revise_counter
+    - pr_fixer
+    - pr_feedback_analyzer
+    - revise_counter
+    - poll_status
+    - closed_unmerged_emitter
+  scripts_executed:
+    - guidance_loader
+    - pr_initial_reviewer_poster
+    - poll_status
+    - revise_counter
+    - revise_counter
+    - revise_counter
+    - poll_status
+    - closed_unmerged_emitter
+  gates_presented:
+    - revise_cap_gate
+  reached_terminal: true
+  output_contains:
+    merged: false
