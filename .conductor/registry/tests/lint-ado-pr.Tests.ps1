@@ -367,3 +367,80 @@ agents:
         }
     }
 }
+
+Describe 'lint-ado-pr.ps1 — revise_counter no-commit fast-fail (AB#3236)' {
+
+    BeforeAll {
+        $script:LintScript = Join-Path $PSScriptRoot 'lint-ado-pr.ps1'
+        $script:AdoPrYaml  = Join-Path $PSScriptRoot '..' 'workflows' 'ado-pr.yaml'
+        $script:Yaml       = Get-Content $script:AdoPrYaml -Raw
+    }
+
+    Context 'Production ado-pr.yaml — AB#3236 wiring assertions' {
+
+        It 'revise_counter increments unconditionally (no digest gate)' {
+            $script:Yaml | Should -Match '(?s)- name: revise_counter\b.*?# AB#3236.*?increment unconditionally.*?\$count\s*=\s*\$count\s*\+\s*1'
+        }
+
+        It 'revise_counter tracks no_commit_count via poll_status.output.head_sha' {
+            $script:Yaml | Should -Match '(?s)- name: revise_counter\b.*?no_commit_count'
+            $script:Yaml | Should -Match '(?s)- name: revise_counter\b.*?poll_status\.output\.head_sha'
+        }
+
+        It 'revise_counter emits cap_reason for downstream prompt branching' {
+            $script:Yaml | Should -Match '(?s)- name: revise_counter\b.*?cap_reason'
+        }
+
+        It 'revise_cap_gate prompt branches on cap_reason == ''no_commit_stuck''' {
+            $script:Yaml | Should -Match "(?s)- name: revise_cap_gate\b.*?cap_reason\s*==\s*'no_commit_stuck'"
+        }
+    }
+
+    Context 'Synthetic mutations — AB#3236 negative cases' {
+
+        BeforeEach {
+            $script:TempRoot     = Join-Path ([System.IO.Path]::GetTempPath()) "lint-ado-3236-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+            $script:WorkflowsDir = Join-Path $script:TempRoot 'workflows'
+            $script:TestsDir     = Join-Path $script:TempRoot 'tests'
+            New-Item $script:WorkflowsDir -ItemType Directory -Force | Out-Null
+            New-Item $script:TestsDir -ItemType Directory -Force | Out-Null
+            Copy-Item $script:LintScript (Join-Path $script:TestsDir 'lint-ado-pr.ps1')
+        }
+
+        AfterEach {
+            Remove-Item $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Fails when revise_counter no_commit_count tracking is stripped' {
+            # Strip the no_commit_count tracking from revise_counter — the
+            # rest of the workflow stays valid. lint must surface
+            # 'revise-counter-missing-no-commit-detection'.
+            $mutated = $script:Yaml -replace 'no_commit_count', 'XYZ_REMOVED_XYZ'
+            Set-Content (Join-Path $script:WorkflowsDir 'ado-pr.yaml') $mutated
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-ado-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'revise-counter-missing-no-commit-detection'
+        }
+
+        It 'Fails when revise_counter cap_reason emission is stripped' {
+            $mutated = $script:Yaml -replace 'cap_reason', 'capReasonRemoved'
+            Set-Content (Join-Path $script:WorkflowsDir 'ado-pr.yaml') $mutated
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-ado-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'revise-counter-missing-cap-reason'
+        }
+
+        It 'Fails when revise_cap_gate stops branching on cap_reason' {
+            # Replace the AB#3236 conditional with a static prompt header to
+            # simulate a regression that drops the no_commit_stuck branch.
+            $mutated = $script:Yaml -replace "cap_reason\s*==\s*'no_commit_stuck'", "cap_reason == 'always_false_sentinel'"
+            Set-Content (Join-Path $script:WorkflowsDir 'ado-pr.yaml') $mutated
+            # That replacement also kills the cap_reason emission in revise_counter
+            # (search-and-replace is yaml-wide) — but the negative branch we care
+            # about is revise-cap-gate-not-branched; just assert it fires.
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-ado-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join "`n") | Should -Match 'revise-cap-gate-not-branched'
+        }
+    }
+}
