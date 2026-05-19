@@ -1613,7 +1613,7 @@ agents:
             auto_disposition = $disposition
         } | ConvertTo-Json -Compress
     routes:
-      - to: user_acceptance_policy_router
+      - to: pr_platform_router
 
   - name: scope_reviewer
     type: agent
@@ -1780,7 +1780,7 @@ agents:
       {{ scope_guidance_loader.output.reviewer.type_refinement }}
       {% endif %}
     routes:
-      - to: user_acceptance_policy_router
+      - to: pr_platform_router
         when: "{{ scope_reviewer.output.verdict == 'approved' }}"
       - to: scope_approvals_policy
         when: "{{ scope_reviewer.output.verdict == 'changes_requested' }}"
@@ -2019,136 +2019,6 @@ agents:
       - "{{ workflow.input.mg_path }}"
     routes:
       - to: primary_router
-
-  # ── User acceptance policy router (AB#3104) ───────────────────────────
-  #
-  # Reads `policy.unattended.acceptance_mode`. When `auto`, bypasses the
-  # `user_acceptance` gate by routing directly to `pr_platform_router`
-  # (the same target the operator's "accept" option selects). When
-  # `manual` or unknown, falls through to the human gate.
-  #
-  # Invariants:
-  #   Pre:  scope_reviewer.output.verdict == 'approved'.
-  #   Post: load_policy.output.unattended.acceptance_mode is
-  #         {manual, auto} (validated by the loader).
-  - name: user_acceptance_policy_router
-    type: script
-    description: Bypass user_acceptance gate when policy.unattended.acceptance_mode=auto
-    command: polyphony
-    args:
-      - "policy"
-      - "load"
-    routes:
-      - to: pr_platform_router
-        when: "{{ user_acceptance_policy_router.output.unattended.acceptance_mode == 'auto' }}"
-      - to: fetch_for_user_acceptance
-
-  # ── Fetch for user acceptance (AB#3157) ───────────────────────────────
-  #
-  # Mirror of `fetch_for_scope_review` placed before the user_acceptance
-  # human gate. The gate's prompt renders `git log` / `git diff` example
-  # commands the operator may copy into a worktree shell to inspect the
-  # MG; that inspection is only meaningful if local refs (or `origin/...`
-  # refs) reflect what `gh pr merge` pushed. Pre-fetching here keeps the
-  # operator's commands honest and brings local heads up to date even
-  # when the user_acceptance_policy_router runs in `manual` mode (the
-  # `auto` path bypasses this step and goes straight to pr_platform_router,
-  # which uses platform verbs that handle their own ref freshness).
-  #
-  # Invariants:
-  #   Pre:  scope_reviewer.output.verdict == 'approved' AND
-  #         policy.unattended.acceptance_mode == 'manual'.
-  #   Post: `origin/feature_branch` and `origin/mg/...` reflect remote;
-  #         local heads have been fast-forwarded to match when safe.
-  - name: fetch_for_user_acceptance
-    type: script
-    description: Pre-fetch origin refs so the operator's inspection commands see fresh state (AB#3157)
-    command: pwsh
-    args:
-      - "-NoProfile"
-      - "-Command"
-      - |
-        $feature = '{{ workflow.input.feature_branch }}'
-        $mg = 'mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}'
-        git fetch --quiet origin $feature $mg
-        if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $feature, $mg" }
-        # Defensive fast-forward of local heads so any consumer that
-        # uses bare names (without the origin/ prefix) sees fresh state.
-        foreach ($branch in @($feature, $mg)) {
-            $remoteRef = "refs/remotes/origin/$branch"
-            $localRef = "refs/heads/$branch"
-            $localExists = (git rev-parse --verify --quiet $localRef 2>$null) -ne $null
-            if ($localExists) {
-                & git merge-base --is-ancestor $localRef $remoteRef
-                if ($LASTEXITCODE -eq 0) {
-                    git update-ref $localRef $remoteRef
-                } else {
-                    Write-Host "::warning:: local $branch has commits not on origin; not fast-forwarding"
-                }
-            }
-        }
-        @{ ok = $true } | ConvertTo-Json -Compress
-    routes:
-      - to: user_acceptance
-
-  # ── User acceptance gate ──────────────────────────────────────────────
-  #
-  # Optional human gate for user acceptance of the completed MG before
-  # MG PR submission.
-  #
-  # Invariants:
-  #   Pre:  scope_reviewer.output.verdict == 'approved'.
-  #   Post: User has accepted (proceed to MG PR), requested changes (loop), or aborted.
-  - name: user_acceptance
-    type: human_gate
-    prompt: |
-      ## ✅ MG `{{ workflow.input.mg_path }}` — Ready for MG PR
-
-      All tasks in MG `{{ workflow.input.mg_path }}` for work item
-      **{{ workflow.input.work_item_id }}** have been implemented, reviewed,
-      and merged into the MG branch.
-
-      ### Tasks completed: {{ workflow.input.work_item_ids | length }}
-
-      {% for task_id in workflow.input.work_item_ids %}
-      - `AB#{{ task_id }}`
-      {% endfor %}
-
-      ### Reviewer Summary
-
-      {% if scope_reviewer is defined %}{{ scope_reviewer.output.feedback }}{% elif scope_auto_approve is defined %}{{ scope_auto_approve.output.feedback }}{% else %}(No reviewer feedback available){% endif %}
-
-      ### Inspect the MG branch
-
-      > Refs were freshly fetched from origin immediately upstream;
-      > compare against `origin/...` refs to avoid stale-cache false
-      > positives. (See AB#3157.)
-
-      ```
-      git log --oneline origin/{{ workflow.input.feature_branch }}..origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}
-      git diff origin/{{ workflow.input.feature_branch }}...origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }} --stat
-      git diff origin/{{ workflow.input.feature_branch }}...origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}
-      ```
-
-      ---
-
-      Choose an action:
-      - **Accept** — proceed to open and merge the MG PR
-      - **Request Changes** — send back for additional work
-      - **Abort** — cancel this MG
-    options:
-      - label: "✅ Accept"
-        value: accepted
-        route: pr_platform_router
-      - label: "🔄 Request Changes"
-        value: changes
-        # AB#3217: route through clear_apex_impl_marker so the
-        # impl-merged-in-mg marker doesn't suppress the next
-        # primary_router poll for the apex root case.
-        route: clear_apex_impl_marker
-      - label: "🛑 Abort"
-        value: abort
-        route: terminal_abort_run
 
   # ── PR platform router ────────────────────────────────────────────────
   #
