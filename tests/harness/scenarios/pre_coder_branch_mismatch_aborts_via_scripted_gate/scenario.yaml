@@ -1,0 +1,124 @@
+# AB#3210 — pre-coder branch mismatch gate; scripted abort.
+#
+# implement-merge-group.yaml's branch_assert_on_impl_pre_coder defends
+# against the apex-run-3165 failure mode where coder commits landed on a
+# sibling impl branch. When `polyphony branch assert-on-impl` reports
+# action=mismatch, the workflow routes to pre_coder_branch_mismatch_gate
+# which offers two options:
+#
+#   - retry → re-runs the assertion (would loop forever in the harness
+#             because the cli_scripts stub keeps returning mismatch)
+#   - abort → terminal_abort_run → $end
+#
+# Under --skip-gates alone the harness would auto-pick the first option
+# (retry) and loop until conductor's max_iterations cap or the
+# cli_scripts deck runs dry. Scripted gates let us drive `abort` and
+# prove the abort recovery path actually terminates the workflow.
+#
+# Entry chain (5 polyphony verbs, all shim-interceptable, zero agents):
+#   branch_ensure_mg → primary_router → impl_branch_ensure
+#     → guidance_loader → branch_assert_on_impl_pre_coder
+#     → pre_coder_branch_mismatch_gate (scripted=abort)
+#     → terminal_abort_run → $end
+
+workflow: .conductor/registry/workflows/implement-merge-group.yaml
+
+inputs:
+  work_item_id: 3210
+  root_id: 3210
+  pg_number: 1
+  mg_path: "pg-1"
+  work_item_ids:
+    - 9999
+  feature_branch: "feature/ab3210"
+  platform: "github"
+
+# Drive the gate's `abort` option (second option). Without this entry
+# the harness auto-picks `retry`, which loops back to the assertion
+# verb forever.
+gates:
+  pre_coder_branch_mismatch_gate: abort
+
+# No agent_scripts — the entry chain to the gate is pure script nodes.
+agent_scripts: {}
+
+cli_scripts:
+  - command: polyphony
+    args: [branch, ensure-mg]
+    stdout: |
+      {
+        "action": "checked_out",
+        "branch": "mg/3210_pg-1",
+        "base": "feature/ab3210"
+      }
+    exit_code: 0
+
+  - command: polyphony
+    args: [branch, next-impl]
+    stdout: |
+      {
+        "action": "implement_item",
+        "primary_id": 9999,
+        "primary_title": "AB#3210 harness fixture task"
+      }
+    exit_code: 0
+
+  - command: polyphony
+    args: [branch, ensure-impl]
+    stdout: |
+      {
+        "action": "checked_out",
+        "branch": "impl/3210-9999",
+        "base": "mg/3210_pg-1"
+      }
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {
+        "type": "deliverable",
+        "architect": {"role": "", "type_refinement": ""},
+        "reviewer":  {"role": "", "type_refinement": ""},
+        "coder":     {"role": "", "type_refinement": ""},
+        "agents": {}
+      }
+    exit_code: 0
+
+  # The whole point — assert-on-impl returns mismatch so the workflow
+  # routes to the gate. expected_branch + actual_branch are referenced
+  # by the gate's prompt template, so they MUST be present.
+  - command: polyphony
+    args: [branch, assert-on-impl]
+    stdout: |
+      {
+        "action": "mismatch",
+        "expected_branch": "impl/3210-9999",
+        "actual_branch": "impl/3210-8888",
+        "error": ""
+      }
+    exit_code: 0
+
+expected_trace:
+  agents_executed:
+    - branch_ensure_mg
+    - primary_router
+    - impl_branch_ensure
+    - guidance_loader
+    - branch_assert_on_impl_pre_coder
+    - pre_coder_branch_mismatch_gate
+    - terminal_abort_run
+  scripts_executed:
+    - branch_ensure_mg
+    - primary_router
+    - impl_branch_ensure
+    - guidance_loader
+    - branch_assert_on_impl_pre_coder
+    - terminal_abort_run
+  gates_presented:
+    - pre_coder_branch_mismatch_gate
+  gates_resolved:
+    pre_coder_branch_mismatch_gate: abort
+  reached_terminal: true
+  output_contains:
+    merged: false
