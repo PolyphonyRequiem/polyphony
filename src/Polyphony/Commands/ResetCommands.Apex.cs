@@ -7,7 +7,7 @@ namespace Polyphony.Commands;
 /// <summary>
 /// <c>polyphony reset apex --apex N [--execute] [--skip-state] [--comment "..."]</c> —
 /// composite that runs the full reset chain in the documented order:
-/// <c>prs → worktrees → branches → manifest → state</c>.
+/// <c>prs → worktrees → branches → facets → manifest → state</c>.
 ///
 /// <para>Per <c>docs/decisions/run-reset.md</c>, the state stamp lands
 /// LAST so that a crash partway through the cleanup leaves the system
@@ -64,6 +64,7 @@ public sealed partial class ResetCommands
         ResetPrsResult? prs = null;
         ResetWorktreesResult? worktrees = null;
         ResetBranchesResult? branches = null;
+        ResetFacetsResult? facets = null;
         ResetManifestResult? manifest = null;
         ResetStateResult? state = null;
         string? haltReason = null;
@@ -92,7 +93,20 @@ public sealed partial class ResetCommands
                 else { stepsFailed.Add("branches"); haltReason = $"branches: {branches.Error}"; }
             }
 
-            // 4) Manifest (read-only inspection)
+            // 4) Facets — strip polyphony:facets=* and polyphony:planned
+            //    tags from the apex subtree. Must come AFTER branches
+            //    (no point cleaning tags if the plan branch we're
+            //    invalidating is still there) and BEFORE state (the
+            //    watermark stamp invariant is "world is clean"; persisted
+            //    planning decisions are part of "world").
+            if (haltReason is null)
+            {
+                facets = await RunFacetsAsync(apex, execute, ct).ConfigureAwait(false);
+                if (facets.Success) stepsCompleted.Add("facets");
+                else { stepsFailed.Add("facets"); haltReason = $"facets: {facets.Error}"; }
+            }
+
+            // 5) Manifest (read-only inspection)
             if (haltReason is null)
             {
                 manifest = await RunManifestAsync(apex, execute, ct).ConfigureAwait(false);
@@ -100,7 +114,7 @@ public sealed partial class ResetCommands
                 else { stepsFailed.Add("manifest"); haltReason = $"manifest: {manifest.Error}"; }
             }
 
-            // 5) State (last — only on a fully-clean chain, and only
+            // 6) State (last — only on a fully-clean chain, and only
             //    when not explicitly skipped)
             if (haltReason is null && !skipState)
             {
@@ -125,6 +139,7 @@ public sealed partial class ResetCommands
             Prs = prs,
             Worktrees = worktrees,
             Branches = branches,
+            Facets = facets,
             Manifest = manifest,
             State = state,
             StateSkipped = skipState,
@@ -168,6 +183,13 @@ public sealed partial class ResetCommands
         var json = await CaptureAsync(() => ResetBranches(apex, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetBranchesResult)
             ?? throw new InvalidOperationException("reset branches returned unparseable JSON");
+    }
+
+    private async Task<ResetFacetsResult> RunFacetsAsync(int apex, bool execute, CancellationToken ct)
+    {
+        var json = await CaptureAsync(() => ResetFacets(apex, execute, ct)).ConfigureAwait(false);
+        return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetFacetsResult)
+            ?? throw new InvalidOperationException("reset facets returned unparseable JSON");
     }
 
     private async Task<ResetManifestResult> RunManifestAsync(int apex, bool execute, CancellationToken ct)

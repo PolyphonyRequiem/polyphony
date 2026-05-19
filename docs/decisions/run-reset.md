@@ -201,7 +201,7 @@ populated by the server — no per-PR write needed.
 
 - `polyphony reset state` verb (the only writer of the watermark).
 - Full reset verb family (`reset prs`, `reset worktrees`, `reset branches`,
-  `reset manifest`, `reset state`, composite `reset apex`).
+  `reset facets`, `reset manifest`, `reset state`, composite `reset apex`).
 
 **Out of scope for PR 1, planned for PR 3:**
 
@@ -222,8 +222,9 @@ Ships six verbs under the `polyphony reset` verb group:
 | `reset prs`           | Abandon every open PR in the apex's polyphony scope.     |
 | `reset branches`      | Delete every apex-scoped branch on origin and locally.   |
 | `reset worktrees`     | Remove every git worktree under `{runs_root}/apex-{N}/`. |
+| `reset facets`        | Strip persisted planning tags (`polyphony:facets=*`, `polyphony:planned`) from the apex subtree. |
 | `reset manifest`      | Read-only inspection (clearing deferred — see below).    |
-| `reset apex`          | Composite: `prs → worktrees → branches → manifest → state`. |
+| `reset apex`          | Composite: `prs → worktrees → branches → facets → manifest → state`. |
 
 ### Convention divergence: dry-run by default, `--execute` opt-in
 
@@ -239,7 +240,7 @@ envelope before committing.
 
 ### Composite ordering rationale
 
-`prs → worktrees → branches → manifest → state`:
+`prs → worktrees → branches → facets → manifest → state`:
 
 1. **prs first** — close open PRs before deleting their branches so the
    platform's "branch deleted" notice never races with the abandon
@@ -248,15 +249,67 @@ envelope before committing.
 2. **worktrees before branches** — git refuses to delete a checked-out
    branch. Tearing down worktrees first guarantees no local branch is
    pinned.
-3. **manifest after branches** — the manifest lives on `feature/{N}`,
+3. **branches before facets** — facets are persisted planning
+   decisions stamped on work items by the planner. Cleaning those tags
+   only makes sense once the plan branch and its PR are gone; otherwise
+   the apex remains in a paradoxical state (plan branch exists but the
+   work item declares "planning already done"). See
+   §"Why facets cleanup is separate from watermark" below.
+4. **manifest after facets** — the manifest lives on `feature/{N}`,
    so deleting that branch clears the manifest as a side-effect. The
-   manifest verb is read-only and runs purely as an inspection step.
-4. **state last** — the watermark stamp is the signal that the
+   manifest verb is read-only and runs purely as an inspection step;
+   ordering it after facets keeps all ADO-mutating steps grouped before
+   the read-only step.
+5. **state last** — the watermark stamp is the signal that the
    observers consult for "is this run current?". Advancing it on top of
    a half-done cleanup would leak ghost satisfaction signals past the
    new watermark. Halt-on-step-failure means a crash anywhere upstream
    leaves the system "still mid-reset" rather than "watermark advanced
    but ghosts remain."
+
+### Why facets cleanup is separate from watermark
+
+**Incident, apex 62286666 (2026-05-18):** an operator ran
+`polyphony reset apex --execute` after a failed first run, then
+re-dispatched with `-Intent new`. The new run skipped the plan-level
+sub-workflow entirely and went straight to `implement-merge-group` —
+without ever surfacing the plan gate the operator expected to review.
+The classifier was correct: it read `polyphony:facets=implementable`
+from the apex work item and concluded "planning already done". The
+tag had been stamped by the prior run's `polyphony plan seed-children`
+when the architect declared `apex_facets: [implementable]` in plan
+front-matter. The reset chain cleaned the plan branch + plan PR but
+left the tag stamped, so the next run's classifier saw a stale
+"planning done" decision over a phantom plan that no longer existed.
+
+The watermark mechanism (§"Run watermark" above) was deliberately
+designed to filter **merged-PR observations** by merge time: any
+satisfaction signal whose underlying PR merged at or before
+`polyphony:run-started-at` is ignored. The facet override + planned
+marker are NOT PR observations — they are **persisted planning
+decisions** stamped directly on the work item. A watermark cannot
+demote them, so a separate reset step is required.
+
+`reset facets` walks the apex subtree (via `HierarchyWalker`, max
+depth 16) and strips:
+
+- Every `polyphony:facets=<csv>` tag (the per-item facet override
+  consumed by `Sdlc.RequirementInputResolver`).
+- The bare `polyphony:planned` tag (consulted by
+  `Sdlc.Observers.PlanObserver`'s resume-detection gate).
+
+Items with no targeted tags are silently skipped — only items that
+actually had a tag to remove appear in the result envelope's
+`items` array.
+
+Per-item failures (silent ADO eventual-consistency reverts caught by
+the read-after-write defense; mirror of `BranchCommands.MarkImplMerged`)
+do **not** halt the walk — they surface as
+`items[].verified = false` entries with a non-null
+`items[].error`. The verb's overall `success` remains true (the walk
+completed); a verb-wide failure (sync threw, walk threw) flips
+`success` to false with `error` populated. This mirrors the
+per-item-failure tolerance of `reset prs` / `reset branches`.
 
 ### Manifest is read-only in PR 2
 

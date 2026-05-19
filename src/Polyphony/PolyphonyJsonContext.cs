@@ -222,6 +222,8 @@ namespace Polyphony;
 [JsonSerializable(typeof(ResetRemovedWorktree))]
 [JsonSerializable(typeof(ResetFailedWorktree))]
 [JsonSerializable(typeof(ResetManifestResult))]
+[JsonSerializable(typeof(ResetFacetsResult))]
+[JsonSerializable(typeof(ResetFacetsItem))]
 [JsonSerializable(typeof(ResetApexResult))]
 // ADO auth chain DTOs (port of twig's MSAL refresh-token methodology)
 [JsonSerializable(typeof(JwtAccessTokenPayload))]
