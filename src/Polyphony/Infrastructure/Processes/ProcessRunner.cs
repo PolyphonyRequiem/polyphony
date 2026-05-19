@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace Polyphony.Infrastructure.Processes;
 
@@ -37,6 +38,18 @@ public sealed class ProcessRunner : IProcessRunner
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = stdin is not null || closeStdin,
+            // #116: force UTF-8 on all three redirected streams. The .NET
+            // default is Console.InputEncoding / Console.OutputEncoding,
+            // which on Windows defaults to the system code page (cp1252
+            // on most installs). When we pipe a Unicode comment body
+            // (`→`, `🔄`, …) into `gh pr comment --body-file -` the
+            // bytes hit gh as cp1252 and the unmappable characters fall
+            // back to `?` (0x3F) or SUB (0x1A), producing the `??` /
+            // `^Z` mojibake observed on PR #113. UTF-8 round-trips ASCII
+            // unchanged and carries Unicode through losslessly.
+            StandardInputEncoding = (stdin is not null || closeStdin) ? Encoding.UTF8 : null,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
         };
 
         if (workingDirectory is not null)

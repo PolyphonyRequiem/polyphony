@@ -252,4 +252,41 @@ public sealed class ProcessRunnerTests
         cts.IsCancellationRequested.ShouldBeFalse(
             "child should have exited well before the 15s outer timeout");
     }
+
+    /// <summary>
+    /// #116: when a Unicode body is piped to a child via stdin (e.g.
+    /// <c>gh pr comment --body-file -</c> with arrows / emoji in the
+    /// comment text), the bytes the child sees must be UTF-8, not the
+    /// Windows ANSI default cp1252. The pre-fix runner left
+    /// <see cref="ProcessStartInfo.StandardInputEncoding"/> at its
+    /// default (<see cref="Console.InputEncoding"/>, cp1252 on
+    /// Windows), which mapped unrepresentable chars to <c>?</c>
+    /// (0x3F) or <c>SUB</c> (0x1A) — the visible mojibake on PR #113.
+    ///
+    /// Verify by piping a string containing <c>→</c> and <c>🔄</c>
+    /// through a child that echoes stdin back on stdout (cmd /c more
+    /// on Windows, cat on POSIX) and assert the round-trip preserves
+    /// the original characters.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_StdinWithUnicode_PreservesCharactersAsUtf8()
+    {
+        var runner = new ProcessRunner();
+
+        var (exe, args) = IsWindows
+            ? ("cmd.exe", new[] { "/c", "more" })
+            : ("cat", Array.Empty<string>());
+
+        const string payload = "Auto-rebased onto `parent` 🔄 abc → def";
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        var result = await runner.RunAsync(exe, args, cts.Token, stdin: payload);
+
+        result.Succeeded.ShouldBeTrue();
+        // Both characters must survive the round-trip.
+        result.Stdout.ShouldContain("🔄");
+        result.Stdout.ShouldContain("→");
+        // And the cp1252 mojibake sentinels must NOT appear.
+        result.Stdout.ShouldNotContain("?\u001a");
+    }
 }
