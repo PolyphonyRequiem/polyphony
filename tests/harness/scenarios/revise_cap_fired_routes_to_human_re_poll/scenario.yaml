@@ -1,0 +1,191 @@
+# Issue #442 — github-pr revise_counter max_revisions cap, then re-poll merges.
+#
+# revise_counter caps the revise loop at policy.approvals.max_revision_cycles.
+# This scenario overrides max_revision_cycles=2 via a custom approvals_policy
+# response and walks two revise iterations with DIFFERENT head_sha values
+# (so the no-commit cap does NOT fire first). On iter 2, count=2 >=
+# max_revisions=2 → cap_reached=true, cap_reason='max_revisions' →
+# revise_cap_gate.
+#
+# Under --skip-gates the gate's first option is "🔁 Re-poll PR" → poll_status.
+# The third poll returns route=merge_now, so pr_merger terminates the
+# workflow with merged=true.
+#
+# Counter walk (file at $env:TMP/conductor-github-pr-revise-442004-442.json):
+#   iter 1: count=1, sha=A, shaPrev='',  no_commit=0,   cap=false → fixer
+#   iter 2: count=2, sha=B, shaPrev=A,   no_commit=0,   cap=true (max_revisions) → revise_cap_gate
+#   gate (re-poll) → poll #3 (merge_now) → pr_merger
+#
+# Exercises Phase A's shim sequencing (3 poll responses + custom policy
+# response), the gate_presented assertion, and the gate→poll→merge path.
+
+workflow: .conductor/registry/workflows/github-pr.yaml
+
+inputs:
+  pr_number: 442
+  branch_name: feature/issue-442
+  target_branch: main
+  work_item_id: "442004"
+
+agent_scripts:
+  pr_initial_reviewer:
+    - content:
+        posted: false
+        pr_number: 442
+        summary: "Harness fixture review — one blocking concern."
+        strengths: []
+        blocking_concerns:
+          - "TestThing.cs:42 swallows the exception silently."
+        non_blocking_suggestions: []
+        comment_body: |
+          <!-- polyphony:agent-comment agent=pr_initial_reviewer pr_number=442 -->
+          ### Blocking concerns
+          - TestThing.cs:42 swallows the exception silently.
+
+  # 2 analyzer calls (third poll routes merge_now, never reaches analyzer).
+  pr_feedback_analyzer:
+    - content:
+        has_negative_feedback: true
+        feedback_summary: "Fix TestThing.cs:42 — log + rethrow (iter 1)."
+        feedback_digest: "harness-digest-442004-i1"
+        reasoning: "Bot reviewer surfaced 1 blocking concern; fixer iteration 1 begins."
+    - content:
+        has_negative_feedback: true
+        feedback_summary: "Fix TestThing.cs:42 — log + rethrow (iter 2)."
+        feedback_digest: "harness-digest-442004-i2"
+        reasoning: "Fixer committed but didn't address the concern; iteration 2 — cap will fire."
+
+  # Only one fixer call: after iter-2's revise_counter caps at 2 revisions
+  # the workflow routes to revise_cap_gate instead of the fixer.
+  pr_fixer:
+    - content:
+        fixes_applied:
+          - "Attempted fix on TestThing.cs:42 (iteration 1)."
+        files_modified:
+          - "src/TestThing.cs"
+        tests_passed: true
+
+  pr_merger:
+    - content:
+        merged: true
+        pr_url: "https://github.com/polyphony/polyphony/pull/442"
+        merge_method: "squash"
+        error: ""
+
+cli_scripts:
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {
+        "type": "deliverable",
+        "architect": {"role": "", "type_refinement": ""},
+        "reviewer":  {"role": "", "type_refinement": ""},
+        "coder":     {"role": "", "type_refinement": ""},
+        "agents": {}
+      }
+    exit_code: 0
+
+  - command: gh
+    args: [pr, comment]
+    stdout: '{"posted":true,"pr_number":442}'
+    exit_code: 0
+
+  - command: gh
+    args: [repo, view]
+    stdout: '{"owner":{"login":"polyphony"},"name":"polyphony"}'
+    exit_code: 0
+
+  # ── Override max_revision_cycles=2 so the cap fires after 2 revise loops.
+  - command: polyphony
+    args: [policy, resolve, --domain, approvals]
+    stdout: |
+      {
+        "domain": "approvals",
+        "scope": "type:deliverable",
+        "mode": "warning",
+        "max_revision_cycles": 2
+      }
+    exit_code: 0
+
+  # ── Sequenced poll-status. Iter 1 sees head=A, iter 2 sees head=B
+  # (changing SHA defeats the no_commit cap so cap_by_count fires first),
+  # iter 3 (post-cap-gate re-poll) returns merge_now to terminate.
+  - command: polyphony
+    args: [pr, poll-status]
+    times: 1
+    stdout: |
+      {
+        "route": "none",
+        "route_reason": "bot reviewer surfaced blocking concerns; no merge signal",
+        "state": "OPEN",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "shaA",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+  - command: polyphony
+    args: [pr, poll-status]
+    times: 1
+    stdout: |
+      {
+        "route": "none",
+        "route_reason": "fixer committed but reviewer still unhappy",
+        "state": "OPEN",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "shaB",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+  - command: polyphony
+    args: [pr, poll-status]
+    times: 1
+    stdout: |
+      {
+        "route": "merge_now",
+        "route_reason": "operator approved after cap-gate re-poll",
+        "state": "OPEN",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "shaB",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+expected_trace:
+  agents_executed:
+    - guidance_loader
+    - pr_initial_reviewer
+    - pr_initial_reviewer_poster
+    - poll_status
+    - pr_feedback_analyzer
+    - revise_counter
+    - pr_fixer
+    - poll_status
+    - pr_feedback_analyzer
+    - revise_counter
+    - revise_cap_gate
+    - poll_status
+    - pr_merger
+  scripts_executed:
+    - guidance_loader
+    - pr_initial_reviewer_poster
+    - poll_status
+    - revise_counter
+    - poll_status
+    - revise_counter
+    - poll_status
+  gates_presented:
+    - revise_cap_gate
+  reached_terminal: true
+  output_contains:
+    merged: true

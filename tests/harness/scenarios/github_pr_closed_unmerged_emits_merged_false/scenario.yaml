@@ -1,0 +1,102 @@
+# Issue #442 — github-pr sentiment-driven PR review loop, abort path.
+#
+# Operator closed the GitHub PR without merging while the workflow was
+# polling. poll_status's deterministic 4-way classifier maps that to
+# `route='abort_unmerged'`. The workflow MUST route to
+# closed_unmerged_emitter and terminate with `merged: false` so the
+# parent feature-pr.yaml can either accept the abandonment or run its
+# remediation cycle.
+#
+# Path covered:
+#   guidance_loader → pr_initial_reviewer → pr_initial_reviewer_poster
+#   → poll_status (route=abort_unmerged) → closed_unmerged_emitter → $end
+#
+# No analyzer / counter / fixer / merger calls — the abort path is
+# single-pass by design. No sequencing needed.
+
+workflow: .conductor/registry/workflows/github-pr.yaml
+
+inputs:
+  pr_number: 442
+  branch_name: feature/issue-442
+  target_branch: main
+  work_item_id: "442001"
+
+agent_scripts:
+  pr_initial_reviewer:
+    - content:
+        posted: false
+        pr_number: 442
+        summary: "Harness fixture review — no blocking concerns."
+        strengths: []
+        blocking_concerns: []
+        non_blocking_suggestions: []
+        comment_body: |
+          <!-- polyphony:agent-comment agent=pr_initial_reviewer pr_number=442 -->
+          _No blocking concerns identified._
+
+cli_scripts:
+  # guidance_loader: the real verb's PlanLoadAgentGuidanceResult shape —
+  # type + architect/coder/reviewer (each with role + type_refinement) +
+  # agents dict. Empty strings stay falsy in Jinja's `{% if x.role %}`
+  # guards so the prompt's per-role override blocks degrade cleanly; an
+  # incomplete payload triggers TemplateError on `.role`/`.type_refinement`
+  # access under conductor's strict-Undefined rendering.
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {
+        "type": "deliverable",
+        "architect": {"role": "", "type_refinement": ""},
+        "reviewer":  {"role": "", "type_refinement": ""},
+        "coder":     {"role": "", "type_refinement": ""},
+        "agents": {}
+      }
+    exit_code: 0
+
+  # pr_initial_reviewer_poster: pwsh script that calls `gh pr comment`.
+  # Workflow only inspects `posted == true` to continue; URL not asserted.
+  - command: gh
+    args: [pr, comment]
+    stdout: '{"posted":true,"pr_number":442}'
+    exit_code: 0
+
+  # poll_status: pwsh script first calls `gh repo view` to build a PR URL,
+  # then `polyphony pr poll-status --pr-url <url>` for the classifier.
+  - command: gh
+    args: [repo, view]
+    stdout: '{"owner":{"login":"polyphony"},"name":"polyphony"}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [pr, poll-status]
+    stdout: |
+      {
+        "route": "abort_unmerged",
+        "route_reason": "operator closed PR without merging",
+        "state": "CLOSED",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "abc123",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+expected_trace:
+  agents_executed:
+    - guidance_loader
+    - pr_initial_reviewer
+    - pr_initial_reviewer_poster
+    - poll_status
+    - closed_unmerged_emitter
+  scripts_executed:
+    - guidance_loader
+    - pr_initial_reviewer_poster
+    - poll_status
+    - closed_unmerged_emitter
+  gates_presented: []
+  reached_terminal: true
+  output_contains:
+    merged: false

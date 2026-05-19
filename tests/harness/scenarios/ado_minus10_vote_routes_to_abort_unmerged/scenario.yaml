@@ -1,0 +1,98 @@
+# Issue #442 — ado-pr sentiment-driven PR review loop, abort path.
+#
+# Reviewer cast a -10 ("Rejected") vote on the ADO PR. The deterministic
+# classifier (`PrPollTerminalRoute.Classify`) maps any -10 vote — or a
+# `status == abandoned` PR — to `route='abort_unmerged'`. The workflow
+# MUST route to closed_unmerged_emitter and terminate with `merged:
+# false`, mirroring the github-pr abort path.
+#
+# Path covered:
+#   ado_inputs_validator → guidance_loader → pr_initial_reviewer
+#   → pr_initial_reviewer_poster → poll_status (route=abort_unmerged)
+#   → closed_unmerged_emitter → $end
+#
+# ado_inputs_validator is the workflow entry point (NOT guidance_loader).
+# It requires organization/project/repository/root_id non-empty —
+# missing any one routes to ado_inputs_missing_gate and the test would
+# never reach the review loop. Supply non-empty placeholders for all four.
+
+workflow: .conductor/registry/workflows/ado-pr.yaml
+
+inputs:
+  pr_number: 442
+  branch_name: feature/issue-442
+  target_branch: main
+  work_item_id: "442002"
+  organization: harness-org
+  project: harness-project
+  repository: harness-repo
+  root_id: "442002"
+
+agent_scripts:
+  pr_initial_reviewer:
+    - content:
+        posted: false
+        pr_number: 442
+        summary: "Harness fixture review — no blocking concerns."
+        strengths: []
+        blocking_concerns: []
+        non_blocking_suggestions: []
+        comment_body: |
+          <!-- polyphony:agent-comment agent=pr_initial_reviewer pr_number=442 -->
+          _No blocking concerns identified._
+
+cli_scripts:
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {
+        "type": "deliverable",
+        "architect": {"role": "", "type_refinement": ""},
+        "reviewer":  {"role": "", "type_refinement": ""},
+        "coder":     {"role": "", "type_refinement": ""},
+        "agents": {}
+      }
+    exit_code: 0
+
+  # pr_initial_reviewer_poster is a direct polyphony pr post-comment-ado
+  # call on ADO — no pwsh wrapper, no gh shim hits.
+  - command: polyphony
+    args: [pr, post-comment-ado]
+    stdout: '{"posted":true,"comment_id":"42"}'
+    exit_code: 0
+
+  # poll_status uses polyphony pr poll-status-ado directly.
+  - command: polyphony
+    args: [pr, poll-status-ado]
+    stdout: |
+      {
+        "route": "abort_unmerged",
+        "route_reason": "reviewer cast a -10 vote",
+        "state": "ACTIVE",
+        "pr_url": "https://dev.azure.com/harness-org/harness-project/_git/harness-repo/pullrequest/442",
+        "author_identity": "polyphony-bot@local",
+        "head_sha": "abc123",
+        "comments": [],
+        "threads": [],
+        "reviewers": [{"identity":"reviewer-1","vote":-10}]
+      }
+    exit_code: 0
+
+expected_trace:
+  agents_executed:
+    - ado_inputs_validator
+    - guidance_loader
+    - pr_initial_reviewer
+    - pr_initial_reviewer_poster
+    - poll_status
+    - closed_unmerged_emitter
+  scripts_executed:
+    - ado_inputs_validator
+    - guidance_loader
+    - pr_initial_reviewer_poster
+    - poll_status
+    - closed_unmerged_emitter
+  gates_presented: []
+  reached_terminal: true
+  output_contains:
+    merged: false

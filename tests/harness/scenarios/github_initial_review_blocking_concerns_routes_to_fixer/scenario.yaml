@@ -1,0 +1,167 @@
+# Issue #442 — github-pr sentiment-driven PR review loop, happy revise path.
+#
+# pr_initial_reviewer surfaces blocking concerns, the analyzer judges the
+# PR has negative feedback, pr_fixer addresses it, the next poll sees a
+# merge-now signal, pr_merger merges, workflow_completed with merged=true.
+#
+# Path covered:
+#   guidance_loader → pr_initial_reviewer → pr_initial_reviewer_poster
+#   → poll_status (#1, route=none) → pr_feedback_analyzer (neg)
+#   → approvals_policy → revise_counter (count=1, cap=false) → pr_fixer
+#   → poll_status (#2, route=merge_now) → pr_merger → $end
+#
+# Exercises Phase A's shim sequencing: two distinct poll-status responses
+# for identical argv (none → merge_now) using `times: 1` on each entry.
+
+workflow: .conductor/registry/workflows/github-pr.yaml
+
+inputs:
+  pr_number: 442
+  branch_name: feature/issue-442
+  target_branch: main
+  work_item_id: "442002"
+
+agent_scripts:
+  pr_initial_reviewer:
+    - content:
+        posted: false
+        pr_number: 442
+        summary: "Harness fixture review — one blocking concern."
+        strengths: []
+        blocking_concerns:
+          - "TestThing.cs:42 swallows the exception silently — log + rethrow."
+        non_blocking_suggestions: []
+        comment_body: |
+          <!-- polyphony:agent-comment agent=pr_initial_reviewer pr_number=442 -->
+          ### Blocking concerns
+          - TestThing.cs:42 swallows the exception silently — log + rethrow.
+
+  pr_feedback_analyzer:
+    - content:
+        has_negative_feedback: true
+        feedback_summary: "Fix TestThing.cs:42 — log + rethrow instead of swallowing."
+        feedback_digest: "harness-digest-442002-v1"
+        reasoning: "Bot reviewer surfaced 1 blocking concern; no offsetting approvals."
+
+  pr_fixer:
+    - content:
+        fixes_applied:
+          - "TestThing.cs:42: replaced silent catch with log + rethrow."
+        files_modified:
+          - "src/TestThing.cs"
+        tests_passed: true
+
+  pr_merger:
+    - content:
+        merged: true
+        pr_url: "https://github.com/polyphony/polyphony/pull/442"
+        merge_method: "squash"
+        error: ""
+
+cli_scripts:
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {
+        "type": "deliverable",
+        "architect": {"role": "", "type_refinement": ""},
+        "reviewer":  {"role": "", "type_refinement": ""},
+        "coder":     {"role": "", "type_refinement": ""},
+        "agents": {}
+      }
+    exit_code: 0
+
+  - command: gh
+    args: [pr, comment]
+    stdout: '{"posted":true,"pr_number":442}'
+    exit_code: 0
+
+  - command: gh
+    args: [repo, view]
+    stdout: '{"owner":{"login":"polyphony"},"name":"polyphony"}'
+    exit_code: 0
+
+  # approvals_policy: real `polyphony policy resolve` shape (snake_case
+  # via PolyphonyJsonContext SnakeCaseLower). revise_counter reads
+  # approvals_policy.output.max_revision_cycles — default 5 is fine here
+  # since this scenario never reaches the cap.
+  - command: polyphony
+    args: [policy, resolve, --domain, approvals]
+    stdout: |
+      {
+        "domain": "approvals",
+        "scope": "type:deliverable",
+        "mode": "warning",
+        "max_revision_cycles": 5
+      }
+    exit_code: 0
+
+  # ── Sequenced poll-status: first call returns route=none (drives the
+  # analyzer), second call returns route=merge_now (drives the merger).
+  # Per Phase A's shim sequencing, list the same entry twice with
+  # `times: 1` each — the counter file fall-through consumes them in
+  # order then halts on the final unmatched call (unreachable here).
+  - command: polyphony
+    args: [pr, poll-status]
+    times: 1
+    stdout: |
+      {
+        "route": "none",
+        "route_reason": "bot reviewer surfaced blocking concerns; no merge signal",
+        "state": "OPEN",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "shaA",
+        "comments": [
+          {
+            "id": "c1",
+            "author": "polyphony-bot",
+            "body": "### Blocking concerns\n- TestThing.cs:42 swallows the exception silently",
+            "marker": "polyphony:agent-comment agent=pr_initial_reviewer pr_number=442"
+          }
+        ],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+  - command: polyphony
+    args: [pr, poll-status]
+    times: 1
+    stdout: |
+      {
+        "route": "merge_now",
+        "route_reason": "operator approved; no unresolved threads",
+        "state": "OPEN",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/442",
+        "author_identity": "polyphony-bot",
+        "head_sha": "shaB",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+expected_trace:
+  agents_executed:
+    - guidance_loader
+    - pr_initial_reviewer
+    - pr_initial_reviewer_poster
+    - poll_status
+    - pr_feedback_analyzer
+    - approvals_policy
+    - revise_counter
+    - pr_fixer
+    - poll_status
+    - pr_merger
+  scripts_executed:
+    - guidance_loader
+    - pr_initial_reviewer_poster
+    - poll_status
+    - approvals_policy
+    - revise_counter
+    - poll_status
+  gates_presented: []
+  reached_terminal: true
+  output_contains:
+    merged: true
