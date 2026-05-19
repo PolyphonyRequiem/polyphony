@@ -41,9 +41,34 @@ def _load_yaml(text: str) -> object:
     return yaml.load(text)
 
 
+def _parse_times(raw_value: Any, index: int, scenario_file: Path) -> int | None:
+    """Validate a cli_scripts[*].times value.
+
+    ``None`` (unset) means unlimited — legacy first-match-wins. Any other
+    value must be a positive integer. Zero or negative caps are rejected
+    eagerly because they encode "matcher exhausted before first use", which
+    is almost always a typo for "remove the entry entirely".
+    """
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+        raise ValueError(
+            f"cli_scripts[{index}].times must be a positive integer, "
+            f"got {raw_value!r}: {scenario_file}"
+        )
+    if raw_value <= 0:
+        raise ValueError(
+            f"cli_scripts[{index}].times must be > 0 (got {raw_value}); "
+            f"use no 'times' field for unlimited matching: {scenario_file}"
+        )
+    return raw_value
+
+
 @dataclass
 class ExpectedTrace:
     agents_executed: list[str] = field(default_factory=list)
+    scripts_executed: list[str] = field(default_factory=list)
+    gates_presented: list[str] = field(default_factory=list)
     reached_terminal: bool = True
     output_contains: dict[str, Any] = field(default_factory=dict)
 
@@ -124,12 +149,15 @@ def load_scenario(scenario_dir: Path, repo_root: Path) -> Scenario:
                 stdout=str(entry.get("stdout") or ""),
                 stderr=str(entry.get("stderr") or ""),
                 exit_code=int(entry.get("exit_code") or 0),
+                times=_parse_times(entry.get("times"), idx, scenario_file),
             )
         )
 
     expected_raw = raw.get("expected_trace") or {}
     expected = ExpectedTrace(
         agents_executed=list(expected_raw.get("agents_executed") or []),
+        scripts_executed=list(expected_raw.get("scripts_executed") or []),
+        gates_presented=list(expected_raw.get("gates_presented") or []),
         reached_terminal=bool(expected_raw.get("reached_terminal", True)),
         output_contains=dict(expected_raw.get("output_contains") or {}),
     )

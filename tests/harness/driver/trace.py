@@ -32,12 +32,41 @@ class TraceRecorder:
     @property
     def agents_executed(self) -> list[str]:
         """Ordered list of agent names whose execution started."""
+        return self._collect_names("agent_started")
+
+    @property
+    def scripts_executed(self) -> list[str]:
+        """Ordered list of script-node names that started executing.
+
+        Lets scenarios assert which terminal/branch script ran without
+        leaning on output_contains, e.g. proving closed_unmerged_emitter
+        fired vs. already_merged_emitter.
+        """
+        return self._collect_names("script_started")
+
+    @property
+    def gates_presented(self) -> list[str]:
+        """Ordered list of human-gate node names that were presented.
+
+        Lets scenarios assert that a specific gate fired (e.g. that
+        ``revise_cap_gate`` was reached after the no-commit fast-fail) even
+        when ``--skip-gates`` auto-picks the first option and the workflow
+        keeps walking.
+        """
+        return self._collect_names("gate_presented")
+
+    def _collect_names(self, event_type: str) -> list[str]:
         names: list[str] = []
         for event in self.events:
-            if event.type == "agent_started":
-                name = event.data.get("agent_name") or event.data.get("agent")
-                if isinstance(name, str):
-                    names.append(name)
+            if event.type != event_type:
+                continue
+            name = (
+                event.data.get("agent_name")
+                or event.data.get("agent")
+                or event.data.get("name")
+            )
+            if isinstance(name, str):
+                names.append(name)
         return names
 
     @property
@@ -51,6 +80,8 @@ class TraceRecorder:
         return {
             "event_count": len(self.events),
             "agents_executed": self.agents_executed,
+            "scripts_executed": self.scripts_executed,
+            "gates_presented": self.gates_presented,
             "reached_terminal": self.reached_terminal,
             "event_types": [event.type for event in self.events],
         }
@@ -69,6 +100,20 @@ def check_expectations(
         failures.append(
             "agents_executed expected (ordered subsequence) "
             f"{expected.agents_executed!r}, actual {actual_agents!r}"
+        )
+
+    actual_scripts = recorder.scripts_executed
+    if not _is_ordered_subsequence(expected.scripts_executed, actual_scripts):
+        failures.append(
+            "scripts_executed expected (ordered subsequence) "
+            f"{expected.scripts_executed!r}, actual {actual_scripts!r}"
+        )
+
+    actual_gates = recorder.gates_presented
+    if not _is_ordered_subsequence(expected.gates_presented, actual_gates):
+        failures.append(
+            "gates_presented expected (ordered subsequence) "
+            f"{expected.gates_presented!r}, actual {actual_gates!r}"
         )
 
     if expected.reached_terminal and not recorder.reached_terminal:

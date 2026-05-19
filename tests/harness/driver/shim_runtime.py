@@ -37,15 +37,19 @@ class CliScript:
     stdout: str = ""
     stderr: str = ""
     exit_code: int = 0
+    times: int | None = None
 
     def to_manifest_entry(self) -> dict[str, Any]:
-        return {
+        entry: dict[str, Any] = {
             "command": self.command,
             "args": list(self.args),
             "stdout": self.stdout,
             "stderr": self.stderr,
             "exit_code": int(self.exit_code),
         }
+        if self.times is not None:
+            entry["times"] = int(self.times)
+        return entry
 
 
 @dataclass
@@ -55,6 +59,8 @@ class ShimContext:
     bin_dir: Path
     manifest_path: Path
     audit_log_path: Path
+    counters_path: Path
+    temp_dir: Path
     extra_env: dict[str, str] = field(default_factory=dict)
 
 
@@ -166,6 +172,13 @@ def stage_scenario_bin(
 
     manifest_path = bin_dir / "manifest.json"
     audit_log_path = bin_dir / "audit.log"
+    counters_path = Path(str(manifest_path) + ".counters.json")
+    # Per-scenario temp dir overrides $TMP / $TEMP / $TMPDIR so workflow-owned
+    # state files (e.g. revise_counter's [Path]::GetTempPath() tempfile keyed
+    # on work_item_id + pr_number) cannot leak between scenarios, regardless
+    # of whether the author remembered to pick unique work-item IDs.
+    temp_dir = bin_dir / "tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = {
         "responses": [s.to_manifest_entry() for s in cli_scripts],
@@ -175,12 +188,23 @@ def stage_scenario_bin(
 
     # Empty audit so each run starts clean.
     audit_log_path.write_text("", encoding="utf-8")
+    # Wipe any prior counter state from a previous bin/ recycle so sequencing
+    # restarts from zero on every scenario invocation.
+    if counters_path.exists():
+        counters_path.unlink()
 
     return ShimContext(
         bin_dir=bin_dir,
         manifest_path=manifest_path,
         audit_log_path=audit_log_path,
-        extra_env={"POLYPHONY_HARNESS_MANIFEST": str(manifest_path)},
+        counters_path=counters_path,
+        temp_dir=temp_dir,
+        extra_env={
+            "POLYPHONY_HARNESS_MANIFEST": str(manifest_path),
+            "TMP": str(temp_dir),
+            "TEMP": str(temp_dir),
+            "TMPDIR": str(temp_dir),
+        },
     )
 
 
