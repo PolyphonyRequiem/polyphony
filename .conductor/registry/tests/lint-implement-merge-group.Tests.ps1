@@ -216,7 +216,7 @@ agents:
     command: pwsh
     args: ["-Command", "@{ verdict = 'approved'; feedback = 'auto'; issues = @() } | ConvertTo-Json"]
     routes:
-      - to: user_acceptance
+      - to: mg_pr_open
   - name: scope_reviewer
     type: agent
     model: claude-opus-4.7
@@ -232,7 +232,7 @@ agents:
           type: string
     prompt: "Review the MG"
     routes:
-      - to: user_acceptance
+      - to: mg_pr_open
         when: "{{ scope_reviewer.output.verdict == 'approved' }}"
       - to: scope_revise_counter
         when: "{{ scope_reviewer.output.verdict == 'changes_requested' }}"
@@ -266,16 +266,6 @@ agents:
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
       - to: primary_router
-  - name: user_acceptance
-    type: human_gate
-    prompt: "Accept MG?"
-    options:
-      - label: "Accept"
-        value: accepted
-        route: mg_pr_open
-      - label: "Changes"
-        value: changes
-        route: primary_router
   - name: mg_pr_open
     type: script
     command: polyphony
@@ -478,14 +468,6 @@ agents:
             ($output | Out-String) | Should -Match 'missing-gate-option'
         }
 
-        It 'Fails when user_acceptance gate is missing' {
-            $yaml = ($script:ValidYaml) -replace 'name: user_acceptance', 'name: user_review'
-            Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
-            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
-            $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-user-acceptance'
-        }
-
         It 'Fails when scope_closer is missing' {
             $yaml = ($script:ValidYaml) -replace 'name: scope_closer', 'name: mg_closer'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
@@ -554,7 +536,7 @@ agents:
         }
 
         It 'Fails when scope_revise_reset script is missing (AB#3125)' {
-            $yaml = ($script:ValidYaml) -replace '(?ms)  - name: scope_revise_reset\r?\n.*?\r?\n  - name: user_acceptance', '  - name: user_acceptance'
+            $yaml = ($script:ValidYaml) -replace '(?ms)  - name: scope_revise_reset\r?\n.*?\r?\n  - name: mg_pr_open', '  - name: mg_pr_open'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1

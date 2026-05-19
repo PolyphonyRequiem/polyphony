@@ -132,36 +132,46 @@ Describe 'implement-merge-group.yaml — scope_empty_mg_triage deterministic nod
             'origin/main must be fresh before the ancestry check — fetch_for_scope_review only fetches feature + MG')
     }
 
-    It 'scope_auto_approve node exists and routes to user_acceptance_policy_router' {
+    It 'scope_auto_approve node exists and routes to pr_platform_router' {
         $script:AutoApprove | Should -Not -BeNullOrEmpty -Because (
             'scope_auto_approve must exist to emit an approved verdict for auto-approved zero-commit MGs')
         $script:AutoApprove.type | Should -Be 'script'
         $route = $script:AutoApprove.routes | Select-Object -First 1
-        $route.to | Should -Be 'user_acceptance_policy_router' -Because (
-            'auto-approved MGs follow the same acceptance path as LLM-approved MGs')
+        $route.to | Should -Be 'pr_platform_router' -Because (
+            'auto-approved MGs route directly to PR open (AB#3226 — user_acceptance gate removed from MG completion)')
     }
 }
 
-Describe 'implement-merge-group.yaml — user_acceptance handles both scope_reviewer and scope_auto_approve (AB#3166)' {
+Describe 'implement-merge-group.yaml — user_acceptance gate removed from MG completion (AB#3226)' {
+    # The user_acceptance gate previously fired on every MG completion,
+    # bypassed only by `policy.unattended.acceptance_mode=auto`. AB#3226
+    # established that this placement was structurally wrong (wrong layer,
+    # wrong default, wrong trigger). The gate has been removed from this
+    # workflow entirely; a per-item gate at impl-completion-before-review,
+    # conditional on a per-work-item requirement, will land in a follow-up.
 
     BeforeAll {
         $script:WorkflowPath = Join-Path $PSScriptRoot '..' 'workflows' 'implement-merge-group.yaml'
         $script:WorkflowPath | Should -Exist
         $raw = Get-Content -Raw $script:WorkflowPath
         $script:Yaml = ConvertFrom-Yaml $raw
-        $script:UserAcceptance = $script:Yaml.agents | Where-Object { $_.name -eq 'user_acceptance' } | Select-Object -First 1
-        $script:UserAcceptance | Should -Not -BeNullOrEmpty
     }
 
-    It 'user_acceptance prompt renders feedback from scope_auto_approve when scope_reviewer did not run' {
-        $prompt = [string]$script:UserAcceptance.prompt
-        $prompt | Should -Match 'scope_auto_approve' -Because (
-            'the user_acceptance gate must handle feedback from the auto-approve path (AB#3166 Case C bypass)')
+    It 'user_acceptance human gate node does not exist' {
+        $hit = $script:Yaml.agents | Where-Object { $_.name -eq 'user_acceptance' }
+        $hit | Should -BeNullOrEmpty -Because (
+            'AB#3226 removed the user_acceptance gate from MG completion; a per-item replacement gate will live in a different workflow')
     }
 
-    It 'user_acceptance prompt still renders feedback from scope_reviewer when it ran' {
-        $prompt = [string]$script:UserAcceptance.prompt
-        $prompt | Should -Match 'scope_reviewer' -Because (
-            'the user_acceptance gate must still render scope_reviewer feedback on the normal review path')
+    It 'user_acceptance_policy_router script node does not exist' {
+        $hit = $script:Yaml.agents | Where-Object { $_.name -eq 'user_acceptance_policy_router' }
+        $hit | Should -BeNullOrEmpty -Because (
+            'the policy-router scaffolding only existed to bypass user_acceptance and has no remaining consumers')
+    }
+
+    It 'fetch_for_user_acceptance script node does not exist' {
+        $hit = $script:Yaml.agents | Where-Object { $_.name -eq 'fetch_for_user_acceptance' }
+        $hit | Should -BeNullOrEmpty -Because (
+            'fetch_for_user_acceptance only prepared refs for the user_acceptance gate; with the gate gone, the pre-fetch step has no purpose')
     }
 }

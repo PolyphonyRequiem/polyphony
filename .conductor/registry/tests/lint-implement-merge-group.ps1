@@ -225,15 +225,7 @@ foreach ($opt in $requiredGateOptions) {
     }
 }
 
-# ── Check 13: User acceptance gate ───────────────────────────────────────
-if ($content -notmatch 'name:\s*user_acceptance') {
-    $violations += [PSCustomObject]@{
-        Rule   = 'missing-user-acceptance'
-        Detail = "Missing user_acceptance human gate"
-    }
-}
-
-# ── Check 14: Scope closer ───────────────────────────────────────────────
+# ── Check 13: Scope closer ───────────────────────────────────────────────
 if ($content -notmatch 'name:\s*scope_closer') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-scope-closer'
@@ -241,7 +233,7 @@ if ($content -notmatch 'name:\s*scope_closer') {
     }
 }
 
-# ── Check 15: Output schemas on routed agents ────────────────────────────
+# ── Check 14: Output schemas on routed agents ────────────────────────────
 # Per conductor-mechanics M2, any LLM agent whose output is consumed by
 # a route MUST have an `output:` schema. Otherwise the conductor packs
 # the entire response into output.result and the routes silently break.
@@ -264,7 +256,7 @@ foreach ($agentName in $schemaAgents) {
     }
 }
 
-# ── Check 16: max_iterations is high enough for the task loop ────────────
+# ── Check 15: max_iterations is high enough for the task loop ────────────
 # The MG task loop is wide because each task has
 # seven nodes (ensure-impl → coder → reviewer → impl-pr-open → impl-pr-merge
 # → completer → router). Ten tasks ~= 70 iterations baseline, doubled by
@@ -280,7 +272,7 @@ if ($content -match '(?m)^\s*max_iterations:\s*(\d+)') {
     }
 }
 
-# ── Check 17: Route target validation ────────────────────────────────────
+# ── Check 16: Route target validation ────────────────────────────────────
 $agentNames = @()
 foreach ($line in $lines) {
     if ($line -match '^\s*-?\s*name:\s*(\S+)') {
@@ -315,7 +307,7 @@ foreach ($route in $invalidRoutes) {
     }
 }
 
-# ── Check 18: Scope-revise cap structure (AB#3125) ───────────────────────
+# ── Check 17: Scope-revise cap structure (AB#3125) ───────────────────────
 # The scope_reviewer → primary_router revise loop must be capped to
 # prevent infinite loops on structurally-broken MGs (empty branch,
 # zero implementable items). The required nodes mirror the canonical
@@ -378,7 +370,11 @@ if ($counterBlock -and $counterBlock -notmatch 'scope_revise_counter\.output\.ca
     }
 }
 
-# scope_reviewer must route changes_requested through scope_revise_counter
+# scope_reviewer must route changes_requested through scope_revise_counter,
+# either directly OR indirectly via scope_approvals_policy (AB#3181 wiring:
+# scope_approvals_policy is a deterministic 1-hop policy resolver that
+# unconditionally routes to scope_revise_counter, so accepting it as a hop
+# preserves the cap invariant).
 $scopeReviewerBlock = ''
 $inReviewer = $false
 foreach ($line in $lines) {
@@ -388,14 +384,28 @@ foreach ($line in $lines) {
         $scopeReviewerBlock += $line + "`n"
     }
 }
-if ($scopeReviewerBlock -and $scopeReviewerBlock -notmatch 'to:\s*scope_revise_counter') {
+# Determine valid cap hops: direct scope_revise_counter, or indirect via
+# scope_approvals_policy (verified below to itself route to scope_revise_counter).
+$approvalsPolicyBlock = ''
+$inApprovals = $false
+foreach ($line in $lines) {
+    if ($line -match 'name:\s*scope_approvals_policy\s*$') { $inApprovals = $true; continue }
+    if ($inApprovals) {
+        if ($line -match '^\s*-\s*name:') { break }
+        $approvalsPolicyBlock += $line + "`n"
+    }
+}
+$approvalsRoutesToCounter = $approvalsPolicyBlock -match 'to:\s*scope_revise_counter'
+$reviewerHopsToCap = $scopeReviewerBlock -match 'to:\s*scope_revise_counter' -or `
+    ($scopeReviewerBlock -match 'to:\s*scope_approvals_policy' -and $approvalsRoutesToCounter)
+if ($scopeReviewerBlock -and -not $reviewerHopsToCap) {
     $violations += [PSCustomObject]@{
         Rule   = 'scope-reviewer-bypasses-cap'
-        Detail = "scope_reviewer must route to scope_revise_counter (changes_requested + catch-all), not directly to primary_router (AB#3125)"
+        Detail = "scope_reviewer must route to scope_revise_counter (directly, or via scope_approvals_policy which itself routes to scope_revise_counter), not directly to primary_router (AB#3125)"
     }
 }
 
-# ── Check 19: Scope empty-MG triage + auto-approve (AB#3166) ─────────────
+# ── Check 18: Scope empty-MG triage + auto-approve (AB#3166) ─────────────
 # The zero-commit MG direction-asymmetry fix requires:
 #   1. scope_empty_mg_triage script node (deterministic triage)
 #   2. scope_auto_approve script node (deterministic approval for Case C)
