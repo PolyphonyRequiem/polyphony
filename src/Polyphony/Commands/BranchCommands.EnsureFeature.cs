@@ -1,11 +1,24 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Infrastructure.Processes;
 
 namespace Polyphony.Commands;
 
 public sealed partial class BranchCommands
 {
+    /// <summary>
+    /// Matches git's "fatal: '&lt;branch&gt;' is already used by worktree at
+    /// '&lt;path&gt;'" stderr (AB#211). Single-quoted on POSIX; git emits
+    /// the same quoting on Windows. Captures the worktree path so the
+    /// verb can surface it in the success envelope.
+    /// </summary>
+    [GeneratedRegex(
+        @"is already used by worktree at '([^']+)'",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex BranchInOtherWorktreeRegex();
+
     /// <summary>
     /// Idempotently ensure a feature branch exists locally and on the remote.
     /// Creates from <paramref name="baseBranch"/> if absent. The root workflow
@@ -41,16 +54,36 @@ public sealed partial class BranchCommands
             string action;
             bool pushed = false;
             string? createdFrom = null;
+            string? worktreePath = null;
 
             if (localExisted)
             {
-                // Local branch exists — just check it out.
-                await git.CheckoutAsync(branch, ct).ConfigureAwait(false);
-                action = "checked_out";
+                // Local branch exists — try to check it out in the current
+                // worktree. Under the parallel-fleet apex convention the
+                // branch may already be checked out in a sibling worktree;
+                // git refuses with exit 128 + "is already used by worktree
+                // at '...'". That is NOT a failure of this verb's purpose
+                // (the branch DOES exist locally); treat it as a success
+                // and surface the sibling worktree path so the workflow
+                // can route to it (AB#211).
+                try
+                {
+                    await git.CheckoutAsync(branch, ct).ConfigureAwait(false);
+                    action = "checked_out";
+                }
+                catch (ExternalToolException ex)
+                    when (BranchInOtherWorktreeRegex().Match(ex.Stderr) is { Success: true } worktreeMatch)
+                {
+                    worktreePath = worktreeMatch.Groups[1].Value;
+                    action = "exists_in_other_worktree";
+                }
 
                 if (!remoteExisted)
                 {
-                    // Push to remote so downstream steps can branch from it.
+                    // Push to remote so downstream steps can branch from
+                    // it. Push works regardless of which worktree owns
+                    // the checkout — git resolves refs/heads/{branch} by
+                    // ref, not by working tree.
                     await git.PushAsync(branch, remote, ct).ConfigureAwait(false);
                     pushed = true;
                 }
@@ -79,6 +112,7 @@ public sealed partial class BranchCommands
                 RemoteExisted = remoteExisted,
                 Pushed = pushed,
                 CreatedFrom = createdFrom,
+                WorktreePath = worktreePath,
             };
             Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.BranchEnsureFeatureResult));
             return ExitCodes.Success;
