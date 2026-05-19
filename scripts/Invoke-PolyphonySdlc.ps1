@@ -78,6 +78,14 @@
     Run conductor in the foreground (don't Start-Process). Useful for debugging
     the invocation. Default: detached into a new console window.
 
+    Known limitation (#274): when invoked from a nested ``pwsh -NoProfile -File``
+    wrapper (i.e. the launcher's stdin is a redirected file handle rather than
+    an attached TTY), ``conductor run --web`` exits within ~1s because its
+    interactive-gate TTY check fails. The launcher prints a warning and
+    proceeds; if the run dies immediately, invoke the launcher directly from
+    your top-level shell rather than through a nested ``pwsh -File`` wrapper.
+    This is upstream behaviour; tracked in #274.
+
 .PARAMETER DryRun
     Print the resolved command and exit without executing. Calls
     `polyphony worktree init-apex --dry-run` so no worktrees are created.
@@ -1030,6 +1038,22 @@ if (-not (Get-Command conductor -ErrorAction SilentlyContinue)) {
 }
 
 if ($NoDetach) {
+    # #274: under nested pwsh-File invocation the launcher's stdin is a
+    # redirected file handle, not an attached TTY. `conductor run --web`
+    # treats that as "no operator present", refuses to wait for
+    # interactive gates, and exits within ~1s — silently, before the
+    # workflow runs. Detect the redirected-stdin case and warn loudly
+    # so the operator knows why the run died. We don't auto-swap to
+    # `--web-bg`: that defeats the entire purpose of `-NoDetach`
+    # (foreground output for debugging).
+    if ([Console]::IsInputRedirected) {
+        Write-Warning ("[polyphony-sdlc] -NoDetach detected stdin is redirected " +
+            "(likely a nested 'pwsh -NoProfile -File ...' wrapper). conductor " +
+            "may exit immediately because its interactive-gate TTY check fails. " +
+            "If the run dies inside the first second, invoke this launcher " +
+            "directly from your top-level shell. See #274.")
+    }
+
     Push-Location $WorktreeRoot
     try {
         & conductor @conductorArgs
