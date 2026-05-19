@@ -1,4 +1,5 @@
 using Polyphony;
+using Polyphony.Tests.Commands;
 using Shouldly;
 using Xunit;
 using System.Text.Json;
@@ -53,15 +54,27 @@ public sealed class StringBoolArgTests
     [InlineData("trueish")]
     public void Parse_RejectsAnythingElse_EmitsEnvelope(string raw)
     {
-        var sw = new StringWriter();
-        var origOut = Console.Out;
-        Console.SetOut(sw);
+        // Console.Out is process-global; tests across classes can run in
+        // parallel. Serialize against every other Console-redirecting test
+        // via the shared lock — see ConsoleTestLock.cs for the convention.
+        ConsoleTestLock.AsyncLock.Wait();
         bool? parsed;
-        try { parsed = StringBoolArg.Parse("pr merge-impl-pr", "--delete-branch", raw); }
-        finally { Console.SetOut(origOut); }
+        string stdout;
+        try
+        {
+            var sw = new StringWriter();
+            var origOut = Console.Out;
+            Console.SetOut(sw);
+            try { parsed = StringBoolArg.Parse("pr merge-impl-pr", "--delete-branch", raw); }
+            finally { Console.SetOut(origOut); }
+            stdout = sw.ToString().Trim();
+        }
+        finally
+        {
+            ConsoleTestLock.AsyncLock.Release();
+        }
 
         parsed.ShouldBeNull();
-        var stdout = sw.ToString().Trim();
         stdout.ShouldNotBeEmpty();
 
         var envelope = JsonSerializer.Deserialize(
@@ -80,14 +93,24 @@ public sealed class StringBoolArgTests
         // The envelope's `verb` field is consumed by conductor's event log
         // to attribute the failure to a node; the flag in `missing_args`
         // lets downstream remediation route on the specific flag.
-        var sw = new StringWriter();
-        var origOut = Console.Out;
-        Console.SetOut(sw);
-        try { StringBoolArg.Parse("pr poll-status-ado", "--allow-any-approval-vote", "maybe"); }
-        finally { Console.SetOut(origOut); }
+        ConsoleTestLock.AsyncLock.Wait();
+        string stdout;
+        try
+        {
+            var sw = new StringWriter();
+            var origOut = Console.Out;
+            Console.SetOut(sw);
+            try { StringBoolArg.Parse("pr poll-status-ado", "--allow-any-approval-vote", "maybe"); }
+            finally { Console.SetOut(origOut); }
+            stdout = sw.ToString().Trim();
+        }
+        finally
+        {
+            ConsoleTestLock.AsyncLock.Release();
+        }
 
         var envelope = JsonSerializer.Deserialize(
-            sw.ToString().Trim(), PolyphonyJsonContext.Default.RequiredInputErrorResult);
+            stdout, PolyphonyJsonContext.Default.RequiredInputErrorResult);
         envelope!.Verb.ShouldBe("pr poll-status-ado");
         envelope.MissingArgs.ShouldContain("--allow-any-approval-vote");
     }

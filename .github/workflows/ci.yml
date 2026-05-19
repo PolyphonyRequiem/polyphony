@@ -42,6 +42,13 @@ jobs:
         # step (which runs `if: always()`) cannot cascade by skipping the
         # install. Previously this lived after the lint block and a single
         # type-agnostic violation cratered the whole job.
+        #
+        # `if: always()` (not just `success()`) so a failure in dotnet
+        # test (or any earlier step) does NOT silently skip the module
+        # install. Without it, the `if: always()` lint steps below run
+        # without Pester/powershell-yaml present and produce false-positive
+        # "module not found" failures that mask the real upstream error.
+        if: always()
         shell: pwsh
         run: Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
 
@@ -50,6 +57,7 @@ jobs:
         # tests/lint-pwsh-jinja-bareword.ps1. Sequenced before the lint
         # block so the bareword lint's `if: always()` always sees the
         # module — see Install Pester comment above.
+        if: always()
         shell: pwsh
         run: Install-Module -Name powershell-yaml -Force -SkipPublisherCheck -Scope CurrentUser
 
