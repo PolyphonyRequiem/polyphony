@@ -236,7 +236,7 @@ try {
             # be idempotent and resumable on existing in-flight artifacts
             # (e.g. plan-level can resume on an OPEN plan PR and drive it
             # through its review+merge phases, especially under unattended
-            # policy with review_wait_mode=auto). When the fulfilling kinds
+            # policy with review_wait_mode=skip). When the fulfilling kinds
             # are ones a lifecycle workflow CAN drive forward, fall through
             # to classification and re-enter the right lifecycle. Only stay
             # in monitoring when fulfilling kinds are purely external

@@ -31,6 +31,9 @@ schema_version: 1
 #   • root_fallback: use_active_item — never prompt for a missing root id.
 #   • renegotiation: ignore — treat child renegotiation requests as advisory.
 #   • unattended: auto / skip / auto_proceed — bypass the wired Bucket-C gates.
+#                 (review_wait_mode: skip — the previous `auto` magic-comment
+#                 mode was removed in the sentiment-driven PR-review loop;
+#                 see issue #444 for re-enablement via platform vote APIs.)
 #   • concurrency: unchanged from canonical defaults.
 
 approvals:
@@ -76,7 +79,7 @@ renegotiation:
 
 unattended:
   # acceptance_mode: auto / manual
-  # review_wait_mode: wait / skip / auto
+  # review_wait_mode: wait / skip   (`auto` is rejected — see issue #444)
   # cap_mode: auto_proceed / auto_fail / manual
   #
   # Bypass the wired Bucket-C deterministic human gates so the run
@@ -84,11 +87,14 @@ unattended:
   # apex_completion_gate, user_acceptance, pending_review_gate,
   # stuck_review_gate. Additional gates land in PR2 — see AB#3104.
   #
-  # `review_wait_mode: auto` posts the SHA-bound polyphony:approve magic
-  # comment from the PR-author identity so the next poll observes
-  # approval (vs `skip`, which only re-polls and never converges to
-  # approved). GitHub-only at MVP; on ADO it falls back to `skip`
-  # semantics until AB#3104 PR2 wires the ADO equivalent.
+  # `review_wait_mode: skip` keeps polling silently instead of escalating
+  # to a human throttle gate; combined with `acceptance_mode: auto` and
+  # `cap_mode: auto_proceed` this is the closest hands-off configuration
+  # currently available. The previous `auto` value posted a SHA-bound
+  # `polyphony:approve` magic comment to converge the poll loop on its
+  # own, but that path was removed in the sentiment-driven PR-review loop
+  # (PRs #438 / #440) and is now rejected by the loader and the workflow
+  # router. Re-enablement via platform vote APIs is tracked in issue #444.
   acceptance_mode: auto
-  review_wait_mode: auto
+  review_wait_mode: skip
   cap_mode: auto_proceed
