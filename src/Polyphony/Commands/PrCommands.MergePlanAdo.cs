@@ -517,6 +517,14 @@ public sealed partial class PrCommands
                         $"PR #{prNumber} disappeared between poll and complete in {slug}.",
                         isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, lockToken: lockToken,
                         prState: poll.State);
+                case "completion_pending":
+                    return EmitMergePlanAdoError(
+                        rootId, itemId, parentItemId, organization, project, repository, slug, prUrl, prNumber,
+                        "completion_pending",
+                        $"ADO accepted the complete-PR PATCH for PR #{prNumber} but the PR did not transition to status=completed within the poll budget. The merge may still land asynchronously, or the PR may be blocked by a policy. Inspect via `az repos pr show --id {prNumber}` and consider `az repos pr update --id {prNumber} --status completed` to land it manually. Detail: {complete.ErrorBody}",
+                        isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, lockToken: lockToken,
+                        prState: poll.State);
+
                 case "not_mergeable":
                 default:
                     return EmitMergePlanAdoError(

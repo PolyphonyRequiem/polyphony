@@ -374,6 +374,32 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
     }
 
     [Fact]
+    public async Task MergeImplAdo_CompletionPending_RoutesCompletionPendingError()
+    {
+        // Regression for the AdoClient false-positive-merge bug: when ADO
+        // accepted the PATCH but the PR didn't actually transition to
+        // status=completed, the client surfaces "completion_pending" and
+        // the verb must route to a distinct error_code (not silently
+        // pretending the merge landed).
+        var (cmd, _, ado) = CreateCommand();
+        ado.ListPrs = new List<AdoPullRequest>
+        {
+            MakePr(id: 88, status: "active",
+                sourceRef: "refs/heads/impl/100-200",
+                targetRef: "refs/heads/mg/100_core"),
+        };
+        ado.PollData = MakePoll(state: "OPEN", headOid: "head-sha-1");
+        ado.CompleteResult = new AdoCompletePullRequestResult(
+            HttpStatus: 200, Status: "completion_pending", MergeCommitSha: null,
+            ErrorBody: "PR #88 did not transition to status=completed within the poll budget.");
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergeImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core"));
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("completion_pending");
+        result.Merged.ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task MergeImplAdo_PrInClosedState_RoutesPrStateInvalid()
     {
         var (cmd, _, ado) = CreateCommand();

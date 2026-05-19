@@ -515,6 +515,21 @@ public sealed class PrCommandsMergeFeatureAdoTests : CommandTestBase
     }
 
     [Fact]
+    public async Task MergeFeatureAdo_CompletionPending_RoutesCompletionPendingError()
+    {
+        var (cmd, _, ado) = CreateCommand();
+        SeedActivePr(ado);
+        ado.CompleteResult = new AdoCompletePullRequestResult(
+            Status: "completion_pending", MergeCommitSha: null, HttpStatus: 200,
+            ErrorBody: "PR did not transition to status=completed within the poll budget.");
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergeFeatureAdo(Org, Project, Repo, rootId: 100));
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("completion_pending");
+    }
+
+    [Fact]
     public async Task MergeFeatureAdo_CompleteNotFound_RoutesPrNotFound()
     {
         var (cmd, _, ado) = CreateCommand();

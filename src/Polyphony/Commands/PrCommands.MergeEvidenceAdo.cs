@@ -234,6 +234,13 @@ public sealed partial class PrCommands
                         prUrl: prUrl);
                     return ExitCodes.Success;
 
+                case "completion_pending":
+                    EmitMergeEvidenceAdoError(organization, project, repository, slug, prNumber,
+                        "completion_pending",
+                        $"ADO accepted the complete-PR PATCH for PR #{prNumber} but the PR did not transition to status=completed within the poll budget. The merge may still land asynchronously, or the PR may be blocked by a policy. Inspect via `az repos pr show --id {prNumber}` and consider `az repos pr update --id {prNumber} --status completed` to land it manually. Detail: {complete.ErrorBody}",
+                        prUrl: prUrl);
+                    return ExitCodes.Success;
+
                 case "not_mergeable":
                 default:
                     EmitMergeEvidenceAdoError(organization, project, repository, slug, prNumber,

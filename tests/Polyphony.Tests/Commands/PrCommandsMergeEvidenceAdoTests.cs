@@ -208,6 +208,23 @@ public sealed class PrCommandsMergeEvidenceAdoTests : CommandTestBase
     }
 
     [Fact]
+    public async Task MergeEvidenceAdo_CompletionPending_RoutesCompletionPendingError()
+    {
+        var (cmd, _, ado) = CreateCommand();
+        ado.GetPr = MakePr("active");
+        ado.PollData = MakePoll("OPEN");
+        ado.CompleteResult = new AdoCompletePullRequestResult(
+            "completion_pending", null, 200,
+            "PR did not transition to status=completed within the poll budget.");
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergeEvidenceAdo(Org, Project, Repo, prNumber: PrNumber));
+        var result = Parse(output);
+        result.ErrorCode.ShouldBe("completion_pending");
+        result.Merged.ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task MergeEvidenceAdo_PollUnauthorized_RoutesNoPat()
     {
         var (cmd, _, ado) = CreateCommand();

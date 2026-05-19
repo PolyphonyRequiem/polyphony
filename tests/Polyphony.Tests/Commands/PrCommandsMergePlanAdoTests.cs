@@ -589,6 +589,25 @@ public sealed class PrCommandsMergePlanAdoTests : CommandTestBase, IDisposable
     }
 
     [Fact]
+    public async Task CompletePr_CompletionPending_RoutesCompletionPendingError()
+    {
+        var (cmd, runner, ado) = CreateCommand();
+        StubEnvironmentDefaults(runner);
+        StubStatusClean(runner);
+        StubFetch(runner, "feature/100");
+        SeedManifest(100);
+        ado.PollData = MakePoll(42, "OPEN", headRef: "plan/100", baseRef: "feature/100");
+        ado.CompleteResult = new AdoCompletePullRequestResult(
+            Status: "completion_pending", MergeCommitSha: null, HttpStatus: 200,
+            ErrorBody: "PR did not transition to status=completed within the poll budget.");
+
+        var (_, output) = await CaptureConsoleAsync(
+            () => cmd.MergePlanAdo(Org, Project, Repo, rootId: 100, itemId: 100, prNumber: 42,
+                manifestPath: _manifestPath));
+        Parse(output).ErrorCode.ShouldBe("completion_pending");
+    }
+
+    [Fact]
     public async Task CompletePr_NotFound_RoutesPrNotFound()
     {
         var (cmd, runner, ado) = CreateCommand();
