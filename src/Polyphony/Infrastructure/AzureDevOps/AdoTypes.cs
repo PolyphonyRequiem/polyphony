@@ -228,8 +228,11 @@ public sealed class AdoCompletionOptions
 /// (any other non-success status).
 /// </param>
 /// <param name="MergeCommitSha">
-/// SHA of the merge commit ADO recorded. Populated only when
-/// <see cref="Status"/> is <c>"completed"</c>; null otherwise.
+/// SHA of the landed merge commit. Populated only when
+/// <see cref="Status"/> is <c>"completed"</c>; null otherwise (including
+/// <c>"completion_pending"</c> — the merge may or may not eventually land
+/// asynchronously, but we can't report a SHA we haven't verified). Never
+/// populated with a merge-preview SHA from an active PR.
 /// </param>
 /// <param name="HttpStatus">
 /// Raw HTTP status returned by ADO. Populated for non-success outcomes so

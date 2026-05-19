@@ -283,16 +283,13 @@ public sealed class AdoClientCompletePullRequestTests
     }
 
     [Fact]
-    public async Task CompletePullRequestAsync_SuccessWithoutMergeSha_ReturnsCompletedWithNullMergeSha()
+    public async Task CompletePullRequestAsync_SuccessWithoutMergeSha_ReturnsCompletionPending()
     {
         // Defensive — ADO is documented to return lastMergeCommit on a
-        // successful complete, but the verb's "missing_merge_commit" error
-        // code exists for the case where the wire shape disagrees. The
-        // client surfaces null and lets the verb decide.
-        //
-        // NoRetry policy has CompletionMergePollAttempts=0, so the
-        // post-PATCH poll loop introduced in AB#3227 is disabled here —
-        // this test pins the pre-poll wire-shape contract.
+        // successful complete, but if the wire shape disagrees we must NOT
+        // declare the merge landed without a SHA. With NoRetry policy the
+        // poll loop is disabled (CompletionMergePollAttempts=0), so the
+        // verb falls through to completion_pending immediately.
         var bodyMissingMerge = $$"""
             {
               "pullRequestId": {{PrId}},
@@ -307,7 +304,7 @@ public sealed class AdoClientCompletePullRequestTests
 
         var result = await client.CompletePullRequestAsync(Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
-        result.Status.ShouldBe("completed");
+        result.Status.ShouldBe("completion_pending");
         result.MergeCommitSha.ShouldBeNull();
         handler.RequestCount.ShouldBe(1);
     }
@@ -362,11 +359,12 @@ public sealed class AdoClientCompletePullRequestTests
     }
 
     [Fact]
-    public async Task CompletePullRequestAsync_PollExhausts_ReturnsNullMergeSha()
+    public async Task CompletePullRequestAsync_PollExhausts_ReturnsCompletionPending()
     {
-        // Pathological case: ADO never populates lastMergeCommit. After the
-        // budget exhausts, the client surfaces null and the verb layer's
-        // missing_merge_commit error path fires legitimately.
+        // Pathological case: ADO never confirms completion. After the
+        // budget exhausts, the client surfaces completion_pending so the
+        // verb-layer routes the operator to manual recovery rather than
+        // pretending the merge landed.
         const int pollAttempts = 3;
         var responses = new (HttpStatusCode, string)[1 + pollAttempts];
         responses[0] = (HttpStatusCode.OK, BodyMissingMerge());
@@ -380,17 +378,20 @@ public sealed class AdoClientCompletePullRequestTests
         var result = await client.CompletePullRequestAsync(
             Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
-        result.Status.ShouldBe("completed");
+        result.Status.ShouldBe("completion_pending");
         result.MergeCommitSha.ShouldBeNull();
+        result.ErrorBody.ShouldNotBeNull();
+        result.ErrorBody!.ShouldContain($"PR #{PrId}");
         handler.RequestCount.ShouldBe(1 + pollAttempts); // PATCH + N GETs
     }
 
     [Fact]
-    public async Task CompletePullRequestAsync_PollGet404_BailsImmediatelyWithNull()
+    public async Task CompletePullRequestAsync_PollGet404_ReturnsCompletionPending()
     {
         // If the PR vanishes between the PATCH and the poll (operator
         // abandoned it, race with deletion, etc.), don't keep polling a
-        // ghost. Surface null and let the verb layer route accordingly.
+        // ghost. We can't confirm the merge landed — surface completion
+        // pending and let the verb layer route accordingly.
         var handler = StubHandler.ReturnsInSequence(
             (HttpStatusCode.OK, BodyMissingMerge()),    // PATCH
             (HttpStatusCode.NotFound, "{\"message\":\"gone\"}"));  // First poll GET
@@ -399,7 +400,7 @@ public sealed class AdoClientCompletePullRequestTests
         var result = await client.CompletePullRequestAsync(
             Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
 
-        result.Status.ShouldBe("completed");
+        result.Status.ShouldBe("completion_pending");
         result.MergeCommitSha.ShouldBeNull();
         handler.RequestCount.ShouldBe(2); // PATCH + 1 poll (no further polls after 404)
     }
@@ -444,6 +445,97 @@ public sealed class AdoClientCompletePullRequestTests
         await Should.ThrowAsync<OperationCanceledException>(
             () => client.CompletePullRequestAsync(
                 Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false, cts.Token));
+    }
+
+    // ─── apex-62286666: don't trust preview-SHA on an active PR ──────────
+
+    /// <summary>
+    /// PR detail body where ADO has reported a merge-preview SHA in
+    /// <c>lastMergeCommit.commitId</c> but the PR's <c>status</c> is still
+    /// <c>"active"</c> (i.e. the merge has NOT landed — ADO has only
+    /// previewed what it would land if completion ran). The bug we're
+    /// guarding against: prior implementations interpreted populated
+    /// <c>lastMergeCommit</c> as "merge landed" and returned the preview
+    /// SHA, which (a) never appears on origin and (b) routes downstream
+    /// coverage checks to a squash_coverage_mismatch_gate false-positive.
+    /// </summary>
+    private static string BodyActiveWithPreviewSha(string previewSha = "preview1234567890preview1234567890previe") => $$"""
+        {
+          "pullRequestId": {{PrId}},
+          "status": "active",
+          "mergeStatus": "succeeded",
+          "sourceRefName": "refs/heads/feature/x",
+          "targetRefName": "refs/heads/main",
+          "lastMergeSourceCommit": { "commitId": "{{HeadSha}}" },
+          "lastMergeCommit": { "commitId": "{{previewSha}}" }
+        }
+        """;
+
+    [Fact]
+    public async Task CompletePullRequestAsync_PatchReturnsActiveWithPreviewSha_DoesNotReportCompleted()
+    {
+        // Regression for the apex-62286666 dogfood incident: ADO returned
+        // 200 OK to the PATCH with status="active" and a populated
+        // lastMergeCommit (preview SHA). The verb must NOT report
+        // Status="completed" with that SHA — it would be a SHA that
+        // never lands on origin. With NoRetry policy the poll loop is
+        // disabled, so the verb falls through to completion_pending.
+        var handler = StubHandler.Returns(HttpStatusCode.OK, BodyActiveWithPreviewSha());
+        var client = NewClient(handler);
+
+        var result = await client.CompletePullRequestAsync(
+            Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
+
+        result.Status.ShouldBe("completion_pending");
+        result.MergeCommitSha.ShouldBeNull();
+        result.ErrorBody.ShouldNotBeNull();
+        result.ErrorBody!.ShouldContain($"PR #{PrId}");
+        handler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task CompletePullRequestAsync_PatchActiveThenPollCompletes_ReturnsCompletedWithLandedSha()
+    {
+        // The typical async-completion case: PATCH returns status="active"
+        // with a preview SHA, then the next poll sees status="completed"
+        // with the actual landed SHA. The verb must return the LANDED SHA,
+        // not the preview SHA from the PATCH response.
+        const string landedSha = "landed12345678901234567890landed12345678";
+        var handler = StubHandler.ReturnsInSequence(
+            (HttpStatusCode.OK, BodyActiveWithPreviewSha()),               // PATCH
+            (HttpStatusCode.OK, SuccessBody(mergeSha: landedSha)));         // First poll GET
+        var client = NewClient(handler, policy: PollPolicyZeroDelay());
+
+        var result = await client.CompletePullRequestAsync(
+            Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
+
+        result.Status.ShouldBe("completed");
+        result.MergeCommitSha.ShouldBe(landedSha);
+        handler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task CompletePullRequestAsync_PatchActiveAndPollStaysActive_ReturnsCompletionPending()
+    {
+        // The bug-class case: ADO accepted the PATCH (200 OK) but the PR
+        // remains active for the entire poll budget — most likely a policy
+        // block ADO is enforcing silently, or a queue stall. The verb must
+        // surface completion_pending rather than reporting a fake merge.
+        const int pollAttempts = 3;
+        var responses = new (HttpStatusCode, string)[1 + pollAttempts];
+        for (int i = 0; i < responses.Length; i++)
+        {
+            responses[i] = (HttpStatusCode.OK, BodyActiveWithPreviewSha());
+        }
+        var handler = StubHandler.ReturnsInSequence(responses);
+        var client = NewClient(handler, policy: PollPolicyZeroDelay(pollAttempts: pollAttempts));
+
+        var result = await client.CompletePullRequestAsync(
+            Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false);
+
+        result.Status.ShouldBe("completion_pending");
+        result.MergeCommitSha.ShouldBeNull();
+        handler.RequestCount.ShouldBe(1 + pollAttempts);
     }
 
     // ─── Argument validation ─────────────────────────────────────────────

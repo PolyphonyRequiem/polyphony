@@ -692,38 +692,168 @@ public sealed class AdoClient : IAdoClient
         await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         var detail = await JsonSerializer.DeserializeAsync(
             stream, PolyphonyJsonContext.Default.AdoPullRequestDetailRaw, ct).ConfigureAwait(false);
-        var mergeCommit = detail?.LastMergeCommit?.CommitId;
 
-        // ADO's complete-PR PATCH is async on the server: it returns 200 OK
-        // as soon as the merge request is accepted, but the actual ref
-        // update runs on the CompletionQueueWorker and lastMergeCommit is
-        // routinely empty in the PATCH response body. Poll the PR detail
-        // endpoint with bounded exponential backoff until the SHA appears
-        // (typical real-world latency is sub-second). See AB#3227 — the
-        // verb-layer "missing_merge_commit" error is now reserved for the
-        // truly-degenerate case where the poll budget exhausts.
-        if (string.IsNullOrEmpty(mergeCommit) && _policy.CompletionMergePollAttempts > 0)
+        // The PATCH may return 200 OK long before ADO actually lands the
+        // merge: completion is asynchronous on the server side. Two fields
+        // matter for declaring success:
+        //
+        //   * detail.Status == "completed" — authoritative "the PR has
+        //     been retired into the target branch" signal. While the PR is
+        //     still being worked on (or silently blocked by policy) this
+        //     stays "active".
+        //   * detail.LastMergeCommit.CommitId — the landed merge commit's
+        //     SHA. WARNING: while the PR is active, ADO routinely populates
+        //     this with the *preview* merge SHA (what the merge would be if
+        //     completion ran right now), NOT the landed commit. So a
+        //     populated lastMergeCommit on an active PR is meaningless and
+        //     must NOT be reported as "completed". See the apex-62286666
+        //     dogfood incident.
+        //
+        // Only return Status="completed" when BOTH fields agree the merge
+        // landed. Otherwise poll until they do (typical real-world case
+        // converges in well under a second) or surface "completion_pending"
+        // so the verb layer can route the operator to manual recovery
+        // (e.g. `az repos pr update --status completed`).
+        if (IsConfirmedCompletion(detail, out var confirmedSha))
         {
-            mergeCommit = await PollPullRequestForMergeCommitShaAsync(
+            return new AdoCompletePullRequestResult(
+                Status: "completed",
+                MergeCommitSha: confirmedSha,
+                HttpStatus: (int)response.StatusCode,
+                ErrorBody: null);
+        }
+
+        var pollReason = CompletionPollReason.PollingDisabled;
+        if (_policy.CompletionMergePollAttempts > 0)
+        {
+            var (polledSha, reason) = await PollPullRequestForCompletionAsync(
                 organization, project, repository, pullRequestId, pat, ct).ConfigureAwait(false);
+            if (polledSha is { Length: > 0 })
+            {
+                return new AdoCompletePullRequestResult(
+                    Status: "completed",
+                    MergeCommitSha: polledSha,
+                    HttpStatus: (int)response.StatusCode,
+                    ErrorBody: null);
+            }
+            pollReason = reason;
         }
 
         return new AdoCompletePullRequestResult(
-            Status: "completed",
-            MergeCommitSha: mergeCommit,
+            Status: "completion_pending",
+            MergeCommitSha: null,
             HttpStatus: (int)response.StatusCode,
-            ErrorBody: null);
+            ErrorBody: BuildCompletionPendingErrorBody(pullRequestId, (int)response.StatusCode, pollReason));
     }
 
     /// <summary>
-    /// Bounded poll loop for the post-PATCH merge-commit SHA. Returns the
-    /// populated SHA on the first GET that carries it, or <c>null</c> after
-    /// the configured budget exhausts. The 4xx/5xx behavior matches the
-    /// outer PATCH: 404 is structured (null), 401/403 propagate as
+    /// Why the post-PATCH confirmation poll did not yield a landed merge
+    /// SHA. Drives the operator-facing message attached to
+    /// <c>completion_pending</c>; routing is identical for all three.
+    /// </summary>
+    private enum CompletionPollReason
+    {
+        /// <summary>
+        /// Poll budget was zero (typically a unit-test seam) so no GETs
+        /// were issued; we never proved the PR did or did not complete.
+        /// </summary>
+        PollingDisabled,
+
+        /// <summary>
+        /// Poll ran to completion without ever seeing
+        /// <c>status == "completed"</c> + populated
+        /// <c>lastMergeCommit.commitId</c>. The PR likely remains active
+        /// (server-side queue, branch policy, etc.).
+        /// </summary>
+        Exhausted,
+
+        /// <summary>
+        /// A poll GET returned HTTP 404. The PR vanished between the
+        /// PATCH and the GET — possibly deleted, moved, or a permissions
+        /// change. We cannot prove whether the merge landed first.
+        /// </summary>
+        NotFoundDuringPoll,
+    }
+
+    /// <summary>
+    /// Produces the <c>completion_pending</c> ErrorBody text. The shared
+    /// preamble + recovery ladder is identical across reasons; only the
+    /// one-line diagnostic at the top varies. The recovery ladder is
+    /// deliberately ordered safest-first:
+    /// <list type="number">
+    ///   <item>Inspect the PR.</item>
+    ///   <item>If it has landed, re-enter the polyphony workflow (it will
+    ///         re-confirm and pick up the real SHA).</item>
+    ///   <item>If still active, re-run the same polyphony verb (preserves
+    ///         merge strategy, delete-source-branch, stale-head guard).</item>
+    ///   <item>Only as a last resort, <c>az repos pr update --status
+    ///         completed</c> — and only after verifying source-branch tip,
+    ///         target branch, policies, and merge strategy by hand.</item>
+    /// </list>
+    /// </summary>
+    private static string BuildCompletionPendingErrorBody(int pullRequestId, int httpStatus, CompletionPollReason reason)
+    {
+        var diagnostic = reason switch
+        {
+            CompletionPollReason.PollingDisabled =>
+                $"ADO accepted the PATCH (HTTP {httpStatus}) for PR #{pullRequestId} but completion polling is disabled, so the landed merge SHA could not be confirmed.",
+            CompletionPollReason.Exhausted =>
+                $"ADO accepted the PATCH (HTTP {httpStatus}) but PR #{pullRequestId} did not transition to status=completed within the poll budget. It likely remains active (branch policy, server-side queue, or a silent block).",
+            CompletionPollReason.NotFoundDuringPoll =>
+                $"ADO accepted the PATCH (HTTP {httpStatus}) for PR #{pullRequestId} but the PR returned HTTP 404 during confirmation polling — possibly deleted, moved, or a permissions change. We cannot prove whether the merge landed.",
+            _ => $"ADO accepted the PATCH (HTTP {httpStatus}) but completion of PR #{pullRequestId} could not be confirmed.",
+        };
+
+        return $"{diagnostic} Recovery: " +
+            $"(1) inspect with `az repos pr show --id {pullRequestId}`; " +
+            $"(2) if it has since completed, re-enter the polyphony workflow so it records the real merge SHA; " +
+            $"(3) if it is still active, re-run the same `polyphony pr merge-*-ado` verb (preserves merge strategy, delete-source-branch, and stale-head guard); " +
+            $"(4) only as a last resort, manually land it via `az repos pr update --id {pullRequestId} --status completed` AFTER verifying the source-branch tip, target branch, branch policies, and intended merge strategy by hand — this bypasses the polyphony safeguards.";
+    }
+
+    /// <summary>
+    /// Returns true when ADO's PR detail confirms the merge has landed:
+    /// <c>status == "completed"</c> AND <c>lastMergeCommit.commitId</c>
+    /// populated. Anything else (active with preview SHA, completed with
+    /// transiently-empty SHA) means we don't yet know the landed merge
+    /// commit — the caller must poll or return completion_pending.
+    /// </summary>
+    private static bool IsConfirmedCompletion(AdoPullRequestDetailRaw? detail, out string? sha)
+    {
+        sha = null;
+        if (detail is null) return false;
+        if (!string.Equals(detail.Status, "completed", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        var commit = detail.LastMergeCommit?.CommitId;
+        if (string.IsNullOrEmpty(commit))
+        {
+            return false;
+        }
+        sha = commit;
+        return true;
+    }
+
+    /// <summary>
+    /// Bounded poll loop for post-PATCH completion confirmation. Returns
+    /// the landed merge SHA (with <see cref="CompletionPollReason"/>
+    /// ignored by the caller) once the PR's <c>status</c> flips to
+    /// <c>"completed"</c> AND <c>lastMergeCommit.commitId</c> is populated.
+    /// Returns <c>(null, Exhausted)</c> after the configured budget exhausts,
+    /// or <c>(null, NotFoundDuringPoll)</c> if a poll GET sees HTTP 404
+    /// (the PR vanished between the PATCH and the GET). Both null outcomes
+    /// route to <c>completion_pending</c> at the verb layer; the reason
+    /// distinction is purely diagnostic, surfaced in the ErrorBody message.
+    ///
+    /// <para>
+    /// The 4xx/5xx behavior on the GET matches the outer PATCH: 404 short-
+    /// circuits, 401/403 propagate as
     /// <see cref="HttpRequestException"/>, timeouts propagate as
     /// <see cref="TimeoutException"/>. Cancellation propagates immediately.
+    /// </para>
     /// </summary>
-    private async Task<string?> PollPullRequestForMergeCommitShaAsync(
+    private async Task<(string? Sha, CompletionPollReason Reason)> PollPullRequestForCompletionAsync(
         string organization,
         string project,
         string repository,
@@ -757,25 +887,24 @@ public sealed class AdoClient : IAdoClient
 
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                // The PR vanished between the PATCH and this poll. Treat as
-                // "we don't know" — the caller will surface the empty SHA
-                // and the verb layer will route accordingly. Don't keep
-                // polling a PR that no longer exists.
-                return null;
+                // The PR vanished between the PATCH and this poll. We can't
+                // confirm whether the merge landed — surface as completion
+                // pending and let the verb layer route the operator to
+                // manual inspection. Don't keep polling a ghost.
+                return (null, CompletionPollReason.NotFoundDuringPoll);
             }
             await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
 
             await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             var detail = await JsonSerializer.DeserializeAsync(
                 stream, PolyphonyJsonContext.Default.AdoPullRequestDetailRaw, ct).ConfigureAwait(false);
-            var sha = detail?.LastMergeCommit?.CommitId;
-            if (!string.IsNullOrEmpty(sha))
+            if (IsConfirmedCompletion(detail, out var sha))
             {
-                return sha;
+                return (sha, CompletionPollReason.Exhausted);
             }
         }
 
-        return null;
+        return (null, CompletionPollReason.Exhausted);
     }
 
     /// <inheritdoc />

@@ -265,9 +265,24 @@ public interface IAdoClient
     /// </para>
     ///
     /// <para>
+    /// <b>Completion confirmation.</b> ADO's PATCH is asynchronous on the
+    /// server: 200 OK means "merge request accepted", NOT "merge landed".
+    /// The implementation confirms completion by checking that the PR's
+    /// <c>status</c> has flipped to <c>"completed"</c> AND
+    /// <c>lastMergeCommit.commitId</c> is populated. While the PR is
+    /// active, ADO routinely populates <c>lastMergeCommit</c> with the
+    /// preview merge SHA (what the merge would be if completion ran right
+    /// now), so that field alone is NOT proof of completion. If the PR
+    /// remains active for the full poll budget the verb returns
+    /// <c>"completion_pending"</c> so the caller can route the operator to
+    /// manual recovery rather than report a fake merge SHA.
+    /// </para>
+    ///
+    /// <para>
     /// Failure shape, encoded into <see cref="AdoCompletePullRequestResult.Status"/>:
     /// <list type="bullet">
-    ///   <item><c>"completed"</c> — HTTP 200; <c>MergeCommitSha</c> populated from the response's <c>lastMergeCommit.commitId</c>.</item>
+    ///   <item><c>"completed"</c> — HTTP 200 AND the PR detail confirms <c>status == "completed"</c> AND <c>lastMergeCommit.commitId</c> populated; <c>MergeCommitSha</c> carries the landed commit.</item>
+    ///   <item><c>"completion_pending"</c> — HTTP 200 to the PATCH, but the PR did not transition to <c>status == "completed"</c> within the poll budget (or vanished mid-poll). The merge MAY still land asynchronously; treat as a failure for routing purposes and direct the operator to inspect the PR (e.g. <c>az repos pr show --id N</c>) and optionally complete it manually.</item>
     ///   <item><c>"stale_head"</c> — HTTP 409 (source branch advanced past <paramref name="lastMergeSourceCommitSha"/>).</item>
     ///   <item><c>"not_found"</c> — HTTP 404 (PR or repo missing).</item>
     ///   <item><c>"not_mergeable"</c> — HTTP 400 (ADO refused for a non-stale reason — policy block, conflicts, …).</item>
