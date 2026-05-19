@@ -1,0 +1,152 @@
+# AB#3239 — plan-level sentiment-loop abort path (closed-unmerged).
+#
+# Analog of `github_pr_closed_unmerged_emits_merged_false` for the
+# recursive planning workflow. state_detector classifies the plan PR as
+# `awaiting_review` so the workflow enters the sentiment-loop seam
+# (pr_poll_platform_router → poll_status). poll_status then reports
+# `route=abort_unmerged` — the operator closed the plan PR without
+# merging while we were polling. The workflow MUST surface the
+# closed_unmerged_gate so the run halts instead of looping into the
+# analyzer / fixer cycle.
+#
+# Path covered:
+#   depth_guard → guidance_loader → root_resolver → type_loader
+#   → ancestor_chain → state_detector (awaiting_review)
+#   → pr_poll_platform_router (platform=github)
+#   → poll_status (route=abort_unmerged)
+#   → closed_unmerged_gate (auto-resolved to "Acknowledge" → $end)
+#
+# Single-pass abort, no sequencing. Establishes the first path-coverage
+# scenario for plan-level.yaml. Follow-up scenarios for the analyzer →
+# fixer → merge loop, stale-generation re-architect, and complete-path
+# child recursion will land separately.
+
+workflow: .conductor/registry/workflows/plan-level.yaml
+
+inputs:
+  work_item_id: 3239001
+  platform: github
+  depth: 0
+  max_depth: 6
+
+cli_scripts:
+  # depth_guard — allowed=true so we proceed past the depth check.
+  - command: polyphony
+    args: [plan, depth-guard]
+    stdout: |
+      {
+        "depth": 0,
+        "max_depth": 6,
+        "allowed": true
+      }
+    exit_code: 0
+
+  # guidance_loader — PlanLoadAgentGuidanceResult. Empty strings keep
+  # the architect/reviewer prompt guards quiet under StrictUndefined.
+  # (Architect doesn't run on this path, but the loader still does.)
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {
+        "type": "deliverable",
+        "architect": {"role": "", "type_refinement": ""},
+        "reviewer":  {"role": "", "type_refinement": ""},
+        "coder":     {"role": "", "type_refinement": ""},
+        "agents": {}
+      }
+    exit_code: 0
+
+  # root_resolver — fallback_required=false, no error, resolved id set.
+  - command: polyphony
+    args: [root, resolve]
+    stdout: |
+      {
+        "resolved_root_id": 3239000,
+        "fallback_required": false
+      }
+    exit_code: 0
+
+  # type_loader — non-empty type field gates progression to ancestor_chain.
+  - command: polyphony
+    args: [plan, load-type]
+    stdout: |
+      {
+        "type": "deliverable",
+        "definition": "",
+        "template": "",
+        "decomposition_guidance": ""
+      }
+    exit_code: 0
+
+  # ancestor_chain — root plan, no error. parent_item_id stays 0.
+  - command: polyphony
+    args: [plan, derive-ancestor-chain]
+    stdout: |
+      {
+        "root_id": 3239000,
+        "item_id": 3239001,
+        "parent_item_id": 0,
+        "ancestor_ids": [],
+        "is_root_plan": true
+      }
+    exit_code: 0
+
+  # state_detector — awaiting_review with a populated pr_url so
+  # poll_status's --pr-url interpolation has a value to forward.
+  - command: polyphony
+    args: [plan, detect-state]
+    stdout: |
+      {
+        "root_id": 3239000,
+        "item_id": 3239001,
+        "plan_branch": "plan/3239000-3239001",
+        "state": "awaiting_review",
+        "branch_exists_on_origin": true,
+        "pr_number": 3239,
+        "pr_url": "https://github.com/polyphony/polyphony/pull/3239",
+        "pr_state": "OPEN",
+        "stale_ancestors": [],
+        "parent_change_pending_children": []
+      }
+    exit_code: 0
+
+  # poll_status — abort_unmerged. Single-shot; no sequencing.
+  - command: polyphony
+    args: [pr, poll-status]
+    stdout: |
+      {
+        "route": "abort_unmerged",
+        "route_reason": "operator closed the plan PR without merging",
+        "state": "CLOSED",
+        "pr_url": "https://github.com/polyphony/polyphony/pull/3239",
+        "pr_number": 3239,
+        "author_identity": "polyphony-bot",
+        "head_sha": "planSHA",
+        "comments": [],
+        "threads": [],
+        "reviewers": []
+      }
+    exit_code: 0
+
+expected_trace:
+  agents_executed:
+    - depth_guard
+    - guidance_loader
+    - root_resolver
+    - type_loader
+    - ancestor_chain
+    - state_detector
+    - pr_poll_platform_router
+    - poll_status
+  scripts_executed:
+    - depth_guard
+    - guidance_loader
+    - root_resolver
+    - type_loader
+    - ancestor_chain
+    - state_detector
+    - pr_poll_platform_router
+    - poll_status
+  gates_presented:
+    - closed_unmerged_gate
+  reached_terminal: true
