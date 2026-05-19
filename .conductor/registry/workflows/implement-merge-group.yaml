@@ -79,7 +79,7 @@ workflow:
     MG branch, iterates tasks through coder → reviewer with per-task
     branches and PRs, runs scope-level review, and opens + merges the
     MG PR via the merge-commit-only path required by the ADR.
-  version: "2.4.8"
+  version: "2.4.9"
   entry_point: branch_ensure_mg
   metadata:
     min_polyphony_version: "2.4.8"
@@ -1745,6 +1745,30 @@ agents:
          - Tasks work together cohesively
          - No integration issues between tasks
          - Test coverage is adequate at the integration level
+
+         **Anti-hallucination rule (HARD requirement).** For
+         documentation deliverables especially, do NOT describe
+         specific content (diagrams, sections, examples, code blocks,
+         tables) as being present in a file unless you have *directly
+         read the file* and the content is literally there. Git
+         line/insertion stats are NOT evidence of content. If the
+         parent's acceptance criteria call out a specific artifact
+         (e.g. "must include a mermaid diagram", "needs a sequence
+         diagram", "include an example for X"), `grep` or read the
+         file to verify:
+         - Mermaid blocks: `grep -c '^```mermaid' <file>` must return
+           ≥ 1 before you claim "diagram present".
+         - Code examples in a specific language: `grep -c '^```<lang>'
+           <file>` must return ≥ N before you claim N examples.
+         - Named sections: `grep -nE '^#{1,6}\s+<section name>' <file>`
+           must return a hit before you claim the section exists.
+
+         Hallucinating presence of acceptance-criteria artifacts is a
+         hard FAIL — return `verdict: "changes_requested"` with an
+         `issues` entry like `missing_required_artifact: <what was
+         missing> (parent AC: "<quoted AC line>")`. The user_acceptance
+         gate downstream cannot un-do a false positive: once approved,
+         the MG ships.
       6. Return your verdict.
 
          The `feedback` field will be rendered to the human in the
