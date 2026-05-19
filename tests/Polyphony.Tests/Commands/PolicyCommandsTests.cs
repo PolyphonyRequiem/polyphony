@@ -957,7 +957,6 @@ public sealed class PolicyCommandsTests : CommandTestBase
     [InlineData("auto", "skip", "auto_proceed")]
     [InlineData("auto", "wait", "auto_fail")]
     [InlineData("manual", "skip", "auto_proceed")]
-    [InlineData("auto", "auto", "auto_proceed")]
     public void Load_FileWithUnattended_PreservesAllModes(
         string acceptance, string reviewWait, string cap)
     {
@@ -979,6 +978,36 @@ public sealed class PolicyCommandsTests : CommandTestBase
         result.Unattended.AcceptanceMode.ShouldBe(acceptance);
         result.Unattended.ReviewWaitMode.ShouldBe(reviewWait);
         result.Unattended.CapMode.ShouldBe(cap);
+    }
+
+    [Fact]
+    public void Load_ReviewWaitModeAuto_ReturnsConfigErrorReferencingIssue444()
+    {
+        // Issue #444: `review_wait_mode: auto` previously triggered a
+        // magic-comment self-approve path that was removed when the
+        // sentiment-driven PR-review loop landed (PRs #438 / #440). The
+        // loader rejects it now so the misconfiguration surfaces at
+        // validate-config time instead of mid-apex via the workflow
+        // router's terminal_abort_auto_mode_unsupported route.
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            unattended:
+              review_wait_mode: auto
+            """);
+
+        var cmd = CreateCommand();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var doc = JsonDocument.Parse(output);
+        var err = doc.RootElement.GetProperty("error").GetString();
+        err.ShouldNotBeNull();
+        err.ShouldContain("review_wait_mode");
+        err.ShouldContain("auto");
+        err.ShouldContain("#444");
+        err.ShouldContain("skip");
+        err.ShouldContain("wait");
     }
 
     [Fact]

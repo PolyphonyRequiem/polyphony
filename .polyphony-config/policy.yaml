@@ -162,25 +162,22 @@ unattended:
   #            checkpoints — distinct from "the reviewer has not
   #            yet weighed in" review-wait gates below).
   #
-  # review_wait_mode (one of `wait`, `skip`, `auto`):
+  # review_wait_mode (one of `wait`, `skip`):
   #   wait   — surface the PR-review-wait gate when triggered (default).
   #   skip   — keep polling the review state instead of escalating.
   #            Affects: pending_review_gate, stuck_review_gate,
   #            ado_stuck_review_gate, ado_pr_pending_gate,
   #            ado_pr_changes_requested_gate.
-  #   auto   — post the SHA-bound `polyphony:approve <head_sha>` magic
-  #            comment from the PR-author identity, then re-poll. The
-  #            next poll observes the comment via PrPollStateDerivation
-  #            and returns `approved`, allowing the workflow to proceed
-  #            to merge hands-off. Use for fully unattended dogfood / CI
-  #            runs where the operator IS the PR author.
-  #            GitHub-only at MVP: on ADO, falls back to `skip` semantics
-  #            until AB#3104 PR2 wires the ADO equivalent. If the gh
-  #            actor is not the PR author the script falls back to the
-  #            human pending_review_gate (silent no-op merge prevented).
-  #            Affects: pending_review_gate (the auto-approve path);
-  #            stuck_review_gate falls through to the human gate when
-  #            `auto` (escalation path — auto-approve never converged).
+  #
+  #   NOTE: a third value `auto` previously posted a SHA-bound
+  #   `polyphony:approve <head_sha>` magic comment so the next poll
+  #   observed approval and the workflow merged hands-off. That path was
+  #   removed when the sentiment-driven PR-review loop landed
+  #   (PRs #438 / #440). The loader now rejects `auto` at validate-config
+  #   time, and the workflow router rejects it at runtime via
+  #   `terminal_abort_auto_mode_unsupported`. Use `skip` for silent
+  #   unattended polling or `wait` for the human throttle gate.
+  #   Re-enablement via platform vote APIs is tracked in issue #444.
   #
   # cap_mode (one of `manual`, `auto_proceed`, `auto_fail`):
   #   manual       — surface the cap-hit gate (default).

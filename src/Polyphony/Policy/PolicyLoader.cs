@@ -262,11 +262,29 @@ public static class PolicyLoader
                 $"unattended.acceptance_mode '{accept}' is not a known mode. " +
                 $"Expected '{UnattendedAcceptanceMode.Manual}' or '{UnattendedAcceptanceMode.Auto}'.");
 
+        // Reject `auto` explicitly with an actionable message that mirrors the
+        // workflow router's terminal_abort_auto_mode_unsupported wording. The
+        // magic-comment self-approve path that previously honored `auto` was
+        // removed in PRs #438 / #440 (sentiment-driven PR-review loop); see
+        // issue #444 for the platform-vote re-implementation tracking. This is
+        // the shift-left of the workflow's runtime check — failing here means
+        // operators see the misconfiguration at `polyphony validate-config`
+        // time instead of mid-apex.
+#pragma warning disable CS0618 // Intentional reference to the obsolete `Auto` constant: this is the explicit-rejection site.
+        if (unattended.ReviewWaitMode == UnattendedReviewWaitMode.Auto)
+            throw new InvalidOperationException(
+                "unattended.review_wait_mode 'auto' is currently unsupported under the " +
+                "sentiment-driven PR-review loop (the magic-comment auto-approve path was " +
+                "removed in PRs #438 / #440). Set it to '" + UnattendedReviewWaitMode.Skip +
+                "' (silent unattended polling) or '" + UnattendedReviewWaitMode.Wait +
+                "' (human throttle gate). Re-enablement via platform vote APIs is tracked " +
+                "in issue #444.");
+#pragma warning restore CS0618
+
         if (unattended.ReviewWaitMode is { } wait && !UnattendedReviewWaitMode.IsValid(wait))
             throw new InvalidOperationException(
                 $"unattended.review_wait_mode '{wait}' is not a known mode. " +
-                $"Expected '{UnattendedReviewWaitMode.Wait}', '{UnattendedReviewWaitMode.Skip}', " +
-                $"or '{UnattendedReviewWaitMode.Auto}'.");
+                $"Expected '{UnattendedReviewWaitMode.Wait}' or '{UnattendedReviewWaitMode.Skip}'.");
 
         if (unattended.CapMode is { } cap && !UnattendedCapMode.IsValid(cap))
             throw new InvalidOperationException(

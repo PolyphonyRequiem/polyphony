@@ -234,27 +234,38 @@ public static class UnattendedReviewWaitMode
     /// indefinitely for review rather than abandoning the run.</summary>
     public const string Skip = "skip";
 
-    /// <summary>Auto-approve: post the SHA-bound <c>polyphony:approve &lt;head_sha&gt;</c>
-    /// magic comment from the PR-author identity (the only identity GitHub honors
-    /// for a self-PR), then re-poll. The next poll observes the comment via
-    /// <see cref="Commands.PrPollStateDerivation.DeriveState"/> and returns
-    /// <c>approved</c>, allowing the workflow to proceed to merge.
+    /// <summary>Auto-approve magic-comment mode — <b>currently rejected by
+    /// <see cref="PolicyLoader.ApplyBuiltInDefaults"/> with a config-error
+    /// envelope</b>; see issue #444.
     ///
-    /// <para>Use for fully unattended dogfood / CI runs where the operator is
-    /// the PR author and wants the run to merge hands-off. The comment is
-    /// idempotent (skipped if already present for the current head SHA) and
-    /// SHA-pinned (a new commit silently invalidates it — no stale-approve
-    /// risk on revisions).</para>
+    /// <para>Historically posted a SHA-bound <c>polyphony:approve &lt;head_sha&gt;</c>
+    /// magic comment from the PR-author identity so the next poll observed
+    /// approval. That mechanism was removed when the sentiment-driven
+    /// PR-review loop landed (PRs #438 / #440), and reintroducing the mode
+    /// requires calling the platform vote APIs (<c>gh pr review --approve</c> /
+    /// <c>az repos pr set-vote</c>) from an operator-identity token — see
+    /// issue #444 for the re-implementation tracking.</para>
     ///
-    /// <para><b>GitHub-only at MVP.</b> The workflow router falls back to
-    /// <see cref="Skip"/> semantics when <c>workflow.input.platform != 'github'</c>.
-    /// ADO support requires a parallel <c>polyphony pr post-comment</c> path that
-    /// honors ADO's review-vote conventions — tracked under AB#3104 PR2.</para>
+    /// <para>Until that re-implementation ships, the loader rejects this
+    /// value at validate-config time and the workflow router rejects it
+    /// at runtime via <c>terminal_abort_auto_mode_unsupported</c>. Use
+    /// <see cref="Wait"/> (human throttle gate) or <see cref="Skip"/>
+    /// (silent unattended polling) instead.</para>
+    ///
+    /// <para>The constant is retained so the workflow YAMLs' literal
+    /// <c>== 'auto'</c> defense-in-depth check still maps to a canonical
+    /// token, and so future re-implementation does not need to reintroduce
+    /// the name.</para>
     /// </summary>
+    [Obsolete("review_wait_mode: 'auto' is rejected by PolicyLoader — see issue #444. " +
+              "Use UnattendedReviewWaitMode.Wait or UnattendedReviewWaitMode.Skip until " +
+              "the platform-vote re-implementation lands.")]
     public const string Auto = "auto";
 
-    /// <summary>True when <paramref name="value"/> is one of the canonical tokens.</summary>
-    public static bool IsValid(string value) => value is Wait or Skip or Auto;
+    /// <summary>True when <paramref name="value"/> is currently accepted by the
+    /// loader. <c>auto</c> is intentionally excluded — see <see cref="Auto"/>
+    /// and issue #444.</summary>
+    public static bool IsValid(string value) => value is Wait or Skip;
 }
 
 /// <summary>Canonical string constants for <see cref="UnattendedPolicy.CapMode"/>.</summary>
