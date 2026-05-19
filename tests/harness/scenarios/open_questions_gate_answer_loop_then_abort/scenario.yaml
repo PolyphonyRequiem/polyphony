@@ -1,0 +1,214 @@
+# AB#3239 follow-up — open_questions_gate mapping-form scripted response.
+#
+# Exercises the AB#3212 scripted-gate infrastructure's MAPPING FORM,
+# which carries `additional_input` for gate options that declare
+# `prompt_for: X`. open_questions_gate's `answer` option uses
+# `prompt_for: answers`, making it the canonical proving ground.
+#
+# Path covered (zero direct git, zero LLM, all faked through verb /
+# agent / gate seams):
+#
+#   depth_guard → guidance_loader → root_resolver → type_loader
+#     → ancestor_chain → state_detector (state=not_started)
+#     → architect (call #1: 1 high-severity open_question)
+#     → research_loop_counter → open_questions_policy
+#     → open_questions_counter (iter 0 < cap; question gates)
+#     → open_questions_gate (scripted=answer + additional_input.answers)
+#     → architect (call #2: open_questions cleared by operator answer)
+#     → research_loop_counter → open_questions_policy
+#     → open_questions_counter (no gating questions remain)
+#     → ensure_plan_branch (verb returns error envelope to short-circuit
+#       the downstream write-plan / commit-and-push / open-PR chain;
+#       in the real workflow this would route to error_gate for
+#       operator action — we exercise the abort branch here)
+#     → ensure_plan_branch_error_gate (scripted=abort, STRING SHORTHAND)
+#     → terminal_abort_run → $end
+#
+# This scenario doubles as the proof for BOTH gate-script forms:
+#   - mapping form  (open_questions_gate: {value, additional_input})
+#   - string form   (ensure_plan_branch_error_gate: abort)
+#
+# strict_gates=true is the default when `gates:` is non-empty (per
+# AB#3212); a typo in either gate name would fail the scenario loudly.
+
+workflow: .conductor/registry/workflows/plan-level.yaml
+
+inputs:
+  work_item_id: 3239100
+  depth: 0
+  max_depth: 6
+  platform: github
+  intent: resume
+  user_plan_path: ""
+  organization: ""
+  project: ""
+  repository: ""
+  child_scope_globs: ""
+
+gates:
+  # Mapping form — `prompt_for: answers` on the `answer` option means
+  # the scripted handler must carry an `additional_input.answers` field
+  # alongside the value to satisfy the gate's contract.
+  open_questions_gate:
+    value: answer
+    additional_input:
+      answers: |
+        1. Use approach A; the alternative was rejected because of throughput.
+        2. Defer the API surface decision to the follow-up plan.
+
+  # String shorthand — abort the workflow once we've proven the
+  # answer-loop returned through the architect and the gate clears.
+  ensure_plan_branch_error_gate: abort
+
+agent_scripts:
+  # Architect runs twice: first with open_questions, second with the
+  # questions resolved after the operator's answer. The fake doesn't
+  # inspect the prompt; we just feed the next scripted reply each call.
+  architect:
+    # Call #1 — high-severity open_question gates progression.
+    - content:
+        plan: "# Plan\n\n## Summary\nFirst pass — needs operator input."
+        children: []
+        open_questions:
+          - topic: "Approach selection"
+            detail: "Approach A or Approach B?"
+            severity: "high"
+            relevant_files: []
+        summary: "First-pass plan with one open question."
+        research_request_kind: "none"
+        research_topics: []
+        research_context: {}
+        research_budget_hint: ""
+        research_archive_scope: {}
+        research_escalation_cap: 1
+
+    # Call #2 — operator answered; no remaining open_questions.
+    - content:
+        plan: "# Plan\n\n## Summary\nApproach A selected per operator answer."
+        children: []
+        open_questions: []
+        summary: "Final plan after operator-answered open questions."
+        research_request_kind: "none"
+        research_topics: []
+        research_context: {}
+        research_budget_hint: ""
+        research_archive_scope: {}
+        research_escalation_cap: 1
+
+cli_scripts:
+  # ── Pre-architect preamble ──────────────────────────────────────────
+  - command: polyphony
+    args: [plan, depth-guard]
+    stdout: '{"allowed": true, "depth": 0, "max_depth": 6}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, load-agent-guidance]
+    stdout: |
+      {"type":"Issue","architect":{"role":"","type_refinement":""},"coder":{"role":"","type_refinement":""},"reviewer":{"role":"","type_refinement":""},"agents":{}}
+    exit_code: 0
+
+  - command: polyphony
+    args: [root, resolve]
+    stdout: '{"resolved_root_id": 3239100, "fallback_required": false}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, load-type]
+    stdout: |
+      {"type":"Issue","definition":"","template":"","decomposition_guidance":""}
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, derive-ancestor-chain]
+    stdout: '{"root_id": 3239100, "item_id": 3239100, "parent_item_id": 0, "ancestor_ids": [], "is_root_plan": true}'
+    exit_code: 0
+
+  - command: polyphony
+    args: [plan, detect-state]
+    stdout: |
+      {
+        "root_id": 3239100,
+        "item_id": 3239100,
+        "plan_branch": "plan/3239100",
+        "state": "not_started",
+        "branch_exists_on_origin": false,
+        "stale_ancestors": [],
+        "parent_change_pending_children": []
+      }
+    exit_code: 0
+
+  # open_questions_policy — mode=manual + non-trivial max_question_loops
+  # so the counter routes to the gate on the first iteration (count=0
+  # < max_loops=3).
+  - command: polyphony
+    args: [policy, resolve, --domain, open_questions]
+    stdout: |
+      {
+        "domain": "open_questions",
+        "scope": "type:Issue",
+        "mode": "manual",
+        "min_severity": "low",
+        "max_question_loops": 3,
+        "severities_at_or_above": ["critical", "high", "medium", "low"]
+      }
+    exit_code: 0
+
+  # ensure_plan_branch — returns a populated `error` field so the
+  # workflow routes to ensure_plan_branch_error_gate. The scripted
+  # `abort` response on that gate terminates the workflow cleanly,
+  # proving the error-recovery abort path is reachable without driving
+  # the rest of the plan-PR lifecycle (which would cross the
+  # commit_and_push / open_plan_pr / poll_status / merge_plan_pr chain).
+  - command: polyphony
+    args: [branch, ensure-plan]
+    stdout: |
+      {
+        "branch": "plan/3239100",
+        "created": false,
+        "error": "harness-fixture: simulated transient git failure (operator-abort under test)"
+      }
+    exit_code: 0
+
+expected_trace:
+  agents_executed:
+    - depth_guard
+    - guidance_loader
+    - root_resolver
+    - type_loader
+    - ancestor_chain
+    - state_detector
+    - architect
+    - research_loop_counter
+    - open_questions_policy
+    - open_questions_counter
+    - open_questions_gate
+    - architect
+    - research_loop_counter
+    - open_questions_policy
+    - open_questions_counter
+    - ensure_plan_branch
+    - ensure_plan_branch_error_gate
+    - terminal_abort_run
+  scripts_executed:
+    - depth_guard
+    - guidance_loader
+    - root_resolver
+    - type_loader
+    - ancestor_chain
+    - state_detector
+    - research_loop_counter
+    - open_questions_policy
+    - open_questions_counter
+    - research_loop_counter
+    - open_questions_policy
+    - open_questions_counter
+    - ensure_plan_branch
+    - terminal_abort_run
+  gates_presented:
+    - open_questions_gate
+    - ensure_plan_branch_error_gate
+  gates_resolved:
+    open_questions_gate: answer
+    ensure_plan_branch_error_gate: abort
+  reached_terminal: true
