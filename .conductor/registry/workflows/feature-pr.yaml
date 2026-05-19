@@ -33,8 +33,8 @@ workflow:
     fails to merge. After each remediation, re-requests review via
     feature_pr_updater (gh on GitHub, `pr post-comment-ado` on ADO).
     Escalates to human gate after cap is exceeded.
-  version: "2.4.8"
-  entry_point: pr_platform_router
+  version: "2.4.9"
+  entry_point: integrate_target_drift
   metadata:
     min_polyphony_version: "2.4.8"
 
@@ -117,6 +117,142 @@ output:
     {%- else -%}0{% endif -%}
 
 agents:
+  # ── Drift integration ───────────────────────────────────────────────────
+  #
+  # AB#3238: A long-lived feature branch accumulates drift as the target
+  # branch advances. Without integrating that drift before opening the
+  # PR, the diff includes / removes changes that landed on the target
+  # while the feature was alive — fooling LLM reviewers into flagging
+  # unrelated files (compounding with AB#3236's revise_counter loop).
+  #
+  # This script is the entry point of feature-pr.yaml so EVERY feature
+  # PR (apex→main from apex-driver, child→feature/<apex> from
+  # apex-item-dispatch, GitHub or ADO) is protected.
+  #
+  # Strategy: `git merge --no-ff origin/<target>` on the feature branch,
+  # then push. Merge (not rebase) preserves SHAs of upstream MG → feature
+  # merge commits, avoids force-push, and leaves an obvious
+  # "drift integration" commit in PR review.
+  #
+  # Routing-style script — always exits 0; failures surface via
+  # `error_code` and route to the conflict / failed gates.
+  #
+  # Invariants:
+  #   Pre:  feature_branch and target_branch inputs are set; cwd is the
+  #         feature-branch worktree.
+  #   Post: feature_branch on origin is no commits behind origin/<target>
+  #         (drift_integrated=true), OR no drift existed
+  #         (drift_integrated=false, success=true), OR a conflict / error
+  #         was surfaced to a gate.
+  - name: integrate_target_drift
+    type: script
+    description: Integrate origin/<target_branch> drift into <feature_branch> before opening the feature PR (AB#3238)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/integrate-target-drift.ps1"
+      - "-FeatureBranch"
+      - "{{ workflow.input.feature_branch }}"
+      - "-TargetBranch"
+      - "{{ workflow.input.target_branch }}"
+    routes:
+      - to: integrate_target_drift_conflict_gate
+        when: "{{ integrate_target_drift.output.error_code == 'merge_conflict' }}"
+      - to: integrate_target_drift_failed_gate
+        when: "{{ integrate_target_drift.output.error_code != '' }}"
+      - to: pr_platform_router
+
+  # ── Conflict gate ───────────────────────────────────────────────────────
+  #
+  # `git merge --no-ff origin/<target>` hit conflicts. The script aborted
+  # the merge cleanly so the worktree is back to feature-branch HEAD.
+  # The operator must resolve by hand (cd into the feature worktree,
+  # merge or rebase against origin/<target>, push), then click Retry.
+  # The script will re-check behind_by; if 0, it falls through to the
+  # PR creator without re-attempting the merge.
+  - name: integrate_target_drift_conflict_gate
+    type: human_gate
+    description: Drift integration hit merge conflicts — operator resolves by hand, then retries
+    prompt: |
+      ## ⚠️ Drift integration: merge conflict
+
+      Integrating `origin/{{ workflow.input.target_branch }}` into
+      `{{ workflow.input.feature_branch }}` hit conflicts on:
+
+      {% if integrate_target_drift.output.conflicted_files | length > 0 -%}
+      {% for f in integrate_target_drift.output.conflicted_files -%}
+      - `{{ f }}`
+      {% endfor %}
+      {%- else -%}
+      _(no conflicted-file list captured)_
+      {%- endif %}
+
+      **Behind by:** `{{ integrate_target_drift.output.behind_by }}` commit(s)
+
+      The merge was aborted cleanly; the feature branch is back at its
+      original HEAD. Resolve by hand:
+
+      ```
+      cd <feature worktree>
+      git fetch origin {{ workflow.input.target_branch }}
+      git merge --no-ff origin/{{ workflow.input.target_branch }}
+      # resolve conflicts, git add, git commit
+      git push origin {{ workflow.input.feature_branch }}
+      ```
+
+      Then click **Retry** — the script will re-check and skip the merge
+      if the branch is now in sync.
+
+      Choose an action:
+      - **Retry** — re-run drift integration (operator has resolved & pushed)
+      - **Abort** — halt without opening the feature PR
+    options:
+      - label: "🔁 Retry — operator resolved & pushed"
+        value: retry
+        route: integrate_target_drift
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
+  # ── Generic failure gate ────────────────────────────────────────────────
+  #
+  # Drift integration failed for a reason other than merge conflict:
+  # fetch failure, branch-mismatch / checkout failure, push failure,
+  # local feature branch diverged from origin, or an uncaught error.
+  - name: integrate_target_drift_failed_gate
+    type: human_gate
+    description: Drift integration failed (non-conflict) — operator decides retry or abort
+    prompt: |
+      ## ⚠️ Drift integration failed
+
+      Could not integrate `origin/{{ workflow.input.target_branch }}` into
+      `{{ workflow.input.feature_branch }}`.
+
+      **Error code:** `{{ integrate_target_drift.output.error_code }}`
+      **Detail:** {{ integrate_target_drift.output.error_message }}
+
+      Common cases:
+      - `fetch_failed` — network / auth / branch-doesn't-exist.
+      - `branch_mismatch` — worktree isn't on the expected feature branch.
+      - `feature_branch_diverged` — local and origin both have unique
+        commits on `{{ workflow.input.feature_branch }}`; inspect with
+        `git log origin/{{ workflow.input.feature_branch }}..HEAD` and
+        `git log HEAD..origin/{{ workflow.input.feature_branch }}`.
+      - `push_failed` — drift was merged locally but the push was
+        rejected (most often: another writer raced us; re-fetch + retry).
+
+      Choose an action:
+      - **Retry** — re-run drift integration
+      - **Abort** — halt without opening the feature PR
+    options:
+      - label: "🔁 Retry"
+        value: retry
+        route: integrate_target_drift
+      - label: "🛑 Abort"
+        value: abort
+        route: $end
+
   # ── PR platform router ──────────────────────────────────────────────────
   #
   # Routes to the platform-specific feature-PR creator based on the
