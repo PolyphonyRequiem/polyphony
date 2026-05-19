@@ -576,7 +576,7 @@ public sealed class ManifestCommandsTests : IDisposable
         entry.RecordedAt.ShouldNotBe(default);
     }
 
-    [Fact(Skip = "Flaky in parallel runs — see #285")]
+    [Fact]
     public async Task RecordPlanMerge_RepeatedCallWithSamePrIdentity_IdempotentSkip()
     {
         var cmd = NewCommand();
@@ -698,7 +698,7 @@ public sealed class ManifestCommandsTests : IDisposable
         manifest.MergedPlanPrs[1].CurrentGeneration.ShouldBe(2);
     }
 
-    [Fact(Skip = "Flaky in parallel runs — see #285")]
+    [Fact]
     public async Task RecordPlanMerge_LegacyAndPrIdentityCallsCoexist()
     {
         var cmd = NewCommand();

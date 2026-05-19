@@ -126,7 +126,7 @@ public sealed class RunManifestStoreTests : IDisposable
         loaded.HumanApprovals[0].Detail.ShouldBe("manual approval at depth 4");
     }
 
-    [Fact(Skip = "Flaky in parallel runs — see #285")]
+    [Fact]
     public void Save_OverwritesExistingFile_AtomicallySwap()
     {
         var path = this.PathOf("run.yaml");
