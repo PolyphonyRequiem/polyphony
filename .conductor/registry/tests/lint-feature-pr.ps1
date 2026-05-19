@@ -245,10 +245,16 @@ foreach ($line in $lines) {
     }
 }
 $adoRoutesText = [string]::Join([Environment]::NewLine, $adoRoutesLines)
-if ($adoRoutesText -notmatch 'to:\s*remediation_counter') {
+# AB#3181 added pr_remediation_policy as an intermediate resolver step:
+# pr_lifecycle_ado → pr_remediation_policy → remediation_counter. Accept
+# either direct routing to remediation_counter (pre-AB#3181) OR routing
+# through pr_remediation_policy (post-AB#3181). Both enter the
+# remediation chain; what matters is that the ADO leg does NOT
+# short-circuit past it on merged==false.
+if ($adoRoutesText -notmatch 'to:\s*(remediation_counter|pr_remediation_policy)') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-ado-remediation-route'
-        Detail = "pr_lifecycle_ado has no route to remediation_counter - ADO leg must enter the remediation chain on merged==false (no short-circuit)"
+        Detail = "pr_lifecycle_ado has no route to remediation_counter or pr_remediation_policy - ADO leg must enter the remediation chain on merged==false (no short-circuit)"
     }
 }
 

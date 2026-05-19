@@ -248,6 +248,20 @@ agents:
     type: agent
     routes:
       - to: open_questions_policy
+  - name: state_detector
+    type: script
+    command: polyphony
+    args: ["plan", "detect-state"]
+    routes:
+      - to: seeder
+        when: "{{ state_detector.output.state == 'merged_unseeded' }}"
+      - to: architect
+  - name: seeder
+    type: script
+    command: polyphony
+    args: ["plan", "seed-children"]
+    routes:
+      - to: review_group
   - name: plan_reviewer
     type: agent
     routes:

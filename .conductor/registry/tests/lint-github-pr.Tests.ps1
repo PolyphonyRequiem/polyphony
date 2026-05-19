@@ -33,7 +33,7 @@ Describe 'lint-github-pr.ps1' {
             $yaml = @'
 workflow:
   name: github-pr
-  entry_point: pr_reviewer
+  entry_point: pr_initial_reviewer
   input:
     branch_name:
       type: string
@@ -47,18 +47,18 @@ output:
   pr_url: "{{ pr_merger.output.pr_url | default('') }}"
 
 agents:
-  - name: pr_reviewer
+  - name: pr_initial_reviewer
     type: agent
     model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR"
     routes:
-      - to: review_counter
-        when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
+      - to: revise_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'changes_requested' }}"
       - to: pr_merger
-        when: "{{ pr_reviewer.output.verdict == 'approved' }}"
-  - name: review_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'approved' }}"
+  - name: revise_counter
     type: script
     command: pwsh
     args:
@@ -66,16 +66,16 @@ agents:
       - "@{ iteration = 1; under_limit = $true } | ConvertTo-Json"
     routes:
       - to: pr_fixer
-        when: "{{ review_counter.output.under_limit == true }}"
+        when: "{{ revise_counter.output.under_limit == true }}"
       - to: pr_fix_exhausted_gate
-        when: "{{ review_counter.output.under_limit == false }}"
+        when: "{{ revise_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
     model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues. Max 10 iterations."
     routes:
-      - to: pr_reviewer
+      - to: pr_initial_reviewer
   - name: pr_fix_exhausted_gate
     type: human_gate
     prompt: "Fix loop exhausted"
@@ -104,7 +104,7 @@ agents:
             $yaml = @'
 workflow:
   name: github-pr
-  entry_point: pr_reviewer
+  entry_point: pr_initial_reviewer
   input:
     pr_number:
       type: number
@@ -119,18 +119,18 @@ output:
   pr_url: ""
 
 agents:
-  - name: pr_reviewer
+  - name: pr_initial_reviewer
     type: agent
     model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR"
     routes:
-      - to: review_counter
-        when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
+      - to: revise_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'changes_requested' }}"
       - to: pr_merger
-        when: "{{ pr_reviewer.output.verdict == 'approved' }}"
-  - name: review_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'approved' }}"
+  - name: revise_counter
     type: script
     command: pwsh
     args:
@@ -138,16 +138,16 @@ agents:
       - "@{ iteration = 1; under_limit = $true } | ConvertTo-Json"
     routes:
       - to: pr_fixer
-        when: "{{ review_counter.output.under_limit == true }}"
+        when: "{{ revise_counter.output.under_limit == true }}"
       - to: pr_fix_exhausted_gate
-        when: "{{ review_counter.output.under_limit == false }}"
+        when: "{{ revise_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
     model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues. Max 10 iterations."
     routes:
-      - to: pr_reviewer
+      - to: pr_initial_reviewer
   - name: pr_fix_exhausted_gate
     type: human_gate
     prompt: "Fix loop exhausted"
@@ -172,11 +172,11 @@ agents:
             ($output | Out-String) | Should -Match 'missing-output'
         }
 
-        It 'Fails when pr_reviewer agent is missing' {
+        It 'Fails when pr_initial_reviewer agent is missing' {
             $yaml = @'
 workflow:
   name: github-pr
-  entry_point: review_counter
+  entry_point: revise_counter
   input:
     pr_number:
       type: number
@@ -192,7 +192,7 @@ output:
   pr_url: ""
 
 agents:
-  - name: review_counter
+  - name: revise_counter
     type: script
     command: pwsh
     args:
@@ -200,16 +200,16 @@ agents:
       - "@{ iteration = 1; under_limit = $true } | ConvertTo-Json"
     routes:
       - to: pr_fixer
-        when: "{{ review_counter.output.under_limit == true }}"
+        when: "{{ revise_counter.output.under_limit == true }}"
       - to: pr_fix_exhausted_gate
-        when: "{{ review_counter.output.under_limit == false }}"
+        when: "{{ revise_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
     model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues. Max 10 iterations."
     routes:
-      - to: review_counter
+      - to: revise_counter
   - name: pr_fix_exhausted_gate
     type: human_gate
     prompt: "Fix loop exhausted"
@@ -231,14 +231,14 @@ agents:
             Set-Content (Join-Path $script:WorkflowsDir 'github-pr.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-github-pr.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-reviewer'
+            ($output | Out-String) | Should -Match 'missing-initial-reviewer'
         }
 
         It 'Fails when pr_merger agent is missing' {
             $yaml = @'
 workflow:
   name: github-pr
-  entry_point: pr_reviewer
+  entry_point: pr_initial_reviewer
   input:
     pr_number:
       type: number
@@ -254,16 +254,16 @@ output:
   pr_url: ""
 
 agents:
-  - name: pr_reviewer
+  - name: pr_initial_reviewer
     type: agent
     model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR"
     routes:
-      - to: review_counter
-        when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
-  - name: review_counter
+      - to: revise_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'changes_requested' }}"
+  - name: revise_counter
     type: script
     command: pwsh
     args:
@@ -271,16 +271,16 @@ agents:
       - "@{ iteration = 1; under_limit = $true } | ConvertTo-Json"
     routes:
       - to: pr_fixer
-        when: "{{ review_counter.output.under_limit == true }}"
+        when: "{{ revise_counter.output.under_limit == true }}"
       - to: pr_fix_exhausted_gate
-        when: "{{ review_counter.output.under_limit == false }}"
+        when: "{{ revise_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
     model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues. Max 10 iterations."
     routes:
-      - to: pr_reviewer
+      - to: pr_initial_reviewer
   - name: pr_fix_exhausted_gate
     type: human_gate
     prompt: "Fix loop exhausted"
@@ -302,7 +302,7 @@ agents:
             $yaml = @'
 workflow:
   name: github-pr
-  entry_point: pr_reviewer
+  entry_point: pr_initial_reviewer
   input:
     pr_number:
       type: number
@@ -318,18 +318,18 @@ output:
   pr_url: ""
 
 agents:
-  - name: pr_reviewer
+  - name: pr_initial_reviewer
     type: agent
     model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR. Max 10 iterations."
     routes:
-      - to: review_counter
-        when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
+      - to: revise_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'changes_requested' }}"
       - to: pr_merger
-        when: "{{ pr_reviewer.output.verdict == 'approved' }}"
-  - name: review_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'approved' }}"
+  - name: revise_counter
     type: script
     command: pwsh
     args:
@@ -337,16 +337,16 @@ agents:
       - "@{ iteration = 1; under_limit = $true } | ConvertTo-Json"
     routes:
       - to: pr_fixer
-        when: "{{ review_counter.output.under_limit == true }}"
+        when: "{{ revise_counter.output.under_limit == true }}"
       - to: $end
-        when: "{{ review_counter.output.under_limit == false }}"
+        when: "{{ revise_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
     model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues"
     routes:
-      - to: pr_reviewer
+      - to: pr_initial_reviewer
   - name: pr_merger
     type: agent
     model: claude-sonnet-4.6
@@ -365,7 +365,7 @@ agents:
             $yaml = @'
 workflow:
   name: github-pr
-  entry_point: pr_reviewer
+  entry_point: pr_initial_reviewer
   input:
     pr_number:
       type: number
@@ -381,18 +381,18 @@ output:
   pr_url: ""
 
 agents:
-  - name: pr_reviewer
+  - name: pr_initial_reviewer
     type: agent
     model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR. Max 10 iterations."
     routes:
-      - to: review_counter
-        when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
+      - to: revise_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'changes_requested' }}"
       - to: pr_merger
-        when: "{{ pr_reviewer.output.verdict == 'approved' }}"
-  - name: review_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'approved' }}"
+  - name: revise_counter
     type: script
     command: pwsh
     args:
@@ -400,16 +400,16 @@ agents:
       - "@{ iteration = 1; under_limit = $true } | ConvertTo-Json"
     routes:
       - to: pr_fixer
-        when: "{{ review_counter.output.under_limit == true }}"
+        when: "{{ revise_counter.output.under_limit == true }}"
       - to: pr_fix_exhausted_gate
-        when: "{{ review_counter.output.under_limit == false }}"
+        when: "{{ revise_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
     model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues"
     routes:
-      - to: pr_reviewer
+      - to: pr_initial_reviewer
   - name: pr_fix_exhausted_gate
     type: human_gate
     prompt: "Fix loop exhausted"
@@ -451,18 +451,18 @@ output:
   pr_url: ""
 
 agents:
-  - name: pr_reviewer
+  - name: pr_initial_reviewer
     type: agent
     model: claude-opus-4.7-1m-internal
     context_window: 1000000
     description: Review PR
     prompt: "Review the PR. Max 10 iterations."
     routes:
-      - to: review_counter
-        when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
+      - to: revise_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'changes_requested' }}"
       - to: pr_merger
-        when: "{{ pr_reviewer.output.verdict == 'approved' }}"
-  - name: review_counter
+        when: "{{ pr_initial_reviewer.output.verdict == 'approved' }}"
+  - name: revise_counter
     type: script
     command: pwsh
     args:
@@ -470,16 +470,16 @@ agents:
       - "@{ iteration = 1; under_limit = $true } | ConvertTo-Json"
     routes:
       - to: pr_fixer
-        when: "{{ review_counter.output.under_limit == true }}"
+        when: "{{ revise_counter.output.under_limit == true }}"
       - to: pr_fix_exhausted_gate
-        when: "{{ review_counter.output.under_limit == false }}"
+        when: "{{ revise_counter.output.under_limit == false }}"
   - name: pr_fixer
     type: agent
     model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues"
     routes:
-      - to: pr_reviewer
+      - to: pr_initial_reviewer
   - name: pr_fix_exhausted_gate
     type: human_gate
     prompt: "Fix loop exhausted"
@@ -504,11 +504,11 @@ agents:
             ($output | Out-String) | Should -Match 'invalid-entry-point'
         }
 
-        It 'Fails when review_counter is missing' {
+        It 'Fails when revise_counter is missing' {
             $yaml = @'
 workflow:
   name: github-pr
-  entry_point: pr_reviewer
+  entry_point: pr_initial_reviewer
   input:
     pr_number:
       type: number
@@ -524,7 +524,7 @@ output:
   pr_url: ""
 
 agents:
-  - name: pr_reviewer
+  - name: pr_initial_reviewer
     type: agent
     model: claude-opus-4.7-1m-internal
     context_window: 1000000
@@ -532,16 +532,16 @@ agents:
     prompt: "Review the PR. Max 10 iterations."
     routes:
       - to: pr_fixer
-        when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
+        when: "{{ pr_initial_reviewer.output.verdict == 'changes_requested' }}"
       - to: pr_merger
-        when: "{{ pr_reviewer.output.verdict == 'approved' }}"
+        when: "{{ pr_initial_reviewer.output.verdict == 'approved' }}"
   - name: pr_fixer
     type: agent
     model: claude-sonnet-4.6
     description: Fix PR issues
     prompt: "Fix the PR issues"
     routes:
-      - to: pr_reviewer
+      - to: pr_initial_reviewer
   - name: pr_fix_exhausted_gate
     type: human_gate
     prompt: "Fix loop exhausted"
@@ -563,14 +563,14 @@ agents:
             Set-Content (Join-Path $script:WorkflowsDir 'github-pr.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-github-pr.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-counter'
+            ($output | Out-String) | Should -Match 'missing-revise-counter'
         }
 
         It 'Passes when all contract requirements are met' {
             $yaml = @'
 workflow:
   name: github-pr
-  entry_point: pr_reviewer
+  entry_point: pr_initial_reviewer
   input:
     pr_number:
       type: number
@@ -586,48 +586,72 @@ output:
   pr_url: "{{ pr_merger.output.pr_url | default('') }}"
 
 agents:
-  - name: pr_reviewer
+  - name: pr_initial_reviewer
     type: agent
-    model: claude-opus-4.7-1m-internal
-    context_window: 1000000
-    description: Review PR
+    model: claude-opus-4.6
+    description: Single advisory review fired once per workflow invocation
     prompt: "Review the PR"
     routes:
-      - to: review_counter
-        when: "{{ pr_reviewer.output.verdict == 'changes_requested' }}"
-      - to: pr_merger
-        when: "{{ pr_reviewer.output.verdict == 'approved' }}"
-  - name: review_counter
+      - to: poll_status
+  - name: poll_status
     type: script
     command: pwsh
     args:
       - "-Command"
-      - "@{ iteration = 1; under_limit = ($count -le 10) } | ConvertTo-Json"
+      - "@{ route = 'none'; head_sha = 'abc' } | ConvertTo-Json"
     routes:
-      - to: pr_fixer
-        when: "{{ review_counter.output.under_limit == true }}"
-      - to: pr_fix_exhausted_gate
-        when: "{{ review_counter.output.under_limit == false }}"
-  - name: pr_fixer
+      - to: pr_feedback_analyzer
+        when: "{{ poll_status.output.route == 'none' }}"
+      - to: pr_merger
+  - name: pr_feedback_analyzer
     type: agent
     model: claude-sonnet-4.6
-    description: Fix PR issues
-    prompt: "Fix the PR issues"
+    description: Sentiment-driven loop heart — digest feedback into a fixer brief
+    prompt: "Analyze feedback"
     routes:
-      - to: pr_reviewer
-  - name: pr_fix_exhausted_gate
+      - to: revise_counter
+        when: "{{ pr_feedback_analyzer.output.has_negative_feedback == true }}"
+      - to: poll_status
+  - name: revise_counter
+    type: script
+    command: pwsh
+    args:
+      - "-Command"
+      - |
+          # AB#3236: increment unconditionally per iteration; track
+          # no_commit_count via poll_status.output.head_sha comparison
+          # and emit cap_reason so revise_cap_gate can branch prompts.
+          $count = $count + 1
+          $no_commit_count = 0
+          $head = '{{ poll_status.output.head_sha }}'
+          $cap_reason = 'max_revisions'
+          @{ iteration = $count; no_commit_count = $no_commit_count; cap_reason = $cap_reason; cap_reached = $false } | ConvertTo-Json
+    routes:
+      - to: revise_cap_gate
+        when: "{{ revise_counter.output.cap_reached == true }}"
+      - to: pr_fixer
+  - name: revise_cap_gate
     type: human_gate
-    prompt: "Fix loop exhausted"
+    prompt: |
+      {% if revise_counter.output.cap_reason == 'no_commit_stuck' %}
+      Stuck — fixer made no commit across N passes.
+      {% else %}
+      Revise cap reached.
+      {% endif %}
     options:
       - label: "Force Merge"
         value: force_merge
         route: pr_merger
-      - label: "Continue"
-        value: continue
-        route: pr_fixer
       - label: "Abort"
         value: abort
         route: $end
+  - name: pr_fixer
+    type: agent
+    model: claude-sonnet-4.6
+    description: Address analyzer-summarized review feedback
+    prompt: "Fix the PR issues"
+    routes:
+      - to: poll_status
   - name: pr_merger
     type: agent
     model: claude-sonnet-4.6
