@@ -225,6 +225,27 @@ jobs:
           $result = Invoke-Pester -Path .conductor/registry/tests/lint-strict-undefined.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
 
+      - name: Lint workflow YAMLs (sentiment-loop consistency)
+        # Asserts that the sentiment-driven PR review loop is structurally
+        # aligned across plan-level.yaml, github-pr.yaml, and ado-pr.yaml.
+        # All three carry a `pr_feedback_analyzer` agent with the same
+        # contract (model, tools, output schema), the same counter-file
+        # naming scheme, the same negative-feedback route shape, and
+        # equivalent terminal handling. Without this lint, future edits
+        # to one workflow silently drift from the other two (issue #443).
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File .conductor/registry/tests/lint-sentiment-loop-consistency.ps1 -Format github
+
+      - name: Lint workflow YAMLs (sentiment-loop consistency, Pester)
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path .conductor/registry/tests/lint-sentiment-loop-consistency.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
+
       - name: Lint workflow YAMLs (PowerShell + Jinja bareword booleans)
         # Catches the AB#3156 Bug 1 class: a `command: pwsh` script body
         # that assigns a Jinja render unquoted (`$x = {{ … }}`). When
