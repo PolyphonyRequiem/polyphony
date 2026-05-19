@@ -4,24 +4,25 @@
 .DESCRIPTION
     Parses workflows/plan-level.yaml and verifies:
     1. open_questions_policy script node exists and calls `polyphony policy resolve --domain open_questions`
-    2. open_questions_counter script node exists
-    3. open_questions_answer_counter script node exists
-    4. Policy-aware routes exist (mode==auto, mode==manual, mode==warning)
-    5. No hardcoded severity list remains in architect→gate routing
-    6. open_questions_gate references policy mode and loop counter in prompt
-    7. cap_reached route exists
-    8. Phase 3 P8c handler — validate_scope script node exists,
+    2. open_questions_counter script node exists (single counter tracks
+       both initial questions and answer-loop iterations — the prior
+       separate open_questions_answer_counter has been folded in)
+    3. Policy-aware routes exist (mode==auto, mode==manual, mode==warning)
+    4. No hardcoded severity list remains in architect→gate routing
+    5. open_questions_gate references policy mode and loop counter in prompt
+    6. cap_reached route exists
+    7. Phase 3 P8c handler — validate_scope script node exists,
        positioned post-review and pre-merge (after plan_reviewer, before
        merge_plan_pr) and gated on workflow.input.child_scope_globs.
-    9. Phase 3 P8c handler — scope_violation_gate human_gate exists and
+    8. Phase 3 P8c handler — scope_violation_gate human_gate exists and
        is gated on validate_scope verdict == 'block'.
-    10. Phase 3 P8c handler — extract_renegotiation_flag script node
-        exists and runs post-merge (referenced from merge_plan_pr).
-    11. Phase 3 P8c handler — workflow exports the four bubble-up
+    9. Phase 3 P8c handler — extract_renegotiation_flag script node
+       exists and runs post-merge (referenced from merge_plan_pr).
+    10. Phase 3 P8c handler — workflow exports the four bubble-up
         outputs at workflow scope (renegotiation_pending,
         renegotiation_request, validate_scope_verdict,
         scope_violation_files).
-    12. Stuck-review timeout MVP — pending_poll_counter exists, both
+    11. Stuck-review timeout MVP — pending_poll_counter exists, both
         poll_status and poll_status_ado route their 'pending' case
         through it, stuck_review_gate exposes continue_waiting /
         override_approved / abort options, stuck_review_reset and
@@ -71,15 +72,7 @@ if ($content -notmatch 'name:\s*open_questions_counter') {
     }
 }
 
-# ── Check 4: open_questions_answer_counter script node exists ────────────
-if ($content -notmatch 'name:\s*open_questions_answer_counter') {
-    $violations += [PSCustomObject]@{
-        Rule   = 'missing-oq-answer-counter-node'
-        Detail = "No open_questions_answer_counter script node found"
-    }
-}
-
-# ── Check 5: Policy-aware routes — mode==auto skips gate ─────────────────
+# ── Check 4: Policy-aware routes — mode==auto skips gate ─────────────────
 if ($content -notmatch "open_questions_policy\.output\.mode\s*==\s*'auto'") {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-auto-mode-route'

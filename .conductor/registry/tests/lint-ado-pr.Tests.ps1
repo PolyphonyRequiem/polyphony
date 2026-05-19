@@ -234,7 +234,7 @@ agents:
             $yaml = @'
 workflow:
   name: ado-pr
-  entry_point: ado_pr_status_check
+  entry_point: poll_status
   input:
     pr_number:
       type: number
@@ -250,38 +250,75 @@ output:
   pr_url: ""
 
 agents:
-  - name: ado_pr_status_check
+  - name: poll_status
     type: script
     command: pwsh
     args:
       - "-Command"
       - "Write-Output '{}'"
     routes:
-      - to: ado_pending_poll_counter
-        when: "{{ ado_pr_status_check.output.state == 'pending' }}"
+      - to: pr_feedback_analyzer
+        when: "{{ poll_status.output.route == 'none' }}"
       - to: ado_pr_manual_gate
-  - name: ado_pending_poll_counter
+  - name: pr_feedback_analyzer
+    type: agent
+    model: claude-sonnet-4.6
+    routes:
+      - to: revise_counter
+        when: "{{ pr_feedback_analyzer.output.has_negative_feedback == true }}"
+      - to: pending_poll_counter
+  - name: revise_counter
+    type: script
+    command: pwsh
+    args:
+      - "-Command"
+      - |
+          # AB#3236: increment unconditionally per iteration; track
+          # no_commit_count via poll_status.output.head_sha comparison
+          # and emit cap_reason so revise_cap_gate can branch prompts.
+          $count = $count + 1
+          $no_commit_count = 0
+          $head = '{{ poll_status.output.head_sha }}'
+          $cap_reason = 'max_revisions'
+          @{ iteration = $count; no_commit_count = $no_commit_count; cap_reason = $cap_reason } | ConvertTo-Json
+    routes:
+      - to: revise_cap_gate
+        when: "{{ revise_counter.output.cap_reached == true }}"
+      - to: ado_pr_manual_gate
+  - name: revise_cap_gate
+    type: human_gate
+    prompt: |
+      {% if revise_counter.output.cap_reason == 'no_commit_stuck' %}
+      Stuck.
+      {% else %}
+      Cap.
+      {% endif %}
+    options:
+      - label: "Abort"
+        value: abort
+        route: $end
+  - name: pending_poll_counter
     type: script
     command: pwsh
     args: ["-Command", "Write-Output '{}'"]
     routes:
-      - to: ado_stuck_review_gate
-        when: "{{ ado_pending_poll_counter.output.cap_reached == true }}"
+      - to: stuck_review_gate
+        when: "{{ pending_poll_counter.output.cap_reached == true }}"
       - to: ado_pr_manual_gate
-  - name: ado_stuck_review_gate
+  - name: stuck_review_gate
     type: human_gate
     prompt: "stuck"
     options:
       - label: "Continue"
         value: continue_waiting
-        route: ado_stuck_review_reset
+        route: stuck_review_reset
       - label: "Override"
         value: override_approved
         route: ado_pr_manual_gate
       - label: "Abort"
         value: abort
         route: $end
-  - name: ado_stuck_review_reset
+  - name: stuck_review_reset
     type: script
     command: pwsh
     args: ["-Command", "Write-Output '{}'"]
@@ -320,35 +357,35 @@ agents:
             Remove-Item $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
 
-        It 'Real ado-pr.yaml carries the ado_pending_poll_counter step' {
-            (Get-Content $script:RealYaml -Raw) | Should -Match 'name:\s*ado_pending_poll_counter'
+        It 'Real ado-pr.yaml carries the pending_poll_counter step' {
+            (Get-Content $script:RealYaml -Raw) | Should -Match 'name:\s*pending_poll_counter'
         }
 
-        It 'Real ado-pr.yaml has ado_stuck_review_gate with all three required options' {
+        It 'Real ado-pr.yaml has stuck_review_gate with all three required options' {
             $content = Get-Content $script:RealYaml -Raw
-            $content | Should -Match 'name:\s*ado_stuck_review_gate'
-            $m = [regex]::Match($content, '(?s)- name: ado_stuck_review_gate\b.*?(?=\n  - name: |\Z)')
+            $content | Should -Match 'name:\s*stuck_review_gate'
+            $m = [regex]::Match($content, '(?s)- name: stuck_review_gate\b.*?(?=\n  - name: |\Z)')
             $m.Success | Should -BeTrue
             $m.Value | Should -Match 'value:\s*continue_waiting'
             $m.Value | Should -Match 'value:\s*override_approved'
             $m.Value | Should -Match 'value:\s*abort'
         }
 
-        It 'Real ado-pr.yaml has ado_stuck_review_reset' {
-            (Get-Content $script:RealYaml -Raw) | Should -Match 'name:\s*ado_stuck_review_reset'
+        It 'Real ado-pr.yaml has stuck_review_reset' {
+            (Get-Content $script:RealYaml -Raw) | Should -Match 'name:\s*stuck_review_reset'
         }
 
-        It 'Real ado-pr.yaml routes pending through ado_pending_poll_counter' {
-            (Get-Content $script:RealYaml -Raw) | Should -Match "to:\s*ado_pending_poll_counter[\s\S]{0,200}?ado_pr_status_check\.output\.state\s*==\s*'pending'"
+        It 'Real ado-pr.yaml routes from pr_feedback_analyzer to pending_poll_counter' {
+            (Get-Content $script:RealYaml -Raw) | Should -Match "(?s)- name: pr_feedback_analyzer\b.*?to:\s*pending_poll_counter.*?(?=\n  - name: |\Z)"
         }
 
-        It 'Real ado-pr.yaml routes from counter to ado_stuck_review_gate on cap_reached' {
-            (Get-Content $script:RealYaml -Raw) | Should -Match 'ado_pending_poll_counter\.output\.cap_reached\s*==\s*true'
+        It 'Real ado-pr.yaml routes from counter to stuck_review_gate_policy_router on cap_reached' {
+            (Get-Content $script:RealYaml -Raw) | Should -Match 'pending_poll_counter\.output\.cap_reached\s*==\s*true'
         }
 
-        It 'Lint fails when ado_pending_poll_counter is removed from ado-pr.yaml' {
+        It 'Lint fails when pending_poll_counter is removed from ado-pr.yaml' {
             $content = Get-Content $script:RealYaml -Raw
-            $stripped = $content -replace '(?s)\n\s*# ── Pending poll counter.*?(?=\n  # ── Pending gate)', "`n"
+            $stripped = $content -replace '(?s)\n\s*# ── Pending poll counter.*?(?=\n  # ── Pending-review gate policy router)', "`n"
             Set-Content (Join-Path $script:WorkflowsDir 'ado-pr.yaml') $stripped
             $lintScript = Join-Path $script:TestsDir 'lint-ado-pr.ps1'
             $output = pwsh -NoProfile -File $lintScript 2>&1
@@ -356,9 +393,9 @@ agents:
             ($output -join "`n") | Should -Match 'missing-pending-poll-counter'
         }
 
-        It 'Lint fails when ado_stuck_review_gate is missing the override_approved option' {
+        It 'Lint fails when stuck_review_gate is missing the override_approved option' {
             $content = Get-Content $script:RealYaml -Raw
-            $mutated = $content -replace '(?s)(- label: "✅ Override approved"\s*\r?\n\s*value:\s*override_approved\s*\r?\n\s*route:\s*ado_pr_merger\s*\r?\n)', ''
+            $mutated = $content -replace '(?s)(- label: "✅ Override approved"\s*\r?\n\s*value:\s*override_approved\s*\r?\n\s*route:\s*pr_merger\s*\r?\n)', ''
             Set-Content (Join-Path $script:WorkflowsDir 'ado-pr.yaml') $mutated
             $lintScript = Join-Path $script:TestsDir 'lint-ado-pr.ps1'
             $output = pwsh -NoProfile -File $lintScript 2>&1

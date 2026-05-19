@@ -5,13 +5,21 @@
     Parses workflows/github-pr.yaml and verifies:
     1. Interface contract matches ado-pr.yaml (inputs: pr_number, branch_name,
        target_branch, review_policy; outputs: merged, pr_url)
-    2. PR reviewer agent exists using Opus 1M model
-    3. PR fixer agent exists using Sonnet model
-    4. PR merger agent exists
-    5. Review-fix loop has iteration counter with max 10 cap (P7)
+    2. PR initial reviewer agent exists using an Opus model (advisory review
+       fired once per workflow run — sentiment-driven loop relies on
+       pr_feedback_analyzer for subsequent cycles, NOT a re-running reviewer)
+    3. PR feedback analyzer agent exists (sentiment-driven loop heart;
+       replaces the pre-#440 pr_reviewer re-run loop)
+    4. PR fixer agent exists
+    5. PR merger agent exists
     6. Human gate exists for fix exhaustion (P7: fail honestly)
     7. Entry point references a valid agent name
     8. All route targets reference valid agent names or $end
+    9. pr_fixer routes back into the polling loop (poll_status), NOT to
+       pr_initial_reviewer — the advisory reviewer runs ONCE per workflow
+       invocation under the sentiment-driven model.
+    10. AB#3236 — revise_counter no-commit fast-fail invariants (see
+        Checks 12/13).
     Exits 0 if clean, 1 if violations found.
 #>
 [CmdletBinding()]
@@ -53,47 +61,47 @@ foreach ($output in $requiredOutputs) {
     }
 }
 
-# ── Check 3: PR reviewer agent with Opus 1M ──────────────────────────────
-if ($content -notmatch 'name:\s*pr_reviewer') {
+# ── Check 3: PR initial reviewer agent with Opus ────────────────────────
+# Renamed pr_reviewer → pr_initial_reviewer in PRs #438/#440 when the
+# sentiment-driven loop replaced the re-running reviewer with a single
+# advisory review fired once per workflow run.
+if ($content -notmatch 'name:\s*pr_initial_reviewer\b') {
     $violations += [PSCustomObject]@{
-        Rule   = 'missing-reviewer'
-        Detail = "No pr_reviewer agent found"
+        Rule   = 'missing-initial-reviewer'
+        Detail = "No pr_initial_reviewer agent found"
     }
 }
-if ($content -notmatch 'name:\s*pr_reviewer\b[^\n]*\n(?:[^\n]*\n)*?\s*model:\s*claude-opus-4(\.\d+)?(-[a-z0-9-]+)?') {
+if ($content -notmatch 'name:\s*pr_initial_reviewer\b[^\n]*\n(?:[^\n]*\n)*?\s*model:\s*claude-opus-4(\.\d+)?(-[a-z0-9-]+)?') {
     $violations += [PSCustomObject]@{
-        Rule   = 'missing-opus-reviewer'
-        Detail = "PR reviewer must use an Opus model from the claude-opus-4.* family"
+        Rule   = 'missing-opus-initial-reviewer'
+        Detail = "pr_initial_reviewer must use an Opus model from the claude-opus-4.* family"
     }
 }
 
-# ── Check 4: PR fixer agent with Sonnet model ────────────────────────────
-if ($content -notmatch 'name:\s*pr_fixer') {
+# ── Check 4: PR feedback analyzer agent (sentiment-driven loop) ─────────
+# pr_feedback_analyzer is the heart of the new loop: it digests platform
+# feedback into a single brief that pr_fixer addresses. Replaces the
+# pre-#440 re-running reviewer.
+if ($content -notmatch 'name:\s*pr_feedback_analyzer\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-feedback-analyzer'
+        Detail = "No pr_feedback_analyzer agent found (sentiment-driven loop heart)"
+    }
+}
+
+# ── Check 5: PR fixer agent ─────────────────────────────────────────────
+if ($content -notmatch 'name:\s*pr_fixer\b') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-fixer'
         Detail = "No pr_fixer agent found"
     }
 }
 
-# ── Check 5: PR merger agent ─────────────────────────────────────────────
-if ($content -notmatch 'name:\s*pr_merger') {
+# ── Check 6: PR merger agent ─────────────────────────────────────────────
+if ($content -notmatch 'name:\s*pr_merger\b') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-merger'
         Detail = "No pr_merger agent found"
-    }
-}
-
-# ── Check 6: Iteration counter with max 10 (P7) ─────────────────────────
-if ($content -notmatch 'name:\s*review_counter') {
-    $violations += [PSCustomObject]@{
-        Rule   = 'missing-counter'
-        Detail = "No review_counter script node found for iteration tracking"
-    }
-}
-if ($content -notmatch '10') {
-    $violations += [PSCustomObject]@{
-        Rule   = 'missing-iteration-cap'
-        Detail = "No iteration cap of 10 found (P7: fail honestly)"
     }
 }
 
@@ -135,19 +143,24 @@ if ($content -notmatch 'name:\s*github-pr') {
     }
 }
 
-# ── Check 11: Fixer routes back to reviewer (loop structure) ─────────────
-# Verify the review-fix loop is properly wired: pr_fixer → pr_reviewer
+# ── Check 11: Fixer routes back into the polling loop (sentiment-driven) ─
+# Verify pr_fixer routes to poll_status (NOT pr_initial_reviewer). Under
+# the post-#440 sentiment-driven model, the advisory reviewer runs ONCE
+# per workflow invocation; subsequent loops are driven by re-polling
+# platform state on the new head SHA after the fixer's push.
 $fixerBlock = ''
-$inFixer = $false
-foreach ($line in $lines) {
-    if ($line -match 'name:\s*pr_fixer') { $inFixer = $true }
-    if ($inFixer) { $fixerBlock += $line + "`n" }
-    if ($inFixer -and $fixerBlock.Length -gt 100 -and $line -match '^\s*-\s*name:') { break }
-}
-if ($fixerBlock -and $fixerBlock -notmatch 'to:\s*pr_reviewer') {
+$m = [regex]::Match($content, '(?s)- name: pr_fixer\b.*?(?=\n  - name: |\Z)')
+if ($m.Success) { $fixerBlock = $m.Value }
+if ($fixerBlock -and $fixerBlock -notmatch 'to:\s*poll_status\b') {
     $violations += [PSCustomObject]@{
         Rule   = 'broken-fix-loop'
-        Detail = "pr_fixer must route back to pr_reviewer for re-review"
+        Detail = "pr_fixer must route back to poll_status (sentiment-driven loop re-evaluates on new head SHA, does NOT re-run pr_initial_reviewer)"
+    }
+}
+if ($fixerBlock -and $fixerBlock -match 'to:\s*pr_initial_reviewer\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'reviewer-rerun-leak'
+        Detail = "pr_fixer must NOT route back to pr_initial_reviewer — the advisory reviewer runs once per workflow invocation only (post-#440)"
     }
 }
 
@@ -212,5 +225,5 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: github-pr.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, reviewer/fixer/merger agents, iteration cap, human gate)" -ForegroundColor Green
+Write-Host "PASS: github-pr.yaml validated ($($requiredInputs.Count) inputs, $($requiredOutputs.Count) outputs, initial reviewer/feedback analyzer/fixer/merger agents, sentiment-driven loop)" -ForegroundColor Green
 exit 0
