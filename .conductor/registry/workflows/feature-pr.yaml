@@ -33,7 +33,7 @@ workflow:
     fails to merge. After each remediation, re-requests review via
     feature_pr_updater (gh on GitHub, `pr post-comment-ado` on ADO).
     Escalates to human gate after cap is exceeded.
-  version: "2.4.10"
+  version: "2.4.8"
   entry_point: integrate_target_drift
   metadata:
     min_polyphony_version: "2.4.8"
