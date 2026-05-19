@@ -159,6 +159,57 @@ if ($content -notmatch 'name:\s*ado_stuck_review_reset\b') {
     }
 }
 
+# ── Check 12: revise_counter no-commit fast-fail (AB#3236) ──────────────
+# Two invariants enforced:
+#   a. revise_counter increments unconditionally per iteration (drops
+#      pre-AB#3236 digest-keyed increment that infinite-looped when
+#      pr_fixer reported success but committed nothing).
+#   b. revise_counter tracks no_commit_count by comparing
+#      poll_status.output.head_sha across passes and emits cap_reason
+#      so the cap gate can render distinct prompts for "max revisions"
+#      vs "stuck fixer".
+$reviseCounterBlock = ''
+$m = [regex]::Match($content, '(?s)- name: revise_counter\b.*?(?=\n  - name: |\Z)')
+if ($m.Success) { $reviseCounterBlock = $m.Value }
+if (-not $reviseCounterBlock) {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-revise-counter'
+        Detail = "No revise_counter script node found (AB#3236)"
+    }
+} else {
+    if ($reviseCounterBlock -notmatch '\$count\s*=\s*\$count\s*\+\s*1' -or
+        $reviseCounterBlock -notmatch '(?s)# AB#3236.*?increment unconditionally') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'revise-counter-not-unconditional'
+            Detail = "revise_counter must increment count unconditionally per AB#3236 (drop digest-keyed increment)"
+        }
+    }
+    if ($reviseCounterBlock -notmatch 'no_commit_count' -or
+        $reviseCounterBlock -notmatch 'poll_status\.output\.head_sha') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'revise-counter-missing-no-commit-detection'
+            Detail = "revise_counter must track no_commit_count via poll_status.output.head_sha comparison (AB#3236)"
+        }
+    }
+    if ($reviseCounterBlock -notmatch 'cap_reason') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'revise-counter-missing-cap-reason'
+            Detail = "revise_counter must emit cap_reason ('max_revisions' | 'no_commit_stuck') so revise_cap_gate can branch prompts (AB#3236)"
+        }
+    }
+}
+
+# ── Check 13: revise_cap_gate branches on cap_reason (AB#3236) ──────────
+$capGateBlock = ''
+$m = [regex]::Match($content, '(?s)- name: revise_cap_gate\b.*?(?=\n  - name: |\Z)')
+if ($m.Success) { $capGateBlock = $m.Value }
+if ($capGateBlock -and $capGateBlock -notmatch "cap_reason\s*==\s*'no_commit_stuck'") {
+    $violations += [PSCustomObject]@{
+        Rule   = 'revise-cap-gate-not-branched'
+        Detail = "revise_cap_gate prompt must branch on revise_counter.output.cap_reason == 'no_commit_stuck' (AB#3236)"
+    }
+}
+
 # ── Report ────────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "FAIL: $($violations.Count) ado-pr.yaml violation(s)" -ForegroundColor Red

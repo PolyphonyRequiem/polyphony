@@ -34,9 +34,13 @@
 #   - approved AND no unresolved threads AND merge_allowed → merge_now
 #   - otherwise (mixed signals, no votes yet, etc.) → none
 #
-# revise_counter is digest-keyed: it only increments when the analyzer's
-# feedback_digest changes — re-polls during CI / between fixer pushes do
-# NOT consume budget.
+# revise_counter (AB#3236): increments unconditionally on every loop
+# iteration, AND separately tracks consecutive no-commit iterations by
+# comparing poll_status.output.head_sha across passes. Two consecutive
+# no-commit iterations fast-fail to revise_cap_gate so a stuck pr_fixer
+# (reports success but commits nothing) can't burn the full revise
+# budget on Opus/Sonnet calls. The analyzer's feedback_digest is still
+# emitted for downstream observers but no longer gates the counter.
 #
 # Interface contract: Accepts the same inputs and produces the same outputs
 # as github-pr.yaml (pr_number, branch_name, target_branch, review_policy,
@@ -748,21 +752,36 @@ agents:
     routes:
       - to: revise_counter
 
-  # ── Revise counter ────────────────────────────────────────────────────
+  # ── Revise counter (AB#3236) ─────────────────────────────────────────
   #
-  # Tracks pr_fixer revision cycles. Digest-keyed — only increments when
-  # `pr_feedback_analyzer.output.feedback_digest` differs from the
-  # last-seen digest. This makes re-polls during CI / between fixer
-  # pushes safe — they would otherwise consume budget without progress.
+  # Tracks pr_fixer revision cycles. Two independent cap mechanisms:
+  #
+  # 1. **Per-iteration count** (`count >= max_revisions`). Incremented
+  #    unconditionally on every loop pass. Cap source:
+  #    `policy.approvals.max_revision_cycles`, falls back to 5.
+  #
+  # 2. **No-commit fast-fail** (`no_commit_count >= no_commit_cap`).
+  #    Detects pr_fixer iterations that reported success but committed
+  #    nothing by comparing `poll_status.output.head_sha` across passes.
+  #    Two consecutive unchanged head SHAs → cap_reached with
+  #    `cap_reason = "no_commit_stuck"`. `no_commit_cap` is a constant
+  #    2; promote to policy if operator data argues for tuning.
+  #
+  # Either cap routes to `revise_cap_gate` for operator rescue.
+  #
+  # The analyzer's `feedback_digest` is still emitted (`digest`,
+  # `digest_changed`) for downstream observers but no longer gates the
+  # counter — the pre-AB#3236 digest-keyed increment produced an
+  # infinite loop when pr_fixer reported success but committed nothing,
+  # because the analyzer kept seeing identical feedback and the digest
+  # never changed.
   #
   # Counter file key is composite (pr_number + work_item_id) so two
   # sibling sub-workflows don't clobber each other's state if they run
   # against the same PR for any reason.
-  #
-  # Cap reading: policy.approvals.max_revision_cycles, falls back to 5.
   - name: revise_counter
     type: script
-    description: Track pr_fixer revise loop iteration count (digest-keyed; cap from policy.approvals.max_revision_cycles)
+    description: Track pr_fixer revise loop iteration count + no-commit fast-fail (cap from policy.approvals.max_revision_cycles, no_commit_cap=2)
     command: pwsh
     args:
       - "-NoProfile"
@@ -770,27 +789,46 @@ agents:
       - |
         $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-ado-pr-revise-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}.json"
         $digestNow   = '{{ pr_feedback_analyzer.output.feedback_digest if (pr_feedback_analyzer is defined and pr_feedback_analyzer.output.feedback_digest is defined) else "" }}'
+        $currentSha  = '{{ poll_status.output.head_sha if (poll_status is defined and poll_status.output.head_sha is defined) else "" }}'
 
         $count = 0
+        $noCommitCount = 0
         $digestPrev = ''
+        $shaPrev = ''
         if (Test-Path $counterFile) {
           try {
-            $state      = Get-Content $counterFile -Raw | ConvertFrom-Json
-            $count      = [int]$state.count
-            $digestPrev = [string]$state.digest
+            $state         = Get-Content $counterFile -Raw | ConvertFrom-Json
+            $count         = [int]$state.count
+            $noCommitCount = if ($state.PSObject.Properties.Name -contains 'no_commit_count') { [int]$state.no_commit_count } else { 0 }
+            $digestPrev    = [string]$state.digest
+            $shaPrev       = if ($state.PSObject.Properties.Name -contains 'sha') { [string]$state.sha } else { '' }
           } catch {
             try { $count = [int](Get-Content $counterFile -Raw) } catch { $count = 0 }
             $digestPrev = ''
+            $shaPrev = ''
           }
         }
 
-        if ($digestNow -ne '' -and $digestNow -ne $digestPrev) {
-          $count = $count + 1
-        } elseif ($count -eq 0) {
-          $count = 1
+        # AB#3236: increment unconditionally per iteration. The previous
+        # digest-keyed increment produced an infinite loop when pr_fixer
+        # reported success but committed nothing — analyzer feedback
+        # (and therefore the digest) stayed the same across iterations,
+        # so the counter never advanced.
+        $count = $count + 1
+
+        # AB#3236: detect no-commit pr_fixer iterations. If poll_status
+        # reports the same head SHA two consecutive iterations, the
+        # previous pr_fixer made no commit. Two consecutive no-commit
+        # iterations fast-fail to the cap gate so a stuck fixer can't
+        # burn the full revise budget.
+        $noProgress = ($shaPrev -ne '' -and $currentSha -ne '' -and $shaPrev -eq $currentSha)
+        if ($noProgress) {
+            $noCommitCount = $noCommitCount + 1
+        } else {
+            $noCommitCount = 0
         }
 
-        @{ count = $count; digest = $digestNow } | ConvertTo-Json -Compress | Set-Content $counterFile
+        @{ count = $count; no_commit_count = $noCommitCount; digest = $digestNow; sha = $currentSha } | ConvertTo-Json -Compress | Set-Content $counterFile
 
         $policyMax = '{{ approvals_policy.output.max_revision_cycles | default("") }}'
         if ([string]::IsNullOrWhiteSpace($policyMax) -or $policyMax -eq 'None' -or $policyMax -eq '0') {
@@ -798,9 +836,13 @@ agents:
         } else {
             $maxRevisions = [int]$policyMax
         }
-        $capReached = $count -ge $maxRevisions
+        $noCommitCap = 2
+        $capByCount = $count -ge $maxRevisions
+        $capByNoCommit = $noCommitCount -ge $noCommitCap
+        $capReached = $capByCount -or $capByNoCommit
         $digestChanged = ($digestNow -ne '' -and $digestNow -ne $digestPrev)
-        @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached; digest = $digestNow; digest_changed = $digestChanged } | ConvertTo-Json
+        $capReason = if (-not $capReached) { '' } elseif ($capByNoCommit) { 'no_commit_stuck' } else { 'max_revisions' }
+        @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached; digest = $digestNow; digest_changed = $digestChanged; no_commit_count = $noCommitCount; no_commit_cap = $noCommitCap; cap_reason = $capReason } | ConvertTo-Json
     routes:
       - to: revise_cap_gate
         when: "{{ revise_counter.output.cap_reached == true }}"
@@ -814,11 +856,23 @@ agents:
   - name: revise_cap_gate
     type: human_gate
     prompt: |
+      {% if revise_counter.output.cap_reason == 'no_commit_stuck' %}
+      ## ⚠️ pr_fixer Stuck (No-Commit Cap) — ADO PR #{{ workflow.input.pr_number }}
+
+      `pr_fixer` ran **{{ revise_counter.output.no_commit_count }}**
+      consecutive iterations without producing a new commit (head SHA
+      unchanged across passes). The fixer is either reporting success
+      it didn't deliver or hitting an environment issue that prevents
+      it from committing/pushing. Continuing the loop would burn the
+      remaining revise budget on more no-op iterations — escalating
+      now so you can intervene.
+      {% else %}
       ## ⚠️ Revision Cap Hit — ADO PR #{{ workflow.input.pr_number }}
 
       pr_fixer has produced **{{ revise_counter.output.max_revisions }}**
       revisions but reviewers / the bot analyzer are still requesting
       changes.
+      {% endif %}
 
       - **PR:** {{ poll_status.output.pr_url }}
       - **Branch:** `{{ workflow.input.branch_name }}`
