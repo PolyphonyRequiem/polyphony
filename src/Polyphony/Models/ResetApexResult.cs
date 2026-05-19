@@ -28,7 +28,17 @@ namespace Polyphony;
 ///         every polyphony branch (local + origin) for the apex. This
 ///         also takes the manifest blob with it (the manifest lives on
 ///         <c>feature/{N}</c>).</item>
-///   <item><c>manifest</c> after branches: today a read-only inspection
+///   <item><c>facets</c> after branches, before manifest: strip the
+///         persisted <c>polyphony:facets=*</c> and <c>polyphony:planned</c>
+///         tags from the apex subtree. Watermark filtering cannot
+///         demote these — they're persisted planning decisions, not PR
+///         observations — so without this step the next
+///         <c>state classify-lifecycle</c> on a re-dispatched apex
+///         silently skips planning (apex 62286666 incident; see
+///         <c>docs/decisions/run-reset.md</c>). Must come BEFORE state
+///         because state advances the watermark and "clean tags" is
+///         part of the watermark-bump invariant.</item>
+///   <item><c>manifest</c> after facets: today a read-only inspection
 ///         pass (the manifest is already gone because branches deleted
 ///         <c>feature/{N}</c>); PR 3 may extend it to handle
 ///         partial-reset scenarios.</item>
@@ -54,6 +64,7 @@ public sealed record ResetApexResult
     public ResetPrsResult? Prs { get; init; }
     public ResetWorktreesResult? Worktrees { get; init; }
     public ResetBranchesResult? Branches { get; init; }
+    public ResetFacetsResult? Facets { get; init; }
     public ResetManifestResult? Manifest { get; init; }
     public ResetStateResult? State { get; init; }
 
