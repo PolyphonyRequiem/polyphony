@@ -25,16 +25,23 @@
          an out-of-band write situation that should be inspected).
       4. Computes `behind_by` from `origin/<target>...HEAD`.
       5. If behind_by == 0, exits clean (already in sync).
-      6. Otherwise, `git merge --no-ff origin/<target>` and pushes.
-         On conflict: safely aborts the merge (only if MERGE_HEAD is
-         present), captures the conflicted file list, and surfaces
+      6. Otherwise, `git rebase origin/<target>` and force-pushes
+         with `--force-with-lease=<feature>:<expected-sha>` (safe
+         force: refuses if origin advanced since fetch).
+         On conflict: safely aborts the rebase (only if a rebase is
+         in progress), captures the conflicted file list, and surfaces
          `merge_conflict` for the gate to handle.
 
-    Merge (not rebase) is intentional:
-      * Preserves SHAs of upstream MG → feature merge commits.
-      * Avoids `--force-with-lease` (vanilla push works after a merge
-        commit is layered on top — fast-forward against origin/feature).
-      * Makes the drift-integration commit obvious in PR review.
+    Rebase (not merge) is intentional:
+      * Feature PR shows clean linear history — no extra integration
+        merge commit polluting the PR commits view.
+      * Reviewer sees only the work the feature actually did, with
+        upstream drift folded in as ancestor commits (not as a sibling
+        merge).
+      * Force-with-lease is safe because polyphony's SDLC run is the
+        sole writer of the feature branch within a run; the
+        local-vs-origin divergence gate (below) guarantees we never
+        force-push over remote-only commits we don't know about.
 
     Routing-style envelope — ALWAYS exits 0. Failures surface via
     `error_code` / `error_message`; the workflow gate routes on those
@@ -43,12 +50,14 @@
     Output JSON envelope:
         {
           success:           <bool>,
+          strategy:          'rebase',
           feature_branch:    '<branch>',
           target_branch:     '<branch>',
           behind_by:         <int>,
           ahead_by:          <int>,
           drift_integrated:  <bool>,
-          merge_commit_sha:  '<sha>' | '',
+          old_head_sha:      '<sha>' | '',
+          new_head_sha:      '<sha>' | '',
           conflicted_files:  [<rel-path>, ...],
           error_code:        '<code>' | '',
           error_message:     '<msg>' | ''
@@ -56,15 +65,22 @@
 
     Error codes:
       git_unavailable          — git not on PATH.
+      worktree_dirty           — uncommitted changes / in-progress merge
+                                 or rebase / cherry-pick / revert detected
+                                 before we touch anything.
       fetch_failed             — `git fetch origin <target>` (or <feature>) failed.
       branch_mismatch          — current branch is not <feature> and checkout failed.
       feature_branch_diverged  — local <feature> and origin/<feature> have
                                  unique commits each — refuse to proceed.
-      merge_conflict           — `git merge --no-ff origin/<target>` hit
-                                 conflicts; merge aborted; conflicted_files
-                                 lists the affected paths.
+      merge_conflict           — `git rebase origin/<target>` hit
+                                 conflicts; rebase aborted; conflicted_files
+                                 lists the affected paths. (Name retained
+                                 for workflow-route compatibility with the
+                                 merge-strategy version — the semantic is
+                                 still "drift integration conflicted".)
       push_failed              — drift was integrated locally but
-                                 `git push origin <feature>` failed.
+                                 `git push --force-with-lease ...` failed
+                                 (typically: origin advanced since fetch).
       unexpected_error         — uncaught exception in the script body.
 
 .PARAMETER FeatureBranch
@@ -99,12 +115,14 @@ $ErrorActionPreference = 'Stop'
 
 $envelope = [ordered]@{
     success           = $false
+    strategy          = 'rebase'
     feature_branch    = $FeatureBranch
     target_branch     = $TargetBranch
     behind_by         = 0
     ahead_by          = 0
     drift_integrated  = $false
-    merge_commit_sha  = ''
+    old_head_sha      = ''
+    new_head_sha      = ''
     conflicted_files  = @()
     error_code        = ''
     error_message     = ''
@@ -137,15 +155,53 @@ function Invoke-Git {
     }
 }
 
-function Test-MergeInProgress {
+function Test-RebaseInProgress {
+    # `git rev-parse --git-path <name>` echoes the resolved path even if
+    # the path does not exist. Existence on disk is the actual signal.
+    $rm = (Invoke-Git 'rev-parse' '--git-path' 'rebase-merge').Stdout
+    $ra = (Invoke-Git 'rev-parse' '--git-path' 'rebase-apply').Stdout
+    return ((-not [string]::IsNullOrWhiteSpace($rm) -and (Test-Path $rm)) -or
+            (-not [string]::IsNullOrWhiteSpace($ra) -and (Test-Path $ra)))
+}
+
+function Test-WorktreeBlocked {
+    # Returns ($true, '<reason>') if any pre-existing in-progress git
+    # operation or uncommitted change should block us from touching the
+    # branch. Returns ($false, '') if safe to proceed.
+    if (Test-RebaseInProgress) {
+        return @($true, 'a rebase is already in progress')
+    }
     $r = Invoke-Git 'rev-parse' '-q' '--verify' 'MERGE_HEAD'
-    return ($r.ExitCode -eq 0)
+    if ($r.ExitCode -eq 0) {
+        return @($true, 'a merge is already in progress')
+    }
+    $r = Invoke-Git 'rev-parse' '-q' '--verify' 'CHERRY_PICK_HEAD'
+    if ($r.ExitCode -eq 0) {
+        return @($true, 'a cherry-pick is already in progress')
+    }
+    $r = Invoke-Git 'rev-parse' '-q' '--verify' 'REVERT_HEAD'
+    if ($r.ExitCode -eq 0) {
+        return @($true, 'a revert is already in progress')
+    }
+    $status = Invoke-Git 'status' '--porcelain'
+    if ($status.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($status.Stdout)) {
+        return @($true, "worktree has uncommitted changes:`n$($status.Stdout)")
+    }
+    return @($false, '')
 }
 
 try {
     if (-not (Test-CommandAvailable 'git')) {
         $envelope.error_code = 'git_unavailable'
         $envelope.error_message = 'git is not available on PATH'
+        Write-Envelope $envelope
+        exit 0
+    }
+
+    $blockedResult = Test-WorktreeBlocked
+    if ($blockedResult[0]) {
+        $envelope.error_code = 'worktree_dirty'
+        $envelope.error_message = "refusing to integrate drift: $($blockedResult[1])"
         Write-Envelope $envelope
         exit 0
     }
@@ -211,38 +267,70 @@ try {
         exit 0
     }
 
-    $mergeMsg = "chore: integrate origin/$TargetBranch drift into $FeatureBranch ($($envelope.behind_by) commit(s)) [AB#3238]"
-    $merge = Invoke-Git 'merge' '--no-ff' '-m' $mergeMsg "origin/$TargetBranch"
-    if ($merge.ExitCode -ne 0) {
+    $oldHead = (Invoke-Git 'rev-parse' 'HEAD').Stdout
+    $envelope.old_head_sha = $oldHead
+
+    # Capture the expected origin/<feature> SHA BEFORE rebase, to use as
+    # the explicit lease in --force-with-lease. This guards against
+    # background fetches that could otherwise weaken the lease.
+    $expectedRemote = ''
+    if ($originFeatureExists) {
+        $expectedRemote = (Invoke-Git 'rev-parse' "refs/remotes/origin/$FeatureBranch").Stdout
+    }
+
+    $rebase = Invoke-Git 'rebase' "origin/$TargetBranch"
+    if ($rebase.ExitCode -ne 0) {
         $conflicted = @()
-        if (Test-MergeInProgress) {
+        if (Test-RebaseInProgress) {
             $unmerged = Invoke-Git 'diff' '--name-only' '--diff-filter=U'
             if ($unmerged.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($unmerged.Stdout)) {
                 $conflicted = @($unmerged.Stdout -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
             }
-            $abort = Invoke-Git 'merge' '--abort'
+            $abort = Invoke-Git 'rebase' '--abort'
             if ($abort.ExitCode -ne 0) {
                 $envelope.error_code = 'merge_conflict'
-                $envelope.error_message = "merge of origin/$TargetBranch into $FeatureBranch failed ($($merge.Stderr)) AND `git merge --abort` failed ($($abort.Stderr)); worktree may be left in a conflicted state"
+                $envelope.error_message = "rebase of HEAD onto origin/$TargetBranch failed ($($rebase.Stderr)) AND ``git rebase --abort`` failed ($($abort.Stderr)); worktree may be left in a conflicted state"
                 $envelope.conflicted_files = $conflicted
                 Write-Envelope $envelope
                 exit 0
             }
         }
         $envelope.error_code = 'merge_conflict'
-        $envelope.error_message = "merge of origin/$TargetBranch into $FeatureBranch hit conflicts; merge aborted cleanly: $($merge.Stderr)"
+        $envelope.error_message = "rebase of HEAD onto origin/$TargetBranch hit conflicts; rebase aborted cleanly: $($rebase.Stderr)"
         $envelope.conflicted_files = $conflicted
         Write-Envelope $envelope
         exit 0
     }
 
-    $sha = (Invoke-Git 'rev-parse' 'HEAD').Stdout
-    $envelope.merge_commit_sha = $sha
+    $newHead = (Invoke-Git 'rev-parse' 'HEAD').Stdout
+    $envelope.new_head_sha = $newHead
 
-    $push = Invoke-Git 'push' 'origin' $FeatureBranch
+    # Edge case: rebase ran but HEAD didn't move (target was already an
+    # ancestor of HEAD, no commits to replay). Behind_by said otherwise,
+    # but git can still no-op in odd-history scenarios. Treat as success
+    # and skip the force-push.
+    if ($newHead -eq $oldHead) {
+        $envelope.success = $true
+        $envelope.drift_integrated = $false
+        $envelope.error_message = ''
+        Write-Envelope $envelope
+        exit 0
+    }
+
+    # Force-push with explicit lease (origin/<feature> must match the SHA
+    # we observed at fetch time). If the feature branch does not exist on
+    # origin yet, a plain `git push -u` is appropriate (no lease needed —
+    # nothing to overwrite).
+    if ([string]::IsNullOrWhiteSpace($expectedRemote)) {
+        $push = Invoke-Git 'push' '--set-upstream' 'origin' $FeatureBranch
+    }
+    else {
+        $leaseArg = "--force-with-lease=refs/heads/${FeatureBranch}:$expectedRemote"
+        $push = Invoke-Git 'push' $leaseArg 'origin' "HEAD:refs/heads/$FeatureBranch"
+    }
     if ($push.ExitCode -ne 0) {
         $envelope.error_code = 'push_failed'
-        $envelope.error_message = "git push origin $FeatureBranch failed: $($push.Stderr)"
+        $envelope.error_message = "git push --force-with-lease ... origin $FeatureBranch failed (most likely: origin advanced since fetch): $($push.Stderr)"
         Write-Envelope $envelope
         exit 0
     }

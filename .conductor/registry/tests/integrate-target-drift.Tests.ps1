@@ -2,11 +2,11 @@
 #
 # Exercises the script against a synthetic two-clone git repo to cover:
 #   - no drift (idempotent fast path)
-#   - clean drift (merge + push)
-#   - conflicting drift (merge aborted, conflicted_files captured)
+#   - clean drift (rebase + force-with-lease push)
+#   - conflicting drift (rebase aborted, conflicted_files captured)
 #   - feature_branch_diverged (local + origin both have unique commits)
-#   - missing origin feature branch (non-fatal warning, proceeds)
-#   - branch_mismatch (checkout-to-feature fails)
+#   - worktree_dirty (uncommitted changes block before we touch anything)
+#   - envelope contract (all required fields present)
 #
 # All tests scope a temp directory tree:
 #   <root>/origin.git      (bare)
@@ -101,18 +101,41 @@ Describe 'integrate-target-drift.ps1 (AB#3238)' {
     }
 
     Context 'Clean drift' {
-        It 'Merges origin/<target> and pushes when behind_by>0' {
+        It 'Rebases onto origin/<target> and force-pushes when behind_by>0' {
             $root = New-IntegrateDriftFixture
             try {
                 Add-DriftCommit -Root $root
+
+                # Capture pre-rebase HEAD to verify the SHA changed.
+                $work = Join-Path $root 'work'
+                Push-Location $work
+                try {
+                    git fetch -q origin main 2>&1 | Out-Null
+                    $preHead = (git rev-parse HEAD).Trim()
+                }
+                finally { Pop-Location }
+
                 $env = Invoke-DriftScript -Root $root
                 $env.success | Should -BeTrue
                 $env.drift_integrated | Should -BeTrue
+                $env.strategy | Should -Be 'rebase'
                 $env.behind_by | Should -Be 1
-                $env.merge_commit_sha | Should -Not -BeNullOrEmpty
+                $env.old_head_sha | Should -Be $preHead
+                $env.new_head_sha | Should -Not -BeNullOrEmpty
+                $env.new_head_sha | Should -Not -Be $preHead
                 $env.error_code | Should -Be ''
 
-                # Verify push: re-run should see no drift.
+                # Verify origin advanced to new_head_sha — confirms the
+                # force-with-lease push landed.
+                Push-Location $work
+                try {
+                    git fetch -q origin feature/test 2>&1 | Out-Null
+                    $remoteHead = (git rev-parse refs/remotes/origin/feature/test).Trim()
+                    $remoteHead | Should -Be $env.new_head_sha
+                }
+                finally { Pop-Location }
+
+                # Re-run should see no drift (target is now ancestor).
                 $env2 = Invoke-DriftScript -Root $root
                 $env2.behind_by | Should -Be 0
                 $env2.drift_integrated | Should -BeFalse
@@ -121,8 +144,8 @@ Describe 'integrate-target-drift.ps1 (AB#3238)' {
         }
     }
 
-    Context 'Merge conflict' {
-        It 'Reports merge_conflict and aborts cleanly when integration conflicts' {
+    Context 'Rebase conflict' {
+        It 'Reports merge_conflict and aborts cleanly when rebase conflicts' {
             $root = New-IntegrateDriftFixture
             try {
                 # Set up a conflicting edit on main vs feature.
@@ -156,13 +179,16 @@ Describe 'integrate-target-drift.ps1 (AB#3238)' {
                 $env.error_code | Should -Be 'merge_conflict'
                 $env.conflicted_files | Should -Contain 'shared.txt'
 
-                # Worktree should be clean after abort.
+                # Worktree should be clean after rebase --abort.
                 Push-Location (Join-Path $root 'work')
                 try {
                     $status = (git status -s) -join "`n"
                     $status | Should -BeNullOrEmpty
-                    $mergeHead = (git rev-parse -q --verify MERGE_HEAD 2>&1)
-                    $LASTEXITCODE | Should -Not -Be 0
+                    # No rebase state should remain.
+                    $rmDir = (git rev-parse --git-path rebase-merge).Trim()
+                    $raDir = (git rev-parse --git-path rebase-apply).Trim()
+                    (Test-Path $rmDir) | Should -BeFalse
+                    (Test-Path $raDir) | Should -BeFalse
                 }
                 finally { Pop-Location }
             }
@@ -207,21 +233,47 @@ Describe 'integrate-target-drift.ps1 (AB#3238)' {
         }
     }
 
+    Context 'Worktree dirty' {
+        It 'Refuses to proceed when worktree has uncommitted changes' {
+            $root = New-IntegrateDriftFixture
+            try {
+                Add-DriftCommit -Root $root
+
+                # Leave an uncommitted change in the worktree.
+                $work = Join-Path $root 'work'
+                Push-Location $work
+                try {
+                    'uncommitted' | Out-File -NoNewline dirty.txt
+                }
+                finally { Pop-Location }
+
+                $env = Invoke-DriftScript -Root $root
+                $env.success | Should -BeFalse
+                $env.error_code | Should -Be 'worktree_dirty'
+                $env.error_message | Should -Match 'uncommitted'
+            }
+            finally { Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
     Context 'Envelope contract' {
         It 'Always emits a parsable JSON envelope with required fields' {
             $root = New-IntegrateDriftFixture
             try {
                 $env = Invoke-DriftScript -Root $root
                 $env.PSObject.Properties.Name | Should -Contain 'success'
+                $env.PSObject.Properties.Name | Should -Contain 'strategy'
                 $env.PSObject.Properties.Name | Should -Contain 'feature_branch'
                 $env.PSObject.Properties.Name | Should -Contain 'target_branch'
                 $env.PSObject.Properties.Name | Should -Contain 'behind_by'
                 $env.PSObject.Properties.Name | Should -Contain 'ahead_by'
                 $env.PSObject.Properties.Name | Should -Contain 'drift_integrated'
-                $env.PSObject.Properties.Name | Should -Contain 'merge_commit_sha'
+                $env.PSObject.Properties.Name | Should -Contain 'old_head_sha'
+                $env.PSObject.Properties.Name | Should -Contain 'new_head_sha'
                 $env.PSObject.Properties.Name | Should -Contain 'conflicted_files'
                 $env.PSObject.Properties.Name | Should -Contain 'error_code'
                 $env.PSObject.Properties.Name | Should -Contain 'error_message'
+                $env.strategy | Should -Be 'rebase'
             }
             finally { Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue }
         }

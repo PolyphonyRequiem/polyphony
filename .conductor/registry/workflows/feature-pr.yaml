@@ -33,7 +33,7 @@ workflow:
     fails to merge. After each remediation, re-requests review via
     feature_pr_updater (gh on GitHub, `pr post-comment-ado` on ADO).
     Escalates to human gate after cap is exceeded.
-  version: "2.4.9"
+  version: "2.4.10"
   entry_point: integrate_target_drift
   metadata:
     min_polyphony_version: "2.4.8"
@@ -129,10 +129,14 @@ agents:
   # PR (apex→main from apex-driver, child→feature/<apex> from
   # apex-item-dispatch, GitHub or ADO) is protected.
   #
-  # Strategy: `git merge --no-ff origin/<target>` on the feature branch,
-  # then push. Merge (not rebase) preserves SHAs of upstream MG → feature
-  # merge commits, avoids force-push, and leaves an obvious
-  # "drift integration" commit in PR review.
+  # Strategy: `git rebase origin/<target>` on the feature branch, then
+  # force-push with `--force-with-lease=<feature>:<expected-sha>`. Rebase
+  # (not merge) keeps the feature PR's commit history linear and clean —
+  # no extra "drift integration" merge commit pollutes the PR's Commits
+  # tab; upstream changes appear as ancestor commits rather than as a
+  # sibling merge. Force-with-lease (refusing if origin advanced since
+  # fetch) plus the local-vs-origin divergence gate (below) make this
+  # safe given polyphony's branch model (SDLC run is sole writer).
   #
   # Routing-style script — always exits 0; failures surface via
   # `error_code` and route to the conflict / failed gates.
@@ -165,20 +169,20 @@ agents:
 
   # ── Conflict gate ───────────────────────────────────────────────────────
   #
-  # `git merge --no-ff origin/<target>` hit conflicts. The script aborted
-  # the merge cleanly so the worktree is back to feature-branch HEAD.
-  # The operator must resolve by hand (cd into the feature worktree,
-  # merge or rebase against origin/<target>, push), then click Retry.
-  # The script will re-check behind_by; if 0, it falls through to the
-  # PR creator without re-attempting the merge.
+  # `git rebase origin/<target>` hit conflicts. The script aborted the
+  # rebase cleanly so the worktree is back to feature-branch HEAD. The
+  # operator must resolve by hand (cd into the feature worktree, rebase
+  # against origin/<target>, resolve, continue, force-push-with-lease),
+  # then click Retry. The script will re-check behind_by; if 0, it falls
+  # through to the PR creator without re-attempting the rebase.
   - name: integrate_target_drift_conflict_gate
     type: human_gate
-    description: Drift integration hit merge conflicts — operator resolves by hand, then retries
+    description: Drift integration hit rebase conflicts — operator resolves by hand, then retries
     prompt: |
-      ## ⚠️ Drift integration: merge conflict
+      ## ⚠️ Drift integration: rebase conflict
 
-      Integrating `origin/{{ workflow.input.target_branch }}` into
-      `{{ workflow.input.feature_branch }}` hit conflicts on:
+      Rebasing `{{ workflow.input.feature_branch }}` onto
+      `origin/{{ workflow.input.target_branch }}` hit conflicts on:
 
       {% if integrate_target_drift.output.conflicted_files | length > 0 -%}
       {% for f in integrate_target_drift.output.conflicted_files -%}
@@ -190,19 +194,21 @@ agents:
 
       **Behind by:** `{{ integrate_target_drift.output.behind_by }}` commit(s)
 
-      The merge was aborted cleanly; the feature branch is back at its
+      The rebase was aborted cleanly; the feature branch is back at its
       original HEAD. Resolve by hand:
 
       ```
       cd <feature worktree>
-      git fetch origin {{ workflow.input.target_branch }}
-      git merge --no-ff origin/{{ workflow.input.target_branch }}
-      # resolve conflicts, git add, git commit
-      git push origin {{ workflow.input.feature_branch }}
+      git fetch origin {{ workflow.input.target_branch }} {{ workflow.input.feature_branch }}
+      git rebase origin/{{ workflow.input.target_branch }}
+      # for each conflict: edit, git add <file>, git rebase --continue
+      # (or `git rebase --abort` to bail out entirely)
+      $expected = git rev-parse refs/remotes/origin/{{ workflow.input.feature_branch }}
+      git push --force-with-lease=refs/heads/{{ workflow.input.feature_branch }}:$expected origin HEAD:refs/heads/{{ workflow.input.feature_branch }}
       ```
 
-      Then click **Retry** — the script will re-check and skip the merge
-      if the branch is now in sync.
+      Then click **Retry** — the script will re-check and skip the
+      rebase if the branch is now in sync.
 
       Choose an action:
       - **Retry** — re-run drift integration (operator has resolved & pushed)
@@ -217,9 +223,12 @@ agents:
 
   # ── Generic failure gate ────────────────────────────────────────────────
   #
-  # Drift integration failed for a reason other than merge conflict:
-  # fetch failure, branch-mismatch / checkout failure, push failure,
-  # local feature branch diverged from origin, or an uncaught error.
+  # Drift integration failed for a reason other than rebase conflict:
+  # worktree-blocked (uncommitted changes / in-progress merge / rebase /
+  # cherry-pick / revert), fetch failure, branch-mismatch / checkout
+  # failure, push failure (typically: origin advanced since fetch ⇒
+  # `--force-with-lease` refused), local feature branch diverged from
+  # origin, or an uncaught error.
   - name: integrate_target_drift_failed_gate
     type: human_gate
     description: Drift integration failed (non-conflict) — operator decides retry or abort
@@ -233,14 +242,19 @@ agents:
       **Detail:** {{ integrate_target_drift.output.error_message }}
 
       Common cases:
+      - `worktree_dirty` — uncommitted changes or in-progress
+        merge/rebase/cherry-pick/revert in the feature worktree.
+        Resolve (`git status`, then commit / stash / reset / abort
+        whatever's pending) and retry.
       - `fetch_failed` — network / auth / branch-doesn't-exist.
       - `branch_mismatch` — worktree isn't on the expected feature branch.
       - `feature_branch_diverged` — local and origin both have unique
         commits on `{{ workflow.input.feature_branch }}`; inspect with
         `git log origin/{{ workflow.input.feature_branch }}..HEAD` and
         `git log HEAD..origin/{{ workflow.input.feature_branch }}`.
-      - `push_failed` — drift was merged locally but the push was
-        rejected (most often: another writer raced us; re-fetch + retry).
+      - `push_failed` — drift was rebased locally but the force-push was
+        refused by the lease (origin advanced since our fetch).
+        Re-fetch + retry.
 
       Choose an action:
       - **Retry** — re-run drift integration
