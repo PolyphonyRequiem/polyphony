@@ -55,6 +55,28 @@ class TraceRecorder:
         """
         return self._collect_names("gate_presented")
 
+    @property
+    def gates_resolved(self) -> dict[str, str]:
+        """Mapping ``gate_name → selected_option.value`` for every gate
+        that the engine resolved (via scripted response, auto-skip, or
+        live human input).
+
+        Lets scenarios assert that a scripted gate actually drove the
+        intended option (the AB#3212 critique pointed out that
+        ``gates_presented`` alone proves the gate fired, but not which
+        option was selected). Last write wins if the same gate fires
+        twice in one run.
+        """
+        resolved: dict[str, str] = {}
+        for event in self.events:
+            if event.type != "gate_resolved":
+                continue
+            name = event.data.get("agent_name")
+            value = event.data.get("selected_option")
+            if isinstance(name, str) and isinstance(value, str):
+                resolved[name] = value
+        return resolved
+
     def _collect_names(self, event_type: str) -> list[str]:
         names: list[str] = []
         for event in self.events:
@@ -82,6 +104,7 @@ class TraceRecorder:
             "agents_executed": self.agents_executed,
             "scripts_executed": self.scripts_executed,
             "gates_presented": self.gates_presented,
+            "gates_resolved": self.gates_resolved,
             "reached_terminal": self.reached_terminal,
             "event_types": [event.type for event in self.events],
         }
@@ -115,6 +138,22 @@ def check_expectations(
             "gates_presented expected (ordered subsequence) "
             f"{expected.gates_presented!r}, actual {actual_gates!r}"
         )
+
+    if expected.gates_resolved:
+        actual_resolved = recorder.gates_resolved
+        for gate_name, expected_value in expected.gates_resolved.items():
+            actual_value = actual_resolved.get(gate_name)
+            if actual_value is None:
+                failures.append(
+                    f"gates_resolved: gate {gate_name!r} expected to resolve to "
+                    f"{expected_value!r} but was never resolved "
+                    f"(resolved gates: {sorted(actual_resolved)})"
+                )
+            elif actual_value != expected_value:
+                failures.append(
+                    f"gates_resolved: gate {gate_name!r} expected {expected_value!r}, "
+                    f"got {actual_value!r}"
+                )
 
     if expected.reached_terminal and not recorder.reached_terminal:
         failures.append(

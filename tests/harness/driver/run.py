@@ -28,10 +28,12 @@ from typing import Any
 
 from conductor.config.loader import load_workflow
 from conductor.engine.workflow import WorkflowEngine
+import conductor.engine.workflow as engine_module
 from conductor.events import WorkflowEventEmitter
 
 from .fakes.provider import FakeProvider
 from .scenario import Scenario, load_scenario
+from .scripted_gate import ScriptedGateError, ScriptedGateHandler
 from .shim_runtime import patched_environment, read_audit_log, stage_scenario_bin
 from .trace import TraceRecorder, check_expectations
 
@@ -48,29 +50,77 @@ async def _run_scenario(scenario: Scenario, *, verbose: bool = False) -> tuple[i
 
     config = load_workflow(scenario.workflow_path)
 
-    engine = WorkflowEngine(
-        config=config,
-        provider=provider,
-        skip_gates=True,
-        workflow_path=scenario.workflow_path,
-        event_emitter=emitter,
+    # Install the scripted gate handler for both top-level and sub-workflow
+    # engines. ``WorkflowEngine.__init__`` constructs its handler from the
+    # module-level ``HumanGateHandler`` symbol; sub-workflows do the same.
+    # Monkey-patching the symbol for the duration of ``engine.run()`` makes
+    # the scripted handler the ONLY handler any engine instantiates this
+    # run, so a gate in cascade-remedy.yaml or feature-pr.yaml resolves
+    # against the same scenario ``gates:`` block as a gate in the top-level
+    # workflow. See AB#3212 for the design notes.
+    scripted_handler = ScriptedGateHandler(
+        scripted=scenario.gates,
+        strict=scenario.strict_gates,
     )
+
+    def _handler_factory(
+        skip_gates: bool = False,
+        console: Any = None,
+    ) -> ScriptedGateHandler:
+        # Sub-workflow engines call ``HumanGateHandler(skip_gates=...)``.
+        # We always return a handler bound to the same scripted entries
+        # and the same ``_consumed`` set so end-of-run validation sees
+        # every consumption across the whole engine tree.
+        scripted_handler.console = console or scripted_handler.console
+        return scripted_handler
+
+    original_handler_cls = engine_module.HumanGateHandler
 
     workflow_output: dict[str, Any] | None = None
     error_text: str | None = None
     cli_calls: list[dict[str, str]] = []
+    unused_gates: list[str] = []
+    extra_failures: list[str] = []
 
-    with tempfile.TemporaryDirectory(prefix=f"harness-{scenario.name}-") as tmp:
-        bin_dir = Path(tmp) / "bin"
-        shim_ctx = stage_scenario_bin(bin_dir, scenario.cli_scripts, verbose=verbose)
-        with patched_environment(shim_ctx):
-            try:
-                workflow_output = await engine.run(scenario.inputs)
-            except Exception as exc:
-                error_text = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
-        cli_calls = read_audit_log(shim_ctx)
+    engine_module.HumanGateHandler = _handler_factory  # type: ignore[assignment,misc]
+    try:
+        engine = WorkflowEngine(
+            config=config,
+            provider=provider,
+            skip_gates=True,
+            workflow_path=scenario.workflow_path,
+            event_emitter=emitter,
+        )
+        # Belt-and-braces: the factory ran during construction and produced
+        # ``scripted_handler``; the explicit assignment keeps the wiring
+        # obvious to a reader of the driver.
+        engine.gate_handler = scripted_handler
+
+        with tempfile.TemporaryDirectory(prefix=f"harness-{scenario.name}-") as tmp:
+            bin_dir = Path(tmp) / "bin"
+            shim_ctx = stage_scenario_bin(bin_dir, scenario.cli_scripts, verbose=verbose)
+            with patched_environment(shim_ctx):
+                try:
+                    workflow_output = await engine.run(scenario.inputs)
+                except ScriptedGateError as exc:
+                    extra_failures.append(f"scripted gate error: {exc}")
+                except Exception as exc:
+                    error_text = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+            cli_calls = read_audit_log(shim_ctx)
+    finally:
+        engine_module.HumanGateHandler = original_handler_cls  # type: ignore[assignment]
+
+    declared = set(scenario.gates)
+    consumed = scripted_handler.consumed_gates
+    unused_gates = sorted(declared - consumed)
 
     failures = check_expectations(scenario.expected_trace, recorder, workflow_output)
+    failures.extend(extra_failures)
+    if unused_gates:
+        failures.append(
+            "unused gates declared in `gates:` but never reached: "
+            f"{unused_gates} (typo, or scenario routes never hit these gates)"
+        )
     if error_text and not failures:
         failures.append(f"workflow raised: {error_text}")
 
