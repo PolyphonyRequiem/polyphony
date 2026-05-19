@@ -33,6 +33,7 @@ from typing import Any
 import ruamel.yaml
 
 from .fakes.provider import ScriptedResponse
+from .scripted_gate import ScriptedGateEntry
 from .shim_runtime import CliScript
 
 
@@ -69,6 +70,7 @@ class ExpectedTrace:
     agents_executed: list[str] = field(default_factory=list)
     scripts_executed: list[str] = field(default_factory=list)
     gates_presented: list[str] = field(default_factory=list)
+    gates_resolved: dict[str, str] = field(default_factory=dict)
     reached_terminal: bool = True
     output_contains: dict[str, Any] = field(default_factory=dict)
 
@@ -82,6 +84,8 @@ class Scenario:
     agent_scripts: dict[str, list[ScriptedResponse]]
     cli_scripts: list[CliScript]
     expected_trace: ExpectedTrace
+    gates: dict[str, ScriptedGateEntry] = field(default_factory=dict)
+    strict_gates: bool = False
 
 
 def load_scenario(scenario_dir: Path, repo_root: Path) -> Scenario:
@@ -154,13 +158,29 @@ def load_scenario(scenario_dir: Path, repo_root: Path) -> Scenario:
         )
 
     expected_raw = raw.get("expected_trace") or {}
+    gates_resolved_raw = expected_raw.get("gates_resolved") or {}
+    if not isinstance(gates_resolved_raw, dict):
+        raise ValueError(
+            f"expected_trace.gates_resolved must be a mapping: {scenario_file}"
+        )
+    gates_resolved: dict[str, str] = {}
+    for gate_name, value in gates_resolved_raw.items():
+        if not isinstance(gate_name, str) or not isinstance(value, str):
+            raise ValueError(
+                f"expected_trace.gates_resolved entries must be str→str "
+                f"(got {gate_name!r}→{value!r}): {scenario_file}"
+            )
+        gates_resolved[gate_name] = value
     expected = ExpectedTrace(
         agents_executed=list(expected_raw.get("agents_executed") or []),
         scripts_executed=list(expected_raw.get("scripts_executed") or []),
         gates_presented=list(expected_raw.get("gates_presented") or []),
+        gates_resolved=gates_resolved,
         reached_terminal=bool(expected_raw.get("reached_terminal", True)),
         output_contains=dict(expected_raw.get("output_contains") or {}),
     )
+
+    gates, strict_gates = _parse_gates_block(raw, scenario_file)
 
     return Scenario(
         name=scenario_dir.name,
@@ -170,4 +190,85 @@ def load_scenario(scenario_dir: Path, repo_root: Path) -> Scenario:
         agent_scripts=agent_scripts,
         cli_scripts=cli_scripts,
         expected_trace=expected,
+        gates=gates,
+        strict_gates=strict_gates,
     )
+
+
+def _parse_gates_block(
+    raw: dict[str, Any],
+    scenario_file: Path,
+) -> tuple[dict[str, ScriptedGateEntry], bool]:
+    """Parse the optional ``gates:`` + ``strict_gates:`` scenario blocks.
+
+    Two shorthand forms for ``gates:`` entries are supported:
+
+    .. code:: yaml
+
+        gates:
+          # String → equivalent to ``{value: X, additional_input: {}}``
+          revise_cap_gate: abort
+          # Mapping form — required when the option uses ``prompt_for``
+          open_questions_gate:
+            value: answer
+            additional_input:
+              answers: "yes please"
+
+    ``strict_gates`` defaults to ``bool(gates)`` per the rubber-duck pass:
+    scenarios that declare any gate response are strict by default
+    (typos in ``gates:`` for unreached gates would otherwise be silent),
+    while scenarios with no ``gates:`` block stay lenient and preserve
+    the pre-AB#3212 ``--skip-gates`` semantics that 11 existing
+    scenarios rely on.
+    """
+    gates_raw = raw.get("gates") or {}
+    if not isinstance(gates_raw, dict):
+        raise ValueError(f"'gates' must be a mapping: {scenario_file}")
+
+    gates: dict[str, ScriptedGateEntry] = {}
+    for gate_name, entry in gates_raw.items():
+        if not isinstance(gate_name, str):
+            raise ValueError(
+                f"gates: keys must be strings (got {gate_name!r}): {scenario_file}"
+            )
+        if isinstance(entry, str):
+            gates[gate_name] = ScriptedGateEntry(value=entry)
+            continue
+        if isinstance(entry, dict):
+            value = entry.get("value")
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"gates.{gate_name}.value must be a string: {scenario_file}"
+                )
+            additional_input_raw = entry.get("additional_input") or {}
+            if not isinstance(additional_input_raw, dict):
+                raise ValueError(
+                    f"gates.{gate_name}.additional_input must be a mapping: {scenario_file}"
+                )
+            additional_input: dict[str, str] = {}
+            for k, v in additional_input_raw.items():
+                if not isinstance(k, str) or not isinstance(v, str):
+                    raise ValueError(
+                        f"gates.{gate_name}.additional_input entries must be str→str: {scenario_file}"
+                    )
+                additional_input[k] = v
+            gates[gate_name] = ScriptedGateEntry(
+                value=value, additional_input=additional_input
+            )
+            continue
+        raise ValueError(
+            f"gates.{gate_name} must be a string or a {{value, additional_input?}} "
+            f"mapping (got {type(entry).__name__}): {scenario_file}"
+        )
+
+    strict_raw = raw.get("strict_gates")
+    if strict_raw is None:
+        strict_gates = bool(gates)
+    else:
+        if not isinstance(strict_raw, bool):
+            raise ValueError(
+                f"strict_gates must be a boolean: {scenario_file}"
+            )
+        strict_gates = strict_raw
+
+    return gates, strict_gates
