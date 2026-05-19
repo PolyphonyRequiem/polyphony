@@ -262,6 +262,74 @@ if ($content -match 'ado_remediation_not_supported_emitter') {
     }
 }
 
+# ── Check 21-24: AB#3238 — drift integration entry guard ─────────────────
+# Every feature PR (apex→main, child→feature/<apex>, GitHub or ADO) must
+# integrate origin/<target_branch> drift before opening the PR, otherwise
+# the diff includes unrelated drift as false-positive review feedback
+# (which compounds with AB#3236's revise_counter loop to burn unbounded
+# LLM tokens). The guard lives at the feature-pr.yaml entry point so it
+# runs once per feature PR regardless of platform leg.
+
+# 21: integrate_target_drift node exists.
+if ($content -notmatch '(?m)name:\s*integrate_target_drift\s*$') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-drift-integrator'
+        Detail = "No integrate_target_drift node found - AB#3238 requires drift integration before opening any feature PR"
+    }
+}
+
+# 22: integrate_target_drift is the workflow entry point.
+if ($content -match 'entry_point:\s*(\S+)') {
+    if ($Matches[1] -ne 'integrate_target_drift') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'drift-integrator-not-entry'
+            Detail = "AB#3238: feature-pr.yaml entry_point must be integrate_target_drift (was '$($Matches[1])') — any other entry bypasses drift integration"
+        }
+    }
+}
+
+# 23: Both AB#3238 gates exist (conflict + non-conflict failure).
+foreach ($gate in @('integrate_target_drift_conflict_gate', 'integrate_target_drift_failed_gate')) {
+    if ($content -notmatch "(?m)name:\s*$gate\s*$") {
+        $violations += [PSCustomObject]@{
+            Rule   = 'missing-drift-gate'
+            Detail = "AB#3238: missing $gate human_gate - drift integration failures must route to an operator decision"
+        }
+    }
+}
+
+# 24: integrate_target_drift's routes branch on error_code (merge_conflict
+# → conflict gate, other error → failed gate, otherwise → pr_platform_router).
+$driftBlock = ''
+$inDrift = $false
+$driftLines = @()
+foreach ($line in $lines) {
+    if ($line -match '^\s*-\s*name:\s*integrate_target_drift\s*$') {
+        $inDrift = $true
+        continue
+    }
+    if ($inDrift -and $line -match '^\s*-\s*name:\s*\S+\s*$') {
+        $inDrift = $false
+        continue
+    }
+    if ($inDrift) { $driftLines += $line }
+}
+$driftText = [string]::Join([Environment]::NewLine, $driftLines)
+$requireSubstrings = @(
+    "'merge_conflict'",
+    'to: integrate_target_drift_conflict_gate',
+    'to: integrate_target_drift_failed_gate',
+    'to: pr_platform_router'
+)
+foreach ($needle in $requireSubstrings) {
+    if ($driftText -notmatch [regex]::Escape($needle)) {
+        $violations += [PSCustomObject]@{
+            Rule   = 'drift-routes-malformed'
+            Detail = "AB#3238: integrate_target_drift routes block is missing required edge or condition fragment: '$needle'"
+        }
+    }
+}
+
 # ── Report ────────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "FAIL: $($violations.Count) feature-pr.yaml violation(s)" -ForegroundColor Red

@@ -22,7 +22,7 @@ Describe 'lint-feature-pr.ps1' {
                 return @'
 workflow:
   name: feature-pr
-  entry_point: feature_pr_creator
+  entry_point: integrate_target_drift
   input:
     work_item_id:
       type: number
@@ -36,6 +36,43 @@ output:
   pr_url: "{{ feature_pr_creator.output.pr_url | default('') }}"
 
 agents:
+  - name: integrate_target_drift
+    type: script
+    description: Integrate origin/<target> drift before opening PR (AB#3238)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/integrate-target-drift.ps1"
+    routes:
+      - to: integrate_target_drift_conflict_gate
+        when: "{{ integrate_target_drift.output.error_code == 'merge_conflict' }}"
+      - to: integrate_target_drift_failed_gate
+        when: "{{ integrate_target_drift.output.error_code != '' }}"
+      - to: pr_platform_router
+
+  - name: integrate_target_drift_conflict_gate
+    type: human_gate
+    prompt: "Drift merge conflict"
+    options:
+      - label: "Retry"
+        value: retry
+        route: integrate_target_drift
+      - label: "Abort"
+        value: abort
+        route: $end
+
+  - name: integrate_target_drift_failed_gate
+    type: human_gate
+    prompt: "Drift integration failed"
+    options:
+      - label: "Retry"
+        value: retry
+        route: integrate_target_drift
+      - label: "Abort"
+        value: abort
+        route: $end
+
   - name: feature_pr_creator
     type: script
     description: Create feature PR
@@ -304,7 +341,7 @@ agents:
         }
 
         It 'Fails when entry point references non-existent agent' {
-            $yaml = (Get-ValidFeaturePrYaml) -replace 'entry_point: feature_pr_creator', 'entry_point: nonexistent_agent'
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'entry_point: integrate_target_drift', 'entry_point: nonexistent_agent'
             Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
@@ -393,6 +430,56 @@ agents:
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'ado-remediation-stub-present'
+        }
+
+        # ── AB#3238 — drift integration entry guard ─────────────────────
+
+        It 'Fails when integrate_target_drift node is removed (AB#3238)' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'name:\s*integrate_target_drift\s*\r?\n', "name: not_a_real_node`n"
+            Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-drift-integrator'
+        }
+
+        It 'Fails when entry_point is not integrate_target_drift (AB#3238)' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'entry_point:\s*integrate_target_drift', 'entry_point: pr_platform_router'
+            Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'drift-integrator-not-entry'
+        }
+
+        It 'Fails when integrate_target_drift_conflict_gate is missing (AB#3238)' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'name:\s*integrate_target_drift_conflict_gate\s*\r?\n', "name: some_unused_gate`n"
+            Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-drift-gate'
+        }
+
+        It 'Fails when integrate_target_drift_failed_gate is missing (AB#3238)' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'name:\s*integrate_target_drift_failed_gate\s*\r?\n', "name: some_unused_gate`n"
+            Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'missing-drift-gate'
+        }
+
+        It 'Fails when integrate_target_drift route to conflict gate is missing (AB#3238)' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace 'to: integrate_target_drift_conflict_gate', 'to: integrate_target_drift_failed_gate'
+            Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'drift-routes-malformed'
+        }
+
+        It 'Fails when integrate_target_drift bypasses pr_platform_router (AB#3238)' {
+            $yaml = (Get-ValidFeaturePrYaml) -replace '(?m)^\s+- to: pr_platform_router\s*$', '      - to: $end'
+            Set-Content (Join-Path $script:WorkflowsDir 'feature-pr.yaml') $yaml
+            $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-feature-pr.ps1') 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output | Out-String) | Should -Match 'drift-routes-malformed'
         }
     }
 }
