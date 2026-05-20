@@ -11,14 +11,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout polyphony
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: polyphony
           fetch-depth: 0
           filter: tree:0
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           global-json-file: polyphony/global.json
 
@@ -183,7 +183,7 @@ jobs:
         # conductor engine in-process from Python with a FakeProvider for
         # the LLM boundary and a .NET shim binary on PATH for `script:`
         # nodes. Conductor requires Python 3.12+.
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 

@@ -28,7 +28,7 @@ jobs:
       version: ${{ steps.compute.outputs.version }}
     steps:
       - name: Checkout polyphony
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           filter: tree:0
@@ -76,14 +76,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout polyphony
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: polyphony
           fetch-depth: 0
           filter: tree:0
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           global-json-file: polyphony/global.json
 
@@ -194,7 +194,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout polyphony (for release notes template)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
