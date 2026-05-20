@@ -31,15 +31,20 @@ Always exits 0 and writes a single JSON envelope to stdout. Routing
 in the workflow keys off `output.success`. Failure variants surface
 via `error_code`:
 
-  invalid_inputs              - organization or project missing.
-  manifest_read_failed        - `polyphony manifest read` exited non-zero
-                                for a reason OTHER than `manifest_not_found`
-                                or `manifest_root_mismatch`.
-  manifest_parse_failed       - `polyphony manifest read` stdout wasn't JSON.
-  manifest_root_mismatch      - manifest root_id != ApexId (AB#3067 guard).
-  manifest_init_failed        - `polyphony manifest init` exited non-zero.
-  manifest_init_parse_failed  - `polyphony manifest init` stdout wasn't JSON.
-  polyphony_unavailable       - polyphony not on PATH.
+  invalid_inputs                       - organization or project missing
+                                         (init path) or partially supplied
+                                         (reuse path).
+  manifest_read_failed                 - `polyphony manifest read` exited non-zero
+                                         for a reason OTHER than `manifest_not_found`
+                                         or `manifest_root_mismatch`.
+  manifest_parse_failed                - `polyphony manifest read` stdout wasn't JSON.
+  manifest_root_mismatch               - manifest root_id != ApexId (AB#3067 guard).
+  manifest_platform_project_mismatch   - stored manifest platform_project does not
+                                         match the invocation's
+                                         `dev.azure.com/{org}/{project}` (GH #166).
+  manifest_init_failed                 - `polyphony manifest init` exited non-zero.
+  manifest_init_parse_failed           - `polyphony manifest init` stdout wasn't JSON.
+  polyphony_unavailable                - polyphony not on PATH.
 
 .NOTES
 Topology-hash drift on resume (manifest topology vs current ADO tree) is
@@ -52,9 +57,13 @@ ADO work-item id of the apex (run-root) being executed.
 
 .PARAMETER Organization
 ADO organization name. Required when initialising a fresh manifest.
+On the reuse path, optional — but if supplied, Project must also be
+supplied, and the resulting `dev.azure.com/{org}/{project}` is
+validated against the stored manifest's `platform_project` (GH #166).
 
 .PARAMETER Project
-ADO project name. Required when initialising a fresh manifest.
+ADO project name. Required when initialising a fresh manifest. On the
+reuse path, same partial-supply / validation rule as Organization.
 
 .PARAMETER PolyphonyExe
 Override for the polyphony executable path. Defaults to `polyphony`.
@@ -122,12 +131,56 @@ if ($read.Exit -eq 0) {
     # NOTE: topology-hash validation against the current ADO tree is
     # deferred - see docstring. For now, a successful root-id-checked
     # read is sufficient to consider the manifest reusable.
+
+    # GH #166: validate platform_project drift. When the invocation
+    # supplies Organization+Project, the synthesized
+    # `dev.azure.com/{org}/{project}` must match the stored manifest's
+    # platform_project. If exactly one of Organization/Project is supplied,
+    # reject as invalid_inputs (partial identity is never intentional).
+    # If both are absent, skip silently (the resume case where the
+    # operator chose not to re-supply them).
+    $hasOrganization = -not [string]::IsNullOrWhiteSpace($Organization)
+    $hasProject      = -not [string]::IsNullOrWhiteSpace($Project)
+
+    if ($hasOrganization -xor $hasProject) {
+        Emit-Envelope @{
+            success    = $false
+            error_code = 'invalid_inputs'
+            error      = "manifest reuse validation requires both organization and project when either is supplied (got organization='$Organization', project='$Project')"
+            apex_id    = $ApexId
+        }
+        exit 0
+    }
+
+    $platformProjectValidation = 'skipped_absent'
+    if ($hasOrganization -and $hasProject) {
+        $expectedPlatformProject = "dev.azure.com/$Organization/$Project"
+        $storedPlatformProject   = $manifest.manifest.platform_project
+        # OrdinalIgnoreCase is explicit — ADO org/project names are
+        # case-insensitive identifiers and PowerShell's default `-ne`
+        # is also case-insensitive, but stating it defensively here
+        # prevents future "cleanup" from accidentally changing semantics.
+        if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($expectedPlatformProject, $storedPlatformProject)) {
+            Emit-Envelope @{
+                success                     = $false
+                error_code                  = 'manifest_platform_project_mismatch'
+                error                       = "manifest platform_project '$storedPlatformProject' does not match invocation '$expectedPlatformProject'; delete the manifest or correct the invocation"
+                apex_id                     = $ApexId
+                manifest_platform_project   = $storedPlatformProject
+                invocation_platform_project = $expectedPlatformProject
+            }
+            exit 0
+        }
+        $platformProjectValidation = 'checked'
+    }
+
     Emit-Envelope @{
-        success          = $true
-        action           = 'reused'
-        path             = $manifest.manifest.path
-        root_id          = $manifest.manifest.root_id
-        platform_project = $manifest.manifest.platform_project
+        success                     = $true
+        action                      = 'reused'
+        path                        = $manifest.manifest.path
+        root_id                     = $manifest.manifest.root_id
+        platform_project            = $manifest.manifest.platform_project
+        platform_project_validation = $platformProjectValidation
     }
     exit 0
 }

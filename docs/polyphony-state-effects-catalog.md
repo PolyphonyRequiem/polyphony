@@ -223,12 +223,19 @@ introduce new dependencies.
 - **Pre**: ADO reachable; polyphony on PATH.
 - **Post**: manifest exists with `root_id == N`; emits routing-style
   envelope `{success, action: "created"|"reused", root_id, ...}`.
+  On the reuse path, success envelopes additionally carry
+  `platform_project_validation: "checked"|"skipped_absent"`.
 - **Side effects**: may invoke `polyphony manifest init` (FS write).
 - **Idempotent**: yes (validates existing manifest's `root_id` matches;
   refuses on mismatch with `error_code: manifest_root_mismatch`).
-- **Limitations**: does **not** validate manifest's `platform_project`
-  matches the requested run's project (gap noted in PR #159 smoke).
-  Does **not** validate topology-hash drift on resume (deferred).
+  Also validates stored `platform_project` against the invocation's
+  `dev.azure.com/{org}/{project}` when both Organization and Project
+  are supplied (refuses on mismatch with
+  `error_code: manifest_platform_project_mismatch`, GH #166).
+  Partial identity (exactly one of Organization/Project supplied) is
+  rejected with `error_code: invalid_inputs`.
+- **Limitations**: does **not** validate topology-hash drift on resume
+  (deferred — tracked in apex-driver pipeline-audit-fix PR body).
 
 ### `lifecycle-router.ps1 -WorkItemId N -ApexId A`
 - **Purpose**: classify item N's next dispatch lifecycle (plan-level /
