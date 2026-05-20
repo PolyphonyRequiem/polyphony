@@ -602,7 +602,7 @@ agents:
     routes:
       - to: pr_feedback_analyzer
         when: "{{ poll_status.output.route == 'none' }}"
-      - to: pr_merger
+      - to: pr_pre_merge_policy_router
   - name: pr_feedback_analyzer
     type: agent
     model: claude-sonnet-4.6
@@ -681,6 +681,30 @@ agents:
       - "cap-auto-fail"
     routes:
       - to: $end
+  # AB#3184 — pre-merge policy router + gate fixtures.
+  - name: pr_pre_merge_policy_router
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/resolve-pr-policy.ps1"
+    routes:
+      - to: pr_pre_merge_gate
+        when: "{{ pr_pre_merge_policy_router.output.mode == 'manual' }}"
+      - to: pr_merger
+        when: "{{ pr_pre_merge_policy_router.output.mode in ['auto', 'warning'] }}"
+      - to: pr_pre_merge_gate
+  - name: pr_pre_merge_gate
+    type: human_gate
+    prompt: "Approve merge?"
+    options:
+      - label: "Approve"
+        value: approve
+        route: pr_merger
+      - label: "Abort"
+        value: abort
+        route: $end
 '@
             Set-Content (Join-Path $script:WorkflowsDir 'github-pr.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-github-pr.ps1') 2>&1
