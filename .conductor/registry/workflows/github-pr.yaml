@@ -391,7 +391,12 @@ agents:
         when: "{{ poll_status.output.route == 'abort_unmerged' }}"
       - to: already_merged_emitter
         when: "{{ poll_status.output.route == 'already_merged' }}"
-      - to: pr_merger
+      # AB#3184 — route auto-merge path through the policy router so
+      # `policy.pr.defaults.mode == 'manual'` can interpose a human gate.
+      # Operator-initiated merges (force_merge / override_approved at
+      # revise_cap_gate / stuck_review_gate) bypass — the operator IS the
+      # policy decision in those cases.
+      - to: pr_pre_merge_policy_router
         when: "{{ poll_status.output.route == 'merge_now' }}"
       - to: pr_feedback_analyzer
         when: "{{ poll_status.output.route == 'none' }}"
@@ -1114,6 +1119,87 @@ agents:
         @{ count = 0; reset = $true } | ConvertTo-Json
     routes:
       - to: pending_review_gate_policy_router
+
+  # ── Pre-merge policy router (AB#3184) ─────────────────────────────────
+  #
+  # Reads `policy.pr.defaults.mode` via resolve-pr-policy.ps1. Three modes:
+  #   - auto    → straight to pr_merger (current behavior).
+  #   - warning → straight to pr_merger. Without quality_threshold wiring
+  #               (tracked under AB#3217) there is no second sufficiency
+  #               check to defer on, so warning has no extra effect today.
+  #               Documented here so the policy author isn't surprised.
+  #   - manual  → divert to pr_pre_merge_gate for explicit operator
+  #               approval before the merge fires.
+  #
+  # On policy-resolution error (CLI failure, malformed JSON, unknown
+  # mode value), the resolver flips mode to 'manual' and surfaces the
+  # error string so the gate prompt can render it. This means a typo in
+  # policy.yaml fails safe — no silent auto-merge.
+  #
+  # Fronts ONLY the auto-merge path from poll_status. Operator-initiated
+  # merges (force_merge at revise_cap_gate, override_approved at
+  # stuck_review_gate) bypass this router — the operator already made
+  # the merge decision at those gates.
+  - name: pr_pre_merge_policy_router
+    type: script
+    description: Resolve policy.pr.defaults.mode for the pre-merge gate (AB#3184)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/resolve-pr-policy.ps1"
+      - "-Scope"
+      - "default"
+    routes:
+      - to: pr_pre_merge_gate
+        when: "{{ pr_pre_merge_policy_router.output.mode == 'manual' }}"
+      - to: pr_merger
+        when: "{{ pr_pre_merge_policy_router.output.mode in ['auto', 'warning'] }}"
+      # M4 catch-all: defensive — if mode is somehow neither, treat as
+      # manual so the operator is forced to acknowledge. Routes to the
+      # gate, not back to the router, to avoid a cycle.
+      - to: pr_pre_merge_gate
+
+  # ── Pre-merge gate (AB#3184, mode=manual) ─────────────────────────────
+  #
+  # Fires only when policy.pr.defaults.mode == 'manual' (or policy
+  # resolution failed and the resolver flipped to manual as a safe
+  # fallback). Operator decides whether to merge, defer, or abort.
+  #
+  #   - approve  → pr_merger (proceed with squash merge)
+  #   - defer    → pending_review_gate (wait for more input / re-poll)
+  #   - abort    → terminal_abort_run
+  - name: pr_pre_merge_gate
+    type: human_gate
+    description: Policy mode=manual — operator approves the merge before pr_merger fires.
+    prompt: |
+      ## 🔒 Pre-merge Gate — PR #{{ workflow.input.pr_number }}
+
+      Policy `policy.pr.defaults.mode == 'manual'` requires explicit
+      operator approval before this PR is merged.
+
+      **PR**: #{{ workflow.input.pr_number }} on `{{ workflow.input.branch_name }}` → `{{ workflow.input.target_branch }}`
+
+      {% if pr_pre_merge_policy_router.output.source == 'error' %}
+      ⚠️ **Policy resolution failed** — falling back to manual gate.
+      Error: `{{ pr_pre_merge_policy_router.output.policy_error }}`
+      Check `.polyphony-config/policy.yaml` for `pr.defaults.mode` typos.
+      {% endif %}
+
+      Choose:
+        - **Approve merge** → squash merge proceeds (pr_merger fires `gh pr merge --squash --delete-branch`)
+        - **Defer** → back to pending_review_gate (operator can re-evaluate later)
+        - **Abort** → halt the run cleanly
+    options:
+      - label: "✅ Approve merge"
+        value: approve
+        route: pr_merger
+      - label: "⏸️ Defer (back to pending)"
+        value: defer
+        route: pending_review_gate
+      - label: "🛑 Abort"
+        value: abort
+        route: terminal_abort_run
 
   # ── PR merger ──────────────────────────────────────────────────────────
   #

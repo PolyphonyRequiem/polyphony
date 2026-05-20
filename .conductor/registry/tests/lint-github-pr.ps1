@@ -275,6 +275,63 @@ if ($content -notmatch 'name:\s*terminal_cap_auto_fail\b') {
         }
     }
 }
+
+# ── AB#3184 — pre-merge policy router for policy.pr.defaults.mode ────────
+#
+# The auto-merge path (poll_status route == 'merge_now') must transit
+# through `pr_pre_merge_policy_router` so `policy.pr.defaults.mode ==
+# 'manual'` can interpose `pr_pre_merge_gate` before pr_merger fires.
+# Operator-initiated merges (force_merge / override_approved gate
+# options) intentionally bypass the router — the operator IS the policy
+# decision at those gates.
+if ($content -notmatch 'name:\s*pr_pre_merge_policy_router\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-pre-merge-policy-router'
+        Detail = "AB#3184: 'pr_pre_merge_policy_router' script node missing. Required to read policy.pr.defaults.mode via resolve-pr-policy.ps1 and route mode=='manual' to pr_pre_merge_gate."
+    }
+} else {
+    $routerMatch = [regex]::Match($content, '(?s)- name:\s*pr_pre_merge_policy_router\b.*?(?=\n  - name: |\Z)')
+    $routerBlock = if ($routerMatch.Success) { $routerMatch.Value } else { '' }
+    if ($routerBlock -notmatch 'resolve-pr-policy\.ps1') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'pre-merge-router-wrong-helper'
+            Detail = "AB#3184: 'pr_pre_merge_policy_router' must invoke the shared 'resolve-pr-policy.ps1' helper, not inline policy lookup."
+        }
+    }
+    if ($routerBlock -notmatch 'to:\s*pr_pre_merge_gate\b') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'pre-merge-router-missing-manual-route'
+            Detail = "AB#3184: 'pr_pre_merge_policy_router' must include a 'to: pr_pre_merge_gate' route guarded by mode == 'manual'."
+        }
+    }
+    if ($routerBlock -notmatch 'to:\s*pr_merger\b') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'pre-merge-router-missing-auto-route'
+            Detail = "AB#3184: 'pr_pre_merge_policy_router' must include a 'to: pr_merger' route for mode in ['auto', 'warning']."
+        }
+    }
+}
+
+if ($content -notmatch 'name:\s*pr_pre_merge_gate\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-pre-merge-gate'
+        Detail = "AB#3184: 'pr_pre_merge_gate' human_gate missing. Required as the mode=='manual' divert target; must offer approve→pr_merger / defer→pending_review_gate / abort→terminal_abort_run options."
+    }
+}
+
+# Reject any direct 'to: pr_merger' from poll_status — the merge_now
+# path MUST go through pr_pre_merge_policy_router for AB#3184. The
+# operator-initiated routes (force_merge / override_approved in
+# revise_cap_gate / stuck_review_gate) DO go straight to pr_merger, but
+# those use `route:` (option-scoped), not `to:` (routes-block scoped).
+$pollStatusMatch = [regex]::Match($content, '(?s)- name:\s*poll_status\b.*?(?=\n  - name: |\Z)')
+if ($pollStatusMatch.Success -and $pollStatusMatch.Value -match '(?m)^\s*-\s*to:\s*pr_merger\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'poll-status-bypasses-pre-merge-router'
+        Detail = "AB#3184: 'poll_status' must route merge_now through 'pr_pre_merge_policy_router', not directly to 'pr_merger'."
+    }
+}
+
 # ── Report ────────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "FAIL: $($violations.Count) github-pr.yaml violation(s)" -ForegroundColor Red

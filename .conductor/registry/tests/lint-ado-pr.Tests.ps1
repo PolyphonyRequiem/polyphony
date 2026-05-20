@@ -356,6 +356,30 @@ agents:
       - "cap-auto-fail"
     routes:
       - to: $end
+  # AB#3184 — pre-merge policy router + gate fixtures.
+  - name: pr_pre_merge_policy_router
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/resolve-pr-policy.ps1"
+    routes:
+      - to: pr_pre_merge_gate
+        when: "{{ pr_pre_merge_policy_router.output.mode == 'manual' }}"
+      - to: pr_merger
+        when: "{{ pr_pre_merge_policy_router.output.mode in ['auto', 'warning'] }}"
+      - to: pr_pre_merge_gate
+  - name: pr_pre_merge_gate
+    type: human_gate
+    prompt: "Approve merge?"
+    options:
+      - label: "Approve"
+        value: approve
+        route: ado_pr_manual_gate
+      - label: "Abort"
+        value: abort
+        route: $end
 '@
             Set-Content (Join-Path $script:WorkflowsDir 'ado-pr.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-ado-pr.ps1') 2>&1
