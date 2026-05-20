@@ -207,6 +207,9 @@ agents:
         when: "{{ depth_guard.output.allowed == true }}"
       - to: depth_exceeded_gate_policy_router
         when: "{{ depth_guard.output.allowed == false }}"
+      # M4 catch-all — fail-safe to the cap gate if `allowed` is undefined /
+      # null / unexpected. Stops recursion rather than continuing deeper.
+      - to: depth_exceeded_gate_policy_router
 
   # ── Depth-exceeded gate policy router (AB#3186) ──────────────────────────
   #

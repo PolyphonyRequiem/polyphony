@@ -272,8 +272,7 @@ agents:
     args:
       - "sync"
     routes:
-      - to: preflight_apex_state
-      # Catch-all per M4 — twig sync failures shouldn't halt the run;
+      # M4 catch-all — twig sync failures shouldn't halt the run;
       # apex-driver continues with stale cache and the operator can
       # re-invoke if dispatch picks up wrong state.
       - to: preflight_apex_state
@@ -344,8 +343,7 @@ agents:
     routes:
       - to: init_manifest
         when: "{{ preflight_ensure_branch.output.error is not defined or preflight_ensure_branch.output.error == '' }}"
-      - to: preflight_failure_gate
-      # M4 catch-all
+      # M4 catch-all — fail-safe to gate on error / template eval edge cases.
       - to: preflight_failure_gate
 
   # ── Preflight: initialize run manifest ───────────────────────────────────
@@ -379,8 +377,7 @@ agents:
     routes:
       - to: declare_root
         when: "{{ init_manifest.output.success | string | lower == 'true' }}"
-      - to: preflight_failure_gate
-      # M4 catch-all
+      # M4 catch-all — fail-safe to gate on error / template eval edge cases.
       - to: preflight_failure_gate
 
   # ── Preflight: stamp the polyphony:root marker tag ───────────────────────
@@ -407,10 +404,11 @@ agents:
       - "--work-item"
       - "{{ workflow.input.apex_id }}"
     routes:
-      - to: preflight_failure_gate
-        when: "{{ declare_root.output.error is defined and declare_root.output.error != '' }}"
       - to: outer_loop_init
-      # M4 catch-all
+        when: "{{ declare_root.output.error is not defined or declare_root.output.error == '' }}"
+      # M4 catch-all — fail-safe to gate on error / template eval edge cases.
+      # (Prior shape routed the bare catch-all to `outer_loop_init`, the
+      # success path, defeating defense-in-depth.)
       - to: preflight_failure_gate
 
   # ── Outer loop init (PR #9 — apex-driver iterate-until-stable) ────────────
@@ -488,8 +486,7 @@ agents:
     routes:
       - to: check_conflicts
         when: "{{ build_worklist.output.error is not defined or build_worklist.output.error == '' }}"
-      - to: worklist_failure_gate
-      # M4 catch-all
+      # M4 catch-all — fail-safe to gate on error / template eval edge cases.
       - to: worklist_failure_gate
 
   # ── Check edge conflicts ──────────────────────────────────────────────────
@@ -635,8 +632,7 @@ agents:
     routes:
       - to: renegotiation_summary
         when: "{{ wave_loop_summary.output.all_succeeded | string | lower == 'true' }}"
-      - to: wave_failed_gate
-      # M4 catch-all
+      # M4 catch-all — fail-safe to gate on error / template eval edge cases.
       - to: wave_failed_gate
 
   # ── Renegotiation summary ────────────────────────────────────────────────
@@ -701,8 +697,8 @@ agents:
     routes:
       - to: renegotiation_policy
         when: "{{ renegotiation_summary.output.any_pending | string | lower == 'true' }}"
-      - to: outer_loop_evaluator
-      # M4 catch-all
+      # M4 catch-all — defaulting to "no renegotiation needed" matches the
+      # workflow-output template, which also defaults `any_pending` to false.
       - to: outer_loop_evaluator
 
   # ── Renegotiation policy resolver (AB#3185) ─────────────────────────────
