@@ -158,12 +158,24 @@ Describe 'apex-driver.yaml :: declare_root agent stamps polyphony:root before bu
         $initRoute = $initAgent.routes | Where-Object { $_.to -eq 'build_worklist' }
         $initRoute | Should -Not -BeNullOrEmpty
     }
-    It 'declare_root routes envelope errors to preflight_failure_gate' {
+    It 'declare_root routes envelope errors to preflight_failure_gate (either via an explicit when: clause OR via a bare M4 catch-all whose success path requires no error)' {
         $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'declare_root' }
-        $failureRoute = $agent.routes | Where-Object {
+        # Two M4-compliant shapes both route errors to the gate:
+        #   A) explicit `when: ...error is defined and != ''` → preflight_failure_gate
+        #   B) explicit `when: ...error is not defined or == ''` → outer_loop_init
+        #      with a bare catch-all → preflight_failure_gate
+        $explicitErrorRoute = $agent.routes | Where-Object {
             $_.to -eq 'preflight_failure_gate' -and $_.when -match 'declare_root\.output\.error'
         }
-        $failureRoute | Should -Not -BeNullOrEmpty
+        $successNoErrorRoute = $agent.routes | Where-Object {
+            $_.to -eq 'outer_loop_init' -and $_.when -match "declare_root\.output\.error.*is not defined.*or.*declare_root\.output\.error.*==.*''"
+        }
+        $bareCatchAllToGate = $agent.routes | Where-Object {
+            $_.to -eq 'preflight_failure_gate' -and (-not $_.when)
+        }
+        $shapeA = [bool]$explicitErrorRoute
+        $shapeB = ([bool]$successNoErrorRoute) -and ([bool]$bareCatchAllToGate)
+        ($shapeA -or $shapeB) | Should -BeTrue -Because "declare_root must route envelope errors to preflight_failure_gate either explicitly or via a defensive M4 catch-all"
     }
     It 'init_manifest routes to declare_root (declare_root is reachable)' {
         $agent = $script:ApexYaml.agents | Where-Object { $_.name -eq 'init_manifest' }
