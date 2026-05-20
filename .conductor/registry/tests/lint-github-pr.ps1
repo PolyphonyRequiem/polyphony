@@ -215,6 +215,66 @@ if ($capGateBlock -and $capGateBlock -notmatch "cap_reason\s*==\s*'no_commit_stu
     }
 }
 
+# ── AB#3186 — Unattended cap_mode policy-router wiring ──────────────────
+#
+# Each cap-hit gate must be preceded by a `<gate>_policy_router` script
+# node that invokes resolve-unattended-cap-mode.ps1 and offers three
+# routes:
+#   auto_proceed → workflow-specific target (the "force one more / accept"
+#                  semantic for this site; not checked here — site-specific)
+#   auto_fail    → terminal_cap_auto_fail
+#   (fallthrough)→ the cap-hit gate itself (manual + catch-all)
+#
+# These checks enumerate the concrete cap-hit gates known to this
+# workflow rather than suffix-matching `*_cap_gate` so that an
+# accidentally-deleted router (vs. a renamed/removed gate) shows up
+# as a violation rather than vanishing silently.
+foreach ($gate in @('revise_cap_gate')) {
+    $routerName = "${gate}_policy_router"
+    if ($content -notmatch "name:\s*$([regex]::Escape($routerName))\b") {
+        $violations += [PSCustomObject]@{
+            Rule   = "missing-cap-mode-policy-router-$gate"
+            Detail = "AB#3186: '$gate' must be preceded by a '$routerName' script node that calls resolve-unattended-cap-mode.ps1 and routes cap_mode=auto_proceed/auto_fail/manual."
+        }
+        continue
+    }
+    $routerBlock = ''
+    $routerMatch = [regex]::Match($content, "(?s)- name:\s*$([regex]::Escape($routerName))\b.*?(?=\n  - name: |\Z)")
+    if ($routerMatch.Success) { $routerBlock = $routerMatch.Value }
+    if ($routerBlock -notmatch 'resolve-unattended-cap-mode\.ps1') {
+        $violations += [PSCustomObject]@{
+            Rule   = "cap-mode-router-wrong-helper-$gate"
+            Detail = "AB#3186: '$routerName' must invoke the shared 'resolve-unattended-cap-mode.ps1' helper, not inline policy lookup."
+        }
+    }
+    if ($routerBlock -notmatch 'to:\s*terminal_cap_auto_fail\b') {
+        $violations += [PSCustomObject]@{
+            Rule   = "cap-mode-router-missing-auto-fail-route-$gate"
+            Detail = "AB#3186: '$routerName' must include a 'to: terminal_cap_auto_fail' route guarded by cap_mode == 'auto_fail'."
+        }
+    }
+    if ($routerBlock -notmatch "to:\s*$([regex]::Escape($gate))\b") {
+        $violations += [PSCustomObject]@{
+            Rule   = "cap-mode-router-missing-manual-fallthrough-$gate"
+            Detail = "AB#3186: '$routerName' must include a final unconditional 'to: $gate' route as the manual + catch-all fallthrough (per conductor-mechanics M4)."
+        }
+    }
+}
+
+if ($content -notmatch 'name:\s*terminal_cap_auto_fail\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-terminal-cap-auto-fail'
+        Detail = "AB#3186: 'terminal_cap_auto_fail' terminal node missing. Required as the auto_fail target for cap-mode policy routers; must invoke abort-run.ps1 with -Reason 'cap-auto-fail'."
+    }
+} else {
+    $terminalMatch = [regex]::Match($content, '(?s)- name:\s*terminal_cap_auto_fail\b.*?(?=\n  - name: |\Z)')
+    if ($terminalMatch.Success -and $terminalMatch.Value -notmatch '"cap-auto-fail"') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'terminal-cap-auto-fail-wrong-reason'
+            Detail = "AB#3186: 'terminal_cap_auto_fail' must invoke abort-run.ps1 with -Reason 'cap-auto-fail' (the discriminator vs 'operator-abort' for post-mortem diagnostics)."
+        }
+    }
+}
 # ── Report ────────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "FAIL: $($violations.Count) github-pr.yaml violation(s)" -ForegroundColor Red

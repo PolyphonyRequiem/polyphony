@@ -1897,7 +1897,7 @@ agents:
         $capReached = $count -ge $maxRevisions
         @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached } | ConvertTo-Json
     routes:
-      - to: scope_revise_cap_gate
+      - to: scope_revise_cap_gate_policy_router
         when: "{{ scope_revise_counter.output.cap_reached == true }}"
       # AB#3217: route revision passes through clear_apex_impl_marker so
       # the impl-merged-in-mg marker (stamped by primary_completer when
@@ -1906,8 +1906,45 @@ agents:
       - to: clear_apex_impl_marker
         when: "{{ scope_revise_counter.output.cap_reached == false }}"
       # Catch-all per M4: defensive against cap_reached missing/malformed.
-      # Routes to the gate so a human resolves it rather than silently
-      # bypassing the cap.
+      # Routes to the policy router so a human resolves it rather than
+      # silently bypassing the cap (the router falls through to the gate
+      # under default/manual).
+      - to: scope_revise_cap_gate_policy_router
+
+  # ── Scope revise cap gate policy router (AB#3186) ───────────────────────
+  #
+  # Reads `policy.unattended.cap_mode` via the shared resolver. Three
+  # modes:
+  #   • `manual` (default) → fall through to scope_revise_cap_gate
+  #   • `auto_proceed`     → pr_platform_router (force-accept the current
+  #                          MG state and proceed to MG PR open; same
+  #                          semantic as the operator picking
+  #                          "Force-accept (proceed to MG PR)". Re-loop
+  #                          was rejected as the auto_proceed target
+  #                          because it just kicks the can — fresh
+  #                          budget with the same broken state will
+  #                          loop at the cap again. Operators who
+  #                          want re-loop semantics should leave
+  #                          cap_mode='manual' and pick it interactively.)
+  #   • `auto_fail`        → terminal_cap_auto_fail (NOT terminal_abort_run —
+  #                          honest about who decided to halt)
+  #
+  # Helper degrades to `cap_mode = 'manual'` on policy / CLI failure.
+  # See `.conductor/registry/scripts/resolve-unattended-cap-mode.ps1`.
+  - name: scope_revise_cap_gate_policy_router
+    type: script
+    description: Resolve policy.unattended.cap_mode for scope_revise_cap_gate (AB#3186)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/resolve-unattended-cap-mode.ps1"
+    routes:
+      - to: pr_platform_router
+        when: "{{ scope_revise_cap_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
+      - to: terminal_cap_auto_fail
+        when: "{{ scope_revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
+      # Default + 'manual' + any unknown → surface the human gate.
       - to: scope_revise_cap_gate
 
   # ── Scope revise cap gate (AB#3125) ───────────────────────────────────
@@ -1951,6 +1988,12 @@ agents:
       {% for issue in scope_reviewer.output.issues %}
       - {{ issue }}
       {% endfor %}
+      {% endif %}
+
+      {% if scope_revise_cap_gate_policy_router is defined and scope_revise_cap_gate_policy_router.output.source == 'error' %}
+      > ⚠️ Policy resolution for `unattended.cap_mode` failed; surfacing this
+      > gate as a manual fallback. Details:
+      > `{{ scope_revise_cap_gate_policy_router.output.policy_error }}`
       {% endif %}
 
       ---
@@ -2368,5 +2411,31 @@ agents:
       - "operator-abort"
       - "-Stage"
       - "implement-merge-group"
+    routes:
+      - to: $end
+
+  # ── Terminal: policy-driven cap-mode auto-fail (AB#3186) ─────────────────
+  #
+  # Reached when `policy.unattended.cap_mode == 'auto_fail'` triggers at
+  # scope_revise_cap_gate. Distinct from terminal_abort_run so post-mortem
+  # diagnostics can tell policy-driven failures apart from human-initiated
+  # aborts — the abort-run.ps1 envelope's `reason` field is the
+  # discriminator (`cap-auto-fail` vs `operator-abort`).
+  - name: terminal_cap_auto_fail
+    type: script
+    description: Policy-driven full-run abort — unattended.cap_mode='auto_fail' at a cap-hit gate
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "cap-auto-fail"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Stage"
+      - "implement-merge-group"
+      - "-Detail"
+      - "policy.unattended.cap_mode='auto_fail' triggered at scope_revise_cap_gate."
     routes:
       - to: $end

@@ -378,6 +378,39 @@ agents:
       - "{{ poll_status.output.pr_number }}"
     routes:
       - to: cascade_remedy
+  - name: depth_exceeded_gate_policy_router
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/resolve-unattended-cap-mode.ps1"
+    routes:
+      - to: terminal_cap_auto_fail
+        when: "{{ depth_exceeded_gate_policy_router.output.cap_mode == 'auto_fail' }}"
+      - to: depth_exceeded_gate
+  - name: revise_cap_gate_policy_router
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/resolve-unattended-cap-mode.ps1"
+    routes:
+      - to: terminal_cap_auto_fail
+        when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
+      - to: revise_cap_gate
+  - name: terminal_cap_auto_fail
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - "echo done"
+      - "-Reason"
+      - "cap-auto-fail"
+    routes:
+      - to: `$end
 "@
             Set-Content (Join-Path $script:WorkflowsDir 'plan-level.yaml') $yaml
             $lintScript = Join-Path $script:TestsDir 'lint-plan-level.ps1'

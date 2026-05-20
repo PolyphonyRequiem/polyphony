@@ -599,9 +599,43 @@ agents:
     routes:
       - to: remediation_guidance_loader
         when: "{{ remediation_counter.output.under_limit == true }}"
-      - to: remediation_cap_gate
+      - to: remediation_cap_gate_policy_router
         when: "{{ remediation_counter.output.under_limit == false }}"
       # Catch-all: defensive against missing/malformed under_limit.
+      - to: remediation_cap_gate_policy_router
+
+  # ── Remediation cap gate policy router (AB#3186) ────────────────────────
+  #
+  # Reads `policy.unattended.cap_mode` via the shared resolver. Three
+  # modes:
+  #   • `manual` (default) → fall through to remediation_cap_gate
+  #   • `auto_proceed`     → remediation_guidance_loader (continue the
+  #                          remediation cycle past the cap; same as the
+  #                          operator picking "Continue Anyway". The
+  #                          counter does NOT reset, so the cap is
+  #                          re-evaluated next cycle and re-fires —
+  #                          auto_proceed effectively turns
+  #                          max_remediation_cycles into "advisory".)
+  #   • `auto_fail`        → terminal_cap_auto_fail (NOT remediation_abort
+  #                          which encodes operator intent in its reason
+  #                          field — honest about who decided to halt)
+  #
+  # Helper degrades to `cap_mode = 'manual'` on policy / CLI failure.
+  # See `.conductor/registry/scripts/resolve-unattended-cap-mode.ps1`.
+  - name: remediation_cap_gate_policy_router
+    type: script
+    description: Resolve policy.unattended.cap_mode for remediation_cap_gate (AB#3186)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/resolve-unattended-cap-mode.ps1"
+    routes:
+      - to: remediation_guidance_loader
+        when: "{{ remediation_cap_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
+      - to: terminal_cap_auto_fail
+        when: "{{ remediation_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
+      # Default + 'manual' + any unknown → surface the human gate.
       - to: remediation_cap_gate
 
   # ── Remediation cap gate ────────────────────────────────────────────────
@@ -640,6 +674,12 @@ agents:
       The platform PR sub-workflow was unable to merge the feature PR after
       **{{ remediation_counter.output.iteration }}** remediation cycles.
       Review the PR comments on GitHub/ADO for details on unresolved issues.
+
+      {% if remediation_cap_gate_policy_router is defined and remediation_cap_gate_policy_router.output.source == 'error' %}
+      > ⚠️ Policy resolution for `unattended.cap_mode` failed; surfacing this
+      > gate as a manual fallback. Details:
+      > `{{ remediation_cap_gate_policy_router.output.policy_error }}`
+      {% endif %}
 
       Choose an action:
       - **Continue** — override the cap for this cycle only and attempt another
@@ -1208,5 +1248,31 @@ agents:
       - "operator-abort"
       - "-Stage"
       - "feature-pr"
+    routes:
+      - to: $end
+
+  # ── Terminal: policy-driven cap-mode auto-fail (AB#3186) ─────────────────
+  #
+  # Reached when `policy.unattended.cap_mode == 'auto_fail'` triggers at
+  # remediation_cap_gate. Distinct from terminal_abort_run so post-mortem
+  # diagnostics can tell policy-driven failures apart from human-initiated
+  # aborts — the abort-run.ps1 envelope's `reason` field is the
+  # discriminator (`cap-auto-fail` vs `operator-abort`).
+  - name: terminal_cap_auto_fail
+    type: script
+    description: Policy-driven full-run abort — unattended.cap_mode='auto_fail' at a cap-hit gate
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "cap-auto-fail"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Stage"
+      - "feature-pr"
+      - "-Detail"
+      - "policy.unattended.cap_mode='auto_fail' triggered at remediation_cap_gate."
     routes:
       - to: $end

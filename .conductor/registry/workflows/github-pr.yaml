@@ -718,9 +718,40 @@ agents:
         $capReason = if (-not $capReached) { '' } elseif ($capByNoCommit) { 'no_commit_stuck' } else { 'max_revisions' }
         @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached; digest = $digestNow; digest_changed = $digestChanged; no_commit_count = $noCommitCount; no_commit_cap = $noCommitCap; cap_reason = $capReason } | ConvertTo-Json
     routes:
-      - to: revise_cap_gate
+      - to: revise_cap_gate_policy_router
         when: "{{ revise_counter.output.cap_reached == true }}"
       - to: pr_fixer
+
+  # ── Revise cap gate policy router (AB#3186) ─────────────────────────────
+  #
+  # Reads `policy.unattended.cap_mode` via the shared resolver. Three
+  # modes:
+  #   • `manual` (default) → fall through to revise_cap_gate
+  #   • `auto_proceed`     → pr_fixer (force one more revision; same
+  #                          semantic as the operator picking "Force one
+  #                          more revision". NOT force_merge — auto-
+  #                          merging an unapproved PR is dangerous and
+  #                          requires explicit human authorization.)
+  #   • `auto_fail`        → terminal_cap_auto_fail (NOT terminal_abort_run —
+  #                          honest about who decided to halt)
+  #
+  # Helper degrades to `cap_mode = 'manual'` on policy / CLI failure.
+  # See `.conductor/registry/scripts/resolve-unattended-cap-mode.ps1`.
+  - name: revise_cap_gate_policy_router
+    type: script
+    description: Resolve policy.unattended.cap_mode for revise_cap_gate (AB#3186)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/resolve-unattended-cap-mode.ps1"
+    routes:
+      - to: pr_fixer
+        when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
+      - to: terminal_cap_auto_fail
+        when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
+      # Default + 'manual' + any unknown → surface the human gate.
+      - to: revise_cap_gate
 
   # ── Revise cap gate ───────────────────────────────────────────────────
   #
@@ -755,6 +786,12 @@ agents:
       ```markdown
       {{ pr_feedback_analyzer.output.feedback_summary }}
       ```
+
+      {% if revise_cap_gate_policy_router is defined and revise_cap_gate_policy_router.output.source == 'error' %}
+      > ⚠️ Policy resolution for `unattended.cap_mode` failed; surfacing this
+      > gate as a manual fallback. Details:
+      > `{{ revise_cap_gate_policy_router.output.policy_error }}`
+      {% endif %}
 
       ---
 
@@ -1169,6 +1206,30 @@ agents:
       - "operator-abort"
       - "-Stage"
       - "github-pr"
+    routes:
+      - to: $end
+
+  # ── Terminal: policy-driven cap-mode auto-fail (AB#3186) ─────────────────
+  #
+  # Reached when `policy.unattended.cap_mode == 'auto_fail'` triggers at
+  # revise_cap_gate. Distinct from terminal_abort_run so post-mortem
+  # diagnostics can tell policy-driven failures apart from human-initiated
+  # aborts — the abort-run.ps1 envelope's `reason` field is the
+  # discriminator (`cap-auto-fail` vs `operator-abort`).
+  - name: terminal_cap_auto_fail
+    type: script
+    description: Policy-driven full-run abort — unattended.cap_mode='auto_fail' at a cap-hit gate
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "cap-auto-fail"
+      - "-Stage"
+      - "github-pr"
+      - "-Detail"
+      - "policy.unattended.cap_mode='auto_fail' triggered at revise_cap_gate."
     routes:
       - to: $end
 
