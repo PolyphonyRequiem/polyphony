@@ -852,7 +852,13 @@ agents:
       - to: revise_cap_gate_policy_router
         when: "{{ revise_counter.output.cap_reached == true }}"
       - to: pr_fixer
-
+        when: "{{ revise_counter.output.cap_reached == false }}"
+      # M10 defensive catch-all (#222): if cap_reached evaluates to
+      # anything other than true/false (counter script crash, malformed
+      # JSON, template eval edge case), fail safe to the cap-hit gate
+      # rather than looping back to pr_fixer indefinitely.
+      - to: revise_cap_gate_policy_router
+  #
   # ── Revise cap gate policy router (AB#3186) ─────────────────────────────
   #
   # Reads `policy.unattended.cap_mode` via the shared resolver. Three
@@ -1089,6 +1095,13 @@ agents:
       - to: stuck_review_gate_policy_router
         when: "{{ pending_poll_counter.output.cap_reached == true }}"
       - to: pending_review_gate_policy_router
+        when: "{{ pending_poll_counter.output.cap_reached == false }}"
+      # M10 defensive catch-all (#222): if cap_reached evaluates to
+      # anything other than true/false (counter script crash, malformed
+      # JSON, template eval edge case), fail safe to the stuck-review
+      # gate rather than re-entering the polling cycle via the policy
+      # router's skip-mode bypass.
+      - to: stuck_review_gate_policy_router
 
   # ── Pending-review gate policy router ─────────────────────────────────
   #

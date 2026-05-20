@@ -246,6 +246,26 @@ jobs:
           $result = Invoke-Pester -Path .conductor/registry/tests/lint-sentiment-loop-consistency.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
 
+      - name: Lint workflow YAMLs (M10 iterate-until-stable counter safety)
+        # Asserts every counter node in the workflow registry follows the
+        # M10 pattern (per `references/m10-iterate-until-stable.md` in
+        # the conductor-mechanics skill): a defensive catch-all must fail
+        # safe to the cap-hit destination, never re-enter the iteration
+        # cycle. Catches the "catch-all loops back to the cycle" infinite-
+        # loop bug class explicitly called out by M10.
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: pwsh -NoProfile -File .conductor/registry/tests/lint-m10-iterate-stable.ps1 -Format github
+
+      - name: Lint workflow YAMLs (M10 iterate-until-stable, Pester)
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path .conductor/registry/tests/lint-m10-iterate-stable.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
+
       - name: Lint workflow YAMLs (PowerShell + Jinja bareword booleans)
         # Catches the AB#3156 Bug 1 class: a `command: pwsh` script body
         # that assigns a Jinja render unquoted (`$x = {{ … }}`). When
