@@ -260,8 +260,8 @@ agents:
         when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'implement-merge-group' }}"
       - to: feature_pr_dispatch
         when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'feature-pr' }}"
-      - to: terminal_spawn_error
-      # M4 catch-all
+      # M4 catch-all — unknown classifications + spawn-failure both funnel
+      # to the spawn-error terminal.
       - to: terminal_spawn_error
 
   # ── Lifecycle dispatch — plan-level ──────────────────────────────────────

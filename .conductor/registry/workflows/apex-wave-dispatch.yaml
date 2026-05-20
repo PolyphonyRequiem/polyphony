@@ -211,7 +211,6 @@ agents:
     routes:
       - to: terminal_wave_skipped
         when: "{{ check_prior_wave_status.output.blocked | string | lower == 'true' }}"
-      - to: dispatch_items
       # M4 catch-all — undefined `blocked` means the guard helper
       # returned an unexpected envelope shape (or git-common-dir
       # resolution failed). Degrade to today's behavior — dispatch
@@ -419,8 +418,10 @@ agents:
     routes:
       - to: record_wave_failure_flag
         when: "{{ aggregate_renegotiation.output.items_failed_count | int > 0 }}"
-      - to: integrate_wave
-      # M4 catch-all
+      # M4 catch-all — undefined `items_failed_count` (script crashed,
+      # `| int` cast on empty string) defaults to "no failures observed"
+      # → proceed to wave integration. Matches the script's documented
+      # degrade behavior.
       - to: integrate_wave
 
   # ── Record wave failure flag (fail-fast across waves) ────────────────────
