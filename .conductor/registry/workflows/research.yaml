@@ -87,6 +87,28 @@ workflow:
         research_dispatch) should plumb research.escalation_cap from
         profile.yaml. Workflow honors only 0 or 1 today; values > 1 are
         clamped to 1.
+    escalation_mode:
+      type: string
+      required: false
+      default: "auto"
+      description: >-
+        Gate behavior at the researcher → deep_researcher transition
+        (AB#3188). Resolved by plan-level.yaml's research_policy_resolver
+        from `policy.research.defaults.mode`; defaults to `auto` here so
+        direct callers (e.g. tests, future entry points) keep historical
+        no-gate behavior.
+
+        Mode semantics:
+          - `auto`    — never gate; researcher's sufficient=false routes
+                        straight to deep_researcher (current behavior).
+          - `warning` — currently aliases `auto` (no second sufficiency
+                        check exists yet). The semantic difference will
+                        land when a post-deep sufficiency gate is added;
+                        until then, treat warning ≡ auto silently.
+          - `manual`  — interpose escalation_decision_gate (human gate)
+                        between researcher and deep_researcher when
+                        researcher emits sufficient=false. Operator
+                        explicitly approves or skips escalation.
 
 tools:
   - filesystem
@@ -229,12 +251,79 @@ agents:
           type: string
     prompt: !file ../prompts/researcher.md
     routes:
-      # Escalate when researcher says insufficient AND escalation_cap > 0.
-      # Cap of 0 forces sufficient=true via the prompt, so this guard is
-      # belt-and-suspenders.
+      # Manual mode (AB#3188): operator gates the escalation decision.
+      # Only fires when escalation_cap > 0 (cap=0 means "never escalate"
+      # regardless of mode — the cap is the hard ceiling, mode tunes
+      # behavior under the ceiling).
+      - to: escalation_decision_gate
+        when: "{{ researcher.output.sufficient == false and workflow.input.escalation_cap > 0 and workflow.input.escalation_mode == 'manual' }}"
+      # Auto / warning: escalate when researcher says insufficient AND
+      # escalation_cap > 0. Cap of 0 forces sufficient=true via the
+      # prompt, so this guard is belt-and-suspenders.
+      #
+      # AB#3188 note: `warning` currently aliases `auto` here — there is
+      # no second sufficiency check after deep_researcher to gate on, so
+      # there is no place to surface a warning today. When a second
+      # check lands, split the `warning` route from the `auto` route.
       - to: deep_researcher
         when: "{{ researcher.output.sufficient == false and workflow.input.escalation_cap > 0 }}"
       - to: archivist
+
+  # ── Escalation decision gate (AB#3188 — manual mode) ───────────────────
+  #
+  # Surfaces when policy.research.defaults.mode == 'manual' and the
+  # researcher judged cheap-tier findings insufficient. The operator
+  # decides whether to spend the deep_researcher budget or accept the
+  # cheap-tier findings as-is. Three options:
+  #
+  #   - escalate  → run deep_researcher with researcher's gap analysis.
+  #   - skip      → accept cheap-tier findings; route directly to archivist.
+  #   - abort     → terminate research (rare; the caller may re-dispatch
+  #                 with different topics).
+  #
+  # When the upstream `research_policy_resolver` failed (source=='error'),
+  # the resolver flips mode to 'manual' so this gate ALSO fires as a
+  # diagnostic surface — the prompt renders `policy_error` if present
+  # (passed through workflow.input.policy_error when set).
+  - name: escalation_decision_gate
+    type: human_gate
+    prompt: |
+      ## 🔬 Research Escalation Decision — Work Item {{ workflow.input.context_work_item_id }}
+
+      The researcher judged cheap-tier findings **insufficient** to fully
+      answer the architect's research questions. With `policy.research.defaults.mode = manual`,
+      escalation to `deep_researcher` (live external sources, gh API) requires
+      your explicit approval.
+
+      **Researcher rationale:**
+
+      {{ researcher.output.rationale }}
+
+      {% if researcher.output.gaps is defined and (researcher.output.gaps | length) > 0 %}
+      **Identified gaps:**
+
+      {% for gap in researcher.output.gaps %}
+      - **{{ gap.topic }}** — {{ gap.missing }}
+      {% endfor %}
+      {% endif %}
+
+      ---
+
+      Choose an action:
+
+      - **Escalate** — run deep_researcher to fill the gaps with live sources.
+      - **Skip escalation** — accept cheap-tier findings as-is; route to archivist.
+      - **Abort research** — terminate this research call; architect will receive empty findings.
+    options:
+      - label: "🔬 Escalate to deep_researcher"
+        value: escalate
+        route: deep_researcher
+      - label: "✅ Skip — accept cheap-tier findings"
+        value: skip
+        route: archivist
+      - label: "🛑 Abort research"
+        value: abort
+        route: $end
 
   # ── Deep researcher (escalation tier) ──────────────────────────────────
   #

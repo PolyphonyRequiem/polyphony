@@ -741,7 +741,47 @@ agents:
       # Cap reached — surface to human or fall through.
       - to: research_cap_gate
         when: "{{ research_loop_counter.output.cap_reached == true }}"
-      # Research requested and under cap — dispatch.
+      # Research requested and under cap — resolve policy, then dispatch.
+      # AB#3188: route through research_policy_resolver so policy.research.*
+      # values (mode + escalation_cap) participate in the dispatch input.
+      - to: research_policy_resolver
+
+  # ── Research policy resolver (AB#3188) ─────────────────────────────────
+  #
+  # Resolves `policy.research.defaults.{escalation_cap, mode}` for the
+  # research sub-workflow. The shared helper wraps
+  # `polyphony policy resolve --domain research --scope type:<type>` and
+  # degrades gracefully on policy errors (mode='manual', source='error',
+  # policy_error populated) so a malformed policy surfaces at the
+  # escalation_decision_gate rather than crashing the workflow.
+  #
+  # AB#3188 precedence (documented in PR body):
+  #   policy.research.defaults.escalation_cap   (when source != 'error')
+  #   →  architect.output.research_escalation_cap  (legacy fallback)
+  #
+  # The architect's `research_escalation_cap` field is now effectively
+  # legacy — it's preserved as a fallback so workflows that bypass this
+  # resolver (e.g. future direct callers of research.yaml) keep their
+  # historical behavior, but operator intent in policy.yaml wins by
+  # design. Once the architect prompt is updated to stop emitting the
+  # field, this fallback can be removed in a follow-up contract bump.
+  #
+  # Followup: `profile.research.escalation_cap` (ResearchConfig.cs:59)
+  # is read by C# but not exposed via any CLI verb yet. AB#3188 wires
+  # only the policy half; the profile half is a separate follow-up. The
+  # resolver script has a clear seam for it once a `polyphony profile
+  # load` verb (or equivalent extension to `policy resolve`) lands.
+  - name: research_policy_resolver
+    type: script
+    description: Resolve policy.research.defaults.{escalation_cap, mode} for research_dispatch (AB#3188)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/resolve-research-policy.ps1"
+      - "-Scope"
+      - "type:{{ type_loader.output.type }}"
+    routes:
       - to: research_dispatch
 
   # ── Research dispatch ──────────────────────────────────────────────────
@@ -773,11 +813,22 @@ agents:
       budget_hint: "{{ architect.output.research_budget_hint }}"
       archive_scope_paths: "{{ architect.output.research_archive_scope.get('paths', []) }}"
       archive_scope_tags: "{{ architect.output.research_archive_scope.get('tags', []) }}"
-      # AB#3134: deep_researcher escalation cap. Always-present at the
-      # architect's output (default 1). Profile-driven cap from
-      # research.escalation_cap is a deferred follow-up — when it lands,
-      # this default will be sourced from the resolved profile.
-      escalation_cap: "{{ architect.output.research_escalation_cap }}"
+      # AB#3188: deep_researcher escalation cap. Precedence is
+      # policy.research.defaults.escalation_cap (when resolver source
+      # is not 'error') over architect's emitted default. The architect
+      # field is now a legacy fallback for the resolver-error case so
+      # the workflow degrades to historical behavior on policy faults.
+      #
+      # See research_policy_resolver above for the resolver contract.
+      # Followup: profile.research.escalation_cap is not yet plumbed
+      # (no CLI verb exposes profile data); the resolver returns
+      # whatever `polyphony policy resolve` reports, so once C# adds
+      # profile precedence, this mapping needs no changes.
+      escalation_cap: "{{ research_policy_resolver.output.escalation_cap if research_policy_resolver.output.source != 'error' else architect.output.research_escalation_cap }}"
+      # AB#3188: gate behavior for researcher → deep_researcher.
+      # On resolver error, mode is forced to 'manual' so the gate
+      # surfaces the failure rather than silently auto-escalating.
+      escalation_mode: "{{ research_policy_resolver.output.mode }}"
     routes:
       - to: architect
 
@@ -811,7 +862,9 @@ agents:
         route: open_questions_policy
       - label: "🔬 Force one more research cycle"
         value: force
-        route: research_dispatch
+        # AB#3188: route through resolver so the forced cycle still
+        # picks up policy.research overrides instead of bypassing them.
+        route: research_policy_resolver
 
   # ── Open questions policy resolver ─────────────────────────────────────
   #
