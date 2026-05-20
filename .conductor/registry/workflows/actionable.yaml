@@ -1,9 +1,13 @@
 # actionable — Single-item lifecycle for an item carrying the
 #               `actionable` facet.
 #
-# Phase 6 PR #4 of 8 — initial scaffold. Wires the new evidence-branch
-# (PR #132 / commit e63d84f) and evidence-PR (PR #130 / commit 97bd373)
-# verbs into a runnable subworkflow with an executor router.
+# History:
+#   - Phase 6 PR #4 (#136) scaffolded this workflow with the executor router.
+#   - Phase 6 PR #5 (#142) wired facet-profile composition.
+#   - Phase 6 PR #7 (#139) added the evidence floor check.
+#   - Phase 6 PR #8 (deferred): full evidence_reviewer rubric — see TODO at
+#     the `evidence_reviewer` agent below. The current rubric is a permissive
+#     placeholder.
 #
 # The router branches on the `executor` input:
 #
@@ -13,11 +17,10 @@
 #   - executor = human    → human_satisfaction_gate → workflow_completed
 #                            (or workflow_abandoned)
 #
-# This is the Phase 6 design sketch lines 77-100 made executable. The
-# polyphony leg is GH-only in this PR (consistent with PR #3 / commit
-# 97bd373 — the underlying `pr open-evidence-pr` verb only knows about
-# `gh`). ADO siblings of the evidence verbs are a deferred wave-0 follow-up
-# per the same pattern feature-pr.yaml uses for ADO remediation.
+# The polyphony leg is GH-only — the underlying `pr open-evidence-pr` verb
+# (PR #3) only knows about `gh`. ADO siblings of the evidence verbs are a
+# deferred follow-up per the same pattern feature-pr.yaml uses for ADO
+# remediation.
 #
 # Invariants:
 #   Pre:  Work item carries the actionable facet. When executor=polyphony,
@@ -33,28 +36,22 @@
 #   idempotent — the former reuses an existing local/remote branch;
 #   the latter reuses an existing OPEN PR for the same head/base pair.
 #   The agent stub re-runs from scratch on resume; that is fine for the
-#   scaffold (PR #5 will wire in facet-profile context that may want to
-#   resume mid-conversation, at which point this comment should be
-#   revisited).
+#   placeholder reviewer. Once Phase 6 PR #8 ships the full rubric, the
+#   resume-mid-conversation case may need revisiting.
 #
-# Deferred wiring (forward references — DO NOT add in this PR):
-#   - PR #8: full evidence_reviewer rubric (currently a placeholder
-#            that approves unless the agent emits an explicit `block`)
-#   - Out of scope: wiring this workflow as a subworkflow of
-#                   polyphony-full.yaml. A later PR owns that.
+# Out of scope: wiring this workflow as a subworkflow of polyphony-full.yaml.
 #
-# Wiring landed in this PR (Phase 6 PR #5):
+# Facet-profile composition (Phase 6 PR #5):
 #   - `compose_addendum` script step inserted between
 #     `ensure_evidence_branch` and `actionable_agent`. Shells out to
-#     `polyphony agent compose-addendum {work_item_id}` (Phase 6 PR #5
-#     verb, see src/Polyphony/Commands/AgentCommands.ComposeAddendum.cs).
-#   - The agent's prompt template now injects skills, MCPs, and
-#     per-item guidance from the composer's envelope (Jinja2
-#     `{% if %}` blocks, guarded with `is defined` per M3).
+#     `polyphony agent compose-addendum {work_item_id}` (see
+#     src/Polyphony/Commands/AgentCommands.ComposeAddendum.cs).
+#   - The agent's prompt template injects skills, MCPs, and per-item
+#     guidance from the composer's envelope (Jinja2 `{% if %}` blocks,
+#     guarded with `is defined` per M3).
 #   - Conductor-schema note: agent steps in conductor have a `tools:`
 #     list field but NO `skills:` / `mcps:` / `prompt_addendum:` fields.
-#     The addendum is therefore injected as PROMPT TEXT (the original
-#     `prompt_addendum` framing — see TODO removed below). The static
+#     The addendum is therefore injected as PROMPT TEXT. The static
 #     `tools:` list on `actionable_agent` stays as-is; the dynamic
 #     skills/MCPs the composer surfaces are advisory context the agent
 #     reads from its prompt.
@@ -65,10 +62,9 @@ workflow:
     Single-item lifecycle for an item carrying the `actionable` facet.
     Routes on the `executor` input — polyphony performs the action and
     promotes evidence via an evidence PR; human acts outside polyphony
-    and only a satisfaction gate is recorded. Phase 6 PR #5 wires
-    facet-profile composition + per-item guidance into the
-    actionable_agent prompt; the full review rubric (PR #8) is still
-    deferred.
+    and only a satisfaction gate is recorded. Facet-profile composition
+    and per-item guidance are wired into the actionable_agent prompt;
+    the full evidence-review rubric (Phase 6 PR #8) is still deferred.
   version: "2.4.8"
   entry_point: executor_router
   metadata:

@@ -3,11 +3,6 @@
 # Drives one merge group through: branch creation → per-task implementation
 # loop with per-impl PRs → MG-level review and acceptance → MG PR creation
 # and merge → scope closure.
-# Single MG (merge-group) lifecycle on the Rev 4 branch model.
-#
-# Drives one merge group through: branch creation → per-task implementation
-# loop with per-impl PRs → MG-level review and acceptance → MG PR creation
-# and merge → scope closure.
 #
 # Adopts the Rev 4 ADR (docs/decisions/branch-model.md) shape:
 #
@@ -40,19 +35,14 @@
 #      MG-path-aware item routing (`--mg-path PATH`) and drop the legacy
 #      tag dependency.
 #   2. The same is true for `polyphony branch close-scope --pg-number N`.
-#   3. The run lock and run manifest (`polyphony lock acquire`,
-#      `polyphony manifest init` + `record-approval`) are NOT acquired or
-#      written here. The apex workflow that wraps multiple MGs is
-#      responsible for lock acquisition, manifest init, and final
-#      approval recording. Adding those here would defeat parallel-MG
-#      execution under one root.
-#   4. The MG PR merges directly via `polyphony pr merge-mg-pr` on the
-#      GitHub leg (no review-fix sub-workflow at the MG layer per the
-#      ADR — review happens inside `scope_reviewer` upstream of the MG
-#      PR). The ADO leg uses a human-gate stub (matching `ado-pr.yaml`)
-#      until ADO connection inputs are threaded through the workflow
-#      stack and the ADO MG verbs (`pr open-mg-ado` + `pr merge-mg-ado`,
-#      shipped in PR #106) can be wired in.
+#
+# Permanent design contract (NOT transitional):
+#   - The run lock and run manifest (`polyphony lock acquire`,
+#     `polyphony manifest init` + `record-approval`) are NOT acquired or
+#     written here. The apex workflow that wraps multiple MGs is
+#     responsible for lock acquisition, manifest init, and final
+#     approval recording. Adding those here would defeat parallel-MG
+#     execution under one root.
 #
 # Re-entry behavior (P3):
 #   Every step in this workflow is idempotent — `branch ensure-mg`,
