@@ -196,6 +196,7 @@ public sealed class PolicyCommands
             DefaultsMinSeverity = defaults.MinSeverity?.ToString().ToLowerInvariant(),
             DefaultsMaxQuestionLoops = defaults.MaxQuestionLoops,
             DefaultsEscalationCap = defaults.EscalationCap,
+            DefaultsMaxResearchLoops = defaults.MaxResearchLoops,
             DefaultsQualityAvgScoreAtLeast = defaults.QualityThreshold?.AvgScoreAtLeast,
             DefaultsQualityBlockingCountAtMost = defaults.QualityThreshold?.BlockingCountAtMost,
             RootMode = domain.Root?.Mode?.ToString().ToLowerInvariant(),
@@ -273,6 +274,16 @@ public sealed class PolicyCommands
                 WarnIfNonPositive(rule.EscalationCap, $"research.by_type.{typeName}.escalation_cap", errors);
         }
 
+        // Research plan-level loop caps (defaults, root, by_type). 0 is allowed
+        // (disables research entirely), so we reject negatives only.
+        WarnIfNegative(config.Research?.Defaults?.MaxResearchLoops, "research.defaults.max_research_loops", errors);
+        WarnIfNegative(config.Research?.Root?.MaxResearchLoops, "research.root.max_research_loops", errors);
+        if (config.Research?.ByType is not null)
+        {
+            foreach (var (typeName, rule) in config.Research.ByType)
+                WarnIfNegative(rule.MaxResearchLoops, $"research.by_type.{typeName}.max_research_loops", errors);
+        }
+
         // Guidance: source must be one of the canonical strings (when set);
         // ado_field requires a non-empty ado_field_name.
         ValidateGuidanceForReporting(config.Guidance, errors);
@@ -339,6 +350,12 @@ public sealed class PolicyCommands
     {
         if (value is { } v && v <= 0)
             errors.Add($"{fieldPath} must be positive (got {v}).");
+    }
+
+    private static void WarnIfNegative(int? value, string fieldPath, List<string> errors)
+    {
+        if (value is { } v && v < 0)
+            errors.Add($"{fieldPath} must be non-negative (got {v}).");
     }
 
     private static void EmitLoadError(string path, string message)

@@ -20,6 +20,9 @@ namespace Polyphony.Policy;
 ///   <item><description>open_questions.defaults.mode = warning</description></item>
 ///   <item><description>open_questions.defaults.min_severity = moderate</description></item>
 ///   <item><description>open_questions.defaults.max_question_loops = 3</description></item>
+///   <item><description>research.defaults.mode = warning</description></item>
+///   <item><description>research.defaults.escalation_cap = 1</description></item>
+///   <item><description>research.defaults.max_research_loops = 3</description></item>
 ///   <item><description>concurrency.max_concurrent_children = 3</description></item>
 ///   <item><description>guidance.source = description_block</description></item>
 ///   <item><description>guidance.ado_field_name = null</description></item>
@@ -199,6 +202,7 @@ public static class PolicyLoader
         config.Research.Defaults ??= new ScopeRule();
         config.Research.Defaults.Mode ??= PolicyMode.Warning;
         config.Research.Defaults.EscalationCap ??= 1;
+        config.Research.Defaults.MaxResearchLoops ??= 3;
     }
 
     private static void ValidateGuidance(GuidancePolicy guidance)

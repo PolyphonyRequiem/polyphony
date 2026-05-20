@@ -702,6 +702,37 @@ agents:
           "request" but always present so the input_mapping below can
           read it directly without optional-dict gymnastics.
     routes:
+      - to: research_loops_policy
+
+  # ── Research loops policy resolver ─────────────────────────────────────
+  #
+  # Resolves `policy.research.defaults.max_research_loops` for the
+  # `research_loop_counter` step. Runs BEFORE the counter (architect →
+  # research_loops_policy → research_loop_counter) so the counter has a
+  # dynamic cap to compare iteration against.
+  #
+  # Separate from `research_policy_resolver` (which resolves
+  # escalation_cap + mode for the research_dispatch leg, downstream of
+  # the counter): splitting them keeps a malformed max_research_loops
+  # from poisoning escalation behavior and preserves the cap-gate
+  # `force` route's existing topology (force → resolver → dispatch
+  # bypasses the counter, so we don't reintroduce the M10 infinite-loop
+  # bug a single upstream resolver would cause).
+  #
+  # Degrades gracefully: on policy error the script falls back to
+  # max_research_loops=3 (the historical pre-policy MVP value) so a
+  # malformed policy surfaces at cap-hit rather than crashing the run.
+  - name: research_loops_policy
+    type: script
+    description: Resolve policy.research.defaults.max_research_loops for research_loop_counter
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/resolve-research-max-loops.ps1"
+      - "-Scope"
+      - "type:{{ type_loader.output.type }}"
+    routes:
       - to: research_loop_counter
 
   # ── Research loop counter ───────────────────────────────────────────────
@@ -718,13 +749,10 @@ agents:
   # StrictUndefined trap has been replaced by a flat discriminated union
   # at the architect's output schema.
   #
-  # Hard cap: 3 research loops per plan invocation (MVP). The cap
-  # prevents infinite loops when the architect repeatedly requests
-  # research without converging. The default is intentionally hard-coded;
-  # promotion to policy.yaml is deferred to a future PR.
-  #
-  # TODO(research-loop-policy): elevate to policy.yaml > research:
-  #   { max_loops: 3 } when the policy schema lands.
+  # Loop cap: resolved from `policy.research.defaults.max_research_loops`
+  # via `research_loops_policy` upstream (default 3; 0 disables research
+  # entirely). The cap prevents infinite loops when the architect
+  # repeatedly requests research without converging.
   - name: research_loop_counter
     type: script
     description: Track research loop iteration count and gate on cap / payload presence
@@ -734,7 +762,7 @@ agents:
       - "-Command"
       - |
         $count = [int]'{{ context.history | select('eq', 'research') | list | length }}'
-        $maxLoops = 3
+        $maxLoops = [int]'{{ research_loops_policy.output.max_research_loops }}'
         $capReached = $count -ge $maxLoops
         @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
     routes:

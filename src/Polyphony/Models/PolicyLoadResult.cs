@@ -61,6 +61,7 @@ public sealed record PolicyDomainSnapshot
     public string? DefaultsMinSeverity { get; init; }
     public int? DefaultsMaxQuestionLoops { get; init; }
     public int? DefaultsEscalationCap { get; init; }
+    public int? DefaultsMaxResearchLoops { get; init; }
     public int? DefaultsQualityAvgScoreAtLeast { get; init; }
     public int? DefaultsQualityBlockingCountAtMost { get; init; }
     public string? RootMode { get; init; }

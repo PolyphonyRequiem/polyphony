@@ -208,14 +208,24 @@ research:
   defaults:
     mode: warning
     escalation_cap: 1
+    # Plan-level cap on architect ↔ research_dispatch round-trips per plan
+    # invocation. Distinct from escalation_cap (which is per-topic within
+    # research.yaml). When the architect requests research this many times
+    # without converging on a final plan, plan-level.yaml surfaces
+    # `research_cap_gate` for operator intervention. 0 disables research
+    # entirely; defaults to 3 (matches the pre-policy hard-coded MVP value).
+    max_research_loops: 3
 
   # Per-scope overrides (uncomment to customise per item type or root).
   # root:
   #   mode: manual
   #   escalation_cap: 2
+  #   max_research_loops: 5
   # by_type:
   #   Epic:
   #     escalation_cap: 2    # Epics get more escalation budget
+  #     max_research_loops: 5    # …and more plan-loop budget
   #   Task:
   #     mode: auto           # Tasks auto-escalate without gating
+  #     max_research_loops: 1    # …and a tight loop cap
 
