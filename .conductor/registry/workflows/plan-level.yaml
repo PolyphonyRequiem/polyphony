@@ -745,6 +745,12 @@ agents:
       # AB#3188: route through research_policy_resolver so policy.research.*
       # values (mode + escalation_cap) participate in the dispatch input.
       - to: research_policy_resolver
+        when: "{{ research_loop_counter.output.cap_reached == false }}"
+      # M10 defensive catch-all (#222): if cap_reached evaluates to
+      # anything other than true/false (counter script crash, malformed
+      # JSON, template eval edge case), fail safe to the cap-hit gate
+      # rather than re-entering research_dispatch indefinitely.
+      - to: research_cap_gate
 
   # ── Research policy resolver (AB#3188) ─────────────────────────────────
   #
@@ -1745,6 +1751,13 @@ agents:
       - to: stuck_review_gate_policy_router
         when: "{{ pending_poll_counter.output.cap_reached == true }}"
       - to: pending_review_gate_policy_router
+        when: "{{ pending_poll_counter.output.cap_reached == false }}"
+      # M10 defensive catch-all (#222): if cap_reached evaluates to
+      # anything other than true/false (counter script crash, malformed
+      # JSON, template eval edge case), fail safe to the stuck-review
+      # gate rather than re-entering the polling cycle via the policy
+      # router's skip-mode bypass.
+      - to: stuck_review_gate_policy_router
 
   # ── Pending-review gate policy router ─────────────────────────────────
   #
@@ -2092,6 +2105,12 @@ agents:
       - to: revise_cap_gate_policy_router
         when: "{{ revise_counter.output.cap_reached == true }}"
       - to: architect
+        when: "{{ revise_counter.output.cap_reached == false }}"
+      # M10 defensive catch-all (#222): if cap_reached evaluates to
+      # anything other than true/false (counter script crash, malformed
+      # JSON, template eval edge case), fail safe to the cap-hit gate
+      # rather than looping back to architect indefinitely.
+      - to: revise_cap_gate_policy_router
 
   # ── Revise cap gate policy router (AB#3186) ─────────────────────────────
   #
