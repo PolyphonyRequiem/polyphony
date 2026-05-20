@@ -284,6 +284,28 @@ agents:
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
       - to: $end
+  - name: scope_revise_cap_gate_policy_router
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/resolve-unattended-cap-mode.ps1"
+    routes:
+      - to: terminal_cap_auto_fail
+        when: "{{ scope_revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
+      - to: scope_revise_cap_gate
+  - name: terminal_cap_auto_fail
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - "echo done"
+      - "-Reason"
+      - "cap-auto-fail"
+    routes:
+      - to: $end
 '@
         }
 

@@ -659,6 +659,28 @@ agents:
     prompt: "Merge the PR"
     routes:
       - to: $end
+  - name: revise_cap_gate_policy_router
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/resolve-unattended-cap-mode.ps1"
+    routes:
+      - to: terminal_cap_auto_fail
+        when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
+      - to: revise_cap_gate
+  - name: terminal_cap_auto_fail
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - "echo done"
+      - "-Reason"
+      - "cap-auto-fail"
+    routes:
+      - to: $end
 '@
             Set-Content (Join-Path $script:WorkflowsDir 'github-pr.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-github-pr.ps1') 2>&1

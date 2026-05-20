@@ -205,8 +205,39 @@ agents:
     routes:
       - to: guidance_loader
         when: "{{ depth_guard.output.allowed == true }}"
-      - to: depth_exceeded_gate
+      - to: depth_exceeded_gate_policy_router
         when: "{{ depth_guard.output.allowed == false }}"
+
+  # ── Depth-exceeded gate policy router (AB#3186) ──────────────────────────
+  #
+  # Reads `policy.unattended.cap_mode` via the shared resolver. Three
+  # modes:
+  #   • `manual` (default) → fall through to depth_exceeded_gate for
+  #                          operator acknowledgement
+  #   • `auto_proceed`     → silent acknowledge → $end (planning of this
+  #                          branch stops without operator input)
+  #   • `auto_fail`        → terminal_cap_auto_fail (NOT terminal_abort_run —
+  #                          honest about who decided to halt)
+  #
+  # The shared helper degrades to `cap_mode = 'manual'` on any policy /
+  # CLI failure (with `policy_error` populated for diagnostics), so a
+  # broken policy can't silently flip unattended behavior. Same defensive
+  # posture as `renegotiation_policy` in apex-driver.yaml.
+  - name: depth_exceeded_gate_policy_router
+    type: script
+    description: Resolve policy.unattended.cap_mode for depth_exceeded_gate (AB#3186)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/resolve-unattended-cap-mode.ps1"
+    routes:
+      - to: $end
+        when: "{{ depth_exceeded_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
+      - to: terminal_cap_auto_fail
+        when: "{{ depth_exceeded_gate_policy_router.output.cap_mode == 'auto_fail' }}"
+      # Default + 'manual' + any unknown → surface the human gate.
+      - to: depth_exceeded_gate
 
   # ── Depth exceeded gate ──────────────────────────────────────────────────
   - name: depth_exceeded_gate
@@ -220,6 +251,12 @@ agents:
       This typically means the hierarchy is deeper than expected. Consider
       restructuring the work item tree or increasing `max_depth` if the depth
       is intentional.
+
+      {% if depth_exceeded_gate_policy_router is defined and depth_exceeded_gate_policy_router.output.source == 'error' %}
+      > ⚠️ Policy resolution for `unattended.cap_mode` failed; surfacing this
+      > gate as a manual fallback. Details:
+      > `{{ depth_exceeded_gate_policy_router.output.policy_error }}`
+      {% endif %}
 
       ---
 
@@ -1999,9 +2036,44 @@ agents:
         $digestChanged = ($digestNow -ne '' -and $digestNow -ne $digestPrev)
         @{ iteration = $count; max_revisions = $maxRevisions; cap_reached = $capReached; digest = $digestNow; digest_changed = $digestChanged } | ConvertTo-Json
     routes:
-      - to: revise_cap_gate
+      - to: revise_cap_gate_policy_router
         when: "{{ revise_counter.output.cap_reached == true }}"
       - to: architect
+
+  # ── Revise cap gate policy router (AB#3186) ─────────────────────────────
+  #
+  # Reads `policy.unattended.cap_mode` via the shared resolver. Three
+  # modes:
+  #   • `manual` (default) → fall through to revise_cap_gate
+  #   • `auto_proceed`     → architect (force one more revision; same
+  #                          semantic as the operator picking "Force one
+  #                          more revision" — counter keeps climbing
+  #                          so the cap eventually re-fires)
+  #   • `auto_fail`        → terminal_cap_auto_fail (NOT terminal_abort_run —
+  #                          honest about who decided to halt)
+  #
+  # Note: `auto_proceed` here does NOT loop forever silently. The
+  # revise_counter is not reset, so the next cap_reached check will
+  # route back through this router → architect → revise_counter →
+  # router → architect … Each cycle still consumes the revise budget
+  # and writes the counter file. Unattended runs that hit this state
+  # repeatedly should be caught by the operator's external dispatch
+  # limit; the workflow itself does not impose a hard ceiling.
+  - name: revise_cap_gate_policy_router
+    type: script
+    description: Resolve policy.unattended.cap_mode for revise_cap_gate (AB#3186)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/resolve-unattended-cap-mode.ps1"
+    routes:
+      - to: architect
+        when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
+      - to: terminal_cap_auto_fail
+        when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
+      # Default + 'manual' + any unknown → surface the human gate.
+      - to: revise_cap_gate
 
   # ── Revise cap gate ───────────────────────────────────────────────────
   - name: revise_cap_gate
@@ -2013,6 +2085,12 @@ agents:
       revisions but reviewers are still requesting changes.
 
       - **PR:** {{ open_plan_pr_ado.output.pr_url if (workflow.input.platform == 'ado' and open_plan_pr_ado is defined and open_plan_pr_ado.output.pr_url is defined) else (open_plan_pr.output.pr_url if (open_plan_pr is defined and open_plan_pr.output.pr_url is defined) else state_detector.output.pr_url) }}
+
+      {% if revise_cap_gate_policy_router is defined and revise_cap_gate_policy_router.output.source == 'error' %}
+      > ⚠️ Policy resolution for `unattended.cap_mode` failed; surfacing this
+      > gate as a manual fallback. Details:
+      > `{{ revise_cap_gate_policy_router.output.policy_error }}`
+      {% endif %}
 
       Decide what to do:
 
@@ -2934,6 +3012,32 @@ agents:
       - "{{ workflow.input.work_item_id }}"
       - "-Stage"
       - "plan-level"
+    routes:
+      - to: $end
+
+  # ── Terminal: policy-driven cap-mode auto-fail (AB#3186) ─────────────────
+  #
+  # Reached when `policy.unattended.cap_mode == 'auto_fail'` triggers at
+  # any cap-hit gate (depth_exceeded_gate, revise_cap_gate). Distinct from
+  # terminal_abort_run so post-mortem diagnostics can tell policy-driven
+  # failures apart from human-initiated aborts — the abort-run.ps1 envelope's
+  # `reason` field is the discriminator (`cap-auto-fail` vs `operator-abort`).
+  - name: terminal_cap_auto_fail
+    type: script
+    description: Policy-driven full-run abort — unattended.cap_mode='auto_fail' at a cap-hit gate
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "cap-auto-fail"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Stage"
+      - "plan-level"
+      - "-Detail"
+      - "policy.unattended.cap_mode='auto_fail' triggered at a cap-hit gate (depth_exceeded_gate or revise_cap_gate). Inspect the event log to find which router routed here."
     routes:
       - to: $end
 
