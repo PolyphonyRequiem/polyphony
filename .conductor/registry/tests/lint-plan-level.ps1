@@ -480,6 +480,71 @@ if ($content -notmatch 'name:\s*terminal_cap_auto_fail\b') {
     }
 }
 
+# ── Check 27: AB#3188 — research_policy_resolver node exists ─────────────
+if ($content -notmatch 'name:\s*research_policy_resolver\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-research-policy-resolver'
+        Detail = "AB#3188: 'research_policy_resolver' script node missing. Required to resolve policy.research.defaults.{escalation_cap, mode} before invoking research_dispatch."
+    }
+} else {
+    $resolverMatch = [regex]::Match($content, '(?s)- name:\s*research_policy_resolver\b.*?(?=\n  - name: |\Z)')
+    $resolverBlock = if ($resolverMatch.Success) { $resolverMatch.Value } else { '' }
+
+    # ── Check 28: resolver invokes the shared helper, not inline policy lookup
+    if ($resolverBlock -notmatch 'resolve-research-policy\.ps1') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'research-policy-resolver-wrong-helper'
+            Detail = "AB#3188: 'research_policy_resolver' must invoke the shared 'resolve-research-policy.ps1' helper script."
+        }
+    }
+
+    # ── Check 29: resolver routes unconditionally to research_dispatch
+    if ($resolverBlock -notmatch '(?m)^\s*-\s*to:\s*research_dispatch\b') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'research-policy-resolver-missing-dispatch-route'
+            Detail = "AB#3188: 'research_policy_resolver' must route unconditionally to 'research_dispatch' (it is the sole inbound path)."
+        }
+    }
+}
+
+# ── Check 30: AB#3188 — research_dispatch input_mapping consumes resolver output
+$dispatchMatch = [regex]::Match($content, '(?s)- name:\s*research_dispatch\b.*?(?=\n  - name: |\Z)')
+if ($dispatchMatch.Success) {
+    $dispatchBlock = $dispatchMatch.Value
+    if ($dispatchBlock -notmatch 'research_policy_resolver\.output\.escalation_cap') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'research-dispatch-missing-resolver-cap-mapping'
+            Detail = "AB#3188: 'research_dispatch' input_mapping for 'escalation_cap' must reference 'research_policy_resolver.output.escalation_cap' (policy wins; architect.output.research_escalation_cap is the legacy fallback)."
+        }
+    }
+    if ($dispatchBlock -notmatch 'escalation_mode:\s*"\{\{\s*research_policy_resolver\.output\.mode') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'research-dispatch-missing-mode-mapping'
+            Detail = "AB#3188: 'research_dispatch' input_mapping must include 'escalation_mode' sourced from research_policy_resolver.output.mode (gates researcher → deep_researcher transition in research.yaml)."
+        }
+    }
+}
+
+# ── Check 31: AB#3188 — no direct route to research_dispatch except from resolver
+# All inbound paths to research_dispatch MUST go through research_policy_resolver
+# so policy overrides participate in EVERY dispatch (including the
+# research_cap_gate 'force' option).
+$directRoutes = [regex]::Matches($content, '(?m)^\s*(?:-\s*to|route):\s*research_dispatch\b')
+foreach ($match in $directRoutes) {
+    # Find the containing node name by walking back to the nearest '- name:' line.
+    $matchOffset = $match.Index
+    $precedingText = $content.Substring(0, $matchOffset)
+    $nodeMatch = [regex]::Matches($precedingText, '(?m)^  - name:\s*(\S+)')
+    if ($nodeMatch.Count -eq 0) { continue }
+    $enclosingNode = $nodeMatch[$nodeMatch.Count - 1].Groups[1].Value
+    if ($enclosingNode -ne 'research_policy_resolver') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'research-dispatch-direct-route-bypasses-resolver'
+            Detail = "AB#3188: '$enclosingNode' routes directly to 'research_dispatch', bypassing 'research_policy_resolver'. All inbound paths must go through the resolver so policy.research overrides participate in every dispatch."
+        }
+    }
+}
+
 # ── Report ───────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "`n❌ plan-level.yaml open_questions policy lint FAILED ($($violations.Count) violations):`n" -ForegroundColor Red

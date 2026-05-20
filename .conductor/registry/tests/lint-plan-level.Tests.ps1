@@ -411,6 +411,26 @@ agents:
       - "cap-auto-fail"
     routes:
       - to: `$end
+  - name: research_policy_resolver
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/resolve-research-policy.ps1"
+      - "-Scope"
+      - "default"
+    routes:
+      - to: research_dispatch
+  - name: research_dispatch
+    type: workflow
+    workflow: ./research.yaml
+    input_mapping:
+      topics: "{{ architect.output.research_topics }}"
+      escalation_cap: "{{ research_policy_resolver.output.escalation_cap if research_policy_resolver.output.source != 'error' else architect.output.research_escalation_cap }}"
+      escalation_mode: "{{ research_policy_resolver.output.mode }}"
+    routes:
+      - to: architect
 "@
             Set-Content (Join-Path $script:WorkflowsDir 'plan-level.yaml') $yaml
             $lintScript = Join-Path $script:TestsDir 'lint-plan-level.ps1'
