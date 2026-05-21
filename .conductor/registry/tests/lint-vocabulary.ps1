@@ -52,8 +52,7 @@ $ErrorActionPreference = 'Stop'
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $regexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
 $deferredSpecFiles = @(
-    'docs/proposals/polyphony-journal.md',
-    'docs/proposals/conductor-failure-model.md'
+    'docs/proposals/polyphony-journal.md'
 )
 $skippedFenceLanguages = @('text', 'console', 'output', 'diff')
 
@@ -132,7 +131,50 @@ function New-ForbiddenTermSpec {
         [Parameter(Mandatory)] [string]$Replacement
     )
 
-    if ($Term.EndsWith('*')) {
+    if ($Term.StartsWith('*_')) {
+        # Token-suffix: `*_dispatch` matches `<word>_dispatch` only at end of an
+        # identifier — i.e. preceded by [A-Za-z0-9] and not followed by another
+        # [A-Za-z0-9_]. This prevents false positives like `items_dispatched_count`
+        # (where `_dispatch` is mid-identifier, not a true suffix).
+        $literalSuffix = $Term.Substring(1)
+        $escaped = [regex]::Escape($literalSuffix)
+        $pattern = "(?<=[A-Za-z0-9])$escaped(?![A-Za-z0-9_])"
+        $regex = [regex]::new($pattern, $regexOptions)
+        $kind = 'token-suffix'
+    } elseif ($Term.EndsWith('_*')) {
+        # Token-prefix snake_case: `primary_*` / `terminal_*` matches
+        # `<prefix>_<word>` only at start of an identifier — preceded by
+        # non-[A-Za-z0-9_] (or start of line) and immediately followed by [A-Za-z].
+        # Case-insensitive: also catches `Primary_`, `PRIMARY_`, `Terminal_`.
+        # PascalCase compound forms (e.g. `PrimaryId`, `TerminalState`) are
+        # deliberately NOT caught here — see the dedicated `<Name>*` rule below.
+        # Why split? The snake_case `terminal_*` is a workflow-node-name
+        # convention and the snake_case form is the only locus to police; the
+        # English-noun usage of "terminal" in lifecycle-event variables
+        # (`$terminalKinds`, `$hasTerminalReady`) is semantically distinct and
+        # must NOT be falsely flagged. Domain-noun renames that should ALSO
+        # cover PascalCase (like `Primary` → `Root`) get an explicit second
+        # bullet using `<Name>*` shape.
+        $literalPrefix = $Term.Substring(0, $Term.Length - 1)
+        $escaped = [regex]::Escape($literalPrefix)
+        $pattern = "(?<![A-Za-z0-9_])$escaped(?=[A-Za-z])"
+        $regex = [regex]::new($pattern, $regexOptions)
+        $kind = 'token-prefix'
+    } elseif ($Term -cmatch '^[A-Z][a-z]+\*$') {
+        # PascalCase token-prefix: `Primary*` matches `Primary[A-Z]` exactly
+        # at the start of an identifier. CASE-SENSITIVE — `primary` does NOT
+        # match this rule (the lowercase form is covered by `primary_*` above).
+        # The trailing uppercase requirement (`(?=[A-Z])`) means we catch
+        # PascalCase compounds like `PrimaryId`, `PrimaryRouter` but skip the
+        # bare PascalCase word `Primary` (which would have no uppercase boundary).
+        $literalPrefix = $Term.Substring(0, $Term.Length - 1)  # e.g. 'Primary'
+        $escaped = [regex]::Escape($literalPrefix)
+        $pattern = "(?<![A-Za-z0-9_])$escaped(?=[A-Z])"
+        $regex = [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::Compiled)
+        $kind = 'pascal-prefix'
+    } elseif ($Term.EndsWith('*')) {
+        # Legacy literal-prefix (substring match) — kept for backwards compat
+        # with any future bullet that uses bare `prefix*` (no underscore).
         $literalPrefix = $Term.Substring(0, $Term.Length - 1)
         $pattern = [regex]::Escape($literalPrefix)
         $regex = [regex]::new($pattern, $regexOptions)

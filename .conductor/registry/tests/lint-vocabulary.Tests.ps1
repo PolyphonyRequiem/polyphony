@@ -126,8 +126,9 @@ BeforeAll {
 
         switch ($Term) {
             'primary_*' { return '$x = "primary_completer"' }
-            '_dispatch' { return '$x = "item_dispatch_loop"' }
-            'terminal_' { return '$x = "terminal_abort_run"' }
+            'Primary*' { return '$x = "PrimaryId"' }
+            'terminal_*' { return '$x = "terminal_abort_run"' }
+            '*_dispatch' { return '$x = "plan_level_dispatch"' }
             default { return ('$x = ''{0}''' -f $Term) }
         }
     }
@@ -200,6 +201,91 @@ $title = "Apex"
         $payload = $result.Output | ConvertFrom-Json
         $payload.violation_count | Should -Be 2
         @($payload.violations | Where-Object term -eq 'apex').Count | Should -Be 2
+    }
+
+    It 'flags <prefix>_* only at start of identifier (token-prefix boundary)' {
+        # primary_completer + terminal_abort_run at start of identifier → flagged.
+        # something_primary_blah and a_terminal_state (mid-identifier) → NOT flagged.
+        $repo = New-TestRepo -Files @{
+            'scripts/boundaries.ps1' = @'
+$a = "primary_completer"
+$b = "terminal_abort_run"
+$c = "something_primary_blah"
+$d = "a_terminal_state"
+'@
+        }
+
+        $result = Invoke-Lint -Root $repo -Arguments @('-OutputFormat', 'json')
+
+        $result.ExitCode | Should -Be 1
+        $payload = $result.Output | ConvertFrom-Json
+        $payload.violation_count | Should -Be 2
+        @($payload.violations | Where-Object term -eq 'primary_*').Count | Should -Be 1
+        @($payload.violations | Where-Object term -eq 'terminal_*').Count | Should -Be 1
+    }
+
+    It 'flags Primary* in PascalCase compounds (case-sensitive, identifier start)' {
+        # PrimaryId, PrimaryRouter at start of PascalCase compound → flagged
+        # (mirrors how `apex` rule catches `ApexId`). aPrimaryThing not flagged
+        # (mid-identifier). $primaryThing (lowercase 'p') not flagged either —
+        # snake_case is policed by the separate `primary_*` rule.
+        $repo = New-TestRepo -Files @{
+            'src/Polyphony/Boundaries.cs' = @'
+public sealed class Boundaries {
+    public int PrimaryId { get; set; }
+    public string PrimaryRouter { get; set; } = "";
+    public string aPrimaryThing { get; set; } = "";
+    public string primary { get; set; } = "";
+}
+'@
+        }
+
+        $result = Invoke-Lint -Root $repo -Arguments @('-OutputFormat', 'json')
+
+        $result.ExitCode | Should -Be 1
+        $payload = $result.Output | ConvertFrom-Json
+        $payload.violation_count | Should -Be 2
+        @($payload.violations | Where-Object term -eq 'Primary*').Count | Should -Be 2
+    }
+
+    It 'does not flag terminalKinds or similar lifecycle vocab (terminal_* is snake_case only)' {
+        # The glossary `terminal_*` rule polices a workflow-node-name prefix
+        # convention. PowerShell variables that use "terminal" as an English
+        # word for end-of-lifecycle (`$terminalKinds`, `$hasTerminalReady`)
+        # are semantically distinct and must NOT be flagged.
+        $repo = New-TestRepo -Files @{
+            'scripts/lifecycle.ps1' = @'
+$terminalKinds = @('item_satisfied')
+$hasTerminalReady = $true
+$terminalDecisions = @()
+'@
+        }
+
+        $result = Invoke-Lint -Root $repo
+
+        $result.ExitCode | Should -Be 0
+    }
+
+    It 'flags *_dispatch only at end of identifier (token-suffix boundary)' {
+        # plan_level_dispatch + actionable_dispatch at end of identifier → flagged.
+        # items_dispatched_count, has_dispatch_failures, dispatched_items (mid-identifier
+        # or no leading underscore) → NOT flagged.
+        $repo = New-TestRepo -Files @{
+            'scripts/boundaries.ps1' = @'
+$a = "plan_level_dispatch"
+$b = "actionable_dispatch"
+$c = "items_dispatched_count"
+$d = "has_dispatch_failures"
+$e = "dispatched_items"
+'@
+        }
+
+        $result = Invoke-Lint -Root $repo -Arguments @('-OutputFormat', 'json')
+
+        $result.ExitCode | Should -Be 1
+        $payload = $result.Output | ConvertFrom-Json
+        $payload.violation_count | Should -Be 2
+        @($payload.violations | Where-Object term -eq '*_dispatch').Count | Should -Be 2
     }
 
     It 'skips docs/glossary.md itself even though it contains forbidden terms' {
@@ -277,15 +363,13 @@ $title = "Apex"
     It 'warns once per deferred spec by default without failing' {
         $repo = New-TestRepo -Files @{
             'docs/proposals/polyphony-journal.md'         = 'apex wave cascade'
-            'docs/proposals/conductor-failure-model.md'  = 'apex_driver terminal_abort'
         }
 
         $result = Invoke-Lint -Root $repo
 
         $result.ExitCode | Should -Be 0
         $result.Output | Should -Match 'docs/proposals/polyphony-journal\.md: warning: pending vocab pass per AB#3259'
-        $result.Output | Should -Match 'docs/proposals/conductor-failure-model\.md: warning: pending vocab pass per AB#3259'
-        ([regex]::Matches($result.Output, 'pending vocab pass per AB#3259')).Count | Should -Be 2
+        ([regex]::Matches($result.Output, 'pending vocab pass per AB#3259')).Count | Should -Be 1
     }
 
     It 'fails on deferred spec warnings under -Strict' {
