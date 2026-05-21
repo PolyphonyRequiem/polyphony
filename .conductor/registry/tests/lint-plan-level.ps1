@@ -238,7 +238,7 @@ if ($content -notmatch "merge_plan_pr[\s\S]{0,2000}?to:\s*extract_renegotiation_
 # ── Check 17: Workflow exports the four bubble-up outputs ────────────────
 # Per M7 a sub-workflow's outward-facing surface is its top-level
 # `output:` map. The handler exposes four keys for the (forthcoming)
-# apex-driver consumer. Match on key names (the value templates can
+# polyphony consumer. Match on key names (the value templates can
 # vary in formatting).
 $bubbleKeys = @(
     @{ Key = 'renegotiation_pending';    Rule = 'missing-output-renegotiation-pending' },
@@ -349,10 +349,10 @@ if ($m.Success) { $policyBlock = $m.Value }
 if ($policyBlock -match 'type_loader\.output\.type_name\b') {
     $violations += [PSCustomObject]@{
         Rule   = 'open-questions-policy-bad-type-field'
-        Detail = "open_questions_policy --scope references type_loader.output.type_name; the verb emits 'type', not 'type_name' (caused dogfood failure on apex #3043, 2026-05-07)"
+        Detail = "open_questions_policy --scope references type_loader.output.type_name; the verb emits 'type', not 'type_name' (caused dogfood failure on root #3043, 2026-05-07)"
     }
 }# ── Check 25: ancestor_chain.output.parent_item_id default-filter form ──
-# Bug #8 (dogfood apex #3043, 2026-05-08, two iterations).
+# Bug #8 (dogfood root #3043, 2026-05-08, two iterations).
 #
 # Wire shape: `polyphony plan derive-ancestor-chain` returns int? for
 # `parent_item_id`, always emitted (per-property [JsonIgnore(Never)] in
@@ -370,7 +370,7 @@ if ($policyBlock -match 'type_loader\.output\.type_name\b') {
 # Therefore the correct form is bare `default(0)`. Standard Jinja's
 # 3-arg `default(0, true)` form CRASHES conductor at runtime with
 # "TemplateRenderer._default_filter() takes from 1 to 2 positional
-# arguments but 3 were given" (iter 5 of the apex #3043 dogfood).
+# arguments but 3 were given" (iter 5 of the root #3043 dogfood).
 #
 # This check refuses the 3-arg form to prevent the regression.
 $threeArgMatches = [regex]::Matches(
@@ -379,7 +379,7 @@ $threeArgMatches = [regex]::Matches(
 if ($threeArgMatches.Count -gt 0) {
     $violations += [PSCustomObject]@{
         Rule   = 'parent-item-id-multi-arg-default'
-        Detail = "Found $($threeArgMatches.Count) reference(s) to ancestor_chain.output.parent_item_id with the multi-arg `default(...)` form (e.g. `default(0, true)`); conductor's custom _default_filter only accepts 2 positional args (value, default) and crashes on 3. Use bare `default(0)` — conductor's filter substitutes on both Undefined AND None (caused dogfood failure on apex #3043 iter 5, 2026-05-08)"
+        Detail = "Found $($threeArgMatches.Count) reference(s) to ancestor_chain.output.parent_item_id with the multi-arg `default(...)` form (e.g. `default(0, true)`); conductor's custom _default_filter only accepts 2 positional args (value, default) and crashes on 3. Use bare `default(0)` — conductor's filter substitutes on both Undefined AND None (caused dogfood failure on root #3043 iter 5, 2026-05-08)"
     }
 }
 
@@ -426,7 +426,7 @@ if ($seederBlock -match 'architect\.output\.children\s*\|\s*tojson') {
 # resolve-unattended-cap-mode.ps1 and offers three routes:
 #   auto_proceed → workflow-specific target (the "force one more / accept"
 #                  semantic for this site; not checked here — site-specific)
-#   auto_fail    → terminal_cap_auto_fail
+#   auto_fail    → cap_auto_fail
 #   (fallthrough)→ the cap-hit gate itself (manual + catch-all)
 #
 # These checks enumerate the concrete cap-hit gates known to this
@@ -451,10 +451,10 @@ foreach ($gate in @('depth_exceeded_gate', 'revise_cap_gate')) {
             Detail = "AB#3186: '$routerName' must invoke the shared 'resolve-unattended-cap-mode.ps1' helper, not inline policy lookup."
         }
     }
-    if ($routerBlock -notmatch 'to:\s*terminal_cap_auto_fail\b') {
+    if ($routerBlock -notmatch 'to:\s*cap_auto_fail\b') {
         $violations += [PSCustomObject]@{
             Rule   = "cap-mode-router-missing-auto-fail-route-$gate"
-            Detail = "AB#3186: '$routerName' must include a 'to: terminal_cap_auto_fail' route guarded by cap_mode == 'auto_fail'."
+            Detail = "AB#3186: '$routerName' must include a 'to: cap_auto_fail' route guarded by cap_mode == 'auto_fail'."
         }
     }
     if ($routerBlock -notmatch "to:\s*$([regex]::Escape($gate))\b") {
@@ -465,17 +465,17 @@ foreach ($gate in @('depth_exceeded_gate', 'revise_cap_gate')) {
     }
 }
 
-if ($content -notmatch 'name:\s*terminal_cap_auto_fail\b') {
+if ($content -notmatch 'name:\s*cap_auto_fail\b') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-terminal-cap-auto-fail'
-        Detail = "AB#3186: 'terminal_cap_auto_fail' terminal node missing. Required as the auto_fail target for cap-mode policy routers; must invoke abort-run.ps1 with -Reason 'cap-auto-fail'."
+        Detail = "AB#3186: 'cap_auto_fail' terminal node missing. Required as the auto_fail target for cap-mode policy routers; must invoke abort-run.ps1 with -Reason 'cap-auto-fail'."
     }
 } else {
-    $terminalMatch = [regex]::Match($content, '(?s)- name:\s*terminal_cap_auto_fail\b.*?(?=\n  - name: |\Z)')
+    $terminalMatch = [regex]::Match($content, '(?s)- name:\s*cap_auto_fail\b.*?(?=\n  - name: |\Z)')
     if ($terminalMatch.Success -and $terminalMatch.Value -notmatch '"cap-auto-fail"') {
         $violations += [PSCustomObject]@{
             Rule   = 'terminal-cap-auto-fail-wrong-reason'
-            Detail = "AB#3186: 'terminal_cap_auto_fail' must invoke abort-run.ps1 with -Reason 'cap-auto-fail' (the discriminator vs 'operator-abort' for post-mortem diagnostics)."
+            Detail = "AB#3186: 'cap_auto_fail' must invoke abort-run.ps1 with -Reason 'cap-auto-fail' (the discriminator vs 'operator-abort' for post-mortem diagnostics)."
         }
     }
 }
@@ -484,7 +484,7 @@ if ($content -notmatch 'name:\s*terminal_cap_auto_fail\b') {
 if ($content -notmatch 'name:\s*research_policy_resolver\b') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-research-policy-resolver'
-        Detail = "AB#3188: 'research_policy_resolver' script node missing. Required to resolve policy.research.defaults.{escalation_cap, mode} before invoking research_dispatch."
+        Detail = "AB#3188: 'research_policy_resolver' script node missing. Required to resolve policy.research.defaults.{escalation_cap, mode} before invoking research."
     }
 } else {
     $resolverMatch = [regex]::Match($content, '(?s)- name:\s*research_policy_resolver\b.*?(?=\n  - name: |\Z)')
@@ -498,38 +498,38 @@ if ($content -notmatch 'name:\s*research_policy_resolver\b') {
         }
     }
 
-    # ── Check 29: resolver routes unconditionally to research_dispatch
-    if ($resolverBlock -notmatch '(?m)^\s*-\s*to:\s*research_dispatch\b') {
+    # ── Check 29: resolver routes unconditionally to research
+    if ($resolverBlock -notmatch '(?m)^\s*-\s*to:\s*research\b') {
         $violations += [PSCustomObject]@{
             Rule   = 'research-policy-resolver-missing-dispatch-route'
-            Detail = "AB#3188: 'research_policy_resolver' must route unconditionally to 'research_dispatch' (it is the sole inbound path)."
+            Detail = "AB#3188: 'research_policy_resolver' must route unconditionally to 'research' (it is the sole inbound path)."
         }
     }
 }
 
-# ── Check 30: AB#3188 — research_dispatch input_mapping consumes resolver output
-$dispatchMatch = [regex]::Match($content, '(?s)- name:\s*research_dispatch\b.*?(?=\n  - name: |\Z)')
+# ── Check 30: AB#3188 — research input_mapping consumes resolver output
+$dispatchMatch = [regex]::Match($content, '(?s)- name:\s*research\b.*?(?=\n  - name: |\Z)')
 if ($dispatchMatch.Success) {
     $dispatchBlock = $dispatchMatch.Value
     if ($dispatchBlock -notmatch 'research_policy_resolver\.output\.escalation_cap') {
         $violations += [PSCustomObject]@{
             Rule   = 'research-dispatch-missing-resolver-cap-mapping'
-            Detail = "AB#3188: 'research_dispatch' input_mapping for 'escalation_cap' must reference 'research_policy_resolver.output.escalation_cap' (policy wins; architect.output.research_escalation_cap is the legacy fallback)."
+            Detail = "AB#3188: 'research' input_mapping for 'escalation_cap' must reference 'research_policy_resolver.output.escalation_cap' (policy wins; architect.output.research_escalation_cap is the legacy fallback)."
         }
     }
     if ($dispatchBlock -notmatch 'escalation_mode:\s*"\{\{\s*research_policy_resolver\.output\.mode') {
         $violations += [PSCustomObject]@{
             Rule   = 'research-dispatch-missing-mode-mapping'
-            Detail = "AB#3188: 'research_dispatch' input_mapping must include 'escalation_mode' sourced from research_policy_resolver.output.mode (gates researcher → deep_researcher transition in research.yaml)."
+            Detail = "AB#3188: 'research' input_mapping must include 'escalation_mode' sourced from research_policy_resolver.output.mode (gates researcher → deep_researcher transition in research.yaml)."
         }
     }
 }
 
-# ── Check 31: AB#3188 — no direct route to research_dispatch except from resolver
-# All inbound paths to research_dispatch MUST go through research_policy_resolver
+# ── Check 31: AB#3188 — no direct route to research except from resolver
+# All inbound paths to research MUST go through research_policy_resolver
 # so policy overrides participate in EVERY dispatch (including the
 # research_cap_gate 'force' option).
-$directRoutes = [regex]::Matches($content, '(?m)^\s*(?:-\s*to|route):\s*research_dispatch\b')
+$directRoutes = [regex]::Matches($content, '(?m)^\s*(?:-\s*to|route):\s*research\b')
 foreach ($match in $directRoutes) {
     # Find the containing node name by walking back to the nearest '- name:' line.
     $matchOffset = $match.Index
@@ -540,7 +540,7 @@ foreach ($match in $directRoutes) {
     if ($enclosingNode -ne 'research_policy_resolver') {
         $violations += [PSCustomObject]@{
             Rule   = 'research-dispatch-direct-route-bypasses-resolver'
-            Detail = "AB#3188: '$enclosingNode' routes directly to 'research_dispatch', bypassing 'research_policy_resolver'. All inbound paths must go through the resolver so policy.research overrides participate in every dispatch."
+            Detail = "AB#3188: '$enclosingNode' routes directly to 'research', bypassing 'research_policy_resolver'. All inbound paths must go through the resolver so policy.research overrides participate in every dispatch."
         }
     }
 }

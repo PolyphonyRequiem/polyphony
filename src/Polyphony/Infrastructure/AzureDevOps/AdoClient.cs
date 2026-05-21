@@ -281,7 +281,7 @@ public sealed class AdoClient : IAdoClient
     /// <see cref="AdoConstants.MaxPullRequestDescriptionLength"/> with HTTP
     /// 400; v2.4.7 (AB#3228) wired this into <see cref="CreatePullRequestAsync"/>
     /// and <see cref="EditPullRequestBodyAsync"/> after a live dogfood run
-    /// wedged on `pr create-feature-ado` for an apex with a deep work-item
+    /// wedged on `pr create-feature-ado` for a root with a deep work-item
     /// tree.
     ///
     /// <para>
@@ -706,7 +706,7 @@ public sealed class AdoClient : IAdoClient
         //     this with the *preview* merge SHA (what the merge would be if
         //     completion ran right now), NOT the landed commit. So a
         //     populated lastMergeCommit on an active PR is meaningless and
-        //     must NOT be reported as "completed". See the apex-62286666
+        //     must NOT be reported as "completed". See the root-62286666
         //     dogfood incident.
         //
         // Only return Status="completed" when BOTH fields agree the merge

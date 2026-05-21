@@ -14,7 +14,7 @@ public sealed record BranchEnsureFeatureResult
     /// <summary>
     /// <c>created</c> | <c>existed</c> | <c>checked_out</c> |
     /// <c>exists_in_other_worktree</c> (AB#211: branch already lives in
-    /// a sibling worktree under the parallel-fleet apex convention —
+    /// a sibling worktree under the parallel-fleet root convention —
     /// the branch's existence is satisfied; the caller can route to
     /// <see cref="WorktreePath"/> if it needs to operate on the
     /// checkout). On error, <c>error</c>.

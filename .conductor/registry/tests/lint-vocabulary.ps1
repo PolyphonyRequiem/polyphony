@@ -152,9 +152,11 @@ function New-ForbiddenTermSpec {
         # convention and the snake_case form is the only locus to police; the
         # English-noun usage of "terminal" in lifecycle-event variables
         # (`$terminalKinds`, `$hasTerminalReady`) is semantically distinct and
-        # must NOT be falsely flagged. Domain-noun renames that should ALSO
-        # cover PascalCase (like `Primary` → `Root`) get an explicit second
-        # bullet using `<Name>*` shape.
+        # must NOT be falsely flagged. The hyphenated form (`terminal-satisfied`,
+        # `primary-constructor`) is also legitimate English compound usage
+        # (or external language terminology) and is NOT policed here.
+        # Domain-noun renames that should ALSO cover PascalCase (like
+        # `Primary` → `Root`) get an explicit second bullet using `<Name>*` shape.
         $literalPrefix = $Term.Substring(0, $Term.Length - 1)
         $escaped = [regex]::Escape($literalPrefix)
         $pattern = "(?<![A-Za-z0-9_])$escaped(?=[A-Za-z])"
@@ -193,7 +195,12 @@ function New-ForbiddenTermSpec {
             # Pure-alpha terms match at THREE positions:
             # 1. `(?<![A-Za-z0-9])apex(?![A-Za-z0-9])` — full-word boundary,
             #    matches snake_case and bare-word usage (`apex`, `apex_x`,
-            #    `_apex`). Does not match `apexes`.
+            #    `_apex`). Does not match `apexes`. Also matches at start of
+            #    string. Additionally accepts a C-style escape (`\n`, `\r`,
+            #    `\t`, `\0`) immediately preceding — without that disjunct,
+            #    occurrences inside C#/JSON string literals like
+            #    `"...\napex_facets..."` slip through because the literal `n`
+            #    of `\n` is alphanumeric and defeats the simple lookbehind.
             # 2. `(?<![A-Za-z0-9])apex(?=(?-i:[A-Z]))` — PascalCase compound at
             #    identifier START (case-insensitive overall but the lookahead
             #    forces a literal uppercase boundary). Catches `ApexId`,
@@ -210,7 +217,11 @@ function New-ForbiddenTermSpec {
             $titleFirst = ([char]::ToUpper($Term[0])) + $Term.Substring(1).ToLowerInvariant()
             $titleEscaped = [regex]::Escape($titleFirst)
             $suffixPattern = "(?<=(?-i:[a-z0-9]))(?-i:$titleEscaped)(?![A-Za-z0-9])"
-            $pattern = "(?<![A-Za-z0-9])$escaped(?![A-Za-z0-9])|(?<![A-Za-z0-9])$escaped(?=(?-i:[A-Z]))|$suffixPattern"
+            # Lookbehind alternation: (no alnum) OR (preceded by a C-style
+            # escape: backslash + n/r/t/0). .NET regex supports variable-length
+            # lookbehind so the disjunct is permitted.
+            $boundaryLB = "(?<![A-Za-z0-9])|(?<=\\[nrt0])"
+            $pattern = "(?:$boundaryLB)$escaped(?![A-Za-z0-9])|(?:$boundaryLB)$escaped(?=(?-i:[A-Z]))|$suffixPattern"
             $kind = 'identifier-boundary+pascal-case'
         } else {
             $pattern = "(?<![A-Za-z0-9])$escaped(?![A-Za-z0-9])"
@@ -356,7 +367,11 @@ function Get-ScanFiles {
 
     $testsDir = Join-Path $RepoRoot 'tests'
     if (Test-Path -LiteralPath $testsDir) {
-        $allFiles += Get-ChildItem -LiteralPath $testsDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -eq '.ps1' }
+        # Tests live alongside production code and use the same glossary —
+        # any drift here means a future code change could regress the rename.
+        # Scan both PowerShell and C# tests for forbidden terms; the path
+        # disposition filter (fixtures, harness) still applies.
+        $allFiles += Get-ChildItem -LiteralPath $testsDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.ps1', '.cs' }
     }
 
     $deduped = @{}

@@ -59,7 +59,7 @@ public sealed partial class BranchCommands
             if (localExisted)
             {
                 // Local branch exists — try to check it out in the current
-                // worktree. Under the parallel-fleet apex convention the
+                // worktree. Under the parallel-fleet root convention the
                 // branch may already be checked out in a sibling worktree;
                 // git refuses with exit 128 + "is already used by worktree
                 // at '...'". That is NOT a failure of this verb's purpose

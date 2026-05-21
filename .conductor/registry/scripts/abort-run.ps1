@@ -9,8 +9,8 @@
 # PR/branch corruption.
 #
 # Why /api/stop and not `route: $end`:
-#   `$end` only ends the CURRENT workflow. Sub-workflows (apex-driver →
-#   apex-wave-dispatch → for_each → apex-item-dispatch → plan-level)
+#   `$end` only ends the CURRENT workflow. Sub-workflows (polyphony →
+#   root-batch-dispatch → for_each → root-item-dispatch → plan-level)
 #   cannot signal "halt everything" via routing alone — the parent's next
 #   route is unconditional and forward-progressing. /api/stop fires
 #   conductor's native cooperative-stop primitive, which IS designed to

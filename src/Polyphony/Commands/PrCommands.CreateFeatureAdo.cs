@@ -28,7 +28,7 @@ public sealed partial class PrCommands
     /// <param name="organization">ADO organization name (e.g. <c>contoso</c>).</param>
     /// <param name="project">ADO project name.</param>
     /// <param name="repository">ADO repository identifier — GUID or name; both accepted.</param>
-    /// <param name="rootId">Root work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">Root work-item id of the run's root (focus) item.</param>
     /// <param name="targetBranch">Target branch (typically <c>main</c>); defaults to <c>main</c>.</param>
     /// <param name="title">Optional PR title; deterministic fallback (derived from the work-item title via twig) used when empty.</param>
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>

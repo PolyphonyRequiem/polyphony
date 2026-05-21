@@ -263,13 +263,13 @@ public static class PolicyLoader
                 $"Expected '{UnattendedAcceptanceMode.Manual}' or '{UnattendedAcceptanceMode.Auto}'.");
 
         // Reject `auto` explicitly with an actionable message that mirrors the
-        // workflow router's terminal_abort_auto_mode_unsupported wording. The
+        // workflow router's abort_auto_mode_unsupported wording. The
         // magic-comment self-approve path that previously honored `auto` was
         // removed in PRs #438 / #440 (sentiment-driven PR-review loop); see
         // issue #444 for the platform-vote re-implementation tracking. This is
         // the shift-left of the workflow's runtime check — failing here means
         // operators see the misconfiguration at `polyphony validate-config`
-        // time instead of mid-apex.
+        // time instead of mid-root.
 #pragma warning disable CS0618 // Intentional reference to the obsolete `Auto` constant: this is the explicit-rejection site.
         if (unattended.ReviewWaitMode == UnattendedReviewWaitMode.Auto)
             throw new InvalidOperationException(

@@ -28,7 +28,7 @@ public sealed partial class PrCommands
     /// <c>--delete-branch false</c> to <c>merge-impl-pr</c> when this
     /// assertion is in the chain).
     /// </summary>
-    /// <param name="rootId">ADO work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="itemId">ADO work-item id of the task whose impl PR was just squash-merged.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path of the enclosing MG (e.g. <c>pg-3176</c>).</param>
     /// <param name="remote">Remote name; both impl and mg refs are read as <c>{remote}/...</c>. Defaults to <c>origin</c>.</param>
@@ -51,7 +51,7 @@ public sealed partial class PrCommands
         CancellationToken ct = default)
     {
         // The override flags are accepted for cross-platform workflow
-        // symmetry: cascade-remedy.yaml + implement-merge-group.yaml
+        // symmetry: restack-remedy.yaml + implement-merge-group.yaml
         // thread platform/org/project/repo through every PR-side verb,
         // and we want this verb to accept the same vocabulary even
         // though it operates exclusively on local git refs (no PR API

@@ -4,7 +4,7 @@
 .DESCRIPTION
     Parses workflows/actionable.yaml and verifies:
     1. Workflow name is 'actionable' with entry_point: executor_router
-    2. Required inputs: work_item_id, apex_id, executor, platform,
+    2. Required inputs: work_item_id, root_id, executor, platform,
        organization, project, repository, from_ref
     3. Required outputs: satisfied, executor, pr_url, pr_number,
        evidence_branch
@@ -81,7 +81,7 @@ if ($content -match 'entry_point:\s*(\S+)') {
 # ── Check 3: Required input fields ───────────────────────────────────────
 $requiredInputs = @(
     'work_item_id',
-    'apex_id',
+    'root_id',
     'executor',
     'platform',
     'organization',

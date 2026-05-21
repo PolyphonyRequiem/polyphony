@@ -16,7 +16,7 @@ public sealed partial class BranchCommands
     /// branch; nested → parent merge-group branch). Materializes the base
     /// from the remote first if it exists only there.
     /// </summary>
-    /// <param name="rootId">ADO work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path (each segment matches <c>^[a-z][a-z0-9-]{0,30}$</c>).</param>
     /// <param name="remote">Git remote name.</param>
     /// <param name="ct">Cancellation token.</param>

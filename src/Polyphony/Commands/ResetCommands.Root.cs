@@ -5,7 +5,7 @@ using Polyphony.Annotations;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony reset apex --apex N [--execute] [--skip-state] [--comment "..."]</c> —
+/// <c>polyphony reset root --root N [--execute] [--skip-state] [--comment "..."]</c> —
 /// composite that runs the full reset chain in the documented order:
 /// <c>prs → worktrees → branches → facets → manifest → state</c>.
 ///
@@ -39,24 +39,24 @@ namespace Polyphony.Commands;
 public sealed partial class ResetCommands
 {
     /// <summary>
-    /// Run the full reset chain for an apex.
+    /// Run the full reset chain for an root.
     /// </summary>
-    /// <param name="apex">Apex root work-item ID.</param>
+    /// <param name="root">Root root work-item ID.</param>
     /// <param name="execute">Pass to actually execute each step. Without this flag, the verb is dry-run end-to-end.</param>
-    /// <param name="skipState">Skip the final state-watermark stamp. Use when the cleanup sweep should not advance the per-apex run watermark.</param>
+    /// <param name="skipState">Skip the final state-watermark stamp. Use when the cleanup sweep should not advance the per-root run watermark.</param>
     /// <param name="comment">Optional override for the closing comment posted on each PR. See <see cref="ResetPrs"/>.</param>
     /// <param name="ct">Cancellation token.</param>
-    [Command("apex")]
+    [Command("root")]
     [VerbResult(typeof(ResetApexResult))]
-    public async Task<int> ResetApex(
-        int apex = RequiredInput.MissingInt,
+    public async Task<int> ResetRoot(
+        int root = RequiredInput.MissingInt,
         bool execute = false,
         bool skipState = false,
         string comment = "",
         CancellationToken ct = default)
     {
-        if (RequiredInput.HaltIfMissing("reset apex",
-            ("--apex", apex == RequiredInput.MissingInt)) is { } halt)
+        if (RequiredInput.HaltIfMissing("reset root",
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
         var stepsCompleted = new List<string>();
@@ -72,7 +72,7 @@ public sealed partial class ResetCommands
         try
         {
             // 1) PRs
-            prs = await RunPrsAsync(apex, execute, comment, ct).ConfigureAwait(false);
+            prs = await RunPrsAsync(root, execute, comment, ct).ConfigureAwait(false);
             if (prs.Success) stepsCompleted.Add("prs");
             else { stepsFailed.Add("prs"); haltReason = $"prs: {prs.Error}"; }
 
@@ -80,7 +80,7 @@ public sealed partial class ResetCommands
             //    know whether observers are quiet)
             if (haltReason is null)
             {
-                worktrees = await RunWorktreesAsync(apex, execute, ct).ConfigureAwait(false);
+                worktrees = await RunWorktreesAsync(root, execute, ct).ConfigureAwait(false);
                 if (worktrees.Success) stepsCompleted.Add("worktrees");
                 else { stepsFailed.Add("worktrees"); haltReason = $"worktrees: {worktrees.Error}"; }
             }
@@ -88,20 +88,20 @@ public sealed partial class ResetCommands
             // 3) Branches
             if (haltReason is null)
             {
-                branches = await RunBranchesAsync(apex, execute, ct).ConfigureAwait(false);
+                branches = await RunBranchesAsync(root, execute, ct).ConfigureAwait(false);
                 if (branches.Success) stepsCompleted.Add("branches");
                 else { stepsFailed.Add("branches"); haltReason = $"branches: {branches.Error}"; }
             }
 
             // 4) Facets — strip polyphony:facets=* and polyphony:planned
-            //    tags from the apex subtree. Must come AFTER branches
+            //    tags from the root subtree. Must come AFTER branches
             //    (no point cleaning tags if the plan branch we're
             //    invalidating is still there) and BEFORE state (the
             //    watermark stamp invariant is "world is clean"; persisted
             //    planning decisions are part of "world").
             if (haltReason is null)
             {
-                facets = await RunFacetsAsync(apex, execute, ct).ConfigureAwait(false);
+                facets = await RunFacetsAsync(root, execute, ct).ConfigureAwait(false);
                 if (facets.Success) stepsCompleted.Add("facets");
                 else { stepsFailed.Add("facets"); haltReason = $"facets: {facets.Error}"; }
             }
@@ -109,7 +109,7 @@ public sealed partial class ResetCommands
             // 5) Manifest (read-only inspection)
             if (haltReason is null)
             {
-                manifest = await RunManifestAsync(apex, execute, ct).ConfigureAwait(false);
+                manifest = await RunManifestAsync(root, execute, ct).ConfigureAwait(false);
                 if (manifest.Success) stepsCompleted.Add("manifest");
                 else { stepsFailed.Add("manifest"); haltReason = $"manifest: {manifest.Error}"; }
             }
@@ -118,7 +118,7 @@ public sealed partial class ResetCommands
             //    when not explicitly skipped)
             if (haltReason is null && !skipState)
             {
-                state = await RunStateAsync(apex, execute, ct).ConfigureAwait(false);
+                state = await RunStateAsync(root, execute, ct).ConfigureAwait(false);
                 if (state.Success) stepsCompleted.Add("state");
                 else { stepsFailed.Add("state"); haltReason = $"state: {state.Error}"; }
             }
@@ -131,7 +131,7 @@ public sealed partial class ResetCommands
 
         var result = new ResetApexResult
         {
-            Apex = apex,
+            Root = root,
             Success = stepsFailed.Count == 0 && haltReason is null,
             DryRun = !execute,
             StepsCompleted = stepsCompleted,
@@ -164,44 +164,44 @@ public sealed partial class ResetCommands
     // would see when running the standalone verb. If we ever refactor a
     // sub-verb's envelope, the composite picks up the change for free.
 
-    private async Task<ResetPrsResult> RunPrsAsync(int apex, bool execute, string comment, CancellationToken ct)
+    private async Task<ResetPrsResult> RunPrsAsync(int root, bool execute, string comment, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetPrs(apex, execute, comment, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetPrs(root, execute, comment, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetPrsResult)
             ?? throw new InvalidOperationException("reset prs returned unparseable JSON");
     }
 
-    private async Task<ResetWorktreesResult> RunWorktreesAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetWorktreesResult> RunWorktreesAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetWorktrees(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetWorktrees(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetWorktreesResult)
             ?? throw new InvalidOperationException("reset worktrees returned unparseable JSON");
     }
 
-    private async Task<ResetBranchesResult> RunBranchesAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetBranchesResult> RunBranchesAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetBranches(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetBranches(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetBranchesResult)
             ?? throw new InvalidOperationException("reset branches returned unparseable JSON");
     }
 
-    private async Task<ResetFacetsResult> RunFacetsAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetFacetsResult> RunFacetsAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetFacets(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetFacets(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetFacetsResult)
             ?? throw new InvalidOperationException("reset facets returned unparseable JSON");
     }
 
-    private async Task<ResetManifestResult> RunManifestAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetManifestResult> RunManifestAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetManifest(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetManifest(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetManifestResult)
             ?? throw new InvalidOperationException("reset manifest returned unparseable JSON");
     }
 
-    private async Task<ResetStateResult> RunStateAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetStateResult> RunStateAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetState(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetState(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetStateResult)
             ?? throw new InvalidOperationException("reset state returned unparseable JSON");
     }

@@ -10,7 +10,7 @@ using Twig.Domain.Interfaces;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony status</c> — periodic dashboard snapshot for a single apex.
+/// <c>polyphony status</c> — periodic dashboard snapshot for a single root.
 /// Composes the ADO cache, the run manifest, and a best-effort gh PR query
 /// into a unified JSON envelope plus a human-readable headline. Designed
 /// for polling (e.g. a dashboard widget after each conductor event).
@@ -23,12 +23,12 @@ namespace Polyphony.Commands;
 ///
 /// <para>Cross-signal warnings caught today:</para>
 /// <list type="bullet">
-///   <item><c>apex_not_in_scope</c> — work item missing the
+///   <item><c>root_not_in_scope</c> — work item missing the
 ///     <see cref="PolyphonyTags.InScope"/> / <see cref="PolyphonyTags.Root"/> tag.</item>
-///   <item><c>apex_not_root</c> — work item in-scope but missing
+///   <item><c>root_not_root</c> — work item in-scope but missing
 ///     <see cref="PolyphonyTags.Root"/>; status was likely invoked on a
 ///     descendant by mistake.</item>
-///   <item><c>planned_tag_zero_children</c> — apex carries
+///   <item><c>planned_tag_zero_children</c> — root carries
 ///     <see cref="PolyphonyTags.Planned"/> but has zero ADO children.
 ///     This is the AB#3064 false-satisfied dogfood bug — the seeder
 ///     stamped the tag with empty input. Now caught at lint time by
@@ -47,8 +47,8 @@ public sealed class StatusCommand(
     Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
     Sdlc.Observers.PullRequestReader pullRequestReader)
 {
-    /// <summary>Compose a periodic status snapshot for an apex work item.</summary>
-    /// <param name="apex">Apex (focus) work item ID.</param>
+    /// <summary>Compose a periodic status snapshot for an root work item.</summary>
+    /// <param name="root">Root (focus) work item ID.</param>
     /// <param name="repoSlug">Owner/repo slug (GitHub) for the feature-PR lookup.
     /// When empty, derived from the <c>origin</c> remote (GitHub or ADO);
     /// when no identity can be derived, the feature_pr section reports
@@ -63,7 +63,7 @@ public sealed class StatusCommand(
     [Command("status")]
     [VerbResult(typeof(StatusResult))]
     public async Task<int> Status(
-        int apex = RequiredInput.MissingInt,
+        int root = RequiredInput.MissingInt,
         string repoSlug = "",
         string manifestPath = RunManifestStore.DefaultRelativePath,
         string platform = "",
@@ -73,21 +73,21 @@ public sealed class StatusCommand(
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("status",
-            ("--apex", apex == RequiredInput.MissingInt)) is { } halt)
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
-        var ado = await ReadAdoSectionAsync(apex, ct).ConfigureAwait(false);
+        var ado = await ReadAdoSectionAsync(root, ct).ConfigureAwait(false);
         var manifest = ReadManifestSection(manifestPath);
         var featurePr = await ReadFeaturePrSectionAsync(
-            apex, repoSlug, platform, organization, project, repositoryOverride, ct).ConfigureAwait(false);
+            root, repoSlug, platform, organization, project, repositoryOverride, ct).ConfigureAwait(false);
         var binary = ReadBinarySection();
 
         var warnings = ComputeWarnings(ado, manifest, featurePr);
-        var (headline, nextAction) = ComputeHeadline(apex, ado, manifest, featurePr, warnings);
+        var (headline, nextAction) = ComputeHeadline(root, ado, manifest, featurePr, warnings);
 
         var result = new StatusResult
         {
-            ApexId = apex,
+            RootId = root,
             Ado = ado,
             Manifest = manifest,
             FeaturePr = featurePr,
@@ -102,9 +102,9 @@ public sealed class StatusCommand(
         return ExitCodes.Success;
     }
 
-    private async Task<StatusAdoSection> ReadAdoSectionAsync(int apex, CancellationToken ct)
+    private async Task<StatusAdoSection> ReadAdoSectionAsync(int root, CancellationToken ct)
     {
-        var item = await repository.GetByIdAsync(apex, ct).ConfigureAwait(false);
+        var item = await repository.GetByIdAsync(root, ct).ConfigureAwait(false);
         if (item is null)
         {
             return new StatusAdoSection
@@ -115,7 +115,7 @@ public sealed class StatusCommand(
                 IsRoot = false,
                 HasPlannedTag = false,
                 ChildrenCount = 0,
-                Error = $"Work item {apex} not found in twig cache",
+                Error = $"Work item {root} not found in twig cache",
             };
         }
 
@@ -125,7 +125,7 @@ public sealed class StatusCommand(
         int childrenCount;
         try
         {
-            var children = await repository.GetChildrenAsync(apex, ct).ConfigureAwait(false);
+            var children = await repository.GetChildrenAsync(root, ct).ConfigureAwait(false);
             childrenCount = children.Count;
         }
         catch
@@ -185,7 +185,7 @@ public sealed class StatusCommand(
     }
 
     private async Task<StatusFeaturePrSection> ReadFeaturePrSectionAsync(
-        int apex, string repoSlug,
+        int root, string repoSlug,
         string platform, string organization, string project, string repositoryOverride,
         CancellationToken ct)
     {
@@ -224,7 +224,7 @@ public sealed class StatusCommand(
             };
         }
 
-        var headBranch = $"feature/{apex}";
+        var headBranch = $"feature/{root}";
         try
         {
             // Look at all states (open/merged/closed) so a merged feature PR is
@@ -297,7 +297,7 @@ public sealed class StatusCommand(
             {
                 warnings.Add(new StatusWarning
                 {
-                    Code = "apex_not_in_scope",
+                    Code = "root_not_in_scope",
                     Message = "Work item is missing the polyphony / polyphony:root tag.",
                 });
             }
@@ -305,7 +305,7 @@ public sealed class StatusCommand(
             {
                 warnings.Add(new StatusWarning
                 {
-                    Code = "apex_not_root",
+                    Code = "root_not_root",
                     Message = "Work item carries the polyphony tag but not polyphony:root. status was probably invoked on a descendant.",
                 });
             }
@@ -315,7 +315,7 @@ public sealed class StatusCommand(
                 warnings.Add(new StatusWarning
                 {
                     Code = "planned_tag_zero_children",
-                    Message = "polyphony:planned tag is set but the work item has no ADO children. Closed-loop §3.4(a) requires apex_facets in the plan front-matter when the apex is genuinely indivisible; otherwise this is a false-satisfied bug.",
+                    Message = "polyphony:planned tag is set but the work item has no ADO children. Closed-loop §3.4(a) requires root_facets in the plan front-matter when the root is genuinely indivisible; otherwise this is a false-satisfied bug.",
                 });
             }
         }
@@ -344,7 +344,7 @@ public sealed class StatusCommand(
     }
 
     private static (string Headline, string? NextAction) ComputeHeadline(
-        int apex,
+        int root,
         StatusAdoSection ado,
         StatusManifestSection manifest,
         StatusFeaturePrSection featurePr,
@@ -352,7 +352,7 @@ public sealed class StatusCommand(
     {
         if (!ado.Found)
         {
-            return ($"apex {apex}: not found in twig cache",
+            return ($"root {root}: not found in twig cache",
                     "Run `twig sync` to refresh the cache, or verify the work item ID.");
         }
 
@@ -360,15 +360,15 @@ public sealed class StatusCommand(
         var plannedZero = warnings.FirstOrDefault(w => w.Code == "planned_tag_zero_children");
         if (plannedZero is not null)
         {
-            return ($"apex {apex}: planned but no children — false-satisfied bug",
-                    $"Inspect the plan: `cat plans/plan-{apex}.md`. If children are declared in prose only, re-run plan-level so the architect emits structured `output.children`. If genuinely indivisible, declare `apex_facets: [implementable]` in plan front-matter.");
+            return ($"root {root}: planned but no children — false-satisfied bug",
+                    $"Inspect the plan: `cat plans/plan-{root}.md`. If children are declared in prose only, re-run plan-level so the architect emits structured `output.children`. If genuinely indivisible, declare `root_facets: [implementable]` in plan front-matter.");
         }
 
-        var notInScope = warnings.FirstOrDefault(w => w.Code == "apex_not_in_scope");
+        var notInScope = warnings.FirstOrDefault(w => w.Code == "root_not_in_scope");
         if (notInScope is not null)
         {
-            return ($"apex {apex}: not in polyphony scope (tag missing)",
-                    $"polyphony root declare --work-item {apex}");
+            return ($"root {root}: not in polyphony scope (tag missing)",
+                    $"polyphony root declare --work-item {root}");
         }
 
         var unmergedProgress = warnings.FirstOrDefault(w => w.Code == "feature_pr_unmerged_progress");
@@ -377,23 +377,23 @@ public sealed class StatusCommand(
             var prSegment = featurePr is { Exists: true, Number: { } n }
                 ? $"feature PR #{n} is open"
                 : "no feature PR exists";
-            return ($"apex {apex}: progress recorded ({manifest.MergedPlanPrsCount} plan PR(s) merged) but {prSegment}",
+            return ($"root {root}: progress recorded ({manifest.MergedPlanPrsCount} plan PR(s) merged) but {prSegment}",
                     "Check `gh pr list --state open` for an open feature PR; ship it once impl PRs are merged.");
         }
 
         if (featurePr is { Exists: true, State: "MERGED" })
         {
-            return ($"apex {apex}: feature PR #{featurePr.Number} merged",
-                    "Verify the ADO work item has advanced to its terminal state. The apex-driver's `close_mark_satisfied` step transitions the state via `polyphony validate --event item_satisfied` + `twig state` — if the state didn't advance, the run likely exited before reaching that step. Either re-run `apex-driver` or set the state directly via `twig state Done`.");
+            return ($"root {root}: feature PR #{featurePr.Number} merged",
+                    "Verify the ADO work item has advanced to its terminal state. The polyphony's `close_mark_satisfied` step transitions the state via `polyphony validate --event item_satisfied` + `twig state` — if the state didn't advance, the run likely exited before reaching that step. Either re-run `polyphony` or set the state directly via `twig state Done`.");
         }
 
         if (!manifest.Exists)
         {
-            return ($"apex {apex}: manifest not initialised (state={ado.State})",
-                    $"conductor run apex-driver@polyphony --input apex_id={apex}");
+            return ($"root {root}: manifest not initialised (state={ado.State})",
+                    $"conductor run polyphony@polyphony --input root_id={root}");
         }
 
-        return ($"apex {apex}: in flight (state={ado.State}, children={ado.ChildrenCount}, merged plan PRs={manifest.MergedPlanPrsCount ?? 0})",
-                "Run `polyphony state next-ready --work-item {apex}` for the next dispatchable requirement.");
+        return ($"root {root}: in flight (state={ado.State}, children={ado.ChildrenCount}, merged plan PRs={manifest.MergedPlanPrsCount ?? 0})",
+                "Run `polyphony state next-ready --work-item {root}` for the next dispatchable requirement.");
     }
 }

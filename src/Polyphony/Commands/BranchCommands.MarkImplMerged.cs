@@ -11,7 +11,7 @@ namespace Polyphony.Commands;
 /// <summary>
 /// <c>polyphony branch mark-impl-merged</c> /
 /// <c>polyphony branch clear-impl-merged</c>: stamp or clear the
-/// <c>polyphony:impl-merged-in-mg=&lt;mg-key&gt;</c> marker on an apex
+/// <c>polyphony:impl-merged-in-mg=&lt;mg-key&gt;</c> marker on an root
 /// root work item (AB#3217 follow-up to AB#3169).
 ///
 /// Authoritative tag-namespace owner is
@@ -37,7 +37,7 @@ public sealed partial class BranchCommands
     /// verb returns <c>Success=true, AlreadyInDesiredState=true</c>
     /// without writing.
     /// </summary>
-    /// <param name="workItem">ADO work item ID to stamp the marker on (typically the apex root).</param>
+    /// <param name="workItem">ADO work item ID to stamp the marker on (typically the root root).</param>
     /// <param name="mgPath">Merge-group path the marker applies to — e.g. <c>pg-1</c> or nested <c>pg-1/pg-2</c>. Required; normalized via <see cref="PolyphonyTags.NormalizeMergeGroupKey(string)"/> before embedding in the tag.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("mark-impl-merged")]

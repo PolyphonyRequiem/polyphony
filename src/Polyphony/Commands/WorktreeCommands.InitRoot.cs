@@ -6,18 +6,18 @@ using Polyphony.Infrastructure.Worktrees;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony worktree init-apex --apex N [--dry-run]</c> — bootstrap the
-/// per-apex worktree tree under <c>{runs_root}/apex-{N}/</c> with the
+/// <c>polyphony worktree init-root --root N [--dry-run]</c> — bootstrap the
+/// per-root worktree tree under <c>{runs_root}/root-{N}/</c> with the
 /// <c>feature/{N}</c> branch checked out at
-/// <c>{runs_root}/apex-{N}/feature-{N}/</c>.
+/// <c>{runs_root}/root-{N}/feature-{N}/</c>.
 ///
 /// <para><b>What it does (in order):</b></para>
 /// <list type="number">
 ///   <item>Resolve <c>(runs_root, main_worktree_path)</c> from
 ///         <c>git rev-parse --git-common-dir</c> via
 ///         <see cref="RunsRootResolver"/>.</item>
-///   <item>Compute <c>apex_root = {runs_root}/apex-{N}</c>,
-///         <c>worktree_path = {apex_root}/feature-{N}</c>,
+///   <item>Compute <c>root_root = {runs_root}/root-{N}</c>,
+///         <c>worktree_path = {root_root}/feature-{N}</c>,
 ///         <c>branch = feature/{N}</c>.</item>
 ///   <item>Defensively assert <c>worktree_path</c> is under
 ///         <c>runs_root</c> AND not under <c>main_worktree_path</c>
@@ -25,7 +25,7 @@ namespace Polyphony.Commands;
 ///   <item>If <c>--dry-run</c>: classify the would-be outcome via
 ///         <c>git worktree list --porcelain</c> only (no mutations);
 ///         emit <c>outcome=dry_run</c> with all paths populated.</item>
-///   <item><c>Directory.CreateDirectory(apex_root)</c>.</item>
+///   <item><c>Directory.CreateDirectory(root_root)</c>.</item>
 ///   <item>Run the create-or-attach matrix (path-exists wins over
 ///         branch-state, as required by the AB#3085 design).</item>
 /// </list>
@@ -37,7 +37,7 @@ namespace Polyphony.Commands;
 ///
 /// <para><b>Why this verb does NOT refuse cwd-inside-main:</b> the
 /// launcher (<c>scripts/Invoke-PolyphonySdlc.ps1</c>) MUST run
-/// <c>init-apex</c> from the main worktree during apex bootstrap; the
+/// <c>init-root</c> from the main worktree during root bootstrap; the
 /// hijack invariant is preserved by self-derivation of
 /// <c>worktree_path</c> from the canonicalized common-dir, NOT by
 /// cwd refusal. The sister verb <c>worktree create</c> (PR 1b3) keeps
@@ -50,28 +50,28 @@ namespace Polyphony.Commands;
 public sealed partial class WorktreeCommands
 {
     /// <summary>
-    /// Initialise the per-apex worktree tree.
+    /// Initialise the per-root worktree tree.
     /// </summary>
-    /// <param name="apex">Apex root work-item id (positive integer).</param>
+    /// <param name="root">Root root work-item id (positive integer).</param>
     /// <param name="dryRun">When true, resolve paths and run the create-or-attach matrix in classification-only mode (no <c>Directory.CreateDirectory</c>, no <c>git worktree add</c>); emit <c>outcome=dry_run</c> with all path fields populated. The launcher uses this to drive <c>-DryRun</c> without mutating filesystem state.</param>
     /// <param name="ct">Cancellation token.</param>
-    [Command("init-apex")]
+    [Command("init-root")]
     [VerbResult(typeof(WorktreeInitApexResult))]
-    public async Task<int> InitApex(
-        int apex = RequiredInput.MissingInt,
+    public async Task<int> InitRoot(
+        int root = RequiredInput.MissingInt,
         bool dryRun = false,
         CancellationToken ct = default)
     {
-        if (RequiredInput.HaltIfMissing("worktree init-apex",
-            ("--apex", apex == RequiredInput.MissingInt)) is { } halt)
+        if (RequiredInput.HaltIfMissing("worktree init-root",
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
-        if (apex <= 0)
+        if (root <= 0)
         {
-            EmitInitApex(
-                apex, runsRoot: null, mainPath: null, apexRoot: null, worktreePath: null, branch: null,
-                outcome: "failed", reason: "invalid_apex",
-                error: $"--apex must be positive (got {apex}).",
+            EmitInitRoot(
+                root, runsRoot: null, mainPath: null, rootRoot: null, worktreePath: null, branch: null,
+                outcome: "failed", reason: "invalid_root",
+                error: $"--root must be positive (got {root}).",
                 dryRun: dryRun);
             return ExitCodes.Success;
         }
@@ -83,8 +83,8 @@ public sealed partial class WorktreeCommands
             var raw = await _git.GetCommonDirAsync(ct).ConfigureAwait(false);
             if (string.IsNullOrEmpty(raw))
             {
-                EmitInitApex(
-                    apex, runsRoot: null, mainPath: null, apexRoot: null, worktreePath: null, branch: null,
+                EmitInitRoot(
+                    root, runsRoot: null, mainPath: null, rootRoot: null, worktreePath: null, branch: null,
                     outcome: "failed", reason: "common_dir_unavailable",
                     error: "git rev-parse --git-common-dir returned no path; cwd is not inside a git repository.",
                     dryRun: dryRun);
@@ -95,8 +95,8 @@ public sealed partial class WorktreeCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitInitApex(
-                apex, runsRoot: null, mainPath: null, apexRoot: null, worktreePath: null, branch: null,
+            EmitInitRoot(
+                root, runsRoot: null, mainPath: null, rootRoot: null, worktreePath: null, branch: null,
                 outcome: "failed", reason: "common_dir_unavailable",
                 error: ex.Message,
                 dryRun: dryRun);
@@ -110,17 +110,17 @@ public sealed partial class WorktreeCommands
         }
         catch (ArgumentException ex)
         {
-            EmitInitApex(
-                apex, runsRoot: null, mainPath: null, apexRoot: null, worktreePath: null, branch: null,
+            EmitInitRoot(
+                root, runsRoot: null, mainPath: null, rootRoot: null, worktreePath: null, branch: null,
                 outcome: "failed", reason: "common_dir_unavailable",
                 error: $"Could not derive runs-root from common-dir '{commonDir}': {ex.Message}",
                 dryRun: dryRun);
             return ExitCodes.Success;
         }
 
-        var apexRoot = Path.Combine(runsRoot, $"apex-{apex}");
-        var worktreePath = Path.Combine(apexRoot, $"feature-{apex}");
-        var branch = $"feature/{apex}";
+        var rootRoot = Path.Combine(runsRoot, $"root-{root}");
+        var worktreePath = Path.Combine(rootRoot, $"feature-{root}");
+        var branch = $"feature/{root}";
 
         // ── Step 3: defensive boundary invariant ──
         // RunsRootResolver guarantees runs_root is sibling-of-main, so
@@ -130,8 +130,8 @@ public sealed partial class WorktreeCommands
         // the main worktree.
         if (!PathBoundary.IsSameOrSubpath(runsRoot, worktreePath))
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "filesystem_failure",
                 error: $"Derived worktree path '{worktreePath}' is not inside runs-root '{runsRoot}'. Refusing.",
                 dryRun: dryRun);
@@ -139,8 +139,8 @@ public sealed partial class WorktreeCommands
         }
         if (PathBoundary.IsSameOrSubpath(mainPath, worktreePath))
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "filesystem_failure",
                 error: $"Derived worktree path '{worktreePath}' is inside the main worktree '{mainPath}'. Refusing to hijack.",
                 dryRun: dryRun);
@@ -155,35 +155,35 @@ public sealed partial class WorktreeCommands
         if (dryRun)
         {
             return await ClassifyDryRunAsync(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch, ct)
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch, ct)
                 .ConfigureAwait(false);
         }
 
-        // ── Step 4: ensure the apex-root container exists ──
+        // ── Step 4: ensure the root-root container exists ──
         try
         {
-            Directory.CreateDirectory(apexRoot);
+            Directory.CreateDirectory(rootRoot);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or System.Security.SecurityException or ArgumentException or PathTooLongException)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "filesystem_failure",
-                error: $"Could not create apex root '{apexRoot}': {ex.Message}",
+                error: $"Could not create root root '{rootRoot}': {ex.Message}",
                 dryRun: dryRun);
             return ExitCodes.Success;
         }
 
         // ── Step 5: matrix ──
         return await RunInitApexMatrixAsync(
-            apex, runsRoot, mainPath, apexRoot, worktreePath, branch, ct).ConfigureAwait(false);
+            root, runsRoot, mainPath, rootRoot, worktreePath, branch, ct).ConfigureAwait(false);
     }
 
     private async Task<int> RunInitApexMatrixAsync(
-        int apex,
+        int root,
         string runsRoot,
         string mainPath,
-        string apexRoot,
+        string rootRoot,
         string worktreePath,
         string branch,
         CancellationToken ct)
@@ -194,8 +194,8 @@ public sealed partial class WorktreeCommands
         var listResult = await _git.WorktreeListAsync(ct).ConfigureAwait(false);
         if (!listResult.Succeeded)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "git_failure",
                 error: GitStderrOrFallback(listResult, "git worktree list"),
                 dryRun: false);
@@ -209,8 +209,8 @@ public sealed partial class WorktreeCommands
         }
         catch (FormatException ex)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "git_failure",
                 error: $"Could not parse 'git worktree list --porcelain' output: {ex.Message}",
                 dryRun: false);
@@ -223,14 +223,14 @@ public sealed partial class WorktreeCommands
         {
             if (string.Equals(existing.Branch, branch, StringComparison.Ordinal))
             {
-                EmitInitApex(
-                    apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+                EmitInitRoot(
+                    root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                     outcome: "idempotent", reason: null, error: null, dryRun: false);
                 return ExitCodes.Success;
             }
 
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "path_exists_wrong_branch",
                 error: $"Worktree at '{worktreePath}' is on branch '{existing.Branch ?? "(detached)"}', not '{branch}'.",
                 dryRun: false);
@@ -239,8 +239,8 @@ public sealed partial class WorktreeCommands
 
         if (PathExists(worktreePath))
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "path_exists_not_worktree",
                 error: $"Path '{worktreePath}' exists but is not a registered git worktree.",
                 dryRun: false);
@@ -256,8 +256,8 @@ public sealed partial class WorktreeCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "git_failure",
                 error: $"git rev-parse --verify refs/heads/{branch} failed: {ex.Message}",
                 dryRun: false);
@@ -267,7 +267,7 @@ public sealed partial class WorktreeCommands
         if (branchSha is null)
         {
             // Local branch missing — but is it on origin? Refuse to fork
-            // from main when the apex branch already lives on the remote.
+            // from main when the root branch already lives on the remote.
             IReadOnlyList<string> remotes;
             try
             {
@@ -276,8 +276,8 @@ public sealed partial class WorktreeCommands
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                EmitInitApex(
-                    apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+                EmitInitRoot(
+                    root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                     outcome: "failed", reason: "git_failure",
                     error: $"git branch -r failed: {ex.Message}",
                     dryRun: false);
@@ -286,17 +286,17 @@ public sealed partial class WorktreeCommands
 
             if (remotes.Any(r => string.Equals(r, branch, StringComparison.Ordinal)))
             {
-                EmitInitApex(
-                    apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+                EmitInitRoot(
+                    root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                     outcome: "failed", reason: "remote_branch_exists",
                     error: $"Local branch '{branch}' is missing but origin/{branch} exists. " +
-                           "init-apex is local-only and refuses to fork; fetch and create the local branch first.",
+                           "init-root is local-only and refuses to fork; fetch and create the local branch first.",
                     dryRun: false);
                 return ExitCodes.Success;
             }
 
             return await CreateThenMaybeIdempotentAsync(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch, ct).ConfigureAwait(false);
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch, ct).ConfigureAwait(false);
         }
 
         // Local branch exists. Is it already checked out elsewhere?
@@ -304,8 +304,8 @@ public sealed partial class WorktreeCommands
             e.Branch is not null && string.Equals(e.Branch, branch, StringComparison.Ordinal));
         if (holder is not null)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "branch_in_use",
                 error: $"Branch '{branch}' is already checked out at '{holder.Path}'.",
                 dryRun: false);
@@ -313,7 +313,7 @@ public sealed partial class WorktreeCommands
         }
 
         return await AttachThenMaybeIdempotentAsync(
-            apex, runsRoot, mainPath, apexRoot, worktreePath, branch, ct).ConfigureAwait(false);
+            root, runsRoot, mainPath, rootRoot, worktreePath, branch, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -326,10 +326,10 @@ public sealed partial class WorktreeCommands
     /// mutating path so the launcher can surface remediation early.
     /// </summary>
     private async Task<int> ClassifyDryRunAsync(
-        int apex,
+        int root,
         string runsRoot,
         string mainPath,
-        string apexRoot,
+        string rootRoot,
         string worktreePath,
         string branch,
         CancellationToken ct)
@@ -337,8 +337,8 @@ public sealed partial class WorktreeCommands
         var listResult = await _git.WorktreeListAsync(ct).ConfigureAwait(false);
         if (!listResult.Succeeded)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "git_failure",
                 error: GitStderrOrFallback(listResult, "git worktree list"),
                 dryRun: true);
@@ -352,8 +352,8 @@ public sealed partial class WorktreeCommands
         }
         catch (FormatException ex)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "git_failure",
                 error: $"Could not parse 'git worktree list --porcelain' output: {ex.Message}",
                 dryRun: true);
@@ -365,8 +365,8 @@ public sealed partial class WorktreeCommands
         var existing = FindByPath(entries, worktreePath);
         if (existing is not null && !string.Equals(existing.Branch, branch, StringComparison.Ordinal))
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "path_exists_wrong_branch",
                 error: $"Worktree at '{worktreePath}' is on branch '{existing.Branch ?? "(detached)"}', not '{branch}'.",
                 dryRun: true);
@@ -375,8 +375,8 @@ public sealed partial class WorktreeCommands
 
         if (existing is null && PathExists(worktreePath))
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "path_exists_not_worktree",
                 error: $"Path '{worktreePath}' exists but is not a registered git worktree.",
                 dryRun: true);
@@ -388,28 +388,28 @@ public sealed partial class WorktreeCommands
             && (existing is null || !ReferenceEquals(e, existing)));
         if (holder is not null && existing is null)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "branch_in_use",
                 error: $"Branch '{branch}' is already checked out at '{holder.Path}'.",
                 dryRun: true);
             return ExitCodes.Success;
         }
 
-        EmitInitApex(
-            apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+        EmitInitRoot(
+            root, runsRoot, mainPath, rootRoot, worktreePath, branch,
             outcome: "dry_run", reason: null, error: null, dryRun: true);
         return ExitCodes.Success;
     }
 
     private async Task<int> CreateThenMaybeIdempotentAsync(
-        int apex, string runsRoot, string mainPath, string apexRoot, string worktreePath, string branch, CancellationToken ct)
+        int root, string runsRoot, string mainPath, string rootRoot, string worktreePath, string branch, CancellationToken ct)
     {
         var addResult = await _git.WorktreeAddAsync(branch, worktreePath, "main", ct).ConfigureAwait(false);
         if (addResult.Succeeded)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "created", reason: null, error: null, dryRun: false);
             return ExitCodes.Success;
         }
@@ -418,14 +418,14 @@ public sealed partial class WorktreeCommands
         // between our list call and ours. Re-list and re-classify.
         if (await ProbeIdempotentAsync(worktreePath, branch, ct).ConfigureAwait(false))
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "idempotent", reason: null, error: null, dryRun: false);
             return ExitCodes.Success;
         }
 
-        EmitInitApex(
-            apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+        EmitInitRoot(
+            root, runsRoot, mainPath, rootRoot, worktreePath, branch,
             outcome: "failed", reason: "git_failure",
             error: GitStderrOrFallback(addResult, $"git worktree add -b {branch}"),
             dryRun: false);
@@ -433,27 +433,27 @@ public sealed partial class WorktreeCommands
     }
 
     private async Task<int> AttachThenMaybeIdempotentAsync(
-        int apex, string runsRoot, string mainPath, string apexRoot, string worktreePath, string branch, CancellationToken ct)
+        int root, string runsRoot, string mainPath, string rootRoot, string worktreePath, string branch, CancellationToken ct)
     {
         var attachResult = await _git.WorktreeAddAttachAsync(branch, worktreePath, ct).ConfigureAwait(false);
         if (attachResult.Succeeded)
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "attached", reason: null, error: null, dryRun: false);
             return ExitCodes.Success;
         }
 
         if (await ProbeIdempotentAsync(worktreePath, branch, ct).ConfigureAwait(false))
         {
-            EmitInitApex(
-                apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+            EmitInitRoot(
+                root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "idempotent", reason: null, error: null, dryRun: false);
             return ExitCodes.Success;
         }
 
-        EmitInitApex(
-            apex, runsRoot, mainPath, apexRoot, worktreePath, branch,
+        EmitInitRoot(
+            root, runsRoot, mainPath, rootRoot, worktreePath, branch,
             outcome: "failed", reason: "git_failure",
             error: GitStderrOrFallback(attachResult, $"git worktree add {worktreePath} {branch}"),
             dryRun: false);
@@ -520,11 +520,11 @@ public sealed partial class WorktreeCommands
             : err;
     }
 
-    private static void EmitInitApex(
-        int apex,
+    private static void EmitInitRoot(
+        int root,
         string? runsRoot,
         string? mainPath,
-        string? apexRoot,
+        string? rootRoot,
         string? worktreePath,
         string? branch,
         string outcome,
@@ -535,10 +535,10 @@ public sealed partial class WorktreeCommands
         Console.WriteLine(JsonSerializer.Serialize(
             new WorktreeInitApexResult
             {
-                ApexId = apex,
+                RootId = root,
                 RunsRoot = runsRoot,
                 MainWorktreePath = mainPath,
-                ApexRoot = apexRoot,
+                RootRoot = rootRoot,
                 WorktreePath = worktreePath,
                 Branch = branch,
                 Outcome = outcome,

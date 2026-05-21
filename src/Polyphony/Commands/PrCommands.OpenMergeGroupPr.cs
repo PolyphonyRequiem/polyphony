@@ -15,7 +15,7 @@ public sealed partial class PrCommands
     /// top-level. Reuses an existing open PR for the same head/base pair
     /// instead of creating a duplicate.
     /// </summary>
-    /// <param name="rootId">ADO work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path.</param>
     /// <param name="title">Optional PR title; deterministic fallback used when empty.</param>
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>

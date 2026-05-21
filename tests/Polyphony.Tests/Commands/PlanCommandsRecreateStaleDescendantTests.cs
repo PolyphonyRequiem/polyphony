@@ -14,7 +14,7 @@ namespace Polyphony.Tests.Commands;
 
 /// <summary>
 /// End-to-end tests for <c>polyphony plan recreate-stale-descendant</c>.
-/// The verb is the second remedy policy of the Phase 3 P9 cascade-remedy:
+/// The verb is the second remedy policy of the Phase 3 P9 restack-remedy:
 /// when auto-rebase is not policy-applicable, this verb closes the stale
 /// PR, deletes the head branch (best-effort), re-creates the plan branch
 /// from the current parent-plan tip, opens a fresh PR with an up-to-date
@@ -160,7 +160,7 @@ public sealed class PlanCommandsRecreateStaleDescendantTests : CommandTestBase, 
         => runner.WhenStartsWith("gh", ["pr", "view", prNumber.ToString()],
             new ProcessResult(1, "", $"GraphQL: Could not resolve to a PullRequest with the number of {prNumber}."));
 
-    /// <summary>No PR open at parent → cascade considers parent fresh by default.</summary>
+    /// <summary>No PR open at parent → restack considers parent fresh by default.</summary>
     private static void StubCascadeParentNoPr(FakeProcessRunner runner)
         => runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(0, "[]", ""));
 
@@ -579,7 +579,7 @@ public sealed class PlanCommandsRecreateStaleDescendantTests : CommandTestBase, 
         StubShowManifest(runner);
         StubPrPoll(runner, PrNumber, "CLOSED", HeadBranch, ParentPlanBranch, OldHeadSha,
             MakeBodyWithSnapshot(new Dictionary<string, int> { ["root"] = 1, ["200"] = 0 }));
-        // Cascade list returns empty, AND replacement-PR list returns empty:
+        // Restack list returns empty, AND replacement-PR list returns empty:
         // both queries hit the same `gh pr list` stub.
         StubCascadeParentNoPr(runner);
 
@@ -589,7 +589,7 @@ public sealed class PlanCommandsRecreateStaleDescendantTests : CommandTestBase, 
     }
 
     // ════════════════════════════════════════════════════════════════════
-    // 6. Cascade precondition (parent stale)
+    // 6. Restack precondition (parent stale)
     // ════════════════════════════════════════════════════════════════════
 
     [Fact]
@@ -828,10 +828,10 @@ public sealed class PlanCommandsRecreateStaleDescendantTests : CommandTestBase, 
         var oldBody = MakeBodyWithSnapshot(new Dictionary<string, int> { ["root"] = 1, ["200"] = 0 });
         StubPrPoll(runner, PrNumber, "CLOSED", HeadBranch, ParentPlanBranch, OldHeadSha, oldBody);
 
-        // gh pr list is called for both cascade-parent (no PR) AND
+        // gh pr list is called for both restack-parent (no PR) AND
         // fresh-replacement (one entry). Stub a sequence by matching on
         // the head filter — replacement query has --head=plan/100-300,
-        // cascade query has --head=plan/100-200.
+        // restack query has --head=plan/100-200.
         runner.When(
             (e, a) => e == "gh" && a.Count >= 2 && a[0] == "pr" && a[1] == "list"
                 && ArgValue(a, "--head") == HeadBranch,
@@ -872,7 +872,7 @@ public sealed class PlanCommandsRecreateStaleDescendantTests : CommandTestBase, 
         StubShowManifest(runner);
         var oldBody = MakeBodyWithSnapshot(new Dictionary<string, int> { ["root"] = 1, ["200"] = 0 });
         StubPrPoll(runner, PrNumber, "CLOSED", HeadBranch, ParentPlanBranch, OldHeadSha, oldBody);
-        StubCascadeParentNoPr(runner);  // covers both cascade and replacement queries
+        StubCascadeParentNoPr(runner);  // covers both restack and replacement queries
 
         var (_, output) = await CaptureConsoleAsync(() =>
             cmd.RecreateStaleDescendant(RootId, ItemId, ParentId, PrNumber, ancestorIds: "200,root", manifestPath: _manifestPath));

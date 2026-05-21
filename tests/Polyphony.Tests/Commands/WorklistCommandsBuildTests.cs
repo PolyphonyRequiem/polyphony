@@ -21,8 +21,8 @@ namespace Polyphony.Tests.Commands;
 ///
 /// <para>Phase 7 PR #7 retrofit: the verb composes
 /// <see cref="EdgeGraph.ToWaves"/> + <see cref="ExecutionModeInjector"/>
-/// for wave ordering. Tests cover the new wave shape (entry items in
-/// wave 0, topological wave ordering), conflict surfacing, and mode
+/// for batch ordering. Tests cover the new batch shape (entry items in
+/// batch 0, topological batch ordering), conflict surfacing, and mode
 /// injection alongside the pre-existing manifest-loading + status-mapping
 /// contract that survived the cutover.</para>
 ///
@@ -210,7 +210,7 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
         result.Error!.ShouldContain("Bug");
     }
 
-    // ─── Tree shape: wave assignment via EdgeGraph ──────────────────────
+    // ─── Tree shape: batch assignment via EdgeGraph ──────────────────────
 
     [Fact]
     public async Task Build_EmptyTree_OneWaveOneItemNoConflicts()
@@ -228,7 +228,7 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
         result.Conflicts.ShouldBeEmpty();
         result.ItemsWalked.ShouldBe(1);
         result.Waves.Count.ShouldBe(1);
-        result.Waves[0].WaveIndex.ShouldBe(0);
+        result.Waves[0].BatchIndex.ShouldBe(0);
         result.Waves[0].Items.Count.ShouldBe(1);
         result.Waves[0].Items[0].ItemId.ShouldBe(100);
         result.Waves[0].Items[0].ParentItemId.ShouldBe(0);
@@ -238,7 +238,7 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
     public async Task RootPlusTwoChildren_EmitsTwoWaves_RootThenChildren()
     {
         // Epic 100 (plannable+decomposable) → children_seeded gates each child's
-        // entry requirement → wave 0 = [100], wave 1 = [200, 300].
+        // entry requirement → batch 0 = [100], batch 1 = [200, 300].
         await SeedAsync(
             new WorkItemBuilder().WithId(100).WithType("Epic").Build(),
             new WorkItemBuilder().WithId(200).WithType("Issue").WithParentId(100).Build(),
@@ -253,10 +253,10 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
         result.ItemsWalked.ShouldBe(3);
         result.Waves.Count.ShouldBe(2);
 
-        result.Waves[0].WaveIndex.ShouldBe(0);
+        result.Waves[0].BatchIndex.ShouldBe(0);
         result.Waves[0].Items.Single().ItemId.ShouldBe(100);
 
-        result.Waves[1].WaveIndex.ShouldBe(1);
+        result.Waves[1].BatchIndex.ShouldBe(1);
         // Stable order: ascending by id (per EdgeGraph.ToWaves contract).
         result.Waves[1].Items.Select(i => i.ItemId).ShouldBe(new[] { 200, 300 });
         result.Waves[1].Items.ShouldAllBe(i => i.ParentItemId == 100);
@@ -302,7 +302,7 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
         //
         // To test the verb's conflict-surfacing path end-to-end we
         // exercise the contract that on a clean tree, has_conflicts is
-        // false and waves is the wave-topology projection. The
+        // false and waves is the batch-topology projection. The
         // projection-with-conflicts path is locked in by the model
         // contract on WorklistResult itself (Conflicts always present;
         // Waves empty when HasConflicts is true) and verified at the
@@ -353,7 +353,7 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
             ItemsWalked = 2,
             HasConflicts = true,
             Conflicts = new[] { conflict },
-            Waves = Array.Empty<WorklistWave>(),
+            Waves = Array.Empty<WorklistBatch>(),
         };
 
         var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.WorklistResult);
@@ -410,8 +410,8 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
     {
         // Single self-referential plannable+implementable Story root with no
         // children: under parallel mode no plan_promoted → implementation_merged
-        // edge is injected, so the topological wave shape is the trivial
-        // single-item wave 0.
+        // edge is injected, so the topological batch shape is the trivial
+        // single-item batch 0.
         var config = BuildSingleTypeConfig("Story", ["plannable", "implementable"], executionMode: ExecutionMode.Parallel, decomposable: false);
         await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Story").Build());
         SaveManifest(rootId: 100);
@@ -432,7 +432,7 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
         // plan_promoted → implementation_merged edge inside item 100. The
         // children-unblock cross-item edge (100.children_seeded → child entry)
         // still gates each child on the parent's plan being promoted —
-        // wave 0 = parent, wave 1 = children.
+        // batch 0 = parent, batch 1 = children.
         var config = BuildSingleTypeConfig("Story", ["plannable", "implementable"], executionMode: ExecutionMode.PlanThenImplement, decomposable: true);
         await SeedAsync(
             new WorkItemBuilder().WithId(100).WithType("Story").Build(),
@@ -594,7 +594,7 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
         output.ShouldContain("\"has_conflicts\"");
         output.ShouldContain("\"conflicts\"");
         output.ShouldContain("\"waves\"");
-        output.ShouldContain("\"wave_index\"");
+        output.ShouldContain("\"batch_index\"");
         output.ShouldContain("\"items\"");
         output.ShouldContain("\"item_id\"");
         output.ShouldContain("\"parent_item_id\"");
@@ -602,12 +602,12 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
         output.ShouldContain("\"plan_pr_number\"");
         output.ShouldContain("\"current_generation\"");
 
-        // Cutover: `depth` is gone from the wave entry.
+        // Cutover: `depth` is gone from the batch entry.
         output.Contains("\"depth\"").ShouldBeFalse();
 
         // No PascalCase leakage.
         output.Contains("\"RootId\"").ShouldBeFalse();
-        output.Contains("\"WaveIndex\"").ShouldBeFalse();
+        output.Contains("\"BatchIndex\"").ShouldBeFalse();
         output.Contains("\"HasConflicts\"").ShouldBeFalse();
         output.Contains("\"ItemsWalked\"").ShouldBeFalse();
         output.Contains("\"ItemId\"").ShouldBeFalse();
@@ -667,8 +667,8 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
         output.ShouldContain("root=100");
         output.ShouldContain("items=3");
         output.ShouldContain("waves=2");
-        output.ShouldContain("wave 0:");
-        output.ShouldContain("wave 1:");
+        output.ShouldContain("batch 0:");
+        output.ShouldContain("batch 1:");
         output.ShouldContain("item 100");
         output.ShouldContain("item 200");
         output.ShouldContain("item 300");
@@ -698,7 +698,7 @@ public sealed class WorklistCommandsBuildTests : CommandTestBase, IDisposable
     //
     // When the caller does NOT pass --manifest-path, the verb resolves the
     // local manifest path under <git-common-dir>/polyphony/{rootId}/run.yaml
-    // via PolyphonyStatePaths. The apex-driver workflow's `build_worklist`
+    // via PolyphonyStatePaths. The polyphony workflow's `build_worklist`
     // agent depends on this — it only passes --root-id.
 
     [Fact]

@@ -11,9 +11,9 @@ in parallel)
 Polyphony today is **purely observational** of state it does not own (git,
 ADO, PRs, manifests). When something goes wrong, the only way to reconstruct
 "what did polyphony do?" is to grep conductor's per-run event log and inspect
-external systems by hand. This drives a cascade of downstream pain:
+external systems by hand. This drives a restack of downstream pain:
 
-- **Reset is observation-based, not transactional.** `polyphony reset apex`
+- **Reset is observation-based, not transactional.** `polyphony reset root`
   walks external state hunting residue (AB#3245, AB#3246). It cannot tell
   "polyphony created this branch and forgot to delete it" from "this branch
   was here before polyphony ran."
@@ -63,7 +63,7 @@ journal is either useless (too narrow) or unmaintainable (too broad).
 - **(a) Every CLI verb invocation.** Read and write alike. *Pro:* exhaustive;
   every `polyphony …` call is recorded. *Con:* enormous volume, mostly
   uninteresting (`polyphony state next-ready` runs hundreds of times per
-  apex); dilutes signal.
+  root); dilutes signal.
 
 - **(b) Every state-mutating verb.** Only verbs that mutate external state
   (`branch ensure-evidence-branch`, `pr open-evidence-pr`, watermark stamps,
@@ -96,18 +96,18 @@ linearly with the CLI surface.
 **Options:**
 
 - **(a) Per-worktree** (`<worktree>/.polyphony-state/journal.db`,
-  gitignored). *Pro:* aligns with apex-bound run lifecycle; natural single-
+  gitignored). *Pro:* aligns with root-bound run lifecycle; natural single-
   writer (the run lock); teardown with the worktree. *Con:* destroyed
   with the worktree, so debugging post-cleanup requires copying it out.
 
 - **(b) Per-repo** (`<repo>/.polyphony-state/journal.db`, outside
   worktrees, gitignored). *Pro:* survives worktree cleanup; cross-run
-  queries trivial. *Con:* multiple concurrent apex runs (different
+  queries trivial. *Con:* multiple concurrent root runs (different
   worktrees, same repo) contend for the same DB; the same-root run lock
-  helps but doesn't generalize to cross-apex concurrency.
+  helps but doesn't generalize to cross-root concurrency.
 
 - **(c) Hybrid.** Per-worktree as the *write* store; copy / roll-up to
-  per-repo on apex completion or reset for cross-run debugging. *Pro:*
+  per-repo on root completion or reset for cross-run debugging. *Pro:*
   best of both. *Con:* one more thing that can drift.
 
 **Recommendation: (a) per-worktree** for v1. The teardown loss is real but
@@ -139,7 +139,7 @@ diff) want indexes, and "JSONL + SQLite index" is strictly worse than
 CREATE TABLE actions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id          TEXT    NOT NULL,    -- correlates to conductor run id
-    apex_id         INTEGER,             -- nullable; not all actions are apex-scoped
+    root_id         INTEGER,             -- nullable; not all actions are root-scoped
     work_item_id    INTEGER,             -- nullable; not all actions target a WI
     action          TEXT    NOT NULL,    -- discriminator: 'branch_create', 'pr_open', ...
     target          TEXT    NOT NULL,    -- the affected resource id (branch name, PR url, WI id)
@@ -152,7 +152,7 @@ CREATE TABLE actions (
 );
 
 CREATE INDEX idx_actions_work_item ON actions(work_item_id);
-CREATE INDEX idx_actions_apex      ON actions(apex_id);
+CREATE INDEX idx_actions_root      ON actions(root_id);
 CREATE INDEX idx_actions_run       ON actions(run_id);
 CREATE INDEX idx_actions_action    ON actions(action);
 CREATE INDEX idx_actions_started   ON actions(started_at);
@@ -228,7 +228,7 @@ When the journal lands, in-flight runs have no history. What happens?
 
 - **(a) Greenfield.** Journal starts now. Runs older than the journal-
   enablement commit stay observation-only forever. *Pro:* simple, no
-  surprises. *Con:* in-flight apex runs at the cut-over moment have
+  surprises. *Con:* in-flight root runs at the cut-over moment have
   partial journals — first half observation-only, second half journaled.
 
 - **(b) Best-effort backfill on first journaled run.** Walk the worktree
@@ -238,11 +238,11 @@ When the journal lands, in-flight runs have no history. What happens?
   are lower-fidelity; reset can't trust them as strongly.
 
 - **(c) Forbid in-flight cutover.** Don't enable the journal until all
-  apex runs are quiescent. *Pro:* clean. *Con:* operationally annoying
+  root runs are quiescent. *Pro:* clean. *Con:* operationally annoying
   (we always have runs in flight) and we'd never ship.
 
 **Recommendation: (a) greenfield**, plus a separate `polyphony journal
-backfill <apex>` verb that does (b) on demand for the rare case someone
+backfill <root>` verb that does (b) on demand for the rare case someone
 explicitly wants it. Operationally: enable the journal in a release;
 any in-flight runs get partial history; everyone moves on.
 
@@ -255,7 +255,7 @@ debugging value is high; auto-deletion is a hostile default.
 ### D8 — Concurrency
 
 **Stated without options.** WAL mode SQLite. Multiple writers within a
-single worktree are fine (a single apex run can have parallel verb
+single worktree are fine (a single root run can have parallel verb
 invocations under the same-root run lock). Cross-worktree concurrency is
 not possible by D2 (per-worktree storage).
 
@@ -266,10 +266,10 @@ not possible by D2 (per-worktree storage).
 | Verb | Purpose |
 |---|---|
 | `polyphony journal show --work-item N` | per-WI timeline |
-| `polyphony journal show --apex N` | apex-wide timeline |
+| `polyphony journal show --root N` | root-wide timeline |
 | `polyphony journal show --run R` | per-run actions |
 | `polyphony journal show --action <name>` | per-action-type filter |
-| `polyphony journal drift --apex N` | journal vs. observation diff (D10) |
+| `polyphony journal drift --root N` | journal vs. observation diff (D10) |
 | `polyphony journal export <path>` | dump for off-worktree debugging |
 | `polyphony journal vacuum --before <date>` | retention |
 
@@ -282,7 +282,7 @@ tooling.
 The journal lets us answer **"is the world consistent with what polyphony
 expects?"**
 
-A drift check walks the journal for an apex, projects expected state
+A drift check walks the journal for an root, projects expected state
 (branches that should exist, PRs that should be open, ADO transitions
 that should have stuck), and diffs against observation:
 
@@ -311,7 +311,7 @@ targets; "things polyphony believes it created that are already gone"
 become journal cleanup (mark as externally deleted).
 
 **This is what makes reset transactional.** AB#3245 and AB#3246 become
-trivial: enumerate journal entries for the apex, delete the resources
+trivial: enumerate journal entries for the root, delete the resources
 they refer to, mark journal entries as cleaned up. No more "enumerate
 branches whose names match a pattern."
 
@@ -334,11 +334,11 @@ know what queries actually matter.
 |---|---|---|---|
 | **0** | ADR (this doc, post-discussion) | Approved by you | None |
 | **1** | Schema + `JournalStore` + `[JournaledAction]` decorator + `polyphony journal show` (text + json render) + `polyphony journal export` | New verb suite green; existing verbs unaffected | Low — additive |
-| **2** | Branch ops journal (`branch ensure-evidence-branch`, `branch ensure-feature-branch`, any other branch verb) | Per-apex `journal show` shows real branch lifecycle | Low |
-| **3** | PR ops journal (open, comment, merge, close — both GitHub and ADO legs) | Per-apex `journal show` covers PR lifecycle | Medium |
+| **2** | Branch ops journal (`branch ensure-evidence-branch`, `branch ensure-feature-branch`, any other branch verb) | Per-root `journal show` shows real branch lifecycle | Low |
+| **3** | PR ops journal (open, comment, merge, close — both GitHub and ADO legs) | Per-root `journal show` covers PR lifecycle | Medium |
 | **4** | ADO transitions + tag mutations + watermark stamps + manifest writes journal | Drift check sees a full picture | Medium |
-| **5** | `polyphony journal drift` | Drift verb returns sane diffs on a real apex | Medium |
-| **6** | `polyphony reset apex` rewritten against journal; AB#3245 / AB#3246 close as side-effects | Reset reset-tests pass; residue empirically gone on a clean run | Higher — operational |
+| **5** | `polyphony journal drift` | Drift verb returns sane diffs on a real root | Medium |
+| **6** | `polyphony reset root` rewritten against journal; AB#3245 / AB#3246 close as side-effects | Reset reset-tests pass; residue empirically gone on a clean run | Higher — operational |
 | **7** | (optional) workflow-layer query verbs (D11) | Counter-like scripts begin retiring | Higher — workflow churn |
 
 Phases 1-5 are non-disruptive: nothing changes for existing workflows.

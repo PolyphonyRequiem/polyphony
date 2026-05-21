@@ -127,7 +127,7 @@ public sealed class PolyphonyStatePaths
             throw new ArgumentOutOfRangeException(
                 nameof(rootId),
                 rootId,
-                "rootId must be a positive integer (the apex work-item id).");
+                "rootId must be a positive integer (the root work-item id).");
         }
     }
 }

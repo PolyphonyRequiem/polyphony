@@ -59,9 +59,9 @@ public sealed class JsonOutputContractTests : CommandTestBase
         output.ShouldContain("\"dotnet_version\"");
         output.ShouldContain("\"polyphony_version\"");
         // Canonical SDLC entry-point breadcrumb (added so first-time users see
-        // the apex-driver entry without grepping the conductor registry).
+        // the polyphony entry without grepping the conductor registry).
         output.ShouldContain("\"canonical_workflow\"");
-        output.ShouldContain("\"apex-driver@polyphony\"");
+        output.ShouldContain("\"polyphony@polyphony\"");
         // No PascalCase leakage
         AssertNoPascalCase(output, "Checks");
         AssertNoPascalCase(output, "Os");
@@ -77,7 +77,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         result.Architecture.ShouldNotBeNullOrEmpty();
         result.DotnetVersion.ShouldNotBeNullOrEmpty();
         result.PolyphonyVersion.ShouldNotBeNullOrEmpty();
-        result.CanonicalWorkflow.ShouldBe("apex-driver@polyphony");
+        result.CanonicalWorkflow.ShouldBe("polyphony@polyphony");
         // Round-trip
         var roundTrip = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.HealthResult);
         roundTrip.ShouldContain("\"checks\"");
@@ -636,8 +636,8 @@ public sealed class JsonOutputContractTests : CommandTestBase
             output.ShouldContain("\"has_conflicts\"");
             output.ShouldContain("\"conflicts\"");
             output.ShouldContain("\"waves\"");
-            output.ShouldContain("\"wave_index\"");
-            // Cutover: `depth` is gone from the wave entry.
+            output.ShouldContain("\"batch_index\"");
+            // Cutover: `depth` is gone from the batch entry.
             output.ShouldNotContain("\"depth\"");
 
             AssertNoPascalCase(output, "RootId");
@@ -645,7 +645,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
             AssertNoPascalCase(output, "HasConflicts");
             AssertNoPascalCase(output, "Conflicts");
             AssertNoPascalCase(output, "Waves");
-            AssertNoPascalCase(output, "WaveIndex");
+            AssertNoPascalCase(output, "BatchIndex");
         }
         finally { dispose(); }
     }
@@ -1223,7 +1223,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
                 new PlanStatusItem
                 {
                     ItemId = 13_010,
-                    Title = "Apex epic",
+                    Title = "Root epic",
                     PlanStatus = "open",
                     PlanPrNumber = 42,
                     PlanPrUrl = "https://github.com/owner/repo/pull/42",
@@ -1558,17 +1558,17 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var result = new StateValidateInputsResult
         {
             Ready = false,
-            Summary = "1 required input(s) missing: apex_item",
+            Summary = "1 required input(s) missing: root_item",
             Action = "error",
             WorkflowYaml = "/path/to/workflow.yaml",
             Inputs =
             [
                 new StateValidateInputsDiagnostic
                 {
-                    Name = "apex_item",
+                    Name = "root_item",
                     Required = true,
                     Supplied = false,
-                    Reason = "Required input 'apex_item' was not supplied via --input.",
+                    Reason = "Required input 'root_item' was not supplied via --input.",
                 },
                 new StateValidateInputsDiagnostic
                 {
@@ -1578,7 +1578,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
                     Default = "actionable",
                 },
             ],
-            MissingRequiredInputs = ["apex_item"],
+            MissingRequiredInputs = ["root_item"],
             UnknownInputs = [],
         };
         var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.StateValidateInputsResult);
@@ -1596,7 +1596,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         parsed.ShouldNotBeNull();
         parsed!.Ready.ShouldBeFalse();
         parsed.Action.ShouldBe("error");
-        parsed.MissingRequiredInputs.ShouldBe(["apex_item"]);
+        parsed.MissingRequiredInputs.ShouldBe(["root_item"]);
         parsed.Inputs.Count.ShouldBe(2);
     }
 
@@ -1786,7 +1786,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         var result = new StatusResult
         {
-            ApexId = 42,
+            RootId = 42,
             Ado = new StatusAdoSection
             {
                 Found = true,
@@ -1821,7 +1821,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.StatusResult);
 
         // Top-level snake_case keys.
-        json.ShouldContain("\"apex_id\"");
+        json.ShouldContain("\"root_id\"");
         json.ShouldContain("\"ado\"");
         json.ShouldContain("\"manifest\"");
         json.ShouldContain("\"feature_pr\"");
@@ -1839,7 +1839,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         json.ShouldContain("\"merge_groups_count\"");
         json.ShouldContain("\"informational_version\"");
 
-        AssertNoPascalCase(json, "ApexId");
+        AssertNoPascalCase(json, "RootId");
         AssertNoPascalCase(json, "HasPlannedTag");
         AssertNoPascalCase(json, "IsRoot");
         AssertNoPascalCase(json, "InScope");
@@ -1857,7 +1857,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         var result = new StatusResult
         {
-            ApexId = 42,
+            RootId = 42,
             Ado = new StatusAdoSection
             {
                 Found = false,
@@ -1904,7 +1904,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
     {
         var original = new StatusResult
         {
-            ApexId = 7,
+            RootId = 7,
             Ado = new StatusAdoSection
             {
                 Found = true,
@@ -1951,7 +1951,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var rt = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.StatusResult);
 
         rt.ShouldNotBeNull();
-        rt.ApexId.ShouldBe(7);
+        rt.RootId.ShouldBe(7);
         rt.Ado.HasPlannedTag.ShouldBeTrue();
         rt.Ado.Tags.Count.ShouldBe(3);
         rt.Manifest.PlanGenerationsRoot.ShouldBe(2);

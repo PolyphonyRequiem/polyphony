@@ -23,7 +23,7 @@ public sealed partial class BranchCommands
     /// <param name="workItem">ADO work item ID — root of the hierarchy.</param>
     /// <param name="pgName">Merge-group name (e.g. "PG-1"). Either this or pg-number is required. Operator-facing flag name preserved as <c>--pg-name</c> until the workflow rewire PR ships.</param>
     /// <param name="pgNumber">Merge-group number (e.g. 1). Convenience for callers that track merge groups as ints.</param>
-    /// <param name="mgPath">Rev 4 merge-group path (e.g. "pg-1" or nested "pg-1/pg-2"). When supplied, this is the canonical key used to look up the <c>polyphony:impl-merged-in-mg=&lt;key&gt;</c> tag and skip apex roots whose impl PR for THIS MG has already been merged (AB#3217 fix). Falls back to <paramref name="pgName"/> / derived PG-N when omitted, matching the existing impl-routing fallback ladder.</param>
+    /// <param name="mgPath">Rev 4 merge-group path (e.g. "pg-1" or nested "pg-1/pg-2"). When supplied, this is the canonical key used to look up the <c>polyphony:impl-merged-in-mg=&lt;key&gt;</c> tag and skip root roots whose impl PR for THIS MG has already been merged (AB#3217 fix). Falls back to <paramref name="pgName"/> / derived PG-N when omitted, matching the existing impl-routing fallback ladder.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("next-impl")]
     [VerbResult(typeof(BranchNextImplResult))]
@@ -50,7 +50,7 @@ public sealed partial class BranchCommands
 
         // AB#3217: tag-skip key. Workflows now thread `--mg-path` (the
         // structural Rev 4 identifier) so we can match the stamp written by
-        // `primary_completer` regardless of pg-name/pg-number casing drift
+        // `root_completer` regardless of pg-name/pg-number casing drift
         // between call sites. Pre-Rev-4 callers (and our own tests) may
         // still omit it — in that case fall back to the same string we
         // already use for routing so the tag layer is harmless when the
@@ -116,14 +116,14 @@ public sealed partial class BranchCommands
 
             var nonTerminal = candidates
                 .Where(n => !IsTerminalCategory(n.Node.State))
-                // AB#3217: filter out the apex root if `primary_completer`
+                // AB#3217: filter out the root root if `root_completer`
                 // already stamped the impl-merged-in-mg marker for this MG.
-                // Without this filter, when the apex root is the sole
+                // Without this filter, when the root root is the sole
                 // implementable item AND its terminal transition is
                 // deferred (per AB#3169 — terminal state is fired by
                 // `close_mark_satisfied` AFTER feature → main promotes,
-                // not here), `primary_completer`'s `twig sync` returns
-                // the apex root still in its in-progress state, this
+                // not here), `root_completer`'s `twig sync` returns
+                // the root root still in its in-progress state, this
                 // method re-dispatches it, the impl branch is recreated
                 // empty, the coder generates a tiny no-op commit, and the
                 // squash-coverage assertion fails. The loop has cost an
@@ -142,9 +142,9 @@ public sealed partial class BranchCommands
                 result = new BranchNextImplResult
                 {
                     Action = "all_items_done",
-                    PrimaryId = 0,
-                    PrimaryTitle = "",
-                    PrimaryType = "",
+                    RootId = 0,
+                    RootTitle = "",
+                    RootType = "",
                     ContainerId = 0,
                     ContainerTitle = "",
                     ContainerType = "",
@@ -190,20 +190,20 @@ public sealed partial class BranchCommands
             // returning. `twig state` only mutates the local cache + pending
             // queue; without this push the change is invisible to any
             // subsequent process (e.g. `polyphony validate` in
-            // `primary_completer`) that reads cache directly without first
+            // `root_completer`) that reads cache directly without first
             // calling sync. AB#3126: validate sees Proposed and refuses
             // implementation_complete because the Doing transition was
             // staged-but-never-pushed by an earlier next-impl invocation.
             await twig.SyncAsync(ct).ConfigureAwait(false);
 
             // AB#3189 / AB#3191 read-after-write defense. `twig state` and
-            // `twig sync` both exited 0, but apex 3165 dispatch_items[0] for
+            // `twig sync` both exited 0, but root 3165 dispatch_items[0] for
             // AB#3172 showed that the post-sync cache can still report the
             // pre-transition state — most likely an ADO eventual-consistency
             // race where sync's pull-back overwrites the freshly-pushed
             // value before ADO has settled. The 12-minute self-heal observed
             // there (next-impl re-invoked at 09:36:55 finally saw Doing) was
-            // silent — primary_completer ran in between and refused
+            // silent — root_completer ran in between and refused
             // implementation_complete with no diagnostic pointing at the
             // boundary. Re-fetching from the cache (sqlite, freshly synced
             // from ADO above) and asserting state == targetState surfaces
@@ -238,9 +238,9 @@ public sealed partial class BranchCommands
             result = new BranchNextImplResult
             {
                 Action = "implement_item",
-                PrimaryId = next.Node.WorkItemId,
-                PrimaryTitle = next.Node.Title,
-                PrimaryType = next.Node.Type,
+                RootId = next.Node.WorkItemId,
+                RootTitle = next.Node.Title,
+                RootType = next.Node.Type,
                 ContainerId = containerId,
                 ContainerTitle = containerTitle,
                 ContainerType = containerType,
@@ -356,9 +356,9 @@ public sealed partial class BranchCommands
     private static BranchNextImplResult EmptyNextImplResult(string error, string mergeGroup, string adoWorkspace) => new()
     {
         Action = "error",
-        PrimaryId = 0,
-        PrimaryTitle = "",
-        PrimaryType = "",
+        RootId = 0,
+        RootTitle = "",
+        RootType = "",
         ContainerId = 0,
         ContainerTitle = "",
         ContainerType = "",

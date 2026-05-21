@@ -6,7 +6,7 @@ namespace Polyphony;
 /// open plan PRs, parses their <c>ancestor_plan_generations</c> snapshot,
 /// and reports each whose snapshot is behind the current manifest.
 ///
-/// <para>P9 (ancestor cascade) consumes this list to drive the per-PR
+/// <para>P9 (ancestor restack) consumes this list to drive the per-PR
 /// remedy step (auto-rebase / human-gate / recreate). This verb is
 /// strictly classification — it does not modify any branches or PRs.</para>
 ///

@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
-    Per-item lifecycle classifier for the apex-driver dispatch loop.
+    Per-item lifecycle classifier for the polyphony dispatch loop.
 
 .DESCRIPTION
-    Companion to .conductor/registry/workflows/apex-driver.yaml.
+    Companion to .conductor/registry/workflows/polyphony.yaml.
 
-    The apex-driver iterates `polyphony worklist build` waves and
+    The polyphony iterates `polyphony worklist build` waves and
     dispatches each work item into the correct lifecycle sub-workflow.
     This script is the deterministic classifier: it calls
     `polyphony state next-ready --work-item <id>`, inspects the
     requirement-kind dispositions, and emits the lifecycle workflow
-    name the apex-driver should invoke.
+    name the polyphony should invoke.
 
     The six lifecycle outcomes:
 
@@ -25,14 +25,14 @@
 
       implement-merge-group   — Item has an implementable facet, the next
                        ready requirement is implementation_merged,
-                       AND either (a) the item is NOT the apex root,
-                       or (b) the item IS the apex root but has zero
-                       ADO children (an indivisible apex — the apex
+                       AND either (a) the item is NOT the root root,
+                       or (b) the item IS the root root but has zero
+                       ADO children (an indivisible root — the root
                        itself is the unit of implementation work; the
                        PG branch is `impl/{root}-{root}`).
 
       feature-pr     — Item has implementation_merged ready, IS the
-                       apex root, AND has at least one ADO child. The
+                       root root, AND has at least one ADO child. The
                        children's PG branches have already been merged
                        in earlier waves; feature-pr aggregates them
                        into a single feature PR.
@@ -40,7 +40,7 @@
       fast-path      — Item has no facets (pure organizational
                        container) OR all requirements already
                        satisfied (status='satisfied' or 'empty'). The
-                       apex-driver marks this item as item_satisfied
+                       polyphony marks this item as item_satisfied
                        without spawning a sub-workflow.
 
       terminal-satisfied
@@ -48,17 +48,17 @@
                        is `item_satisfied` — every facet-driven
                        requirement is Satisfied and the only thing
                        left is the act of declaring the item done.
-                       The apex-item-dispatch workflow performs the
+                       The root-item-dispatch workflow performs the
                        ADO state transition (validate +
                        twig state) without spawning a worktree or a
                        lifecycle sub-workflow. Distinct from
-                       fast-path so the wave aggregator can count
+                       fast-path so the batch aggregator can count
                        items as DONE rather than DISPATCHED. Per
                        PR #5 cross-item rollup, this only fires for
                        items whose children's item_satisfied is also
                        Satisfied (or for items with no children).
 
-    Plus three non-dispatch outcomes the apex-driver routes specially:
+    Plus three non-dispatch outcomes the polyphony routes specially:
       monitoring — at least one requirement is fulfilling; defer.
       blocked    — nothing ready, nothing fulfilling, work remains.
       error      — `polyphony state next-ready` returned an error.
@@ -94,27 +94,27 @@
       next_ready_invalid_json     — non-JSON output from polyphony.
       classification_indeterminate — dispatchable but no kind matched a lifecycle.
       hierarchy_failed            — `polyphony hierarchy` exited non-zero or returned non-JSON.
-                                    Surfaces only on the apex-root + implementable
+                                    Surfaces only on the root-root + implementable
                                     branch, where children-count drives the choice
                                     between `implement-merge-group` and `feature-pr`. We FAIL
                                     LOUDLY here rather than silently defaulting,
                                     because either default is wrong roughly half the
-                                    time (decomposed apex → wrong-default skips real
-                                    aggregation; indivisible apex → wrong-default
+                                    time (decomposed root → wrong-default skips real
+                                    aggregation; indivisible root → wrong-default
                                     creates the empty-MG bug).
 
 .PARAMETER WorkItemId
     ADO work item id of the item to classify.
 
-.PARAMETER ApexId
-    Apex root work item id (the value the apex-driver was invoked with).
+.PARAMETER RootId
+    Root root work item id (the value the polyphony was invoked with).
     Used to disambiguate implement-merge-group vs feature-pr.
 
 .PARAMETER PolyphonyExe
     Override for the polyphony executable path. Defaults to `polyphony`.
 
 .NOTES
-    Companion to .conductor/registry/workflows/apex-driver.yaml. The
+    Companion to .conductor/registry/workflows/polyphony.yaml. The
     output schema is the workflow's input schema for the
     `lifecycle_router` step; tests pin both shapes.
 #>
@@ -124,7 +124,7 @@ param(
     [int]$WorkItemId,
 
     [Parameter(Mandatory)]
-    [int]$ApexId,
+    [int]$RootId,
 
     [string]$PolyphonyExe = 'polyphony'
 )
@@ -139,7 +139,7 @@ $envelope = [ordered]@{
     lifecycle_workflow = 'error'
     next_kinds         = @()
     fulfilling_kinds   = @()
-    is_root            = ($WorkItemId -eq $ApexId)
+    is_root            = ($WorkItemId -eq $RootId)
     error_code         = ''
     error_message      = ''
 }
@@ -254,7 +254,7 @@ try {
             # Fall through to classification, treating the fulfilling kinds
             # as the dispatch source. This is the "drive an in-flight PR
             # through merge" path — without it, an open plan PR stalls the
-            # apex driver indefinitely (decision=blocked, iterations=1).
+            # root driver indefinitely (decision=blocked, iterations=1).
         }
         'blocked' {
             $envelope.success = $true
@@ -319,11 +319,11 @@ try {
     elseif ($hasImplReady) {
         $envelope.success = $true
         if ($envelope.is_root) {
-            # Apex-root + implementable splits on decomposition state:
-            #   • zero children → indivisible apex; the apex IS the
+            # Root-root + implementable splits on decomposition state:
+            #   • zero children → indivisible root; the root IS the
             #     PG; route to implement-merge-group so an actual impl PR gets
             #     opened against `impl/{root}-{root}`.
-            #   • >=1 child   → decomposed apex; children's PGs were
+            #   • >=1 child   → decomposed root; children's PGs were
             #     merged in earlier waves; route to feature-pr to
             #     aggregate them into the feature PR.
             #
@@ -338,7 +338,7 @@ try {
                 $envelope.success = $false
                 $envelope.lifecycle_workflow = 'error'
                 $envelope.error_code = 'hierarchy_failed'
-                $envelope.error_message = "could not determine apex-root child count: $($_.Exception.Message)"
+                $envelope.error_message = "could not determine root-root child count: $($_.Exception.Message)"
                 Write-Envelope $envelope
                 exit 0
             }
@@ -351,8 +351,8 @@ try {
     elseif ($hasTerminalReady) {
         # Only terminal kinds are ready -> the item is ready to be
         # declared satisfied. Routes to a worktree-less terminal that
-        # performs the ADO state transition (see apex-item-dispatch.yaml
-        # `terminal_satisfied` node).
+        # performs the ADO state transition (see root-item-dispatch.yaml
+        # `satisfied` node).
         $envelope.success = $true
         $envelope.lifecycle_workflow = 'terminal-satisfied'
     }

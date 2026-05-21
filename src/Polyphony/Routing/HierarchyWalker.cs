@@ -9,7 +9,7 @@ namespace Polyphony.Routing;
 /// Recursively traverses the work item tree to a specified depth,
 /// annotating each node with facets from the process config — or, when an
 /// item carries a <c>polyphony:facets=&lt;csv&gt;</c> tag, the per-item
-/// override (per F2 / architect <c>apex_facets</c> declaration in plan
+/// override (per F2 / architect <c>root_facets</c> declaration in plan
 /// front-matter; round-tripped via <see cref="FacetTagParser"/>).
 /// </summary>
 public sealed class HierarchyWalker(ProcessConfig processConfig, IWorkItemRepository repository)

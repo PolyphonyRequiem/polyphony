@@ -21,12 +21,12 @@ namespace Polyphony.Infrastructure.Worktrees;
 /// <para>The slug is the branch with <c>/</c> replaced by <c>-</c>:
 /// <c>impl/3085-3072</c> → <c>impl-3085-3072</c>;
 /// <c>mg/3085_pg-foo</c> → <c>mg-3085_pg-foo</c>. Slugs are used as
-/// directory names under <c>polyphony-runs/apex-{root}/</c>.</para>
+/// directory names under <c>polyphony-runs/root-{root}/</c>.</para>
 ///
 /// <para>Used by <c>polyphony worktree create</c> (AB#3085, PR 1b3) to
 /// validate that <c>--branch</c> matches the grammar AND that
-/// <see cref="ParsedBranch.RootId"/> matches <c>--apex</c>, catching cross-apex
-/// invocations (<c>worktree create --apex 3085 --branch impl/9999-1234</c>)
+/// <see cref="ParsedBranch.RootId"/> matches <c>--root</c>, catching cross-root
+/// invocations (<c>worktree create --root 3085 --branch impl/9999-1234</c>)
 /// before any git operation.</para>
 /// </summary>
 public static class BranchSlug
@@ -243,7 +243,7 @@ public static class BranchSlug
 
     /// <summary>
     /// The slug used as a directory name under
-    /// <c>polyphony-runs/apex-{root}/</c>. Replaces the single ref-class
+    /// <c>polyphony-runs/root-{root}/</c>. Replaces the single ref-class
     /// <c>/</c> with <c>-</c>; underscores in <c>mg_path</c> are preserved.
     /// </summary>
     private static string Slug(string branch) => branch.Replace('/', '-');
@@ -270,7 +270,7 @@ public static class BranchSlug
 /// Structural parse of a polyphony branch name. See <see cref="BranchSlug.TryParse"/>.
 /// </summary>
 /// <param name="Kind">Branch class.</param>
-/// <param name="RootId">The <c>{root}</c> work item id (apex id).</param>
+/// <param name="RootId">The <c>{root}</c> work item id.</param>
 /// <param name="Slug">Filesystem-safe directory name (<c>/</c> → <c>-</c>).</param>
 /// <param name="MgSegments">Parsed MG hierarchy segments (mg branches only).</param>
 /// <param name="ItemId">The <c>{item_id}</c> for plan-descendant / impl / evidence branches.</param>

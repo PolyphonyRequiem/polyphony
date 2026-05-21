@@ -219,7 +219,7 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
     }
 
     // AB#3211 clause 2 negative: head was deleted AND merge commit isn't
-    // on origin/{base}. The most damaging case from apex 62286666: the
+    // on origin/{base}. The most damaging case from root 62286666: the
     // PR was for a different run, the branch was recycled, and the
     // recorded merge commit no longer lives on today's base branch.
     [Fact]

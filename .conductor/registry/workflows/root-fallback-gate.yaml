@@ -20,7 +20,7 @@
 # Invariants:
 #   Pre:  active_work_item_id is the work item the calling sub-workflow
 #         was invoked on. The caller has already determined it has no
-#         `root_id` / `apex_id` to operate on.
+#         `root_id` / `root_id` to operate on.
 #   Post: Either root_id is a positive integer (caller continues with
 #         that as root) or root_id == 0 with decision == 'abort' (caller
 #         must fail honestly — do not paper over).
@@ -59,17 +59,17 @@ output:
   # so the parent workflow receives a real bool rather than capital
   # "True" / "False".
   root_id: >-
-    {%- if terminal_use_active_item_prompted is defined -%}{{ workflow.input.active_work_item_id }}
-    {%- elif terminal_use_active_item_auto is defined -%}{{ workflow.input.active_work_item_id }}
+    {%- if use_active_item_prompted is defined -%}{{ workflow.input.active_work_item_id }}
+    {%- elif use_active_item_auto is defined -%}{{ workflow.input.active_work_item_id }}
     {%- else -%}0{%- endif -%}
   decision: >-
-    {%- if terminal_use_active_item_prompted is defined -%}use_active_item
-    {%- elif terminal_use_active_item_auto is defined -%}auto_resolved
-    {%- elif terminal_abort_prompted is defined -%}abort
-    {%- elif terminal_abort_auto is defined -%}abort
+    {%- if use_active_item_prompted is defined -%}use_active_item
+    {%- elif use_active_item_auto is defined -%}auto_resolved
+    {%- elif abort_prompted is defined -%}abort
+    {%- elif abort_auto is defined -%}abort
     {%- else -%}abort{%- endif -%}
   auto_policy_applied: >-
-    {%- if terminal_use_active_item_auto is defined or terminal_abort_auto is defined -%}true
+    {%- if use_active_item_auto is defined or abort_auto is defined -%}true
     {%- else -%}false{%- endif -%}
 
 agents:
@@ -94,9 +94,9 @@ agents:
     routes:
       - to: prompt_user
         when: "{{ load_policy.output.root_fallback.auto_decide == 'prompt' }}"
-      - to: terminal_use_active_item_auto
+      - to: use_active_item_auto
         when: "{{ load_policy.output.root_fallback.auto_decide == 'use_active_item' }}"
-      - to: terminal_abort_auto
+      - to: abort_auto
         when: "{{ load_policy.output.root_fallback.auto_decide == 'abort' }}"
       # Catch-all per M4 — defensively route any unknown value to the
       # human gate so the operator decides rather than raising
@@ -113,8 +113,8 @@ agents:
   #
   # Invariants:
   #   Pre:  load_policy.output.root_fallback.auto_decide == 'prompt'.
-  #   Post: Operator chose use_active_item (->terminal_use_active_item_prompted)
-  #         or abort (-> terminal_abort_prompted).
+  #   Post: Operator chose use_active_item (->use_active_item_prompted)
+  #         or abort (-> abort_prompted).
   - name: prompt_user
     type: human_gate
     description: Ask the operator how to handle a missing root work-item id
@@ -148,17 +148,17 @@ agents:
     options:
       - label: "✅ Use active item (#{{ workflow.input.active_work_item_id }} as root)"
         value: use_active_item
-        route: terminal_use_active_item_prompted
+        route: use_active_item_prompted
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_prompted
+        route: abort_prompted
 
   # ── Terminal: use_active_item via prompt ─────────────────────────────────
   #
   # No-op terminal. Emits a JSON envelope so a downstream observer can
   # read which leg of the workflow ran. The workflow `output:` block
   # uses `is defined` checks against this terminal name.
-  - name: terminal_use_active_item_prompted
+  - name: use_active_item_prompted
     type: script
     description: Terminal — operator chose use_active_item from the human gate
     command: pwsh
@@ -175,7 +175,7 @@ agents:
       - to: $end
 
   # ── Terminal: abort via prompt ───────────────────────────────────────────
-  - name: terminal_abort_prompted
+  - name: abort_prompted
     type: script
     description: Terminal — operator chose abort from the human gate
     command: pwsh
@@ -197,7 +197,7 @@ agents:
   # work item is silently promoted to root with no human gate.
   # `decision = 'auto_resolved'` distinguishes this from the prompted
   # path so observers can attribute the choice to policy, not the human.
-  - name: terminal_use_active_item_auto
+  - name: use_active_item_auto
     type: script
     description: Terminal — auto-policy resolved to use_active_item
     command: pwsh
@@ -218,7 +218,7 @@ agents:
   # Fires when policy `auto_decide == 'abort'`. The calling workflow
   # MUST honour `decision == 'abort'` and fail honestly per P7 — do
   # not paper over with a default root id.
-  - name: terminal_abort_auto
+  - name: abort_auto
     type: script
     description: Terminal — auto-policy resolved to abort
     command: pwsh

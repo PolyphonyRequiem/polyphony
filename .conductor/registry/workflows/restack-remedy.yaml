@@ -1,4 +1,4 @@
-# cascade-remedy — Phase 3 P9 step 4: orchestrate per-PR cascade remedy.
+# restack-remedy — Phase 3 P9 step 4: orchestrate per-PR restack remedy.
 #
 # Invoked after a parent plan PR merges and bumps a plan_generation in the
 # run manifest. Walks the descendant tree under {root}, finds open plan
@@ -16,11 +16,11 @@
 #         readable from origin/feature/{root_id}; the manifest has been
 #         updated by the just-merged parent plan PR's merge-plan-pr verb.
 #   Post: Every stale descendant PR has been auto-rebased, recreated, or
-#         routed to a per-PR human gate. Cascade summary gate fires only
+#         routed to a per-PR human gate. Restack summary gate fires only
 #         when at least one remedy iteration produced an error.
 
 workflow:
-  name: cascade-remedy
+  name: restack-remedy
   description: >-
     Walk descendants of {root_id}, classify open plan PRs by
     ancestor-snapshot staleness, and apply auto-rebase / recreate /
@@ -43,7 +43,7 @@ workflow:
       required: true
       description: Run-root work item id whose descendant tree to scan.
     # ── ADO platform inputs (Phase 8 — ADO parity) ──────────────────────
-    # Forwarded from apex-driver / plan-level callers so classify and the
+    # Forwarded from polyphony / plan-level callers so classify and the
     # per-PR remedies can resolve PRs against the correct platform.
     platform:
       type: string
@@ -69,7 +69,7 @@ workflow:
 # Workflow-scope output: bare Jinja template strings (M7). Auto-coerced
 # by _maybe_parse_json — numeric strings become ints, lowercase
 # 'true'/'false' become booleans. `remedy_group` only runs on the
-# stale-found path; guard with `is defined` per the cascade-remedy
+# stale-found path; guard with `is defined` per the restack-remedy
 # design (validator warns on unguarded references).
 output:
   total_stale: "{{ classify.output.total_stale | default(0) }}"
@@ -100,7 +100,7 @@ agents:
       - "{{ workflow.input.repository }}"
     routes:
       # Verb-level error (manifest read/parse, repo slug, etc.) — surface
-      # to the cascade-error gate so the operator can decide.
+      # to the restack-error gate so the operator can decide.
       - to: classify_error_gate
         when: "{{ classify.output.error_code is defined and classify.output.error_code != null and classify.output.error_code != '' }}"
       # Nothing stale — done.
@@ -113,7 +113,7 @@ agents:
   - name: classify_error_gate
     type: human_gate
     prompt: |
-      ## ⚠️ Cascade Classify Failed
+      ## ⚠️ Restack Classify Failed
 
       `polyphony plan classify-stale-descendants` could not enumerate
       stale descendants for root **{{ workflow.input.root_id }}**.
@@ -129,24 +129,24 @@ agents:
 
       Choose an action:
       - **Retry** — re-run the classifier (after fixing the cause).
-      - **Skip cascade** — exit without remediating descendant PRs.
+      - **Skip restack** — exit without remediating descendant PRs.
     options:
       - label: "🔄 Retry classify"
         value: retry
         route: classify
-      - label: "⏭️ Skip cascade"
+      - label: "⏭️ Skip restack"
         value: skip
         route: $end
 
-  # ── Cascade summary gate ──────────────────────────────────────────────
+  # ── Restack summary gate ──────────────────────────────────────────────
   #
   # Fires only when remedy_group.errors is non-empty (i.e. at least one
   # sub-workflow raised an error that wasn't caught by an internal gate).
   # Per-PR human gates fire INSIDE the sub-workflow and don't surface here.
-  - name: cascade_summary_gate
+  - name: restack_summary_gate
     type: human_gate
     prompt: |
-      ## ⚠️ Cascade Remedy Completed With Errors
+      ## ⚠️ Restack Remedy Completed With Errors
 
       Remediated descendants of root **{{ workflow.input.root_id }}** but
       **{{ remedy_group.errors | length }}** of
@@ -165,7 +165,7 @@ agents:
         route: $end
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
 # ── Remedy fan-out (for_each) ──────────────────────────────────────────
 #
@@ -174,7 +174,7 @@ agents:
 # serialize on the lock and complicate per-iteration error attribution.
 #
 # `failure_mode: continue_on_error` so a single failed iteration doesn't
-# short-circuit the whole cascade — the cascade_summary_gate handles
+# short-circuit the whole restack — the restack_summary_gate handles
 # aggregate failure, the per-PR human gate handles per-entry failure.
 #
 # Conductor schema: for_each lives at workflow root, not nested under
@@ -183,11 +183,11 @@ agents:
 
   # ── Terminal abort (operator chose Abort on an error gate) ────────────
   #
-  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # Identical to plan-level.yaml's abort_run. Invokes
   # abort-run.ps1, which POSTs to conductor's /api/stop endpoint. The
   # engine raises InterruptError at every nested between-agent check,
   # unwinding the entire run cleanly (no process-kill, no zombies).
-  - name: terminal_abort_run
+  - name: abort_run
     type: script
     description: Operator-initiated full-run abort — POSTs /api/stop to halt the run cleanly
     command: pwsh
@@ -198,7 +198,7 @@ agents:
       - "-Reason"
       - "operator-abort"
       - "-Stage"
-      - "cascade-remedy"
+      - "restack-remedy"
     routes:
       - to: $end
 
@@ -225,6 +225,6 @@ for_each:
         project: "{{ workflow.input.project }}"
         repository: "{{ workflow.input.repository }}"
     routes:
-      - to: cascade_summary_gate
+      - to: restack_summary_gate
         when: "{{ (remedy_group.errors | length) > 0 }}"
       - to: $end

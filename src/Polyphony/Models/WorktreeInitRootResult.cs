@@ -1,8 +1,8 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output of <c>polyphony worktree init-apex --apex N</c>. Reports the
-/// resolved apex root (the per-apex container under the runs-root) and
+/// Output of <c>polyphony worktree init-root --root N</c>. Reports the
+/// resolved root root (the per-root container under the runs-root) and
 /// the <c>feature/{N}</c> worktree that was created/attached/idempotently
 /// confirmed.
 ///
@@ -21,32 +21,32 @@ namespace Polyphony;
 /// <para><see cref="Reason"/> is null on success and one of these on
 /// failure:</para>
 /// <list type="bullet">
-///   <item><c>invalid_apex</c>             — <c>--apex</c> was supplied but non-positive.</item>
+///   <item><c>invalid_root</c>             — <c>--root</c> was supplied but non-positive.</item>
 ///   <item><c>common_dir_unavailable</c>   — <c>git rev-parse --git-common-dir</c> returned no usable path.</item>
-///   <item><c>filesystem_failure</c>       — could not create the apex-root container directory.</item>
+///   <item><c>filesystem_failure</c>       — could not create the root-root container directory.</item>
 ///   <item><c>git_failure</c>              — a git invocation failed; <see cref="Error"/> carries stderr.</item>
 ///   <item><c>path_exists_wrong_branch</c> — target path is a worktree, but on a different branch.</item>
 ///   <item><c>path_exists_not_worktree</c> — target path exists on disk but is not a registered worktree.</item>
 ///   <item><c>branch_in_use</c>            — <c>feature/{N}</c> exists locally and is already checked out elsewhere.</item>
-///   <item><c>remote_branch_exists</c>     — <c>feature/{N}</c> does not exist locally but does on origin; init-apex is local-only and refuses to fork.</item>
+///   <item><c>remote_branch_exists</c>     — <c>feature/{N}</c> does not exist locally but does on origin; init-root is local-only and refuses to fork.</item>
 /// </list>
 ///
 /// <para>When the failure is detected before path resolution
-/// (<c>invalid_apex</c>, <c>common_dir_unavailable</c>),
-/// <see cref="ApexRoot"/>, <see cref="WorktreePath"/>, and
+/// (<c>invalid_root</c>, <c>common_dir_unavailable</c>),
+/// <see cref="RootRoot"/>, <see cref="WorktreePath"/>, and
 /// <see cref="Branch"/> may be null.</para>
 /// </summary>
 public sealed record WorktreeInitApexResult
 {
-    /// <summary>The apex id that was passed to <c>--apex</c> (echoed back for confirmation).</summary>
-    public required int ApexId { get; init; }
+    /// <summary>The root id that was passed to <c>--root</c> (echoed back for confirmation).</summary>
+    public required int RootId { get; init; }
 
     /// <summary>
-    /// Absolute path to <c>{runs_root}/apex-{N}/</c> — the per-apex
-    /// container that holds all per-item worktrees for this apex.
+    /// Absolute path to <c>{runs_root}/root-{N}/</c> — the per-root
+    /// container that holds all per-item worktrees for this root.
     /// Null when failure occurred before path resolution.
     /// </summary>
-    public string? ApexRoot { get; init; }
+    public string? RootRoot { get; init; }
 
     /// <summary>
     /// Absolute path to the per-run worktree root (<c>{parent}/{repo}-runs/</c>)
@@ -67,7 +67,7 @@ public sealed record WorktreeInitApexResult
 
     /// <summary>
     /// Absolute path to the <c>feature/{N}</c> worktree at
-    /// <c>{runs_root}/apex-{N}/feature-{N}/</c>. Null when failure
+    /// <c>{runs_root}/root-{N}/feature-{N}/</c>. Null when failure
     /// occurred before path resolution.
     /// </summary>
     public string? WorktreePath { get; init; }

@@ -187,7 +187,7 @@ workflow:
 workflow:
   name: example
 agents:
-  - name: research_dispatch
+  - name: research
     type: workflow
     input_mapping:
       escalation_cap: "{{ architect.output.research_needs.escalation_cap | default(1) }}"
@@ -227,7 +227,7 @@ workflow:
 workflow:
   name: example
 agents:
-  - name: research_dispatch
+  - name: research
     type: workflow
     input_mapping:
       escalation_cap: "{{ architect.output.research_needs.get('escalation_cap', 1) }}"

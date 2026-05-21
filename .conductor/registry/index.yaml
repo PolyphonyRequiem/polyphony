@@ -4,7 +4,7 @@ workflows:
     path: workflows/plan-level.yaml
     versions: ["1.0.0", "1.0.1", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
   implement-merge-group:
-    description: "Implement a single merge group — coding, review, MG-PR open + merge (sub-workflow, called by apex-driver / feature-pr remediation)"
+    description: "Implement a single merge group — coding, review, MG-PR open + merge (sub-workflow, called by polyphony / feature-pr remediation)"
     path: workflows/implement-merge-group.yaml
     versions: ["1.0.0", "1.1.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
   feature-pr:
@@ -31,21 +31,21 @@ workflows:
     description: "Root fallback gate — resolves a sub-workflow invoked without a root work-item id (Phase 1 shared sub-workflow)"
     path: workflows/root-fallback-gate.yaml
     versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
-  apex-driver:
-    description: "Apex SDLC driver — tree-walking dispatch over EdgeGraph waves with per-item worktree isolation, observable-state re-entry, renegotiation handling, and (PR #9) the iterate-until-stable outer loop that drives multi-facet items through plan→action→impl in a single invocation (Phase 7 keystone)"
-    path: workflows/apex-driver.yaml
+  polyphony:
+    description: "Root SDLC driver — tree-walking dispatch over EdgeGraph waves with per-item worktree isolation, observable-state re-entry, renegotiation handling, and (PR #9) the iterate-until-stable outer loop that drives multi-facet items through plan→action→impl in a single invocation (Phase 7 keystone)"
+    path: workflows/polyphony.yaml
     versions: ["1.0.0", "1.1.0", "1.2.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
-  apex-wave-dispatch:
-    description: "Per-wave inner sub-workflow invoked by apex-driver — for_each over wave items + integrate the wave; aggregates per-item progress counters for the outer loop (sub-workflow)"
-    path: workflows/apex-wave-dispatch.yaml
+  root-batch-dispatch:
+    description: "Per-batch inner sub-workflow invoked by polyphony — for_each over batch items + integrate the batch; aggregates per-item progress counters for the outer loop (sub-workflow)"
+    path: workflows/root-batch-dispatch.yaml
     versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
-  apex-item-dispatch:
-    description: "Per-item innermost sub-workflow invoked by apex-wave-dispatch — classify lifecycle, spawn/teardown worktree, dispatch lifecycle (sub-workflow)"
-    path: workflows/apex-item-dispatch.yaml
+  root-item-dispatch:
+    description: "Per-item innermost sub-workflow invoked by root-batch-dispatch — classify lifecycle, spawn/teardown worktree, dispatch lifecycle (sub-workflow)"
+    path: workflows/root-item-dispatch.yaml
     versions: ["1.0.0", "1.1.0", "1.2.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
-  cascade-remedy:
-    description: "Cascade-remedy fan-out — runs remedy-stale-descendant per stale descendant of an integration root (sub-workflow)"
-    path: workflows/cascade-remedy.yaml
+  restack-remedy:
+    description: "Restack-remedy fan-out — runs remedy-stale-descendant per stale descendant of an integration root (sub-workflow)"
+    path: workflows/restack-remedy.yaml
     versions: ["1.0.0", "2.2.0", "2.2.1", "2.2.2", "2.3.0", "2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
   remedy-stale-descendant:
     description: "Per-descendant stale-merge remedy — rebases or re-derives one descendant after an upstream PR merge (sub-workflow)"
@@ -55,7 +55,7 @@ workflows:
     description: "Archive-only research sub-workflow — synthesizes findings from the repo archive to answer architect research questions (sub-workflow)"
     path: workflows/research.yaml
     versions: ["2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
-  reset-apex:
-    description: "Reset an apex run — wipes prior state/PRs/branches/worktrees/manifest with operator confirmation gate, enabling -Intent new redispatch"
-    path: workflows/reset-apex.yaml
+  reset-root:
+    description: "Reset an root run — wipes prior state/PRs/branches/worktrees/manifest with operator confirmation gate, enabling -Intent new redispatch"
+    path: workflows/reset-root.yaml
     versions: ["2.4.8"]

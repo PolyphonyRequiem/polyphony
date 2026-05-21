@@ -166,7 +166,7 @@ public sealed class PlanCommandsRebaseStaleDescendantTests : CommandTestBase, ID
         => runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(0, "[]", ""));
 
     /// <summary>
-    /// Stub the WHOLE parent-PR cascade pre-check chain in one call:
+    /// Stub the WHOLE parent-PR restack pre-check chain in one call:
     /// either there are no open PRs at the parent (no-PR fresh) OR the
     /// open PR's snapshot matches the manifest (snapshot fresh).
     /// </summary>
@@ -282,7 +282,7 @@ public sealed class PlanCommandsRebaseStaleDescendantTests : CommandTestBase, ID
 
     /// <summary>
     /// Stub the FULL happy-path chain (env, status, fetches, show, poll,
-    /// cascade, rev-parse, ancestor, merge-base, rebase, push, edit,
+    /// restack, rev-parse, ancestor, merge-base, rebase, push, edit,
     /// manifest push, comment). Returns the manifest seeded.
     /// </summary>
     private void StubHappyPath(
@@ -682,7 +682,7 @@ public sealed class PlanCommandsRebaseStaleDescendantTests : CommandTestBase, ID
     }
 
     // ════════════════════════════════════════════════════════════════════
-    // 6. Cascade precondition (parent stale)
+    // 6. Restack precondition (parent stale)
     // ════════════════════════════════════════════════════════════════════
 
     [Fact]

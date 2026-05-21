@@ -17,7 +17,7 @@ namespace Polyphony.Infrastructure.Worktrees;
 /// either be exactly equal to the parent OR be followed by a directory
 /// separator immediately after the parent's full length.</para>
 ///
-/// <para>Used by the worktree write-verbs (<c>init-apex</c>, <c>create</c>)
+/// <para>Used by the worktree write-verbs (<c>init-root</c>, <c>create</c>)
 /// to assert "self-derived target path is under runs_root AND not under
 /// main_worktree_path" — the structural invariant that makes the
 /// hijack bug impossible by construction.</para>

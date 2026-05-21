@@ -234,7 +234,7 @@ Describe 'Get-PathConflicts' {
 
     It 'flags a non-empty runs root' {
         New-Item -ItemType Directory -Path $script:Paths.RunsRoot -Force | Out-Null
-        New-Item -ItemType Directory -Path (Join-Path $script:Paths.RunsRoot 'apex-1') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:Paths.RunsRoot 'root-1') -Force | Out-Null
         $c = Get-PathConflicts -Paths $script:Paths -RiskFactors $script:EmptyRisk
         ($c -join "`n") | Should -Match 'Runs root .* non-empty'
     }

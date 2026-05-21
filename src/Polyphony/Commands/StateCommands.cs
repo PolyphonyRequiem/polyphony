@@ -70,7 +70,7 @@ public sealed partial class StateCommands(
                 CheckPolyphonyCli(),
                 // bare_repo: required as of AB#3085 (per-run-worktree epic). The
                 // launcher writes per-run worktree paths under
-                // {runs_root}/apex-{N}/, which only resolves correctly when the
+                // {runs_root}/root-{N}/, which only resolves correctly when the
                 // shared gitdir is bare. scripts/Migrate-ToBareRepo.ps1 is the
                 // operator-facing migration tool.
                 await CheckBareRepoAsync(ct).ConfigureAwait(false),
@@ -163,7 +163,7 @@ public sealed partial class StateCommands(
             }
 
             // bare_repo is required as of AB#3085 (per-run-worktree epic). The
-            // launcher writes per-run worktree paths under {runs_root}/apex-{N}/,
+            // launcher writes per-run worktree paths under {runs_root}/root-{N}/,
             // which only resolves correctly when the shared gitdir is bare.
             // Operators on the legacy non-bare layout should run
             // scripts/Migrate-ToBareRepo.ps1 (AB#3097) before invoking the SDLC.

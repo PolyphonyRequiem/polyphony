@@ -164,7 +164,7 @@ if ($violations.Count -gt 0) {
     Write-Host ''
     Write-Host 'Fix one of:' -ForegroundColor Cyan
     Write-Host '  (a) Add the kind value to the appropriate array in lifecycle-router.ps1' -ForegroundColor Cyan
-    Write-Host '      and a matching `when:` clause in apex-item-dispatch.yaml so the' -ForegroundColor Cyan
+    Write-Host '      and a matching `when:` clause in root-item-dispatch.yaml so the' -ForegroundColor Cyan
     Write-Host '      classifier returns a real lifecycle workflow rather than' -ForegroundColor Cyan
     Write-Host '      classification_indeterminate.' -ForegroundColor Cyan
     Write-Host '  (b) Annotate the script with a `# router-skip: <value> — <reason>`' -ForegroundColor Cyan

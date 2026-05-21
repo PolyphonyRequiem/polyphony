@@ -6,8 +6,8 @@ using Polyphony.Infrastructure.Processes;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony reset prs --apex N [--execute] [--comment "..."]</c> —
-/// abandons every OPEN PR targeting any branch in the apex's polyphony
+/// <c>polyphony reset prs --root N [--execute] [--comment "..."]</c> —
+/// abandons every OPEN PR targeting any branch in the root's polyphony
 /// scope: <c>plan/{N}</c>, <c>mg/{N}-*</c>, <c>impl/{N}-*</c>,
 /// <c>evidence/{N}-*</c>, <c>feature/{N}</c>.
 ///
@@ -42,25 +42,25 @@ public sealed partial class ResetCommands
     /// platform's PR history view.
     /// </summary>
     internal const string DefaultResetComment =
-        "Closed by `polyphony reset prs` — this PR's apex is being reset for redispatch.";
+        "Closed by `polyphony reset prs` — this PR's root is being reset for redispatch.";
 
     /// <summary>
-    /// Abandon every open polyphony PR for the apex.
+    /// Abandon every open polyphony PR for the root.
     /// </summary>
-    /// <param name="apex">Apex root work-item ID.</param>
+    /// <param name="root">Root root work-item ID.</param>
     /// <param name="execute">Pass to actually close PRs. Without this flag, the verb is dry-run.</param>
     /// <param name="comment">Optional override for the closing comment posted on each PR. Defaults to <see cref="DefaultResetComment"/>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("prs")]
     [VerbResult(typeof(ResetPrsResult))]
     public async Task<int> ResetPrs(
-        int apex = RequiredInput.MissingInt,
+        int root = RequiredInput.MissingInt,
         bool execute = false,
         string comment = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("reset prs",
-            ("--apex", apex == RequiredInput.MissingInt)) is { } halt)
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
         var commentToPost = string.IsNullOrWhiteSpace(comment) ? DefaultResetComment : comment;
@@ -76,7 +76,7 @@ public sealed partial class ResetCommands
             {
                 result = new ResetPrsResult
                 {
-                    Apex = apex,
+                    Root = root,
                     Success = false,
                     DryRun = !execute,
                     Error =
@@ -89,8 +89,8 @@ public sealed partial class ResetCommands
 
             var slug = Sdlc.Observers.PullRequestReader.BuildRepoSlug(identity);
 
-            // Enumerate concrete branches for each apex pattern.
-            var branches = await EnumerateApexBranchesAsync(apex, ct).ConfigureAwait(false);
+            // Enumerate concrete branches for each root pattern.
+            var branches = await EnumerateApexBranchesAsync(root, ct).ConfigureAwait(false);
 
             var abandoned = new List<ResetAbandonedPr>();
             var failed = new List<ResetFailedPr>();
@@ -175,7 +175,7 @@ public sealed partial class ResetCommands
 
             result = new ResetPrsResult
             {
-                Apex = apex,
+                Root = root,
                 Success = true,
                 DryRun = !execute,
                 RepoSlug = slug,
@@ -188,10 +188,10 @@ public sealed partial class ResetCommands
         {
             result = new ResetPrsResult
             {
-                Apex = apex,
+                Root = root,
                 Success = false,
                 DryRun = !execute,
-                Error = $"Error resetting PRs for apex #{apex}: {ex.Message}",
+                Error = $"Error resetting PRs for root #{root}: {ex.Message}",
             };
         }
 
@@ -201,14 +201,14 @@ public sealed partial class ResetCommands
 
     /// <summary>
     /// Resolve every concrete branch on origin that matches any of the
-    /// apex's polyphony patterns. Returns a de-duped list in stable order
+    /// root's polyphony patterns. Returns a de-duped list in stable order
     /// (pattern order, then alphabetical within a pattern).
     /// </summary>
-    internal async Task<IReadOnlyList<string>> EnumerateApexBranchesAsync(int apex, CancellationToken ct)
+    internal async Task<IReadOnlyList<string>> EnumerateApexBranchesAsync(int root, CancellationToken ct)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<string>();
-        foreach (var pattern in ApexBranchPatterns(apex))
+        foreach (var pattern in RootBranchPatterns(root))
         {
             ct.ThrowIfCancellationRequested();
             IReadOnlyList<string> heads;

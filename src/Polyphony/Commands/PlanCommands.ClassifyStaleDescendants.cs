@@ -15,7 +15,7 @@ namespace Polyphony.Commands;
 /// its <c>ancestor_plan_generations</c> snapshot is behind the current
 /// manifest's <see cref="RunManifest.PlanGenerations"/>.
 ///
-/// <para>P9 (ancestor cascade): the workflow consumes this list to drive
+/// <para>P9 (ancestor restack): the workflow consumes this list to drive
 /// the per-PR remedy step (auto-rebase / human-gate / recreate). This
 /// verb is strictly classification — it does NOT modify any branches
 /// or PRs.</para>
@@ -189,7 +189,7 @@ public sealed partial class PlanCommands
     /// <summary>
     /// BFS-walk descendants of <paramref name="rootId"/> via the work-item
     /// repository. Excludes the root itself. Dedups defensively. Returns
-    /// ids in BFS order (depth-major, ids ascending within a wave) plus a
+    /// ids in BFS order (depth-major, ids ascending within a batch) plus a
     /// parent-of map (descendant id → immediate parent id, including the
     /// root for direct children).
     /// </summary>

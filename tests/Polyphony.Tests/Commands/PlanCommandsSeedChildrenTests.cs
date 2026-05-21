@@ -55,15 +55,15 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     public async Task SeedChildren_EmptyChildrenNoFacets_RoutesError()
     {
         // Indivisibility must be explicit. An empty children list with no
-        // apex_facets declaration is ambiguous and would silently false-
-        // satisfy the apex (AB#3064 dogfood, 2026-05-09). The verb refuses.
+        // root_facets declaration is ambiguous and would silently false-
+        // satisfy the root (AB#3064 dogfood, 2026-05-09). The verb refuses.
         var (cmd, _) = CreateCommand();
 
         var (exit, output) = await CaptureConsoleAsync(() => cmd.SeedChildren(100, "[]"));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ErrorCount.ShouldBe(1);
-        result.Errors[0].Error.ShouldContain("apex_facets");
+        result.Errors[0].Error.ShouldContain("root_facets");
         result.PlannedTagSet.ShouldBeFalse();
     }
 
@@ -75,7 +75,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         // mutation (polyphony:planned, polyphony:facets=...) is durable
         // in ADO before the verb returns. Otherwise the staged change is
         // invisible to the next reader (e.g. `state_detector` in
-        // `apex-driver.yaml` checking `polyphony:planned`), which reads
+        // `polyphony.yaml` checking `polyphony:planned`), which reads
         // cache directly without syncing first. Sister-bug to AB#3126
         // (BranchCommands.NextImpl + close-scope).
         var (cmd, runner) = CreateCommand();
@@ -83,7 +83,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var planFile = WriteTempPlanFile(100, "---\napex_facets: [implementable]\n---\n");
+        var planFile = WriteTempPlanFile(100, "---\nroot_facets: [implementable]\n---\n");
         try
         {
             var (exit, _) = await CaptureConsoleAsync(
@@ -151,13 +151,13 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     public async Task SeedChildren_EmptyChildrenWithApexFacets_StampsTags()
     {
         // The legitimate "decomposable but indivisible" case: planner emits
-        // no children but declares apex_facets in plan front-matter.
+        // no children but declares root_facets in plan front-matter.
         var (cmd, runner) = CreateCommand();
         StubShowTreeNoChildren(runner, 100);
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var planFile = WriteTempPlanFile(100, "---\napex_facets: [implementable]\n---\n");
+        var planFile = WriteTempPlanFile(100, "---\nroot_facets: [implementable]\n---\n");
         try
         {
             var (exit, output) = await CaptureConsoleAsync(
@@ -366,7 +366,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var planFile = WriteTempPlanFile(100, "---\napex_facets: [implementable]\n---\n");
+        var planFile = WriteTempPlanFile(100, "---\nroot_facets: [implementable]\n---\n");
         try
         {
             var (_, output) = await CaptureConsoleAsync(
@@ -376,7 +376,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
             output.ShouldContain("\"seeded_count\"", Case.Sensitive);
             output.ShouldContain("\"planned_tag_set\"", Case.Sensitive);
             output.ShouldContain("\"planned_tag_already\"", Case.Sensitive);
-            output.ShouldContain("\"apex_facets\"", Case.Sensitive);
+            output.ShouldContain("\"root_facets\"", Case.Sensitive);
             output.ShouldContain("\"facets_tag_set\"", Case.Sensitive);
             output.ShouldNotContain("\"WorkItemId\"", Case.Sensitive);
             output.ShouldNotContain("\"PlannedTagSet\"", Case.Sensitive);
@@ -387,13 +387,13 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         }
     }
 
-    // ── apex_facets / plan front-matter (closed-loop PR #7) ─────────────
+    // ── root_facets / plan front-matter (closed-loop PR #7) ─────────────
 
     [Fact]
-    public async Task SeedChildren_ApexFacetsFrontMatter_NoChildren_StampsFacetsTag()
+    public async Task SeedChildren_RootFacetsFrontMatter_NoChildren_StampsFacetsTag()
     {
-        // Architect declares apex_facets in plan front-matter and emits no
-        // children — the apex is "indivisible". The seed-children verb must
+        // Architect declares root_facets in plan front-matter and emits no
+        // children — the root is "indivisible". The seed-children verb must
         // stamp polyphony:facets=... on the parent so downstream consumers
         // see the override.
         var (cmd, runner) = CreateCommand();
@@ -401,7 +401,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 100, tagsField: "");
         StubPatchOk(runner);
 
-        var planFile = WriteTempPlanFile(100, "---\napex_facets: [implementable]\n---\n# Plan for #100\n");
+        var planFile = WriteTempPlanFile(100, "---\nroot_facets: [implementable]\n---\n# Plan for #100\n");
         try
         {
             var (exit, output) = await CaptureConsoleAsync(
@@ -409,7 +409,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
             exit.ShouldBe(ExitCodes.Success);
             var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
             result.ChildCount.ShouldBe(0);
-            result.ApexFacets.ShouldBe(["implementable"]);
+            result.RootFacets.ShouldBe(["implementable"]);
             result.FacetsTagSet.ShouldBeTrue();
             result.PlannedTagSet.ShouldBeTrue();
 
@@ -425,12 +425,12 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_ApexFacetsFrontMatter_WithChildren_RoutesError()
+    public async Task SeedChildren_RootFacetsFrontMatter_WithChildren_RoutesError()
     {
-        // apex_facets and a non-empty children list say opposite things;
+        // root_facets and a non-empty children list say opposite things;
         // the verb must refuse rather than guess.
         var (cmd, _) = CreateCommand();
-        var planFile = WriteTempPlanFile(101, "---\napex_facets: [implementable]\n---\n");
+        var planFile = WriteTempPlanFile(101, "---\nroot_facets: [implementable]\n---\n");
         try
         {
             var children = """[{"child_id":"task-1","title":"X","type":"Task","description":"Body."}]""";
@@ -461,7 +461,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
         result.ErrorCount.ShouldBe(1);
-        result.Errors[0].Error.ShouldContain("apex_facets");
+        result.Errors[0].Error.ShouldContain("root_facets");
         result.PlannedTagSet.ShouldBeFalse();
     }
 
@@ -483,7 +483,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
                 Path.Combine(Path.GetTempPath(), $"polyphony-pr7-missing-{Guid.NewGuid():N}.md")));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
-        result.ApexFacets.ShouldBeEmpty();
+        result.RootFacets.ShouldBeEmpty();
         result.FacetsTagSet.ShouldBeFalse();
         result.PlannedTagSet.ShouldBeTrue();
         result.SeededCount.ShouldBe(1);
@@ -493,7 +493,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     public async Task SeedChildren_PlanFileMalformed_RoutesError()
     {
         var (cmd, _) = CreateCommand();
-        var planFile = WriteTempPlanFile(103, "---\napex_facets:\n  - bogus\n---\n");
+        var planFile = WriteTempPlanFile(103, "---\nroot_facets:\n  - bogus\n---\n");
         try
         {
             var (exit, output) = await CaptureConsoleAsync(
@@ -510,7 +510,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_ApexFacetsReplacesExistingFacetsTag()
+    public async Task SeedChildren_RootFacetsReplacesExistingFacetsTag()
     {
         // Re-plan with a different facet set should replace, not stack —
         // otherwise the parent ends up with two polyphony:facets=... tags
@@ -520,7 +520,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
         StubShowParent(runner, 104, tagsField: "polyphony:facets=plannable; other-tag");
         StubPatchOk(runner);
 
-        var planFile = WriteTempPlanFile(104, "---\napex_facets: [implementable]\n---\n");
+        var planFile = WriteTempPlanFile(104, "---\nroot_facets: [implementable]\n---\n");
         try
         {
             var (exit, output) = await CaptureConsoleAsync(
@@ -713,7 +713,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     [Fact]
     public async Task SeedChildren_SidecarEmpty_NoApexFacets_RoutesError_WithSidecarDiagnostic()
     {
-        // Sidecar exists but is empty array AND no apex_facets → refusal,
+        // Sidecar exists but is empty array AND no root_facets → refusal,
         // but the message must name the sidecar so the operator knows
         // what's actually missing (vs the no-source case).
         var (cmd, _) = CreateCommand();
@@ -738,7 +738,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     public async Task SeedChildren_NoCliNoSidecar_NoApexFacets_RoutesError_WithNoSourceDiagnostic()
     {
         // No CLI, no sidecar (childrenFile points nowhere), no
-        // apex_facets → refusal with the "no source" diagnostic. Differs
+        // root_facets → refusal with the "no source" diagnostic. Differs
         // from the empty-sidecar case in the wording so operators can tell
         // them apart.
         var (cmd, _) = CreateCommand();
@@ -755,10 +755,10 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     [Fact]
     public async Task SeedChildren_SidecarChildren_PlusApexFacets_MutuallyExclusive()
     {
-        // Same mutual-exclusion rule as CLI children + apex_facets — the
+        // Same mutual-exclusion rule as CLI children + root_facets — the
         // sidecar shouldn't be a back door around it.
         var (cmd, _) = CreateCommand();
-        var planFile = WriteTempPlanFile(206, "---\napex_facets: [implementable]\n---\n");
+        var planFile = WriteTempPlanFile(206, "---\nroot_facets: [implementable]\n---\n");
         var sidecar = WriteTempChildrenSidecar(
             """[{"child_id":"x","title":"X","type":"Task"}]""");
         try
@@ -815,8 +815,8 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     // pull/checkout post-merge per Rev 4.2). On re-entry, the seeder must
     // be able to recover the children list straight from the ref. Tests
     // pin the resolution-order precedence (CLI > sidecar > from-ref >
-    // apex_facets) and the hard-vs-soft failure semantics:
-    //   - file-not-at-ref → soft (fall through to apex_facets / refusal)
+    // root_facets) and the hard-vs-soft failure semantics:
+    //   - file-not-at-ref → soft (fall through to root_facets / refusal)
     //   - bad-ref / git-error → hard (ConfigError envelope)
     //   - present-but-malformed → hard (ConfigError envelope)
     //   - present-but-not-array → hard (ConfigError envelope)
@@ -893,17 +893,17 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     {
         // GitClient.ShowFileAtRefAsync returns null when the file does not
         // exist at the ref (the canonical "no sidecar yet" case). The verb
-        // must fall through to apex_facets — soft, not a hard error.
+        // must fall through to root_facets — soft, not a hard error.
         var (cmd, runner) = CreateCommand();
         StubGitFetchOk(runner, "origin", "main");
         runner.WhenExact("git", new[] { "show", "origin/main:plans/plan-302.children.json" },
             new ProcessResult(128, "",
                 "fatal: path 'plans/plan-302.children.json' does not exist in 'origin/main'"));
 
-        var planFile = WriteTempPlanFile(302, "---\napex_facets: [implementable]\n---\n");
+        var planFile = WriteTempPlanFile(302, "---\nroot_facets: [implementable]\n---\n");
         try
         {
-            // Twig stubs for the indivisible-apex path: parent tree fetch
+            // Twig stubs for the indivisible-root path: parent tree fetch
             // happens after facets resolution succeeds.
             StubShowTreeNoChildren(runner, 302);
             StubShowParent(runner, 302, tagsField: "");
@@ -914,7 +914,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
 
             exit.ShouldBe(ExitCodes.Success);
             var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PlanSeedChildrenResult)!;
-            result.ApexFacets.ShouldContain("implementable");
+            result.RootFacets.ShouldContain("implementable");
             result.FacetsTagSet.ShouldBeTrue();
         }
         finally

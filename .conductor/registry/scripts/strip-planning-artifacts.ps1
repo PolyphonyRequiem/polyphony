@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-    Strip polyphony's planning artifacts from the apex feature branch
+    Strip polyphony's planning artifacts from the root feature branch
     before the feature PR is opened against the target branch.
 
 .DESCRIPTION
-    Companion to .conductor/registry/workflows/apex-driver.yaml.
+    Companion to .conductor/registry/workflows/polyphony.yaml.
 
     The polyphony planning lifecycle writes two kinds of working files
     under `plans/` on each plannable item's plan branch (which all
-    eventually land on the apex `feature/<root>` integration trunk via
-    the plan PR cascade):
+    eventually land on the root `feature/<root>` integration trunk via
+    the plan PR restack):
 
       * `plans/plan-<id>.children.json` — unconditionally vestigial; only
         consumed at plan-execution time by `polyphony plan seed-children`.
@@ -24,7 +24,7 @@
     are PRESERVED — the glob is intentionally conservative
     (`plan-*.md` / `plan-*.children.json`).
 
-    Idempotent: if no matching files exist (e.g. fast-pathed apex with
+    Idempotent: if no matching files exist (e.g. fast-pathed root with
     no planning artifacts, or a remediation re-entry after the strip
     already ran), emits `already_clean: true` and skips the commit/push.
 
@@ -47,7 +47,7 @@
 
     Error codes:
       git_unavailable       — git not on PATH.
-      branch_mismatch       — current branch is not the apex feature branch
+      branch_mismatch       — current branch is not the root feature branch
                               and `git checkout` to it failed.
       rm_failed             — `git rm` of the matched files failed.
       commit_failed         — `git commit` failed.
@@ -57,21 +57,21 @@
                               operator can recover by hand).
       unexpected_error      — uncaught exception in the script body.
 
-.PARAMETER ApexId
-    The apex root work item id. Used to derive the feature branch name
+.PARAMETER RootId
+    The root root work item id. Used to derive the feature branch name
     when -FeatureBranch is omitted, and surfaced in the envelope for
-    correlation with apex-driver events.
+    correlation with polyphony events.
 
 .PARAMETER FeatureBranch
-    Override for the apex feature branch. Defaults to `feature/<ApexId>`
+    Override for the root feature branch. Defaults to `feature/<RootId>`
     per the branch-model spec.
 
 .NOTES
-    Companion to .conductor/registry/workflows/apex-driver.yaml. Inserted
+    Companion to .conductor/registry/workflows/polyphony.yaml. Inserted
     between `promote_feature_to_main` (the script that detects the
-    feature branch is ahead of main) and `promote_feature_pr_dispatch`
+    feature branch is ahead of main) and `promote_feature_pr`
     (the sub-workflow that actually opens the feature PR). Runs in the
-    apex-driver's cwd, which is the feature-branch worktree spawned by
+    polyphony's cwd, which is the feature-branch worktree spawned by
     the launcher.
 
     The plan-retention decision is hardcoded to "strip all polyphony
@@ -83,7 +83,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [int]$ApexId,
+    [int]$RootId,
 
     [string]$FeatureBranch = ''
 )
@@ -91,7 +91,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrWhiteSpace($FeatureBranch)) {
-    $FeatureBranch = "feature/$ApexId"
+    $FeatureBranch = "feature/$RootId"
 }
 
 $envelope = [ordered]@{
@@ -122,7 +122,7 @@ try {
         exit 0
     }
 
-    # Defensive: make sure we're on the feature branch. The apex-driver's
+    # Defensive: make sure we're on the feature branch. The polyphony's
     # cwd should already be the feature-branch worktree, but a resume or
     # an operator-initiated detached-HEAD state could leave us elsewhere.
     # If we're already on the right branch, this is a fast no-op; if

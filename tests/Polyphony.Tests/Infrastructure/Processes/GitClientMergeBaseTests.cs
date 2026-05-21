@@ -7,7 +7,7 @@ namespace Polyphony.Tests.Infrastructure.Processes;
 /// <summary>
 /// Unit tests for <see cref="GitClient.MergeBaseAsync"/> and
 /// <see cref="GitClient.IsAncestorAsync"/>. Together these underpin the
-/// cascade-remedy verb's "three-fact freshness" check.
+/// restack-remedy verb's "three-fact freshness" check.
 /// </summary>
 public sealed class GitClientMergeBaseTests
 {

@@ -34,12 +34,12 @@ jobs:
         working-directory: polyphony
         # Fast loop excludes Slow (forks pwsh / polyphony.exe) and Integration
         # (e2e harness scenarios). See #286 / #287. Run the full suite locally
-        # with `dotnet test --no-build` (or via the workflow_dispatch job).
+        # with `dotnet test --no-build` (or via the workflow job).
         run: dotnet test --no-build --filter "Category!=Slow&Category!=Integration"
 
       - name: Install Pester
         # Sequenced before all lint steps so a lint failure in an earlier
-        # step (which runs `if: always()`) cannot cascade by skipping the
+        # step (which runs `if: always()`) cannot restack by skipping the
         # install. Previously this lived after the lint block and a single
         # type-agnostic violation cratered the whole job.
         #
@@ -86,7 +86,7 @@ jobs:
         # Catches the false-satisfied bug class first surfaced by AB#3064:
         # an architect emits a plan whose body lists child work items under
         # a `## Child(ren) …` heading but whose YAML front-matter declares
-        # neither `apex_facets:` (explicit-indivisibility marker) nor a
+        # neither `root_facets:` (explicit-indivisibility marker) nor a
         # structured `children:` block. Defense in depth alongside PR #225
         # (`polyphony plan seed-children`'s runtime refusal); this lint
         # catches the same shape at PR-author time on the plan PR diff.
@@ -144,16 +144,16 @@ jobs:
         working-directory: polyphony
         run: pwsh -NoProfile -File tests/lint-bare-cross-branch-refs.ps1 -Format github
 
-      - name: Lint (primary_completer trust chain — AB#3214)
-        # Encodes the AB#3214 contract: primary_completer in
+      - name: Lint (root_completer trust chain — AB#3214)
+        # Encodes the AB#3214 contract: root_completer in
         # implement-merge-group.yaml must be reachable ONLY via the
         # squash-coverage trust chain (assert_impl_pr_coverage →
-        # delete_impl_branch → primary_completer, with
+        # delete_impl_branch → root_completer, with
         # squash_coverage_mismatch_gate's force_accept option as the
         # only operator-override path). Together with PR #401 (AB#3210)
         # and PR #402 (AB#3211), this makes the AB#3175 premature-Done
         # green-wash structurally impossible. If anyone adds a new
-        # predecessor to primary_completer or delete_impl_branch that
+        # predecessor to root_completer or delete_impl_branch that
         # bypasses the coverage assertion, this lint fails.
         if: always()
         shell: pwsh
@@ -359,16 +359,16 @@ jobs:
           $result = Invoke-Pester -Path .conductor/registry/tests/e2e-actionable.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
 
-      - name: E2E (apex-driver)
+      - name: E2E (polyphony)
         # Phase 7 capstone — graph-walk + branch-on-router +
-        # router-script-to-YAML contract tests for the apex-driver
-        # tree-walker (apex-driver.yaml + apex-wave-dispatch.yaml +
-        # apex-item-dispatch.yaml). Catches drift between
+        # router-script-to-YAML contract tests for the polyphony
+        # tree-walker (polyphony.yaml + root-batch-dispatch.yaml +
+        # root-item-dispatch.yaml). Catches drift between
         # lifecycle-router.ps1's emitted route values and the YAML's
         # `when:` clauses, and pins the bubble-up table across all
         # three workflows. Reuses the powershell-yaml install above.
         shell: pwsh
         working-directory: polyphony
         run: |
-          $result = Invoke-Pester -Path .conductor/registry/tests/e2e-apex-driver.Tests.ps1 -Output Detailed -PassThru
+          $result = Invoke-Pester -Path .conductor/registry/tests/e2e-polyphony.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }

@@ -8,8 +8,8 @@
     3. Required outputs: root_id, decision, auto_policy_applied
     4. Required nodes (gate + auto + four terminals):
        load_policy, prompt_user,
-       terminal_use_active_item_prompted, terminal_abort_prompted,
-       terminal_use_active_item_auto, terminal_abort_auto
+       use_active_item_prompted, abort_prompted,
+       use_active_item_auto, abort_auto
     5. `polyphony policy load` is the loader verb (NOT a new fallback verb)
     6. The four canonical decision/auto_policy_applied combinations
        are emitted by exactly one terminal each
@@ -86,10 +86,10 @@ foreach ($output in $requiredOutputs) {
 $requiredNodes = @(
     'load_policy',
     'prompt_user',
-    'terminal_use_active_item_prompted',
-    'terminal_abort_prompted',
-    'terminal_use_active_item_auto',
-    'terminal_abort_auto'
+    'use_active_item_prompted',
+    'abort_prompted',
+    'use_active_item_auto',
+    'abort_auto'
 )
 foreach ($node in $requiredNodes) {
     if ($content -notmatch "name:\s*$node\s") {
@@ -170,10 +170,10 @@ if ($content -notmatch 'min_polyphony_version:\s*"[0-9]') {
 # Catches a regression where someone refactors a terminal to emit a
 # `decision` value that the workflow `output:` block doesn't recognize.
 $terminalDecisions = @(
-    @{ Node = 'terminal_use_active_item_prompted'; ExpectedDecision = 'use_active_item';  ExpectedAuto = '$false' },
-    @{ Node = 'terminal_abort_prompted';            ExpectedDecision = 'abort';             ExpectedAuto = '$false' },
-    @{ Node = 'terminal_use_active_item_auto';      ExpectedDecision = 'auto_resolved';     ExpectedAuto = '$true'  },
-    @{ Node = 'terminal_abort_auto';                ExpectedDecision = 'abort';             ExpectedAuto = '$true'  }
+    @{ Node = 'use_active_item_prompted'; ExpectedDecision = 'use_active_item';  ExpectedAuto = '$false' },
+    @{ Node = 'abort_prompted';            ExpectedDecision = 'abort';             ExpectedAuto = '$false' },
+    @{ Node = 'use_active_item_auto';      ExpectedDecision = 'auto_resolved';     ExpectedAuto = '$true'  },
+    @{ Node = 'abort_auto';                ExpectedDecision = 'abort';             ExpectedAuto = '$true'  }
 )
 function Get-NodeBlock {
     param([string]$NodeName, [string[]]$Lines)

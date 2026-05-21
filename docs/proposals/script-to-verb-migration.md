@@ -30,7 +30,7 @@ Move deterministic workflow-step logic out of `.conductor/registry/scripts/` and
 
 ## Audit
 
-Scope: `.conductor/registry/scripts/*.ps1` only. Verified out-of-scope: searches of `.conductor/registry/workflows/*.yaml` show executable PowerShell paths resolve to `{{ workflow.dir }}/../scripts/*.ps1`, i.e. the registry script directory, not repo-root `scripts/`. Repo-root `scripts/*.ps1` appears only in launcher/operator references (for example `reset-apex.yaml` mentions `Invoke-PolyphonySdlc.ps1` in prose).
+Scope: `.conductor/registry/scripts/*.ps1` only. Verified out-of-scope: searches of `.conductor/registry/workflows/*.yaml` show executable PowerShell paths resolve to `{{ workflow.dir }}/../scripts/*.ps1`, i.e. the registry script directory, not repo-root `scripts/`. Repo-root `scripts/*.ps1` appears only in launcher/operator references (for example `reset-root.yaml` mentions `Invoke-PolyphonySdlc.ps1` in prose).
 
 ### Catalog
 
@@ -38,18 +38,18 @@ Caller counts are unique workflow files containing an executable reference to th
 
 | Script | Path | Purpose | Callers | LOC | External deps |
 |---|---|---|---|---:|---|
-| `abort-run.ps1` | `.conductor/registry/scripts/abort-run.ps1` | Abort the whole run by POSTing conductor `/api/stop`. | 7 — `ado-pr.yaml`, `cascade-remedy.yaml`, `feature-pr.yaml`, `github-pr.yaml`, `implement-merge-group.yaml`, `plan-level.yaml`, `remedy-stale-descendant.yaml` | 80 | conductor HTTP API |
+| `abort-run.ps1` | `.conductor/registry/scripts/abort-run.ps1` | Abort the whole run by POSTing conductor `/api/stop`. | 7 — `ado-pr.yaml`, `restack-remedy.yaml`, `feature-pr.yaml`, `github-pr.yaml`, `implement-merge-group.yaml`, `plan-level.yaml`, `remedy-stale-descendant.yaml` | 80 | conductor HTTP API |
 | `integrate-target-drift.ps1` | `.conductor/registry/scripts/integrate-target-drift.ps1` | Integrate target-branch drift into the feature branch before the feature PR opens. | 1 — `feature-pr.yaml` | 313 | git |
-| `lifecycle-router.ps1` | `.conductor/registry/scripts/lifecycle-router.ps1` | Classify a work item into the next lifecycle sub-workflow for the root dispatch loop. | 1 — `apex-item-dispatch.yaml` | 337 | polyphony |
-| `manifest-bootstrap.ps1` | `.conductor/registry/scripts/manifest-bootstrap.ps1` | Create or validate the per-run manifest for a root-scoped run. | 1 — `apex-driver.yaml` | 235 | polyphony |
+| `lifecycle-router.ps1` | `.conductor/registry/scripts/lifecycle-router.ps1` | Classify a work item into the next lifecycle sub-workflow for the root dispatch loop. | 1 — `root-item-dispatch.yaml` | 337 | polyphony |
+| `manifest-bootstrap.ps1` | `.conductor/registry/scripts/manifest-bootstrap.ps1` | Create or validate the per-run manifest for a root-scoped run. | 1 — `polyphony.yaml` | 235 | polyphony |
 | `resolve-pr-policy.ps1` | `.conductor/registry/scripts/resolve-pr-policy.ps1` | Resolve PR pre-merge policy for the PR router. | 2 — `ado-pr.yaml`, `github-pr.yaml` | 126 | polyphony |
 | `resolve-research-policy.ps1` | `.conductor/registry/scripts/resolve-research-policy.ps1` | Resolve research escalation policy for the planning research leg. | 1 — `plan-level.yaml` | 180 | polyphony |
 | `resolve-unattended-cap-mode.ps1` | `.conductor/registry/scripts/resolve-unattended-cap-mode.ps1` | Resolve unattended cap policy for cap-hit gates. | 5 — `ado-pr.yaml`, `feature-pr.yaml`, `github-pr.yaml`, `implement-merge-group.yaml`, `plan-level.yaml` | 110 | polyphony |
 | `route-actionable-executor.ps1` | `.conductor/registry/scripts/route-actionable-executor.ps1` | Route actionable work between the Polyphony executor leg and the human executor leg. | 1 — `actionable.yaml` | 59 | none |
-| `strip-planning-artifacts.ps1` | `.conductor/registry/scripts/strip-planning-artifacts.ps1` | Remove Polyphony planning artifacts from the feature branch before the feature PR opens. | 1 — `apex-driver.yaml` | 232 | git |
-| `wave-dispatch-guard.ps1` | `.conductor/registry/scripts/wave-dispatch-guard.ps1` | Track per-root batch failures so later batches short-circuit. | 2 — `apex-driver.yaml`, `apex-wave-dispatch.yaml` | 158 | git, filesystem |
-| `wave-integrator.ps1` | `.conductor/registry/scripts/wave-integrator.ps1` | Merge completed child branches into the feature branch in dependency order. | 1 — `apex-wave-dispatch.yaml` | 265 | polyphony, git |
-| `worktree-manager.ps1` | `.conductor/registry/scripts/worktree-manager.ps1` | Spawn or tear down per-item git worktrees for parallel dispatch. | 1 — `apex-item-dispatch.yaml` | 243 | git |
+| `strip-planning-artifacts.ps1` | `.conductor/registry/scripts/strip-planning-artifacts.ps1` | Remove Polyphony planning artifacts from the feature branch before the feature PR opens. | 1 — `polyphony.yaml` | 232 | git |
+| `batch-dispatch-guard.ps1` | `.conductor/registry/scripts/batch-dispatch-guard.ps1` | Track per-root batch failures so later batches short-circuit. | 2 — `polyphony.yaml`, `root-batch-dispatch.yaml` | 158 | git, filesystem |
+| `batch-integrator.ps1` | `.conductor/registry/scripts/batch-integrator.ps1` | Merge completed child branches into the feature branch in dependency order. | 1 — `root-batch-dispatch.yaml` | 265 | polyphony, git |
+| `worktree-manager.ps1` | `.conductor/registry/scripts/worktree-manager.ps1` | Spawn or tear down per-item git worktrees for parallel dispatch. | 1 — `root-item-dispatch.yaml` | 243 | git |
 
 ### Categorization
 
@@ -64,8 +64,8 @@ Caller counts are unique workflow files containing an executable reference to th
 | `resolve-unattended-cap-mode.ps1` | **WRAP-A-VERB** | It makes one `polyphony policy load` call and extracts a single policy field into a workflow-friendly envelope. |
 | `route-actionable-executor.ps1` | **COMPOSE-VERBS** | It is a pure deterministic router whose only reason to exist is that Polyphony lacks a typed workflow-step verb for executor routing. |
 | `strip-planning-artifacts.ps1` | **COMPOSE-VERBS** | It discovers, deletes, commits, and pushes Polyphony-owned plan artifacts; that retention policy is business logic, not a keepable git shim. |
-| `wave-dispatch-guard.ps1` | **COMPOSE-VERBS** | It stores Polyphony-owned batch-failure sentinel state under the git common dir, so the control-plane state lives in the wrong layer today. |
-| `wave-integrator.ps1` | **COMPOSE-VERBS** | It combines `polyphony edges check` with ordered `git merge` execution and per-branch conflict aggregation, which is exactly the deterministic orchestration the CLI should own. |
+| `batch-dispatch-guard.ps1` | **COMPOSE-VERBS** | It stores Polyphony-owned batch-failure sentinel state under the git common dir, so the control-plane state lives in the wrong layer today. |
+| `batch-integrator.ps1` | **COMPOSE-VERBS** | It combines `polyphony edges check` with ordered `git merge` execution and per-branch conflict aggregation, which is exactly the deterministic orchestration the CLI should own. |
 | `worktree-manager.ps1` | **COMPOSE-VERBS** | Even though the body is mostly `git worktree` calls, it enforces Polyphony worktree lifecycle invariants such as idempotent attach/reuse and branch-in-use guards. |
 
 ### Ambiguous cases
@@ -75,7 +75,7 @@ These files have characteristics of more than one bucket, but the migration reco
 - **`worktree-manager.ps1`** — looks like a SHELL-OUT because it is git-heavy, but the idempotent spawn/attach/teardown rules are Polyphony branch-model logic, so it is COMPOSE-VERBS.
 - **`integrate-target-drift.ps1`** — looks like a git-only helper, but the lease/conflict/rebase policy is part of Polyphony's PR workflow contract and should not remain in script-land.
 - **`manifest-bootstrap.ps1`** — almost a wrapper, but it really composes two verbs plus caller-side validation into a new operation, so it is COMPOSE-VERBS, not WRAP-A-VERB.
-- **`wave-dispatch-guard.ps1`** — could disappear entirely if AB#3254/AB#3257 absorbs the sentinel concept, but until then the state it owns is internal control-plane state and should not remain in PowerShell.
+- **`batch-dispatch-guard.ps1`** — could disappear entirely if AB#3254/AB#3257 absorbs the sentinel concept, but until then the state it owns is internal control-plane state and should not remain in PowerShell.
 
 ---
 
@@ -141,8 +141,8 @@ These files need **new typed verbs**, not better wrappers. The compact inventory
 | `worktree-manager.ps1` | `branch worktree --operation <spawn|teardown> --work-item <id> --base-branch <name>` | `plan = worktrees.Plan(...); apply(plan)` | `WorktreeOperationResult` |
 | `integrate-target-drift.ps1` | `pr integrate-target-drift --feature-branch <name> --target-branch <name>` | `outcome = prService.IntegrateTargetDrift(...); Emit(TargetDriftIntegrationResult.From(outcome))` | `TargetDriftIntegrationResult` |
 | `strip-planning-artifacts.ps1` | `plan strip-artifacts --root <id> --feature-branch <name>` | `files = planArtifacts.Find(...); RemoveCommitPush(files)` | `PlanningArtifactsStripResult` |
-| `wave-dispatch-guard.ps1` | `workflow-step batch-failure-guard --operation <clear|check|record> --root <id> --batch-index <n>` | `batchFailureStore.Execute(operation, root, batchIndex, reason)` | `BatchFailureGuardResult` |
-| `wave-integrator.ps1` | `branch integrate-batch --root <id> --batch-index <n> --work-items <csv>` | `topo = edges.TopologicalOrder(root); branchIntegrator.IntegrateBatch(...)` | `BatchIntegrationResult`; pin `edges_check.topological_order` |
+| `batch-dispatch-guard.ps1` | `workflow-step batch-failure-guard --operation <clear|check|record> --root <id> --batch-index <n>` | `batchFailureStore.Execute(operation, root, batchIndex, reason)` | `BatchFailureGuardResult` |
+| `batch-integrator.ps1` | `branch integrate-batch --root <id> --batch-index <n> --work-items <csv>` | `topo = edges.TopologicalOrder(root); branchIntegrator.IntegrateBatch(...)` | `BatchIntegrationResult`; pin `edges_check.topological_order` |
 
 Ship these as **one script-at-a-time PRs**: add verb, add result model to `PolyphonyJsonContext`, extend `JsonOutputContractTests`, retarget the workflow, bump `min_polyphony_version`, delete the script.
 
@@ -176,7 +176,7 @@ Ship these as **one script-at-a-time PRs**: add verb, add result model to `Polyp
 - **(b) Hard lint once the replacements exist.** *Pro:* lets migration proceed without blocking itself, then prevents regression.
 - **(c) Immediate hard fail.** *Con:* blocks the repo before the typed replacements land.
 
-**Recommendation: (b).** After the first delete/migrate wave, add a dedicated lint that:
+**Recommendation: (b).** After the first delete/migrate batch, add a dedicated lint that:
 
 - Requires a header tag such as `# polyphony-script-category: SHELL-OUT` on every surviving registry script.
 - Fails any new registry script whose category is not `SHELL-OUT`.
@@ -193,7 +193,7 @@ Ship these as **one script-at-a-time PRs**: add verb, add result model to `Polyp
 | **2** | AB#3255 contract slices CT1 + CT2 | `polyphony serialize` exists; `policy load` / `policy resolve` emit workflow-ready typed projections | Low — additive |
 | **3** | Delete WRAP-A-VERB scripts | `resolve-unattended-cap-mode.ps1`, `resolve-pr-policy.ps1`, and `resolve-research-policy.ps1` are gone; workflows route directly on typed verb output | Low |
 | **4** | Migrate low-risk COMPOSE-VERBS | Typed replacements land for `route-actionable-executor.ps1`, `manifest-bootstrap.ps1`, and `lifecycle-router.ps1`; scripts deleted in the same PRs | Medium |
-| **5** | Migrate git-heavy COMPOSE-VERBS | Typed replacements land for `worktree-manager.ps1`, `integrate-target-drift.ps1`, `strip-planning-artifacts.ps1`, `wave-dispatch-guard.ps1`, and `wave-integrator.ps1` | Medium-High |
+| **5** | Migrate git-heavy COMPOSE-VERBS | Typed replacements land for `worktree-manager.ps1`, `integrate-target-drift.ps1`, `strip-planning-artifacts.ps1`, `batch-dispatch-guard.ps1`, and `batch-integrator.ps1` | Medium-High |
 | **6** | Tighten remaining SHELL-OUT scripts + add lint | `abort-run.ps1` emits via `polyphony serialize`; script-category lint prevents new non-SHELL-OUT helpers | Medium |
 | **7** | Cleanup + documentation convergence | Registry script count is down to true keepers only; CLI reference and workflow docs point at verbs, not deleted scripts; `min_polyphony_version` floors are correct everywhere | Low |
 
@@ -204,7 +204,7 @@ Phases 2 and 3 are the unlock for wrapper deletion. Phases 4 and 5 should be int
 ## Open questions
 
 1. **Surface naming.** Is the hybrid surface (`workflow-step` for pure routers/guards, noun-specific verbs for durable operations) the right split, or do you want to forbid `workflow-step` entirely and force everything under existing nouns?
-2. **`wave-dispatch-guard.ps1` timing.** Should we migrate it directly in phase 5, or hold it behind AB#3254 / AB#3257 in case the action journal or failure-model work deletes the sentinel concept first?
+2. **`batch-dispatch-guard.ps1` timing.** Should we migrate it directly in phase 5, or hold it behind AB#3254 / AB#3257 in case the action journal or failure-model work deletes the sentinel concept first?
 3. **`abort-run.ps1` end-state.** Is one long-lived SHELL-OUT acceptable, or do you want the stronger “zero registry scripts” end-state with a future typed `polyphony run abort` even though conductor is external?
 4. **Lint tag format.** Is a simple header pragma (`# polyphony-script-category: SHELL-OUT`) good enough, or do you want a stronger manifest/metadata file for script taxonomy?
 5. **Batch integration noun.** `branch integrate-batch` is semantically decent, but if you want all root-aggregation verbs under a different noun, this is the place to decide it before phase 5 starts shipping verbs.
@@ -222,5 +222,5 @@ Phases 2 and 3 are the unlock for wrapper deletion. Phases 4 and 5 should be int
 
 ### A2 — Repo-root `scripts/` verification
 
-Repo-root `scripts/*.ps1` is out-of-scope for AB#3258. The workflow registry executes `.conductor/registry/scripts/*.ps1`; repo-root `scripts/` is launcher/bootstrap/operator surface and appears in registry YAML only in prose or comments (for example the `reset-apex.yaml` reference to `Invoke-PolyphonySdlc.ps1`).
+Repo-root `scripts/*.ps1` is out-of-scope for AB#3258. The workflow registry executes `.conductor/registry/scripts/*.ps1`; repo-root `scripts/` is launcher/bootstrap/operator surface and appears in registry YAML only in prose or comments (for example the `reset-root.yaml` reference to `Invoke-PolyphonySdlc.ps1`).
 

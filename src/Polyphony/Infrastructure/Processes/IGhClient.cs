@@ -212,7 +212,7 @@ public interface IGhClient
     /// on large plan-PR bodies. Subject to the same retry-on-timeout policy
     /// as every other <c>gh</c> call (<see cref="GhClientPolicy"/>).
     ///
-    /// <para>Used by the P9 cascade remedy
+    /// <para>Used by the P9 restack remedy
     /// (<c>polyphony plan rebase-stale-descendant</c>) to rewrite the
     /// <c>ancestor_plan_generations</c> front-matter snapshot after a
     /// successful auto-rebase. Body-edit failure on that path is a
@@ -240,7 +240,7 @@ public interface IGhClient
     /// <see cref="EditPullRequestBodyAsync"/>). Subject to the standard
     /// retry-on-timeout policy.
     ///
-    /// <para>Used for non-fatal cascade-remedy annotations (e.g. "🔄
+    /// <para>Used for non-fatal restack-remedy annotations (e.g. "🔄
     /// Auto-rebased onto <c>{parent}</c> after ancestor plan_generation
     /// bumped"). Comment-post failure must not poison the rebased outcome,
     /// so this method <b>returns false on any failure</b> (non-zero exit,
@@ -264,7 +264,7 @@ public interface IGhClient
     /// an open pull request and optionally drop a closing comment in the same call.
     /// Subject to the standard retry-on-timeout policy.
     ///
-    /// <para>Used by the P9 cascade-remedy <c>recreate</c> path
+    /// <para>Used by the P9 restack-remedy <c>recreate</c> path
     /// (<c>polyphony plan recreate-stale-descendant</c>) to close a stale plan PR
     /// before a fresh PR is opened from the new ancestor tip. Close failure is a
     /// recoverable, routable outcome — not a fatal exception — so this method

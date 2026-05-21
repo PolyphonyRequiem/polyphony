@@ -13,7 +13,7 @@ namespace Polyphony.Tests.Commands;
 
 /// <summary>
 /// Smoke tests for <c>polyphony pr open-evidence-ado</c>. Verifies orphan
-/// (apexId == workItem) vs sub-item branch derivation and routing-style envelopes.
+/// (rootId == workItem) vs sub-item branch derivation and routing-style envelopes.
 /// </summary>
 public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
 {
@@ -92,10 +92,10 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
     {
         var (cmd, _, _) = CreateCommand();
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidenceAdo(Org, Project, Repo, workItem: 100, apexId: -1));
+            () => cmd.OpenEvidenceAdo(Org, Project, Repo, workItem: 100, rootId: -1));
         var result = Parse(output);
         result.ErrorCode.ShouldBe("invalid_argument");
-        result.Error!.ShouldContain("apexId");
+        result.Error!.ShouldContain("rootId");
     }
 
     [Fact]
@@ -121,7 +121,7 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
     }
 
     [Fact]
-    public async Task OpenEvidenceAdo_OrphanApex_HeadIsEvidenceBareIdAndBaseIsMain()
+    public async Task OpenEvidenceAdo_OrphanRoot_HeadIsEvidenceBareIdAndBaseIsMain()
     {
         var (cmd, runner, ado) = CreateCommand();
         StubBranchesExist(runner, "evidence/100", "main");
@@ -153,7 +153,7 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
             targetRef: "refs/heads/feature/100");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidenceAdo(Org, Project, Repo, workItem: 200, apexId: 100));
+            () => cmd.OpenEvidenceAdo(Org, Project, Repo, workItem: 200, rootId: 100));
         var result = Parse(output);
         result.ErrorCode.ShouldBeEmpty();
         result.HeadBranch.ShouldBe("evidence/100-200");

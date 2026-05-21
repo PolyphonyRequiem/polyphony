@@ -7,9 +7,9 @@ using Polyphony.Tagging;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony reset state --apex N [--execute]</c> — stamps the
-/// per-apex run-watermark tag (<c>polyphony:run-started-at=&lt;ISO-8601&gt;</c>)
-/// on the apex root work item.
+/// <c>polyphony reset state --root N [--execute]</c> — stamps the
+/// per-root run-watermark tag (<c>polyphony:run-started-at=&lt;ISO-8601&gt;</c>)
+/// on the root root work item.
 ///
 /// <para>This is the ONE writer of the watermark. The read side
 /// (<see cref="Sdlc.Observers.PlanObserver"/>,
@@ -20,7 +20,7 @@ namespace Polyphony.Commands;
 /// <para><b>Semantics</b>:
 /// <list type="bullet">
 ///   <item>Removes <b>every</b> existing <c>polyphony:run-started-at=*</c>
-///         tag from the apex root before adding a fresh one (defense
+///         tag from the root root before adding a fresh one (defense
 ///         against duplicate tags from a prior reset bug or operator
 ///         hand-edit). Duplicate count is reported via
 ///         <c>RemovedDuplicateTags</c>.</item>
@@ -46,20 +46,20 @@ namespace Polyphony.Commands;
 public sealed partial class ResetCommands
 {
     /// <summary>
-    /// Stamp the run-watermark tag on the apex root.
+    /// Stamp the run-watermark tag on the root root.
     /// </summary>
-    /// <param name="apex">Apex root work-item ID — the work item that carries the watermark.</param>
+    /// <param name="root">Root root work-item ID — the work item that carries the watermark.</param>
     /// <param name="execute">Pass to perform the write. Without this flag, the verb runs in dry-run mode and emits the would-be outcome without mutating ADO.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("state")]
     [VerbResult(typeof(ResetStateResult))]
     public async Task<int> ResetState(
-        int apex = RequiredInput.MissingInt,
+        int root = RequiredInput.MissingInt,
         bool execute = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("reset state",
-            ("--apex", apex == RequiredInput.MissingInt)) is { } halt)
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
         ResetStateResult result;
@@ -67,7 +67,7 @@ public sealed partial class ResetCommands
         {
             await _twig.SyncAsync(ct).ConfigureAwait(false);
 
-            var currentTags = await ReadApexTagsAsync(apex, ct).ConfigureAwait(false);
+            var currentTags = await ReadApexTagsAsync(root, ct).ConfigureAwait(false);
             var previousWatermark = PolyphonyTags.ReadRunStartedAt(currentTags);
             var previousWatermarkText = previousWatermark is { } pw
                 ? FormatWatermark(pw)
@@ -90,7 +90,7 @@ public sealed partial class ResetCommands
             {
                 result = new ResetStateResult
                 {
-                    Apex = apex,
+                    Root = root,
                     Success = true,
                     DryRun = true,
                     PreviousWatermark = previousWatermarkText,
@@ -104,28 +104,28 @@ public sealed partial class ResetCommands
             var stripped = duplicates.Aggregate(currentTags, (acc, t) => acc.Remove(t));
             var updated = stripped.Add(newTag);
 
-            await _twig.PatchFieldsAsync(apex,
+            await _twig.PatchFieldsAsync(root,
                 new Dictionary<string, string> { ["System.Tags"] = updated.Format() },
                 ct).ConfigureAwait(false);
             await _twig.SyncAsync(ct).ConfigureAwait(false);
 
             // Read-after-write: assert the watermark made it into the
             // cache. AB#3189/3191 pattern from mark-impl-merged.
-            var verifyTags = await ReadApexTagsAsync(apex, ct).ConfigureAwait(false);
+            var verifyTags = await ReadApexTagsAsync(root, ct).ConfigureAwait(false);
             var verifyWatermark = PolyphonyTags.ReadRunStartedAt(verifyTags);
 
             if (verifyWatermark is null)
             {
                 result = new ResetStateResult
                 {
-                    Apex = apex,
+                    Root = root,
                     Success = false,
                     DryRun = false,
                     PreviousWatermark = previousWatermarkText,
                     NewWatermark = newWatermarkText,
                     RemovedDuplicateTags = duplicates.Count,
                     Error =
-                        $"Watermark assertion failed for #{apex} after reset state: " +
+                        $"Watermark assertion failed for #{root} after reset state: " +
                         $"twig patch + sync exited 0 but no polyphony:run-started-at tag is " +
                         $"present in the cache — likely ADO eventual-consistency race or " +
                         $"twig push regression.",
@@ -142,14 +142,14 @@ public sealed partial class ResetCommands
             {
                 result = new ResetStateResult
                 {
-                    Apex = apex,
+                    Root = root,
                     Success = false,
                     DryRun = false,
                     PreviousWatermark = previousWatermarkText,
                     NewWatermark = newWatermarkText,
                     RemovedDuplicateTags = duplicates.Count,
                     Error =
-                        $"Watermark stamp drifted by {drift.TotalSeconds:F0}s for #{apex} " +
+                        $"Watermark stamp drifted by {drift.TotalSeconds:F0}s for #{root} " +
                         $"after reset state: expected ~{newWatermarkText}, " +
                         $"cache reports {FormatWatermark(verifyWatermark.Value)}. " +
                         $"Likely ADO eventual-consistency race; re-run reset state.",
@@ -160,7 +160,7 @@ public sealed partial class ResetCommands
 
             result = new ResetStateResult
             {
-                Apex = apex,
+                Root = root,
                 Success = true,
                 DryRun = false,
                 PreviousWatermark = previousWatermarkText,
@@ -173,10 +173,10 @@ public sealed partial class ResetCommands
         {
             result = new ResetStateResult
             {
-                Apex = apex,
+                Root = root,
                 Success = false,
                 DryRun = !execute,
-                Error = $"Error stamping watermark on #{apex}: {ex.Message}",
+                Error = $"Error stamping watermark on #{root}: {ex.Message}",
             };
         }
 
@@ -185,15 +185,15 @@ public sealed partial class ResetCommands
     }
 
     /// <summary>
-    /// Read the apex root's tag set via <c>twig show</c>. Mirrors
+    /// Read the root root's tag set via <c>twig show</c>. Mirrors
     /// <c>BranchCommands.ReadTagsAsync</c> (re-implemented here to keep
     /// this partial self-contained).
     /// </summary>
-    private async Task<TagSet> ReadApexTagsAsync(int apex, CancellationToken ct)
+    private async Task<TagSet> ReadApexTagsAsync(int root, CancellationToken ct)
     {
-        var item = await _twig.ShowAsync(apex, ct).ConfigureAwait(false)
+        var item = await _twig.ShowAsync(root, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException(
-                $"Apex work item {apex} not found in twig cache after sync.");
+                $"Root work item {root} not found in twig cache after sync.");
 
         var raw = item["tags"]?.GetValue<string>()
             ?? item["fields"]?["System.Tags"]?.GetValue<string>();

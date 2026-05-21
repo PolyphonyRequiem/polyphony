@@ -16,7 +16,7 @@ public sealed partial class BranchCommands
     /// (<c>mg/{root_id}_{mg_path}</c>). Materializes the base from the
     /// remote first if it exists only there.
     /// </summary>
-    /// <param name="rootId">ADO work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="itemId">ADO work-item id of the task.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path of the enclosing MG.</param>
     /// <param name="remote">Git remote name.</param>

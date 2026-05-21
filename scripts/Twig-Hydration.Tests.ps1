@@ -48,21 +48,21 @@ Describe 'Copy-MissingTwigEntries — recursive missing-only semantics' {
         $src = New-TempDir
         $dst = New-TempDir
         Write-File (Join-Path $src 'org/proj/twig.db') 'main-version'
-        Write-File (Join-Path $dst 'org/proj/twig.db') 'apex-version'
+        Write-File (Join-Path $dst 'org/proj/twig.db') 'root-version'
 
         Copy-MissingTwigEntries -SourceRoot $src -DestinationRoot $dst
 
-        Get-Content (Join-Path $dst 'org/proj/twig.db') -Raw | Should -Be 'apex-version'
+        Get-Content (Join-Path $dst 'org/proj/twig.db') -Raw | Should -Be 'root-version'
     }
 
     It 'Recursively fills missing leaves inside a partially-existing directory' {
-        # Bug case from cloudvault §0: apex has .twig/<org>/ from a prior run
+        # Bug case from cloudvault §0: root has .twig/<org>/ from a prior run
         # but the workspace DB is missing inside it.
         $src = New-TempDir
         $dst = New-TempDir
         Write-File (Join-Path $src 'org/proj/twig.db') 'fresh-db'
         Write-File (Join-Path $src 'org/proj/sibling') 'sibling-content'
-        # Apex already has an empty <org>/<proj>/ directory
+        # Root already has an empty <org>/<proj>/ directory
         New-Item -ItemType Directory -Path (Join-Path $dst 'org/proj') -Force | Out-Null
 
         Copy-MissingTwigEntries -SourceRoot $src -DestinationRoot $dst
@@ -77,11 +77,11 @@ Describe 'Copy-MissingTwigEntries — recursive missing-only semantics' {
         $dst = New-TempDir
         Write-File (Join-Path $src 'config') 'main-config'
         Write-File (Join-Path $src 'org/proj/config') 'nested-config-not-skipped'
-        Write-File (Join-Path $dst 'config') 'apex-config'
+        Write-File (Join-Path $dst 'config') 'root-config'
 
         Copy-MissingTwigEntries -SourceRoot $src -DestinationRoot $dst -ExcludeAtRoot @('config')
 
-        Get-Content (Join-Path $dst 'config') -Raw | Should -Be 'apex-config'
+        Get-Content (Join-Path $dst 'config') -Raw | Should -Be 'root-config'
         # Nested file named 'config' should still be copied (rule applies at root only).
         Test-Path (Join-Path $dst 'org/proj/config') -PathType Leaf | Should -BeTrue
         Get-Content (Join-Path $dst 'org/proj/config') -Raw | Should -Be 'nested-config-not-skipped'
@@ -106,56 +106,56 @@ Describe 'Copy-MissingTwigEntries — recursive missing-only semantics' {
     }
 }
 
-Describe 'Assert-ApexTwigWorkspace — fail-fast invariant' {
+Describe 'Assert-RootTwigWorkspace — fail-fast invariant' {
 
     It 'Returns silently when the workspace DB is present' {
-        $apexTwig = New-TempDir
-        Write-File (Join-Path $apexTwig 'microsoft/OS/twig.db') 'real-db'
+        $rootTwig = New-TempDir
+        Write-File (Join-Path $rootTwig 'microsoft/OS/twig.db') 'real-db'
 
-        { Assert-ApexTwigWorkspace `
-            -ApexTwigDir $apexTwig `
+        { Assert-RootTwigWorkspace `
+            -RootTwigDir $rootTwig `
             -Organization 'microsoft' `
             -Project 'OS' `
-            -ApexId 12345 `
+            -RootId 12345 `
             -MainWorktree 'C:\fake\main'
         } | Should -Not -Throw
     }
 
     It 'Throws with operator remediation when the workspace DB is missing' {
-        $apexTwig = New-TempDir
+        $rootTwig = New-TempDir
         # No DB at all.
 
-        { Assert-ApexTwigWorkspace `
-            -ApexTwigDir $apexTwig `
+        { Assert-RootTwigWorkspace `
+            -RootTwigDir $rootTwig `
             -Organization 'microsoft' `
             -Project 'OS' `
-            -ApexId 12345 `
+            -RootId 12345 `
             -MainWorktree 'C:\fake\main'
-        } | Should -Throw -ExpectedMessage '*Apex twig workspace is missing its DB*'
+        } | Should -Throw -ExpectedMessage '*Root twig workspace is missing its DB*'
     }
 
     It 'Throws when only the parent directory exists but DB itself is missing (cloudvault §0 case)' {
-        $apexTwig = New-TempDir
-        New-Item -ItemType Directory -Path (Join-Path $apexTwig 'microsoft/OS') -Force | Out-Null
+        $rootTwig = New-TempDir
+        New-Item -ItemType Directory -Path (Join-Path $rootTwig 'microsoft/OS') -Force | Out-Null
 
-        { Assert-ApexTwigWorkspace `
-            -ApexTwigDir $apexTwig `
+        { Assert-RootTwigWorkspace `
+            -RootTwigDir $rootTwig `
             -Organization 'microsoft' `
             -Project 'OS' `
-            -ApexId 12345 `
+            -RootId 12345 `
             -MainWorktree 'C:\fake\main'
         } | Should -Throw -ExpectedMessage '*missing*twig.db*'
     }
 
-    It 'Surfaces ApexId, Organization, Project, MainWorktree in the remediation message' {
-        $apexTwig = New-TempDir
+    It 'Surfaces RootId, Organization, Project, MainWorktree in the remediation message' {
+        $rootTwig = New-TempDir
 
         try {
-            Assert-ApexTwigWorkspace `
-                -ApexTwigDir $apexTwig `
+            Assert-RootTwigWorkspace `
+                -RootTwigDir $rootTwig `
                 -Organization 'cv-org' `
                 -Project 'CV-Proj' `
-                -ApexId 62286666 `
+                -RootId 62286666 `
                 -MainWorktree 'C:\projects\cv\main'
             throw 'expected throw'
         } catch {

@@ -9,19 +9,19 @@ public sealed partial class PrCommands
 {
     /// <summary>
     /// Open (or reuse) the pull request that promotes an evidence branch
-    /// into its parent feature branch (the run-root <c>feature/&lt;apex&gt;</c>
+    /// into its parent feature branch (the run-root <c>feature/&lt;root&gt;</c>
     /// trunk), or into <c>main</c> for the orphan-evidence case where no
-    /// apex is supplied. Reuses an existing open PR for the same head/base
+    /// root is supplied. Reuses an existing open PR for the same head/base
     /// pair instead of creating a duplicate.
     /// </summary>
     /// <remarks>
     /// Default branch naming follows Phase 6 PR #2 (the evidence branch
     /// builder):
     /// <list type="bullet">
-    ///   <item>apex differs from work item (the normal case): head =
-    ///     <c>evidence/&lt;apex&gt;-&lt;workItem&gt;</c>, base =
-    ///     <c>feature/&lt;apex&gt;</c>.</item>
-    ///   <item>apex omitted or equal to work item (orphan evidence): head =
+    ///   <item>root differs from work item (the normal case): head =
+    ///     <c>evidence/&lt;root&gt;-&lt;workItem&gt;</c>, base =
+    ///     <c>feature/&lt;root&gt;</c>.</item>
+    ///   <item>root omitted or equal to work item (orphan evidence): head =
     ///     <c>evidence/&lt;workItem&gt;</c>, base = <c>main</c>.</item>
     /// </list>
     /// Per-PR overrides via <c>--head</c> / <c>--base-branch</c> are honored
@@ -30,9 +30,9 @@ public sealed partial class PrCommands
     /// <c>--body</c> bypass twig entirely.
     /// </remarks>
     /// <param name="workItem">The actionable work-item id this evidence PR satisfies.</param>
-    /// <param name="apexId">Optional run-root feature id. When omitted (or zero), defaults to <paramref name="workItem"/> (orphan evidence).</param>
+    /// <param name="rootId">Optional run-root feature id. When omitted (or zero), defaults to <paramref name="workItem"/> (orphan evidence).</param>
     /// <param name="head">Optional head branch override. Defaults to the canonical evidence-branch name above.</param>
-    /// <param name="baseBranch">Optional base branch override. Defaults to <c>feature/&lt;apex&gt;</c>, or <c>main</c> in the orphan case.</param>
+    /// <param name="baseBranch">Optional base branch override. Defaults to <c>feature/&lt;root&gt;</c>, or <c>main</c> in the orphan case.</param>
     /// <param name="title">Optional PR title; deterministic fallback derived from the work item's twig title when empty.</param>
     /// <param name="body">Optional PR body; minimal placeholder stub used when empty.</param>
     /// <param name="platform">Platform override (<c>github</c>|<c>ado</c>). Empty for origin-URL auto-detect.</param>
@@ -44,7 +44,7 @@ public sealed partial class PrCommands
     [VerbResult(typeof(PrOpenEvidenceResult))]
     public async Task<int> OpenEvidencePr(
         int workItem = RequiredInput.MissingInt,
-        int apexId = 0,
+        int rootId = 0,
         string head = "",
         string baseBranch = "",
         string title = "",
@@ -61,31 +61,31 @@ public sealed partial class PrCommands
 
         if (workItem <= 0)
         {
-            EmitEvidenceError(workItem, apexId, $"workItem must be positive (got {workItem})");
+            EmitEvidenceError(workItem, rootId, $"workItem must be positive (got {workItem})");
             return ExitCodes.ConfigError;
         }
 
-        if (apexId < 0)
+        if (rootId < 0)
         {
-            EmitEvidenceError(workItem, apexId, $"apexId must be non-negative (got {apexId})");
+            EmitEvidenceError(workItem, rootId, $"rootId must be non-negative (got {rootId})");
             return ExitCodes.ConfigError;
         }
 
-        // apexId omitted (zero) collapses to the orphan-evidence case where
-        // the work item is its own apex. This mirrors PR #2's branch verb,
+        // rootId omitted (zero) collapses to the orphan-evidence case where
+        // the work item is its own root. This mirrors PR #2's branch verb,
         // which uses the same convention to pick the simpler `evidence/<id>`
         // form.
-        var effectiveApex = apexId == 0 ? workItem : apexId;
-        var isOrphan = effectiveApex == workItem;
+        var effectiveRoot = rootId == 0 ? workItem : rootId;
+        var isOrphan = effectiveRoot == workItem;
 
         var headBranch = string.IsNullOrWhiteSpace(head)
             ? (isOrphan
                 ? $"evidence/{workItem}"
-                : $"evidence/{effectiveApex}-{workItem}")
+                : $"evidence/{effectiveRoot}-{workItem}")
             : head;
 
         var resolvedBase = string.IsNullOrWhiteSpace(baseBranch)
-            ? (isOrphan ? "main" : $"feature/{effectiveApex}")
+            ? (isOrphan ? "main" : $"feature/{effectiveRoot}")
             : baseBranch;
 
         // ── Platform-aware identity resolution ───────────────────────────
@@ -101,7 +101,7 @@ public sealed partial class PrCommands
             var slug = BuildAdoSlug(adoRepo.Organization, adoRepo.Project, adoRepo.Repository);
             var outcome = await OpenEvidenceAdoCoreAsync(
                 adoRepo.Organization, adoRepo.Project, adoRepo.Repository, slug,
-                workItem, effectiveApex,
+                workItem, effectiveRoot,
                 headBranch, resolvedBase,
                 title, body, ct).ConfigureAwait(false);
 
@@ -113,7 +113,7 @@ public sealed partial class PrCommands
                 HeadBranch = outcome.HeadBranch,
                 BaseBranch = outcome.BaseBranch,
                 WorkItemId = workItem,
-                ApexId = effectiveApex,
+                RootId = effectiveRoot,
                 Created = outcome.Created,
                 Organization = adoRepo.Organization,
                 Project = adoRepo.Project,
@@ -133,7 +133,7 @@ public sealed partial class PrCommands
             if (headRefs.Count == 0)
             {
                 EmitEvidenceError(
-                    workItem, effectiveApex,
+                    workItem, effectiveRoot,
                     $"head branch '{headBranch}' does not exist on remote",
                     headBranch: headBranch, baseBranch: resolvedBase);
                 return ExitCodes.RoutingFailure;
@@ -143,7 +143,7 @@ public sealed partial class PrCommands
             if (baseRefs.Count == 0)
             {
                 EmitEvidenceError(
-                    workItem, effectiveApex,
+                    workItem, effectiveRoot,
                     $"base branch '{resolvedBase}' does not exist on remote",
                     headBranch: headBranch, baseBranch: resolvedBase);
                 return ExitCodes.RoutingFailure;
@@ -153,7 +153,7 @@ public sealed partial class PrCommands
             if (string.IsNullOrEmpty(slug))
             {
                 EmitEvidenceError(
-                    workItem, effectiveApex,
+                    workItem, effectiveRoot,
                     "Could not resolve repo slug from origin remote",
                     headBranch: headBranch, baseBranch: resolvedBase);
                 return ExitCodes.RoutingFailure;
@@ -163,7 +163,7 @@ public sealed partial class PrCommands
                 ? await ResolveEvidencePrTitleAsync(workItem, ct).ConfigureAwait(false)
                 : title;
             var prBody = string.IsNullOrWhiteSpace(body)
-                ? BuildDefaultEvidenceBody(workItem, effectiveApex, headBranch, resolvedBase)
+                ? BuildDefaultEvidenceBody(workItem, effectiveRoot, headBranch, resolvedBase)
                 : body;
 
             // Reuse an existing open PR for the same head/base pair instead
@@ -184,7 +184,7 @@ public sealed partial class PrCommands
                     HeadBranch = headBranch,
                     BaseBranch = resolvedBase,
                     WorkItemId = workItem,
-                    ApexId = effectiveApex,
+                    RootId = effectiveRoot,
                     Created = false,
                 });
                 return ExitCodes.Success;
@@ -194,7 +194,7 @@ public sealed partial class PrCommands
             if (string.IsNullOrWhiteSpace(url))
             {
                 EmitEvidenceError(
-                    workItem, effectiveApex,
+                    workItem, effectiveRoot,
                     "gh pr create failed — no URL returned",
                     headBranch: headBranch, baseBranch: resolvedBase);
                 return ExitCodes.RoutingFailure;
@@ -209,7 +209,7 @@ public sealed partial class PrCommands
                 HeadBranch = headBranch,
                 BaseBranch = resolvedBase,
                 WorkItemId = workItem,
-                ApexId = effectiveApex,
+                RootId = effectiveRoot,
                 Created = true,
             });
             return ExitCodes.Success;
@@ -218,7 +218,7 @@ public sealed partial class PrCommands
         catch (Exception ex)
         {
             EmitEvidenceError(
-                workItem, effectiveApex, ex.Message,
+                workItem, effectiveRoot, ex.Message,
                 headBranch: headBranch, baseBranch: resolvedBase);
             return ExitCodes.RoutingFailure;
         }
@@ -241,13 +241,13 @@ public sealed partial class PrCommands
         }
     }
 
-    private static string BuildDefaultEvidenceBody(int workItem, int apexId, string headBranch, string baseBranch)
+    private static string BuildDefaultEvidenceBody(int workItem, int rootId, string headBranch, string baseBranch)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("## Evidence for #").Append(workItem);
-        if (apexId != workItem)
+        if (rootId != workItem)
         {
-            sb.Append(" (apex feature #").Append(apexId).Append(')');
+            sb.Append(" (root feature #").Append(rootId).Append(')');
         }
         sb.Append("\n\n");
         sb.Append("Promotes `").Append(headBranch).Append("` into `").Append(baseBranch).Append("`.\n\n");
@@ -265,7 +265,7 @@ public sealed partial class PrCommands
 
     private static void EmitEvidenceError(
         int workItem,
-        int apexId,
+        int rootId,
         string message,
         string headBranch = "",
         string baseBranch = "")
@@ -278,7 +278,7 @@ public sealed partial class PrCommands
             HeadBranch = headBranch,
             BaseBranch = baseBranch,
             WorkItemId = workItem,
-            ApexId = apexId == 0 ? workItem : apexId,
+            RootId = rootId == 0 ? workItem : rootId,
             Created = false,
             Error = message,
         });

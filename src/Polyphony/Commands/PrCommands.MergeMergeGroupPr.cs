@@ -18,7 +18,7 @@ public sealed partial class PrCommands
     /// would break the chain. The head branch is never deleted (sibling
     /// merge groups may still be in flight).
     /// </summary>
-    /// <param name="rootId">ADO work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path being merged.</param>
     /// <param name="admin">Pass <c>--admin</c> to bypass branch-protection requirements.</param>
     /// <param name="matchHeadCommit">

@@ -20,7 +20,7 @@ namespace Polyphony.Infrastructure.Worktrees;
 /// safety check (do not write into it); they MUST NOT assume a worktree
 /// actually exists at that path.</para>
 ///
-/// <para>Used by <c>polyphony worktree init-apex</c> and
+/// <para>Used by <c>polyphony worktree init-root</c> and
 /// <c>polyphony worktree create</c> (AB#3085, PR 1b2 / PR 1b3).</para>
 /// </summary>
 public static class RunsRootResolver

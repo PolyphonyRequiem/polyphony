@@ -21,7 +21,7 @@
     `fetch_for_*` script nodes upstream of each. The PR body's audit named
     two more candidates documented-safe-for-now (`feature-pr.yaml`
     `remediation_planner` and `implement-merge-group.yaml`
-    `primary_reviewer`). This lint catches the whole class mechanically so
+    `root_reviewer`). This lint catches the whole class mechanically so
     new sites can't regress in.
 
     Detection rule:

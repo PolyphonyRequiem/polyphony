@@ -27,7 +27,7 @@ public sealed partial class PrCommands
     /// <param name="organization">ADO organization name.</param>
     /// <param name="project">ADO project name.</param>
     /// <param name="repository">ADO repository identifier — GUID or name.</param>
-    /// <param name="rootId">Root work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">Root work-item id of the run's root (focus) item.</param>
     /// <param name="itemId">ADO work-item id of the task.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path of the enclosing MG.</param>
     /// <param name="matchHeadCommit">

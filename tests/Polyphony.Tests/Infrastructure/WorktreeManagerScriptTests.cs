@@ -8,11 +8,11 @@ namespace Polyphony.Tests.Infrastructure;
 /// <summary>
 /// Pins the JSON envelope shape produced by
 /// <c>.conductor/registry/scripts/worktree-manager.ps1</c> — the
-/// per-item worktree spawner/teardown helper for the apex-driver
+/// per-item worktree spawner/teardown helper for the polyphony
 /// dispatch loop.
 /// </summary>
 /// <remarks>
-/// The apex-driver fans work-items out across waves and dispatches each
+/// The polyphony fans work-items out across waves and dispatches each
 /// item into a per-item git worktree so multiple lifecycle sub-workflows
 /// can run in parallel. This script's envelope is the only contract
 /// between the script and the workflow; tests pin both happy paths and
@@ -206,7 +206,7 @@ public sealed class WorktreeManagerScriptTests
         if (!PwshAvailable) return;
 
         // Teardown is idempotent: a worktree that does not exist is a
-        // no-op success so apex-driver re-entry on resume cannot wedge
+        // no-op success so polyphony re-entry on resume cannot wedge
         // on a half-cleaned-up dispatch.
         var (exitCode, stdout, _) = await RunScriptAsync(
             "-Operation teardown -WorkItemId 99999999");
@@ -260,13 +260,13 @@ public sealed class WorktreeManagerScriptTests
     {
         if (!PwshAvailable) return;
 
-        // Branch name is an apex-driver contract: feature-pr.yaml and
-        // wave-integrator.ps1 both rely on the sdlc/apex/<id> pattern.
+        // Branch name is an polyphony contract: feature-pr.yaml and
+        // batch-integrator.ps1 both rely on the sdlc/root/<id> pattern.
         var (_, stdout, _) = await RunScriptAsync(
             "-Operation spawn -WorkItemId 42 -BaseBranch nonexistent_xyz");
 
         using var doc = JsonDocument.Parse(stdout);
-        doc.RootElement.GetProperty("branch").GetString().ShouldBe("sdlc/apex/42");
+        doc.RootElement.GetProperty("branch").GetString().ShouldBe("sdlc/root/42");
     }
 
     [Fact]
@@ -275,12 +275,12 @@ public sealed class WorktreeManagerScriptTests
         if (!PwshAvailable) return;
 
         // Bug #10 (issue #177): a prior aborted run can leave
-        // sdlc/apex/{id} as a local branch with no worktree directory.
+        // sdlc/root/{id} as a local branch with no worktree directory.
         // The spawn must attach to the existing branch rather than
         // failing with "branch already exists". Resume semantics: any
         // in-flight commits on the branch are preserved.
         using var fixture = new TempGitRepo();
-        fixture.CreateBranch("sdlc/apex/777");
+        fixture.CreateBranch("sdlc/root/777");
 
         var (exitCode, stdout, stderr) = await RunScriptAsync(
             $"-Operation spawn -WorkItemId 777 -BaseBranch main -WorktreeRoot \"{fixture.WorktreeRoot}\"",
@@ -292,11 +292,11 @@ public sealed class WorktreeManagerScriptTests
         var root = doc.RootElement;
 
         root.GetProperty("success").GetBoolean().ShouldBeTrue($"stdout: {stdout}");
-        root.GetProperty("branch").GetString().ShouldBe("sdlc/apex/777");
+        root.GetProperty("branch").GetString().ShouldBe("sdlc/root/777");
         root.GetProperty("error_code").GetString().ShouldBe(string.Empty);
 
         var listing = fixture.ListWorktrees();
-        listing.ShouldContain("branch refs/heads/sdlc/apex/777");
+        listing.ShouldContain("branch refs/heads/sdlc/root/777");
     }
 
     [Fact]
@@ -304,7 +304,7 @@ public sealed class WorktreeManagerScriptTests
     {
         if (!PwshAvailable) return;
 
-        // Defensive guard: when sdlc/apex/{id} is the live checkout of
+        // Defensive guard: when sdlc/root/{id} is the live checkout of
         // another worktree (e.g. a parallel concurrent run, or the
         // repo's primary working tree), we MUST NOT silently attach a
         // second worktree to the same branch — git refuses with a
@@ -312,7 +312,7 @@ public sealed class WorktreeManagerScriptTests
         // Fail fast with branch_in_use instead.
         using var fixture = new TempGitRepo();
 
-        // Create a worktree A on sdlc/apex/888 first.
+        // Create a worktree A on sdlc/root/888 first.
         var (codeA, stdoutA, stderrA) = await RunScriptAsync(
             $"-Operation spawn -WorkItemId 888 -BaseBranch main -WorktreeRoot \"{fixture.WorktreeRoot}\"",
             workingDirectory: fixture.RepoPath);
@@ -327,7 +327,7 @@ public sealed class WorktreeManagerScriptTests
         var aPath = Path.Combine(fixture.WorktreeRoot, "item-888");
         // Don't actually delete — instead, just point WorktreeRoot
         // somewhere new and try to spawn id 888 again. Git will see
-        // sdlc/apex/888 still checked out at worktree A and refuse.
+        // sdlc/root/888 still checked out at worktree A and refuse.
         var altRoot = Path.Combine(Path.GetDirectoryName(fixture.WorktreeRoot)!, "alt");
         Directory.CreateDirectory(altRoot);
 
@@ -367,6 +367,6 @@ public sealed class WorktreeManagerScriptTests
         root.GetProperty("error_code").GetString().ShouldBe(string.Empty);
 
         var listing = fixture.ListWorktrees();
-        listing.ShouldContain("branch refs/heads/sdlc/apex/9001");
+        listing.ShouldContain("branch refs/heads/sdlc/root/9001");
     }
 }

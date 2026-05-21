@@ -305,7 +305,7 @@ internal static class PlanPrFrontMatter
     /// Replace the <c>ancestor_plan_generations</c> snapshot inside an
     /// existing plan-PR body, preserving the <c>requests_parent_change</c>
     /// flag and the body tail (everything below the closing <c>---</c>
-    /// fence) byte-for-byte. Used by the P9 cascade remedy after a clean
+    /// fence) byte-for-byte. Used by the P9 restack remedy after a clean
     /// auto-rebase to update the PR's snapshot to match the manifest's
     /// current <c>plan_generations</c>.
     ///
@@ -318,11 +318,11 @@ internal static class PlanPrFrontMatter
     ///     <paramref name="newAncestorPlanGenerations"/> serialised in
     ///     deterministic key-sorted order.</item>
     ///   <item><see cref="FrontMatterReplacement.Malformed"/> — front-matter
-    ///     was present but failed strict parsing. The cascade-remedy verb
+    ///     was present but failed strict parsing. The restack-remedy verb
     ///     refuses to rewrite a malformed body and surfaces
     ///     <c>malformed_front_matter</c> as its outcome.</item>
     ///   <item><see cref="FrontMatterReplacement.Absent"/> — no fenced
-    ///     front-matter at the start of the body. The cascade-remedy verb
+    ///     front-matter at the start of the body. The restack-remedy verb
     ///     also refuses (a plan-PR without front-matter is a hand-edited
     ///     special case the workflow shouldn't silently overwrite).</item>
     /// </list>
@@ -430,7 +430,7 @@ internal static class PlanPrFrontMatter
 
 /// <summary>
 /// Outcome of <see cref="PlanPrFrontMatter.ReplaceSnapshotPreservingTail"/>.
-/// Discriminated union so the cascade-remedy verb can route on the three
+/// Discriminated union so the restack-remedy verb can route on the three
 /// terminal cases — replaced (write back to the PR), malformed (refuse),
 /// absent (refuse) — without nullable-string sniffing.
 /// </summary>

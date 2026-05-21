@@ -29,7 +29,7 @@ public sealed partial class MergeGroupCommands
     /// mutually exclusive on a given child; passing both is a config
     /// error.
     /// </summary>
-    /// <param name="rootId">Run's apex (focus) work-item id (positive).</param>
+    /// <param name="rootId">Run's root (focus) work-item id (positive).</param>
     /// <param name="itemId">Child work-item id being decided about (positive).</param>
     /// <param name="parentMgPath">
     /// Canonical <c>_</c>-joined merge-group path of the enclosing MG.

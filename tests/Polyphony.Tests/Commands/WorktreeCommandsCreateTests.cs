@@ -8,9 +8,9 @@ using Xunit;
 namespace Polyphony.Tests.Commands;
 
 /// <summary>
-/// Coverage for <c>polyphony worktree create --apex N --branch B [--ref R]</c>:
+/// Coverage for <c>polyphony worktree create --root N --branch B [--ref R]</c>:
 /// argument validation, branch-grammar validation, the bootstrap dependency
-/// (apex feature worktree must already exist on <c>feature/{N}</c>),
+/// (root feature worktree must already exist on <c>feature/{N}</c>),
 /// the create-or-attach matrix (path-exists wins over branch-state),
 /// remote-branch refusal (workflow-rerun safety), race-tolerant
 /// idempotent recovery, and JSON contract.
@@ -54,12 +54,12 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
         base.Dispose();
     }
 
-    private (WorktreeCommands cmd, FakeProcessRunner runner, string apexRoot, string featurePath, string targetPath)
-        Setup(int apex = 3085, string slug = "impl-3085-3072", bool stubCommonDir = true)
+    private (WorktreeCommands cmd, FakeProcessRunner runner, string rootRoot, string featurePath, string targetPath)
+        Setup(int root = 3085, string slug = "impl-3085-3072", bool stubCommonDir = true)
     {
-        var apexRoot = Path.Combine(_runsRoot, $"apex-{apex}");
-        var featurePath = Path.Combine(apexRoot, $"feature-{apex}");
-        var targetPath = Path.Combine(apexRoot, slug);
+        var rootRoot = Path.Combine(_runsRoot, $"root-{root}");
+        var featurePath = Path.Combine(rootRoot, $"feature-{root}");
+        var targetPath = Path.Combine(rootRoot, slug);
 
         var runner = new FakeProcessRunner();
         if (stubCommonDir)
@@ -70,7 +70,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
                 new ProcessResult(0, _commonDir + "\n", ""));
         }
 
-        return (new WorktreeCommands(new GitClient(runner)), runner, apexRoot, featurePath, targetPath);
+        return (new WorktreeCommands(new GitClient(runner)), runner, rootRoot, featurePath, targetPath);
     }
 
     private static WorktreeCreateResult Parse(string output) =>
@@ -79,12 +79,12 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     private static string PorcelainEntry(string path, string branch) =>
         $"worktree {path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/{branch}\n\n";
 
-    /// <summary>Porcelain block for an apex whose feature worktree IS initialized.</summary>
-    private string Bootstrapped(string featurePath, int apex, params (string path, string branch)[] extra)
+    /// <summary>Porcelain block for an root whose feature worktree IS initialized.</summary>
+    private string Bootstrapped(string featurePath, int root, params (string path, string branch)[] extra)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append(PorcelainEntry(_mainPath, "main"));
-        sb.Append(PorcelainEntry(featurePath, $"feature/{apex}"));
+        sb.Append(PorcelainEntry(featurePath, $"feature/{root}"));
         foreach (var (p, b) in extra) sb.Append(PorcelainEntry(p, b));
         return sb.ToString();
     }
@@ -92,7 +92,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     // ─── Argument validation ─────────────────────────────────────────────
 
     [Fact]
-    public async Task Create_MissingApex_EmitsRequiredInputEnvelope()
+    public async Task Create_MissingRoot_EmitsRequiredInputEnvelope()
     {
         var (cmd, runner, _, _, _) = Setup(stubCommonDir: false);
 
@@ -102,7 +102,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
         var envelope = JsonSerializer.Deserialize(
             output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
         envelope.ShouldNotBeNull();
-        envelope!.MissingArgs.ShouldContain("--apex");
+        envelope!.MissingArgs.ShouldContain("--root");
         runner.Invocations.ShouldBeEmpty();
     }
 
@@ -111,7 +111,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     {
         var (cmd, runner, _, _, _) = Setup(stubCommonDir: false);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.Create(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.Create(root: 3085));
 
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var envelope = JsonSerializer.Deserialize(
@@ -122,17 +122,17 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     }
 
     [Fact]
-    public async Task Create_ZeroApex_EmitsInvalidApex()
+    public async Task Create_ZeroRoot_EmitsInvalidRoot()
     {
         var (cmd, runner, _, _, _) = Setup(stubCommonDir: false);
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 0, branch: "impl/0-1"));
+            cmd.Create(root: 0, branch: "impl/0-1"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
-        result.Reason.ShouldBe("invalid_apex");
+        result.Reason.ShouldBe("invalid_root");
         runner.Invocations.ShouldBeEmpty();
     }
 
@@ -144,7 +144,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
         var (cmd, runner, _, _, _) = Setup(stubCommonDir: false);
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "garbage"));
+            cmd.Create(root: 3085, branch: "garbage"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -161,12 +161,12 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
         var (cmd, runner, _, _, _) = Setup(stubCommonDir: false);
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/9999-1234"));
+            cmd.Create(root: 3085, branch: "impl/9999-1234"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
-        result.Reason.ShouldBe("branch_apex_mismatch");
+        result.Reason.ShouldBe("branch_root_mismatch");
         result.Branch.ShouldBe("impl/9999-1234");
         result.Slug.ShouldBe("impl-9999-1234");
         result.Error!.ShouldContain("9999");
@@ -180,13 +180,13 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
         var (cmd, runner, _, _, _) = Setup(stubCommonDir: false);
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "feature/3085", @ref: "main"));
+            cmd.Create(root: 3085, branch: "feature/3085", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
         result.Reason.ShouldBe("unsupported_branch_kind");
-        result.Error!.ShouldContain("init-apex");
+        result.Error!.ShouldContain("init-root");
         runner.Invocations.ShouldBeEmpty();
     }
 
@@ -202,34 +202,34 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(0, "", ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
         result.Reason.ShouldBe("common_dir_unavailable");
-        result.ApexRoot.ShouldBeNull();
+        result.RootRoot.ShouldBeNull();
         result.WorktreePath.ShouldBeNull();
     }
 
-    // ─── apex_not_initialized ────────────────────────────────────────────
+    // ─── root_not_initialized ────────────────────────────────────────────
 
     [Fact]
-    public async Task Create_ApexFeatureMissing_EmitsApexNotInitialized()
+    public async Task Create_RootFeatureMissing_EmitsApexNotInitialized()
     {
         var (cmd, runner, _, _, _) = Setup();
-        // List shows main only — apex feature worktree not registered.
+        // List shows main only — root feature worktree not registered.
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(_mainPath, "main"), ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
-        result.Reason.ShouldBe("apex_not_initialized");
-        result.Error!.ShouldContain("init-apex");
+        result.Reason.ShouldBe("root_not_initialized");
+        result.Error!.ShouldContain("init-root");
         // Critically, no rev-parse, no branch -r, no add — bail before any branch-state work.
         runner.Invocations.ShouldNotContain(i =>
             i.Arguments.Count >= 1 && i.Arguments[0] == "rev-parse"
@@ -239,7 +239,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     }
 
     [Fact]
-    public async Task Create_ApexFeatureRegisteredOnWrongBranch_EmitsApexNotInitialized()
+    public async Task Create_RootFeatureRegisteredOnWrongBranch_EmitsApexNotInitialized()
     {
         var (cmd, runner, _, featurePath, _) = Setup();
         // feature path exists in worktree list but on the wrong branch — partial init.
@@ -250,12 +250,12 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
                 ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
-        result.Reason.ShouldBe("apex_not_initialized");
+        result.Reason.ShouldBe("root_not_initialized");
     }
 
     // ─── Path-exists matrix (after bootstrap check passes) ───────────────
@@ -270,7 +270,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
                 (targetPath, "impl/3085-3072")), ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -289,7 +289,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
                 (targetPath, "impl/3085-9999")), ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -307,7 +307,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(0, Bootstrapped(featurePath, 3085), ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -318,14 +318,14 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     [Fact]
     public async Task Create_PathExistsAsFile_PathExistsNotWorktree()
     {
-        var (cmd, runner, apexRoot, featurePath, targetPath) = Setup();
-        Directory.CreateDirectory(apexRoot);
+        var (cmd, runner, rootRoot, featurePath, targetPath) = Setup();
+        Directory.CreateDirectory(rootRoot);
         File.WriteAllText(targetPath, "stray file");
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, Bootstrapped(featurePath, 3085), ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -350,7 +350,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(0, "Preparing worktree...\n", ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -371,7 +371,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(0, "  origin/main\n", ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -395,7 +395,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
 
         // Operator passes --ref, but we still refuse: workflow-rerun safety.
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -418,7 +418,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(0, "deadbeef\n", ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -441,7 +441,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
 
         // No --ref; should still attach.
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -468,7 +468,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(128, "", "fatal: '" + targetPath + "' already exists\n"));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -491,7 +491,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(128, "", "fatal: invalid reference: garbage-ref\n"));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "garbage-ref"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "garbage-ref"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -515,7 +515,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(128, "", "fatal: branch already in use\n"));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -536,7 +536,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(128, "", "fatal: cannot create worktree: permission denied\n"));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -555,7 +555,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(128, "", "fatal: corrupt index\n"));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -582,7 +582,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(0, "Preparing worktree...\n", ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "plan/3085-9999", @ref: "main"));
+            cmd.Create(root: 3085, branch: "plan/3085-9999", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -607,7 +607,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(0, "Preparing worktree...\n", ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "mg/3085_pg-foo", @ref: "main"));
+            cmd.Create(root: 3085, branch: "mg/3085_pg-foo", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -627,11 +627,11 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
                 (targetPath, "impl/3085-3072")), ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072", @ref: "main"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072", @ref: "main"));
 
         exit.ShouldBe(ExitCodes.Success);
-        output.ShouldContain("\"apex_id\"");
-        output.ShouldContain("\"apex_root\"");
+        output.ShouldContain("\"root_id\"");
+        output.ShouldContain("\"root_root\"");
         output.ShouldContain("\"worktree_path\"");
         output.ShouldContain("\"branch\"");
         output.ShouldContain("\"slug\"");
@@ -641,7 +641,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
         output.ShouldNotContain("\"reason\"");
         output.ShouldNotContain("\"error\"");
         // PascalCase forms must NOT appear
-        output.ShouldNotContain("ApexId");
+        output.ShouldNotContain("RootId");
         output.ShouldNotContain("WorktreePath");
     }
 
@@ -658,7 +658,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
             new ProcessResult(0, "Preparing worktree...\n", ""));
 
         var (exit, output) = await CaptureConsoleAsync(() =>
-            cmd.Create(apex: 3085, branch: "impl/3085-3072"));
+            cmd.Create(root: 3085, branch: "impl/3085-3072"));
 
         exit.ShouldBe(ExitCodes.Success);
         output.ShouldNotContain("\"ref\"");

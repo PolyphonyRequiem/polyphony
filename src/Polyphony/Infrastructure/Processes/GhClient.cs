@@ -483,7 +483,7 @@ public sealed class GhClient : IGhClient
             "--body-file", "-",
         ];
 
-        // Cascade-remedy contract: never throw. Any failure (timeout exhausted,
+        // Restack-remedy contract: never throw. Any failure (timeout exhausted,
         // non-zero exit) becomes a routable false. Caller-driven cancellation
         // still escapes as OperationCanceledException — that's not a tool
         // failure, it's the orchestrator pulling the plug.
@@ -544,7 +544,7 @@ public sealed class GhClient : IGhClient
         if (prNumber <= 0) throw new ArgumentOutOfRangeException(nameof(prNumber), "PR number must be positive.");
 
         // commentBeforeClose is optional — null/empty omits the --comment flag entirely.
-        // Mirrors the cascade-remedy contract of the sibling mutators
+        // Mirrors the restack-remedy contract of the sibling mutators
         // (EditPullRequestBodyAsync / CommentPullRequestAsync): never throw on tool
         // failure; surface a routable bool so the verb can react.
         var args = string.IsNullOrEmpty(commentBeforeClose)

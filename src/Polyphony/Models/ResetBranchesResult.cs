@@ -1,8 +1,8 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output envelope for <c>polyphony reset branches --apex N</c> — deletes
-/// all polyphony branches for the apex (local + origin) across the prefix
+/// Output envelope for <c>polyphony reset branches --root N</c> — deletes
+/// all polyphony branches for the root (local + origin) across the prefix
 /// set <c>plan/{N}</c>, <c>mg/{N}-*</c>, <c>impl/{N}-*</c>,
 /// <c>evidence/{N}-*</c>, <c>feature/{N}</c>.
 ///
@@ -13,7 +13,7 @@ namespace Polyphony;
 /// </summary>
 public sealed record ResetBranchesResult
 {
-    public required int Apex { get; init; }
+    public required int Root { get; init; }
     public required bool Success { get; init; }
     public required bool DryRun { get; init; }
 

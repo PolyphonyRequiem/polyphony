@@ -16,11 +16,11 @@ public sealed record PlanFileFrontMatterResult
     public required PlanFileFrontMatterStatus Status { get; init; }
 
     /// <summary>
-    /// The architect-declared <c>apex_facets</c> list, normalised through
+    /// The architect-declared <c>root_facets</c> list, normalised through
     /// <see cref="FacetTagParser.ParseFacets"/>: alphabetical, lowercase,
     /// deduplicated. Empty when the field is absent or its list is empty.
     /// </summary>
-    public required IReadOnlyList<string> ApexFacets { get; init; }
+    public required IReadOnlyList<string> RootFacets { get; init; }
 
     /// <summary>
     /// The unknown facet tokens that caused <see cref="Status"/> to be
@@ -53,12 +53,12 @@ public enum PlanFileFrontMatterStatus
 /// Strict YAML front-matter parser for <c>plans/plan-{id}.md</c> files.
 /// Mirrors <see cref="Polyphony.Commands.PlanPrFrontMatter"/>'s pattern
 /// (regex fence + YamlDotNet load) but is owned by the SDLC layer because
-/// the recognised keys (<c>apex_facets</c>) drive deriver inputs, not PR
+/// the recognised keys (<c>root_facets</c>) drive deriver inputs, not PR
 /// rendering.
 ///
 /// <para>Recognised keys (closed-loop PR #7):</para>
 /// <list type="bullet">
-///   <item><c>apex_facets: [implementable]</c> — per-item facet override.
+///   <item><c>root_facets: [implementable]</c> — per-item facet override.
 ///         Each entry must be a canonical <see cref="Facet"/> name; unknown
 ///         entries cause <see cref="PlanFileFrontMatterStatus.Malformed"/>.</item>
 /// </list>
@@ -124,12 +124,12 @@ public static class PlanFileFrontMatter
             return Malformed("Front-matter root must be a YAML mapping.");
         }
 
-        IReadOnlyList<string> apexFacets = [];
-        if (root.Children.TryGetValue(new YamlScalarNode("apex_facets"), out var facetsNode))
+        IReadOnlyList<string> rootFacets = [];
+        if (root.Children.TryGetValue(new YamlScalarNode("root_facets"), out var facetsNode))
         {
             if (facetsNode is not YamlSequenceNode seq)
             {
-                return Malformed("'apex_facets' must be a YAML sequence of facet name strings.");
+                return Malformed("'root_facets' must be a YAML sequence of facet name strings.");
             }
 
             var tokens = new List<string>(seq.Children.Count);
@@ -137,7 +137,7 @@ public static class PlanFileFrontMatter
             {
                 if (entry is not YamlScalarNode scalar || string.IsNullOrEmpty(scalar.Value))
                 {
-                    return Malformed("'apex_facets' entries must be non-empty scalar strings.");
+                    return Malformed("'root_facets' entries must be non-empty scalar strings.");
                 }
                 tokens.Add(scalar.Value!);
             }
@@ -148,19 +148,19 @@ public static class PlanFileFrontMatter
                 return new PlanFileFrontMatterResult
                 {
                     Status = PlanFileFrontMatterStatus.Malformed,
-                    ApexFacets = [],
+                    RootFacets = [],
                     UnknownFacets = parse.UnknownFacets,
-                    ErrorDetail = $"'apex_facets' contains unknown facet name(s): {string.Join(", ", parse.UnknownFacets)}. Allowed: {Facet.Plannable}, {Facet.Actionable}, {Facet.Implementable}.",
+                    ErrorDetail = $"'root_facets' contains unknown facet name(s): {string.Join(", ", parse.UnknownFacets)}. Allowed: {Facet.Plannable}, {Facet.Actionable}, {Facet.Implementable}.",
                 };
             }
 
-            apexFacets = parse.Facets;
+            rootFacets = parse.Facets;
         }
 
         return new PlanFileFrontMatterResult
         {
             Status = PlanFileFrontMatterStatus.Present,
-            ApexFacets = apexFacets,
+            RootFacets = rootFacets,
             UnknownFacets = [],
             ErrorDetail = null,
         };
@@ -169,7 +169,7 @@ public static class PlanFileFrontMatter
     private static PlanFileFrontMatterResult Absent() => new()
     {
         Status = PlanFileFrontMatterStatus.Absent,
-        ApexFacets = [],
+        RootFacets = [],
         UnknownFacets = [],
         ErrorDetail = null,
     };
@@ -177,7 +177,7 @@ public static class PlanFileFrontMatter
     private static PlanFileFrontMatterResult Malformed(string detail) => new()
     {
         Status = PlanFileFrontMatterStatus.Malformed,
-        ApexFacets = [],
+        RootFacets = [],
         UnknownFacets = [],
         ErrorDetail = detail,
     };

@@ -434,7 +434,7 @@ args:
   - "-NoProfile"
   - "-Command"
   - >-
-    $taskId = {{ primary_router.output.primary_id }};
+    $taskId = {{ root_router.output.root_id }};
     twig set $taskId;
     twig note --text 'Item completed and approved by reviewer';
     twig state Done;            # ← hardcoded literal — replace with target_state

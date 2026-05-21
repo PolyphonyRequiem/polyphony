@@ -16,7 +16,7 @@ public sealed partial class PrCommands
     /// we do not want to pollute the merge-group branch with; the planner
     /// may override per item via <paramref name="method"/>.
     /// </summary>
-    /// <param name="rootId">ADO work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="itemId">ADO work-item id of the task.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path of the enclosing MG.</param>
     /// <param name="method">

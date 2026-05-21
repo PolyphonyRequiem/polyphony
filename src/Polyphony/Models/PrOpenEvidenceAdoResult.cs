@@ -20,7 +20,7 @@ public sealed record PrOpenEvidenceAdoResult
     public required int WorkItemId { get; init; }
 
     /// <summary>The run-root (feature) work-item id; equal to <see cref="WorkItemId"/> in the orphan case.</summary>
-    public required int ApexId { get; init; }
+    public required int RootId { get; init; }
 
     /// <summary>The fully-qualified head branch (e.g. <c>evidence/100-200</c>).</summary>
     public required string HeadBranch { get; init; }

@@ -131,7 +131,7 @@ internal sealed class NextReadyObservationScope
     public required int ItemId { get; init; }
 
     /// <summary>The resolved root work-item id (= <see cref="ItemId"/> for
-    /// an apex item; ancestor's id walked via parent chain otherwise).
+    /// an root item; ancestor's id walked via parent chain otherwise).
     /// Drives <see cref="PlanBranch"/>.</summary>
     public required int RootId { get; init; }
 
@@ -143,7 +143,7 @@ internal sealed class NextReadyObservationScope
     // ── Run-watermark signal (shared across all PR-based composers) ─────
 
     /// <summary>Value of the <c>polyphony:run-started-at</c> tag on the
-    /// apex root, parsed as a UTC <see cref="DateTimeOffset"/>. Used by
+    /// root root, parsed as a UTC <see cref="DateTimeOffset"/>. Used by
     /// every PR-state composer to filter merged PRs that pre-date the
     /// current run — they're artifacts of a prior run and don't count
     /// towards current-run satisfaction (see
@@ -155,8 +155,8 @@ internal sealed class NextReadyObservationScope
     /// <summary>Captured error message from the <c>twig show</c> call
     /// used to read the run-started-at tag, or null on success.
     /// Distinguishing "fetch failed" from "tag absent" matters: a fresh
-    /// apex legitimately has no tag (no filter, legacy behavior); a
-    /// reset apex whose tag we couldn't read MUST NOT silently fall back
+    /// root legitimately has no tag (no filter, legacy behavior); a
+    /// reset root whose tag we couldn't read MUST NOT silently fall back
     /// to no-filter, because that re-introduces the stuck-state bug the
     /// reset is meant to solve. When non-null, every PR-state composer
     /// forces a Needed disposition with the error surfaced in the

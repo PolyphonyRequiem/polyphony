@@ -6,7 +6,7 @@ using Polyphony.Infrastructure.Processes;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony reset manifest --apex N [--execute]</c> — read-only
+/// <c>polyphony reset manifest --root N [--execute]</c> — read-only
 /// inspection of the run manifest at <c>origin/feature/{N}:.polyphony/run.yaml</c>.
 ///
 /// <para><b>Why read-only</b>: the manifest is co-located with the
@@ -14,7 +14,7 @@ namespace Polyphony.Commands;
 /// <c>feature/{N}</c>, which clears the manifest as a side-effect.
 /// There's no second copy of the manifest that needs separate cleanup.
 /// This verb exists in PR 2 as an explicit inspection step so the
-/// composite (<see cref="ResetApex"/>) can surface the manifest state
+/// composite (<see cref="ResetRoot"/>) can surface the manifest state
 /// to the operator and so the workflow can route on it; <c>--execute</c>
 /// is accepted (and ignored) for symmetry with the other reset verbs.</para>
 ///
@@ -33,23 +33,23 @@ public sealed partial class ResetCommands
     internal const string ManifestPath = ".polyphony/run.yaml";
 
     /// <summary>
-    /// Inspect the run manifest for the apex.
+    /// Inspect the run manifest for the root.
     /// </summary>
-    /// <param name="apex">Apex root work-item ID. Manifest path is <c>origin/feature/{apex}:.polyphony/run.yaml</c>.</param>
+    /// <param name="root">Root root work-item ID. Manifest path is <c>origin/feature/{root}:.polyphony/run.yaml</c>.</param>
     /// <param name="execute">Accepted for symmetry; this verb is read-only in PR 2 and ignores the flag.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("manifest")]
     [VerbResult(typeof(ResetManifestResult))]
     public async Task<int> ResetManifest(
-        int apex = RequiredInput.MissingInt,
+        int root = RequiredInput.MissingInt,
         bool execute = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("reset manifest",
-            ("--apex", apex == RequiredInput.MissingInt)) is { } halt)
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
-        var featureBranch = $"feature/{apex}";
+        var featureBranch = $"feature/{root}";
 
         ResetManifestResult result;
         try
@@ -83,7 +83,7 @@ public sealed partial class ResetCommands
 
             result = new ResetManifestResult
             {
-                Apex = apex,
+                Root = root,
                 Success = true,
                 DryRun = !execute,
                 FeatureBranch = featureBranch,
@@ -101,14 +101,14 @@ public sealed partial class ResetCommands
         {
             result = new ResetManifestResult
             {
-                Apex = apex,
+                Root = root,
                 Success = false,
                 DryRun = !execute,
                 FeatureBranch = featureBranch,
                 ManifestPath = ManifestPath,
                 FeatureBranchExists = false,
                 ManifestPresent = false,
-                Error = $"Error inspecting manifest for apex #{apex}: {ex.Message}",
+                Error = $"Error inspecting manifest for root #{root}: {ex.Message}",
             };
         }
 

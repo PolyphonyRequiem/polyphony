@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "verbs": {
+    "synthetic require-input": {
+      "result_type": "Polyphony.SyntheticResult",
+      "command_class": "Polyphony.Commands.SyntheticCommands",
+      "inputs": [
+        { "name": "work-item", "clr_type": "int", "required": true }
+      ]
+    }
+  },
+  "types": {
+    "Polyphony.SyntheticResult": {
+      "fields": [
+        { "name": "ok", "clr_type": "System.Boolean", "can_omit_when_null": false }
+      ]
+    }
+  }
+}

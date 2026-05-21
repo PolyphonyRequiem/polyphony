@@ -7,8 +7,8 @@
     2. Required inputs: work_item_id, root_id, pg_number, mg_path,
        work_item_ids, feature_branch
     3. Required outputs: merged, pr_url, pr_number, mg_path
-    4. Primary loop agents: primary_router, impl_branch_ensure, coder,
-       primary_reviewer, impl_pr_open, impl_pr_merge, primary_completer
+    4. Primary loop agents: root_router, impl_branch_ensure, coder,
+       root_reviewer, impl_pr_open, impl_pr_merge, root_completer
     5. Coder + scope_reviewer use an "opus" model (flexible match — versioning
        drift across opus revisions does not break this lint).
     6. Scope review agent: scope_reviewer
@@ -101,13 +101,13 @@ foreach ($output in $requiredOutputs) {
 
 # ── Check 5: Primary loop agents ─────────────────────────────────────────
 $primaryLoopAgents = @(
-    'primary_router',
+    'root_router',
     'impl_branch_ensure',
     'coder',
-    'primary_reviewer',
+    'root_reviewer',
     'impl_pr_open',
     'impl_pr_merge',
-    'primary_completer'
+    'root_completer'
 )
 foreach ($agent in $primaryLoopAgents) {
     if ($content -notmatch "name:\s*$agent") {
@@ -237,7 +237,7 @@ if ($content -notmatch 'name:\s*scope_closer') {
 # Per conductor-mechanics M2, any LLM agent whose output is consumed by
 # a route MUST have an `output:` schema. Otherwise the conductor packs
 # the entire response into output.result and the routes silently break.
-$schemaAgents = @('primary_reviewer', 'scope_reviewer')
+$schemaAgents = @('root_reviewer', 'scope_reviewer')
 foreach ($agentName in $schemaAgents) {
     $block = ''
     $inAgent = $false
@@ -308,7 +308,7 @@ foreach ($route in $invalidRoutes) {
 }
 
 # ── Check 17: Scope-revise cap structure (AB#3125) ───────────────────────
-# The scope_reviewer → primary_router revise loop must be capped to
+# The scope_reviewer → root_router revise loop must be capped to
 # prevent infinite loops on structurally-broken MGs (empty branch,
 # zero implementable items). The required nodes mirror the canonical
 # `revise_counter`/`revise_cap_gate` pattern from plan-level.yaml and
@@ -321,7 +321,7 @@ foreach ($route in $invalidRoutes) {
 #      force_accept / abort.
 #   3. scope_revise_reset script node.
 #   4. scope_reviewer routes the `changes_requested` verdict (and its
-#      catch-all) to scope_revise_counter, NOT directly to primary_router.
+#      catch-all) to scope_revise_counter, NOT directly to root_router.
 $reviseNodes = @('scope_revise_counter', 'scope_revise_cap_gate', 'scope_revise_reset')
 foreach ($node in $reviseNodes) {
     if ($content -notmatch "name:\s*$node\b") {
@@ -401,7 +401,7 @@ $reviewerHopsToCap = $scopeReviewerBlock -match 'to:\s*scope_revise_counter' -or
 if ($scopeReviewerBlock -and -not $reviewerHopsToCap) {
     $violations += [PSCustomObject]@{
         Rule   = 'scope-reviewer-bypasses-cap'
-        Detail = "scope_reviewer must route to scope_revise_counter (directly, or via scope_approvals_policy which itself routes to scope_revise_counter), not directly to primary_router (AB#3125)"
+        Detail = "scope_reviewer must route to scope_revise_counter (directly, or via scope_approvals_policy which itself routes to scope_revise_counter), not directly to root_router (AB#3125)"
     }
 }
 
@@ -445,7 +445,7 @@ if ($guidanceLoaderBlock -and $guidanceLoaderBlock -notmatch 'to:\s*scope_empty_
 # routes:
 #   auto_proceed → workflow-specific target (the "force one more / accept"
 #                  semantic for this site; not checked here — site-specific)
-#   auto_fail    → terminal_cap_auto_fail
+#   auto_fail    → cap_auto_fail
 #   (fallthrough)→ the cap-hit gate itself (manual + catch-all)
 #
 # These checks enumerate the concrete cap-hit gates known to this
@@ -470,10 +470,10 @@ foreach ($gate in @('scope_revise_cap_gate')) {
             Detail = "AB#3186: '$routerName' must invoke the shared 'resolve-unattended-cap-mode.ps1' helper, not inline policy lookup."
         }
     }
-    if ($routerBlock -notmatch 'to:\s*terminal_cap_auto_fail\b') {
+    if ($routerBlock -notmatch 'to:\s*cap_auto_fail\b') {
         $violations += [PSCustomObject]@{
             Rule   = "cap-mode-router-missing-auto-fail-route-$gate"
-            Detail = "AB#3186: '$routerName' must include a 'to: terminal_cap_auto_fail' route guarded by cap_mode == 'auto_fail'."
+            Detail = "AB#3186: '$routerName' must include a 'to: cap_auto_fail' route guarded by cap_mode == 'auto_fail'."
         }
     }
     if ($routerBlock -notmatch "to:\s*$([regex]::Escape($gate))\b") {
@@ -484,17 +484,17 @@ foreach ($gate in @('scope_revise_cap_gate')) {
     }
 }
 
-if ($content -notmatch 'name:\s*terminal_cap_auto_fail\b') {
+if ($content -notmatch 'name:\s*cap_auto_fail\b') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-terminal-cap-auto-fail'
-        Detail = "AB#3186: 'terminal_cap_auto_fail' terminal node missing. Required as the auto_fail target for cap-mode policy routers; must invoke abort-run.ps1 with -Reason 'cap-auto-fail'."
+        Detail = "AB#3186: 'cap_auto_fail' terminal node missing. Required as the auto_fail target for cap-mode policy routers; must invoke abort-run.ps1 with -Reason 'cap-auto-fail'."
     }
 } else {
-    $terminalMatch = [regex]::Match($content, '(?s)- name:\s*terminal_cap_auto_fail\b.*?(?=\n  - name: |\Z)')
+    $terminalMatch = [regex]::Match($content, '(?s)- name:\s*cap_auto_fail\b.*?(?=\n  - name: |\Z)')
     if ($terminalMatch.Success -and $terminalMatch.Value -notmatch '"cap-auto-fail"') {
         $violations += [PSCustomObject]@{
             Rule   = 'terminal-cap-auto-fail-wrong-reason'
-            Detail = "AB#3186: 'terminal_cap_auto_fail' must invoke abort-run.ps1 with -Reason 'cap-auto-fail' (the discriminator vs 'operator-abort' for post-mortem diagnostics)."
+            Detail = "AB#3186: 'cap_auto_fail' must invoke abort-run.ps1 with -Reason 'cap-auto-fail' (the discriminator vs 'operator-abort' for post-mortem diagnostics)."
         }
     }
 }

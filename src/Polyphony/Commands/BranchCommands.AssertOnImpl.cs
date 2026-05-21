@@ -18,7 +18,7 @@ public sealed partial class BranchCommands
     /// branch. This verb is read-only: it inspects HEAD via
     /// <c>git branch --show-current</c> and emits a routable verdict.
     /// </summary>
-    /// <param name="rootId">ADO work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="itemId">ADO work-item id of the task this assertion is gating.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("assert-on-impl")]

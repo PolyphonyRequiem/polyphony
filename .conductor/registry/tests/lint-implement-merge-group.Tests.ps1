@@ -14,11 +14,11 @@ Describe 'lint-implement-merge-group.ps1' {
         }
     }
 
-    # AB#3169 — primary_completer must skip implementation_complete event
-    # when primary_id == root_id (indivisible apex root case). Otherwise the
-    # apex Issue is marked Done at MG → feature merge time, before
+    # AB#3169 — root_completer must skip implementation_complete event
+    # when root_id == root_id (indivisible root root case). Otherwise the
+    # root Issue is marked Done at MG → feature merge time, before
     # feature → main has been promoted.
-    Context 'primary_completer apex-root carve-out (AB#3169)' {
+    Context 'root_completer root-root carve-out (AB#3169)' {
 
         BeforeAll {
             $script:ImplementMgYamlText = Get-Content $script:ImplementMgYaml -Raw
@@ -32,8 +32,8 @@ Describe 'lint-implement-merge-group.ps1' {
             $script:ImplementMgYamlText | Should -Match '\$isApexRoot\s*=\s*\(\$taskId\s*-eq\s*\$rootId\)'
         }
 
-        It 'Branches on $isApexRoot so the implementation_complete event is only fired in the else (non-apex-root) arm' {
-            $primary = [regex]::Match($script:ImplementMgYamlText, '(?s)- name: primary_completer.*?routes:')
+        It 'Branches on $isApexRoot so the implementation_complete event is only fired in the else (non-root-root) arm' {
+            $primary = [regex]::Match($script:ImplementMgYamlText, '(?s)- name: root_completer.*?routes:')
             $primary.Success | Should -BeTrue
             $body = $primary.Value
             # Split the inner if-arm from the else-arm at the literal `} else {`
@@ -46,23 +46,23 @@ Describe 'lint-implement-merge-group.ps1' {
             $ifSide   = $split[0]
             $elseSide = $split[1]
             # Trim the if-side back to start at `if ($isApexRoot) {` so we don't
-            # confuse pre-if setup lines with the apex-root body.
+            # confuse pre-if setup lines with the root-root body.
             $ifSplit = $ifSide -split 'if\s*\(\$isApexRoot\)\s*\{', 2
             $ifSplit.Count | Should -Be 2
             $ifBody = $ifSplit[1]
-            $ifBody   | Should -Not -Match 'polyphony validate.*--event implementation_complete' -Because 'AB#3169 — apex root MUST skip implementation_complete; close_mark_satisfied fires the terminal item_satisfied event AFTER feature → main promotion'
-            $ifBody   | Should -Not -Match 'twig state'                                          -Because 'AB#3169 — apex root MUST NOT change ADO state here'
+            $ifBody   | Should -Not -Match 'polyphony validate.*--event implementation_complete' -Because 'AB#3169 — root root MUST skip implementation_complete; close_mark_satisfied fires the terminal item_satisfied event AFTER feature → main promotion'
+            $ifBody   | Should -Not -Match 'twig state'                                          -Because 'AB#3169 — root root MUST NOT change ADO state here'
             $elseSide | Should -Match 'polyphony validate.*--event implementation_complete'      -Because 'Child tasks still get their normal implementation_complete transition'
             $elseSide | Should -Match 'twig state \$validate\.target_state'                      -Because 'Child tasks still transition via twig state'
         }
 
-        It 'Emits a deferred_apex_root flag on the JSON output so callers / dashboards can distinguish the two arms' {
-            $script:ImplementMgYamlText | Should -Match 'deferred_apex_root\s*=\s*\$true'
-            $script:ImplementMgYamlText | Should -Match 'deferred_apex_root\s*=\s*\$false'
+        It 'Emits a deferred_root_root flag on the JSON output so callers / dashboards can distinguish the two arms' {
+            $script:ImplementMgYamlText | Should -Match 'deferred_root_root\s*=\s*\$true'
+            $script:ImplementMgYamlText | Should -Match 'deferred_root_root\s*=\s*\$false'
         }
 
-        It 'Apex-root note text references AB#3169 so the audit trail in twig comments points to the rationale' {
-            $script:ImplementMgYamlText | Should -Match 'twig note --text ''Apex root implementation merged into MG branch.*AB#3169'
+        It 'Root-root note text references AB#3169 so the audit trail in twig comments points to the rationale' {
+            $script:ImplementMgYamlText | Should -Match 'twig note --text ''Root root implementation merged into MG branch.*AB#3169'
         }
     }
 
@@ -113,16 +113,16 @@ agents:
     command: pwsh
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
-      - to: primary_router
-  - name: primary_router
+      - to: root_router
+  - name: root_router
     type: script
     command: pwsh
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
       - to: impl_branch_ensure
-        when: "{{ primary_router.output.action == 'implement_item' }}"
+        when: "{{ root_router.output.action == 'implement_item' }}"
       - to: dependency_check
-        when: "{{ primary_router.output.action == 'all_items_done' }}"
+        when: "{{ root_router.output.action == 'all_items_done' }}"
   - name: impl_branch_ensure
     type: script
     command: polyphony
@@ -135,8 +135,8 @@ agents:
     description: Implement a single task
     prompt: "Implement the task"
     routes:
-      - to: primary_reviewer
-  - name: primary_reviewer
+      - to: root_reviewer
+  - name: root_reviewer
     type: agent
     model: claude-opus-4.6
     description: Review per-item task implementation
@@ -152,9 +152,9 @@ agents:
     prompt: "Review the implementation"
     routes:
       - to: impl_pr_open
-        when: "{{ primary_reviewer.output.verdict == 'approved' }}"
+        when: "{{ root_reviewer.output.verdict == 'approved' }}"
       - to: coder
-        when: "{{ primary_reviewer.output.verdict == 'changes_requested' }}"
+        when: "{{ root_reviewer.output.verdict == 'changes_requested' }}"
   - name: impl_pr_open
     type: script
     command: polyphony
@@ -166,13 +166,13 @@ agents:
     command: polyphony
     args: ["pr", "merge-impl-pr", "--root-id", "1", "--item-id", "2", "--mg-path", "data-layer"]
     routes:
-      - to: primary_completer
-  - name: primary_completer
+      - to: root_completer
+  - name: root_completer
     type: script
     command: pwsh
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
-      - to: primary_router
+      - to: root_router
   - name: dependency_check
     type: script
     command: pwsh
@@ -244,7 +244,7 @@ agents:
     routes:
       - to: scope_revise_cap_gate
         when: "{{ scope_revise_counter.output.cap_reached == true }}"
-      - to: primary_router
+      - to: root_router
         when: "{{ scope_revise_counter.output.cap_reached == false }}"
       - to: scope_revise_cap_gate
   - name: scope_revise_cap_gate
@@ -265,7 +265,7 @@ agents:
     command: pwsh
     args: ["-Command", "@{} | ConvertTo-Json"]
     routes:
-      - to: primary_router
+      - to: root_router
   - name: mg_pr_open
     type: script
     command: polyphony
@@ -292,10 +292,10 @@ agents:
       - "-File"
       - "../scripts/resolve-unattended-cap-mode.ps1"
     routes:
-      - to: terminal_cap_auto_fail
+      - to: cap_auto_fail
         when: "{{ scope_revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
       - to: scope_revise_cap_gate
-  - name: terminal_cap_auto_fail
+  - name: cap_auto_fail
     type: script
     command: pwsh
     args:
@@ -338,7 +338,7 @@ agents:
         }
 
         It 'Fails when root_id input is missing' {
-            $yaml = ($script:ValidYaml) -replace 'root_id:', 'apex_id:'
+            $yaml = ($script:ValidYaml) -replace 'root_id:', 'bogus_input_name:'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
@@ -373,8 +373,8 @@ agents:
             ($output | Out-String) | Should -Match 'missing-output'
         }
 
-        It 'Fails when primary_router agent is missing' {
-            $yaml = ($script:ValidYaml) -replace 'name: primary_router', 'name: task_dispatcher'
+        It 'Fails when root_router agent is missing' {
+            $yaml = ($script:ValidYaml) -replace 'name: root_router', 'name: task_dispatcher'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
@@ -499,18 +499,18 @@ agents:
         }
 
         It 'Fails when entry point is wrong' {
-            $yaml = ($script:ValidYaml) -replace 'entry_point: branch_ensure_mg', 'entry_point: primary_router'
+            $yaml = ($script:ValidYaml) -replace 'entry_point: branch_ensure_mg', 'entry_point: root_router'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
             ($output | Out-String) | Should -Match 'wrong-entry-point'
         }
 
-        It 'Fails when primary_reviewer lacks an output schema' {
+        It 'Fails when root_reviewer lacks an output schema' {
             # Per conductor-mechanics M2, agents whose output is read by
             # routes MUST declare an output schema. Without it the
             # response packs into output.result and the routes break.
-            $yaml = ($script:ValidYaml) -replace '(?ms)(name: primary_reviewer.*?)\n\s+output:\s*\n\s+verdict:\s*\n\s+type: string\s*\n\s+feedback:\s*\n\s+type: string\s*\n\s+issues:\s*\n\s+type: array\s*\n\s+items:\s*\n\s+type: string', '$1'
+            $yaml = ($script:ValidYaml) -replace '(?ms)(name: root_reviewer.*?)\n\s+output:\s*\n\s+verdict:\s*\n\s+type: string\s*\n\s+feedback:\s*\n\s+type: string\s*\n\s+issues:\s*\n\s+type: array\s*\n\s+items:\s*\n\s+type: string', '$1'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
@@ -573,12 +573,12 @@ agents:
             ($output | Out-String) | Should -Match 'missing-scope-revise-gate-option'
         }
 
-        It 'Fails when scope_reviewer routes changes_requested directly to primary_router (AB#3125)' {
+        It 'Fails when scope_reviewer routes changes_requested directly to root_router (AB#3125)' {
             # Strip the cap-gate trio AND rewire scope_reviewer to bypass it.
             # The "scope-reviewer-bypasses-cap" check fires when no route in
             # the scope_reviewer block targets scope_revise_counter.
             $yaml = ($script:ValidYaml) `
-                -replace 'to: scope_revise_counter', 'to: primary_router'
+                -replace 'to: scope_revise_counter', 'to: root_router'
             Set-Content (Join-Path $script:WorkflowsDir 'implement-merge-group.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-implement-merge-group.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1

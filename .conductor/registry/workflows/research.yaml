@@ -84,7 +84,7 @@ workflow:
         Max deep_researcher escalations allowed for this research_needs
         call. 0 disables escalation entirely (cheap-only). 1 = single-shot
         (the design default per plan-3131.md). Caller (e.g., plan-level.yaml's
-        research_dispatch) should plumb research.escalation_cap from
+        research) should plumb research.escalation_cap from
         profile.yaml. Workflow honors only 0 or 1 today; values > 1 are
         clamped to 1.
     escalation_mode:

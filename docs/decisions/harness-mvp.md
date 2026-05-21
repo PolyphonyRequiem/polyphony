@@ -112,7 +112,7 @@ becomes unstable.
 ### Negative / accepted
 
 - **Scenarios are happy-path on day one.** Two scenarios (`close_out_happy_path`,
-  `cascade_remedy_no_stale`) prove the rails work. Real coverage compounds
+  `restack_remedy_no_stale`) prove the rails work. Real coverage compounds
   scenario-by-scenario over time.
 - **Non-default gate routing is unsupported.** Tracked under issue #272 +
   follow-up custom handler.
@@ -138,7 +138,7 @@ becomes unstable.
 - **PR #269** — Python driver, `FakeProvider`, scenario.yaml schema, Pester
   wrapper, first scenario (`close_out_happy_path`).
 - **PR #270** — .NET shim binary, `cli_scripts:` extension to scenario
-  schema, second scenario (`cascade_remedy_no_stale`) exercising both seams.
+  schema, second scenario (`restack_remedy_no_stale`) exercising both seams.
 - **PR #271** — CI integration: `actions/setup-python@v5` + conductor pip
   install + import-verification step. Scenarios run on every PR build.
 

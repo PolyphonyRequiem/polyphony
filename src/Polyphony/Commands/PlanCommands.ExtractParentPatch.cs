@@ -77,7 +77,7 @@ public sealed partial class PlanCommands
 
         // ── 2. Parse the PR URL into platform identity + PR number. ───────
         // Accepts both github.com and dev.azure.com / *.visualstudio.com PR
-        // URLs (Phase 6 — ADO parity for cascade-remedy.yaml +
+        // URLs (Phase 6 — ADO parity for restack-remedy.yaml +
         // remedy-stale-descendant.yaml).
         if (!TryParsePrUrl(prUrl, out var identity, out var resolvedPrNumber))
         {

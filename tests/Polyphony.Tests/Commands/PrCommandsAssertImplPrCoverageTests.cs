@@ -14,7 +14,7 @@ namespace Polyphony.Tests.Commands;
 /// Tests for <c>polyphony pr assert-impl-pr-coverage</c> — post-squash
 /// assertion that the MG-branch squash commit carries the cumulative
 /// diff of the source impl branch. Defends against AB#3211 (silent
-/// commit drop on squash merge, observed in apex 3165 where
+/// commit drop on squash merge, observed in root 3165 where
 /// <c>mg/3165_pg-3176</c> received only 1 of 3 commits' content).
 /// </summary>
 public sealed class PrCommandsAssertImplPrCoverageTests : CommandTestBase

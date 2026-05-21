@@ -28,7 +28,7 @@ public sealed partial class PrCommands
     /// <param name="organization">ADO organization name (e.g. <c>contoso</c>).</param>
     /// <param name="project">ADO project name.</param>
     /// <param name="repository">ADO repository identifier — GUID or name; both accepted.</param>
-    /// <param name="rootId">Root work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">Root work-item id of the run's root (focus) item.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path.</param>
     /// <param name="title">Optional PR title; deterministic fallback used when empty.</param>
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>

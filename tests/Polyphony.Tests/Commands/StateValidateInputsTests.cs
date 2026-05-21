@@ -47,7 +47,7 @@ public sealed class StateValidateInputsTests
         var path = WriteWorkflow("""
         workflow:
           input:
-            apex_item:
+            root_item:
               required: true
             run_label:
               required: false
@@ -58,7 +58,7 @@ public sealed class StateValidateInputsTests
             var cmd = NewCmd();
 
             var (exitCode, output) = await CaptureAsync(() =>
-                cmd.ValidateInputs(workflowYaml: path, inputs: "apex_item=12345"));
+                cmd.ValidateInputs(workflowYaml: path, inputs: "root_item=12345"));
 
             exitCode.ShouldBe(ExitCodes.Success);
 
@@ -80,7 +80,7 @@ public sealed class StateValidateInputsTests
         var path = WriteWorkflow("""
         workflow:
           input:
-            apex_item:
+            root_item:
               required: true
             run_label:
               required: false
@@ -100,8 +100,8 @@ public sealed class StateValidateInputsTests
             result.ShouldNotBeNull();
             result!.Ready.ShouldBeFalse();
             result.Action.ShouldBe("error");
-            result.MissingRequiredInputs.ShouldBe(["apex_item"]);
-            result.Summary.ShouldContain("apex_item");
+            result.MissingRequiredInputs.ShouldBe(["root_item"]);
+            result.Summary.ShouldContain("root_item");
         }
         finally { File.Delete(path); }
     }
@@ -112,7 +112,7 @@ public sealed class StateValidateInputsTests
         var path = WriteWorkflow("""
         workflow:
           input:
-            apex_item:
+            root_item:
               required: true
         """);
         try
@@ -120,7 +120,7 @@ public sealed class StateValidateInputsTests
             var cmd = NewCmd();
 
             var (exitCode, output) = await CaptureAsync(() =>
-                cmd.ValidateInputs(workflowYaml: path, inputs: "apex_item=12345,bogus_input=foo"));
+                cmd.ValidateInputs(workflowYaml: path, inputs: "root_item=12345,bogus_input=foo"));
 
             exitCode.ShouldBe(ExitCodes.Success);
             var result = JsonSerializer.Deserialize(

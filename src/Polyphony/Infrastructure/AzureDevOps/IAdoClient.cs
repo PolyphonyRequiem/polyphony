@@ -459,7 +459,7 @@ public interface IAdoClient
     /// </para>
     ///
     /// <para>
-    /// Used by the cascade remedy
+    /// Used by the restack remedy
     /// (<c>polyphony plan rebase-stale-descendant</c>) to rewrite the
     /// <c>ancestor_plan_generations</c> front-matter snapshot after a
     /// successful auto-rebase. Body-edit failure on that path is a
@@ -503,7 +503,7 @@ public interface IAdoClient
     /// </para>
     ///
     /// <para>
-    /// Used by the cascade-remedy <c>recreate</c> path
+    /// Used by the restack-remedy <c>recreate</c> path
     /// (<c>polyphony plan recreate-stale-descendant</c>) to abandon a stale
     /// plan PR before a fresh PR is opened from the new ancestor tip.
     /// Returns <c>false</c> on any non-success outcome (404, timeout,

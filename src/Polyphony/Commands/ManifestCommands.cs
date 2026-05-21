@@ -155,7 +155,7 @@ public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
     /// <paramref name="platformProject"/>, and (optionally) <paramref name="createdBy"/>.
     /// Refuses to overwrite an existing file unless <paramref name="force"/>.
     /// </summary>
-    /// <param name="rootId">Run's apex (focus) work-item id (positive). REQUIRED.</param>
+    /// <param name="rootId">Run's root (focus) work-item id (positive). REQUIRED.</param>
     /// <param name="platformProject">Platform-qualified project (e.g. <c>dev.azure.com/org/project</c>).</param>
     /// <param name="path">Optional explicit path. When empty, derived from <paramref name="rootId"/> via <see cref="PolyphonyStatePaths"/>.</param>
     /// <param name="createdBy">Who initiated the run. Defaults to <c>git config user.name</c> or <c>$USERNAME</c>.</param>

@@ -368,7 +368,7 @@ public sealed class TransitionValidatorTests
     [Fact]
     public void Validate_ItemSatisfied_WhenAlreadyInTargetState_ReturnsNoOp()
     {
-        // Symptom from AB#3170: apex Issue had been transitioned to Done by
+        // Symptom from AB#3170: root Issue had been transitioned to Done by
         // a sibling code path; close_mark_satisfied later fired item_satisfied
         // and used to error out with a precondition failure. Now it must
         // recognize the no-op and exit cleanly.

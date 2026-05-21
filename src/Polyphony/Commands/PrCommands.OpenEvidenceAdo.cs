@@ -14,8 +14,8 @@ public sealed partial class PrCommands
     /// Azure DevOps. ADO analogue of <c>polyphony pr open-evidence-pr</c>.
     ///
     /// <para>Default branch naming follows PR #2 (the evidence branch
-    /// builder): non-orphan = <c>evidence/{apex}-{workItem}</c> over
-    /// <c>feature/{apex}</c>; orphan = <c>evidence/{workItem}</c> over
+    /// builder): non-orphan = <c>evidence/{root}-{workItem}</c> over
+    /// <c>feature/{root}</c>; orphan = <c>evidence/{workItem}</c> over
     /// <c>main</c>. Per-PR overrides via <c>--head</c> / <c>--base-branch</c>
     /// are honored verbatim.</para>
     ///
@@ -26,7 +26,7 @@ public sealed partial class PrCommands
     /// <param name="project">ADO project name.</param>
     /// <param name="repository">ADO repository identifier — GUID or name.</param>
     /// <param name="workItem">The actionable work-item id this evidence PR satisfies.</param>
-    /// <param name="apexId">Optional run-root feature id. When omitted (or zero), defaults to <paramref name="workItem"/> (orphan evidence).</param>
+    /// <param name="rootId">Optional run-root feature id. When omitted (or zero), defaults to <paramref name="workItem"/> (orphan evidence).</param>
     /// <param name="head">Optional head branch override.</param>
     /// <param name="baseBranch">Optional base branch override.</param>
     /// <param name="title">Optional PR title.</param>
@@ -39,7 +39,7 @@ public sealed partial class PrCommands
         string project = "",
         string repository = "",
         int workItem = RequiredInput.MissingInt,
-        int apexId = 0,
+        int rootId = 0,
         string head = "",
         string baseBranch = "",
         string title = "",
@@ -57,40 +57,40 @@ public sealed partial class PrCommands
 
         if (workItem <= 0)
         {
-            EmitOpenEvidenceAdoError(workItem, apexId, organization, project, repository, slug,
+            EmitOpenEvidenceAdoError(workItem, rootId, organization, project, repository, slug,
                 "invalid_argument", $"workItem must be positive (got {workItem})");
             return ExitCodes.Success;
         }
-        if (apexId < 0)
+        if (rootId < 0)
         {
-            EmitOpenEvidenceAdoError(workItem, apexId, organization, project, repository, slug,
-                "invalid_argument", $"apexId must be non-negative (got {apexId})");
+            EmitOpenEvidenceAdoError(workItem, rootId, organization, project, repository, slug,
+                "invalid_argument", $"rootId must be non-negative (got {rootId})");
             return ExitCodes.Success;
         }
 
-        var effectiveApex = apexId == 0 ? workItem : apexId;
-        var isOrphan = effectiveApex == workItem;
+        var effectiveRoot = rootId == 0 ? workItem : rootId;
+        var isOrphan = effectiveRoot == workItem;
 
         var headBranch = string.IsNullOrWhiteSpace(head)
             ? (isOrphan
                 ? $"evidence/{workItem}"
-                : $"evidence/{effectiveApex}-{workItem}")
+                : $"evidence/{effectiveRoot}-{workItem}")
             : head;
 
         var resolvedBase = string.IsNullOrWhiteSpace(baseBranch)
-            ? (isOrphan ? "main" : $"feature/{effectiveApex}")
+            ? (isOrphan ? "main" : $"feature/{effectiveRoot}")
             : baseBranch;
 
         var outcome = await OpenEvidenceAdoCoreAsync(
             organization, project, repository, slug,
-            workItem, effectiveApex,
+            workItem, effectiveRoot,
             headBranch, resolvedBase,
             title, body, ct).ConfigureAwait(false);
 
         EmitOpenEvidenceAdo(new PrOpenEvidenceAdoResult
         {
             WorkItemId = workItem,
-            ApexId = effectiveApex,
+            RootId = effectiveRoot,
             HeadBranch = outcome.HeadBranch,
             BaseBranch = outcome.BaseBranch,
             Organization = organization,
@@ -120,7 +120,7 @@ public sealed partial class PrCommands
         string repository,
         string slug,
         int workItem,
-        int effectiveApex,
+        int effectiveRoot,
         string headBranch,
         string resolvedBase,
         string title,
@@ -160,7 +160,7 @@ public sealed partial class PrCommands
             ? await ResolveEvidencePrTitleAsync(workItem, ct).ConfigureAwait(false)
             : title;
         var prBody = string.IsNullOrWhiteSpace(body)
-            ? BuildDefaultEvidenceBody(workItem, effectiveApex, headBranch, resolvedBase)
+            ? BuildDefaultEvidenceBody(workItem, effectiveRoot, headBranch, resolvedBase)
             : body;
 
         try
@@ -311,7 +311,7 @@ public sealed partial class PrCommands
 
     private static void EmitOpenEvidenceAdoError(
         int workItem,
-        int apexId,
+        int rootId,
         string organization,
         string project,
         string repository,
@@ -324,7 +324,7 @@ public sealed partial class PrCommands
         EmitOpenEvidenceAdo(new PrOpenEvidenceAdoResult
         {
             WorkItemId = workItem,
-            ApexId = apexId,
+            RootId = rootId,
             HeadBranch = headBranch,
             BaseBranch = baseBranch,
             Organization = organization ?? string.Empty,
