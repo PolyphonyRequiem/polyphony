@@ -1,45 +1,45 @@
 <#
 .SYNOPSIS
-    Per-root sentinel store that lets `apex-wave-dispatch.yaml` short-circuit
-    when an earlier wave under the same apex run already failed.
+    Per-root sentinel store that lets `root-batch-dispatch.yaml` short-circuit
+    when an earlier batch under the same root run already failed.
 
 .DESCRIPTION
-    Companion to .conductor/registry/workflows/apex-driver.yaml +
-    .conductor/registry/workflows/apex-wave-dispatch.yaml.
+    Companion to .conductor/registry/workflows/polyphony.yaml +
+    .conductor/registry/workflows/root-batch-dispatch.yaml.
 
-    apex-driver's outer `wave_dispatch_loop` runs `failure_mode:
-    continue_on_error` (M8) so that a failed wave still flows through
-    `wave_loop_summary` instead of crashing the parent workflow. Conductor's
+    polyphony's outer `batch_dispatch_loop` runs `failure_mode:
+    continue_on_error` (M8) so that a failed batch still flows through
+    `batch_loop_summary` instead of crashing the parent workflow. Conductor's
     native `failure_mode: fail_fast` raises an ExecutionError and would
-    bypass the apex-driver gate routing entirely, so we cannot use it.
+    bypass the polyphony gate routing entirely, so we cannot use it.
 
-    Without an explicit short-circuit, every subsequent wave still runs
-    after wave[N] fails — wasting compute and producing cascading
+    Without an explicit short-circuit, every subsequent batch still runs
+    after batch[N] fails — wasting compute and producing cascading
     sub-workflow failures whose terminal state still rolls up correctly
-    via `outer_loop_evaluator → terminal_apex_dispatch_failures` (PR #265),
-    but only after every later wave's items have been dispatched.
+    via `outer_loop_evaluator → root_dispatch_failures` (PR #265),
+    but only after every later batch's items have been dispatched.
 
     This guard introduces a per-root filesystem sentinel:
 
       * `clear`  — wipe the sentinel directory. Invoked at the start of
-                   every dispatch pass by apex-driver's
-                   `reset_wave_failure_flags` step (between
-                   `check_conflicts` and `wave_dispatch_loop`).
+                   every dispatch pass by polyphony's
+                   `reset_batch_failure_flags` step (between
+                   `check_conflicts` and `batch_dispatch_loop`).
       * `check`  — report whether any flag exists for this root. Invoked
-                   as the entry step of apex-wave-dispatch
-                   (`check_prior_wave_status`); routes to a no-op
+                   as the entry step of root-batch-dispatch
+                   (`check_prior_batch_status`); routes to a no-op
                    terminal when blocked.
-      * `record` — write a flag for this wave. Invoked by
-                   apex-wave-dispatch's `record_wave_failure_flag` step
+      * `record` — write a flag for this batch. Invoked by
+                   root-batch-dispatch's `record_batch_failure_flag` step
                    when `aggregate_renegotiation.output.items_failed_count`
                    is non-zero.
 
     Renegotiation is intentionally NOT short-circuited. The existing
     `renegotiation_gate.override` route flips straight to
-    `apex_completion_gate`; skipping later waves on a renegotiation
-    request would let `override` declare apex completion having silently
+    `root_completion_gate`; skipping later waves on a renegotiation
+    request would let `override` declare root completion having silently
     skipped real work. Failure short-circuit is safe — `outer_loop_evaluator`
-    routes failures to `terminal_apex_dispatch_failures` regardless of
+    routes failures to `root_dispatch_failures` regardless of
     how many waves actually executed.
 
     Per the polyphony-workflow-author skill conventions:
@@ -50,13 +50,13 @@
     One of `clear`, `check`, `record`.
 
 .PARAMETER RootId
-    The apex root work item id. Sentinel directory is namespaced by this
+    The root root work item id. Sentinel directory is namespaced by this
     id so concurrent runs against different apexes do not interfere.
     (The same-root run-lock prevents concurrent runs against the SAME
-    apex; see polyphony-branch-model skill.)
+    root; see polyphony-branch-model skill.)
 
-.PARAMETER WaveIndex
-    0-based wave index. Used by `record` to label the flag file for
+.PARAMETER BatchIndex
+    0-based batch index. Used by `record` to label the flag file for
     diagnostics. Ignored by `clear` and `check`.
 
 .PARAMETER Reason
@@ -65,7 +65,7 @@
     replaced with `_`.
 
 .NOTES
-    Companion to apex-driver.yaml + apex-wave-dispatch.yaml. The output
+    Companion to polyphony.yaml + root-batch-dispatch.yaml. The output
     schema is the workflows' input schema for the guard steps; tests
     pin both shapes.
 #>
@@ -78,7 +78,7 @@ param(
     [Parameter(Mandatory)]
     [int]$RootId,
 
-    [int]$WaveIndex = -1,
+    [int]$BatchIndex = -1,
 
     [string]$Reason = ''
 )
@@ -104,7 +104,7 @@ function Get-FlagDir([int]$rootId) {
     if ([string]::IsNullOrWhiteSpace($gitCommonDir)) {
         return $null
     }
-    return (Join-Path $gitCommonDir "polyphony/$rootId/wave-failures")
+    return (Join-Path $gitCommonDir "polyphony/$rootId/batch-failures")
 }
 
 function Get-SafeReason([string]$reason) {
@@ -160,10 +160,10 @@ try {
                 New-Item -ItemType Directory -Path $flagDir -Force | Out-Null
             }
             $safeReason = Get-SafeReason -reason $Reason
-            $flagName = if ($WaveIndex -ge 0) { "wave-$WaveIndex-$safeReason.flag" } else { "$safeReason.flag" }
+            $flagName = if ($BatchIndex -ge 0) { "batch-$BatchIndex-$safeReason.flag" } else { "$safeReason.flag" }
             $flagPath = Join-Path $flagDir $flagName
             $payload = [ordered]@{
-                wave_index = $WaveIndex
+                batch_index = $BatchIndex
                 reason     = $Reason
                 recorded_at = ([DateTimeOffset]::UtcNow.ToString('o'))
             } | ConvertTo-Json -Compress

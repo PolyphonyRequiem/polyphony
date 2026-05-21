@@ -9,7 +9,7 @@ namespace Polyphony.Branching;
 /// </summary>
 internal static class BranchNameBuilder
 {
-    /// <summary>Ref-class prefix for the apex integration trunk.</summary>
+    /// <summary>Ref-class prefix for the root integration trunk.</summary>
     public const string FeaturePrefix = "feature/";
 
     /// <summary>Ref-class prefix for plan branches.</summary>
@@ -62,7 +62,7 @@ internal static class BranchNameBuilder
 
     /// <summary>
     /// Builds <c>evidence/{item_id}</c> — the orphan evidence branch form
-    /// used when the work item is its own apex (no separate parent
+    /// used when the work item is its own root (no separate parent
     /// feature) so the redundant <c>{root}-{item}</c> would just repeat the
     /// id. The Phase 6 design sketch explicitly allows this collapse for
     /// orphan evidence.

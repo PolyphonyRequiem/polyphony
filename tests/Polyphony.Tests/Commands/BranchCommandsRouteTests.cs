@@ -255,11 +255,11 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         output.ShouldNotContain("\"PrNumber\"");
     }
 
-    // F10: indivisible-apex routing — when the hierarchy has no MG tags
+    // F10: indivisible-root routing — when the hierarchy has no MG tags
     // (BuildRouteGroups synthesizes a single fallback PG-1) and the caller
-    // passes --pg-number = apex_id (e.g. 3064), Route used to silently emit
+    // passes --pg-number = root_id (e.g. 3064), Route used to silently emit
     // action=all_complete because pgNumber matching failed. This is the
-    // false-satisfied bug: the apex carries non-terminal items but Route
+    // false-satisfied bug: the root carries non-terminal items but Route
     // returned "nothing left to do". Now Route accepts the lone synthesized
     // fallback and routes to create_branch instead.
     [Fact]
@@ -273,18 +273,18 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         StubPrList(runner, "merged", "[]");
         StubPrList(runner, "open", "[]");
 
-        // Indivisible apex: a single Epic in non-terminal state, no children,
+        // Indivisible root: a single Epic in non-terminal state, no children,
         // and no PG tags anywhere. BuildRouteGroups will synthesize PG-1 with
-        // the apex as a container WorkItem.
-        var apex = new WorkItemBuilder()
+        // the root as a container WorkItem.
+        var root = new WorkItemBuilder()
             .WithId(3064)
             .WithType("Epic")
             .WithTitle("Wire item_satisfied as ADO transition trigger")
             .WithState("To Do")
             .Build();
-        await SeedAsync(apex);
+        await SeedAsync(root);
 
-        // Caller passes --pg-number = apex_id (the workflow YAML's
+        // Caller passes --pg-number = root_id (the workflow YAML's
         // current shape). Without the F10 fix this returns all_complete.
         var (_, output) = await CaptureConsoleAsync(() => cmd.Route(workItem: 3064, pgNumber: 3064));
         var result = Deserialize(output);

@@ -2,19 +2,19 @@
 
 <#
 .SYNOPSIS
-    Pins the AB#3066 fix to apex-item-dispatch.yaml's `terminal_satisfied` step.
+    Pins the AB#3066 fix to root-item-dispatch.yaml's `satisfied` step.
 
 .DESCRIPTION
-    `terminal_satisfied` wraps a twig+polyphony block in try/catch so that
-    transient ADO/twig failures don't fail the entire wave (the apex-driver
+    `satisfied` wraps a twig+polyphony block in try/catch so that
+    transient ADO/twig failures don't fail the entire batch (the polyphony
     outer loop re-evaluates next-ready on the next pass). Before AB#3066 the
     catch was silent: no stderr write, no field surfaced in the structured
-    output. The fix preserves the don't-fail-the-wave behavior while making
+    output. The fix preserves the don't-fail-the-batch behavior while making
     every caught exception observable in two channels:
 
       1. stderr  — `[Console]::Error.WriteLine(...)` so the conductor event
                    log shows the failure.
-      2. output  — conditional `error` + `error_code` fields so wave
+      2. output  — conditional `error` + `error_code` fields so batch
                    aggregators can act on it.
 
     These tests are structural assertions against the YAML text. They prevent
@@ -22,22 +22,22 @@
 #>
 
 BeforeAll {
-    $script:WorkflowPath = Join-Path $PSScriptRoot '..' '.conductor' 'registry' 'workflows' 'apex-item-dispatch.yaml'
+    $script:WorkflowPath = Join-Path $PSScriptRoot '..' '.conductor' 'registry' 'workflows' 'root-item-dispatch.yaml'
     $script:WorkflowYaml = Get-Content -Raw -LiteralPath $script:WorkflowPath
 
-    # Slice out just the terminal_satisfied block (everything from the step
+    # Slice out just the satisfied block (everything from the step
     # name to the next top-level step).
-    $pattern = '(?ms)^  - name: terminal_satisfied\b.*?(?=^  - name: |\Z)'
+    $pattern = '(?ms)^  - name: satisfied\b.*?(?=^  - name: |\Z)'
     $match = [regex]::Match($script:WorkflowYaml, $pattern)
     if (-not $match.Success) {
-        throw "Could not locate terminal_satisfied block in $script:WorkflowPath"
+        throw "Could not locate satisfied block in $script:WorkflowPath"
     }
     $script:Block = $match.Value
 }
 
-Describe 'apex-item-dispatch.yaml > terminal_satisfied — AB#3066 observable-error fix' {
+Describe 'root-item-dispatch.yaml > satisfied — AB#3066 observable-error fix' {
 
-    It 'has a try/catch wrapper (preserves "do not fail the wave" semantics)' {
+    It 'has a try/catch wrapper (preserves "do not fail the batch" semantics)' {
         $script:Block | Should -Match 'try\s*\{'
         $script:Block | Should -Match '\}\s*catch\s*\{'
     }
@@ -50,17 +50,17 @@ Describe 'apex-item-dispatch.yaml > terminal_satisfied — AB#3066 observable-er
 
     It 'writes the caught exception to stderr (visible in conductor event log)' {
         # Must be `[Console]::Error.WriteLine` — `Write-Error` would terminate
-        # the script (defeating the don't-fail-the-wave intent), and a plain
+        # the script (defeating the don't-fail-the-batch intent), and a plain
         # `Write-Host` would not land on stderr.
         $script:Block | Should -Match '\[Console\]::Error\.WriteLine'
         $script:Block | Should -Not -Match 'Write-Error\b'
     }
 
     It 'surfaces the error in structured output via `error` and `error_code` fields' {
-        # Match the existing terminal-error convention (e.g. terminal_classify_error,
-        # terminal_spawn_error): a string `error` + a string `error_code`.
+        # Match the existing terminal-error convention (e.g. classify_error,
+        # spawn_error): a string `error` + a string `error_code`.
         $script:Block | Should -Match '\$out\.error\s*='
-        $script:Block | Should -Match "\`$out\.error_code\s*=\s*'terminal_satisfied_caught'"
+        $script:Block | Should -Match "\`$out\.error_code\s*=\s*'satisfied_caught'"
     }
 
     It 'only adds the error fields when an exception was actually caught' {
@@ -69,8 +69,8 @@ Describe 'apex-item-dispatch.yaml > terminal_satisfied — AB#3066 observable-er
         $script:Block | Should -Match "if\s*\(\s*\`$errMsg\s+-ne\s+''\s*\)"
     }
 
-    It 'does NOT rethrow inside the catch block (would fail the wave)' {
-        # If a future edit adds `throw` inside the catch, the wave fails and
+    It 'does NOT rethrow inside the catch block (would fail the batch)' {
+        # If a future edit adds `throw` inside the catch, the batch fails and
         # the outer loop re-evaluation is bypassed — that would be a regression
         # of the AB#3066 design, not just the observability fix.
         $catchPattern = '(?ms)\}\s*catch\s*\{(.*?)\}\s*\$out\s*='

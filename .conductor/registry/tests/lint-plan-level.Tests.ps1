@@ -377,7 +377,7 @@ agents:
       - "extract-renegotiation-flag"
       - "{{ poll_status.output.pr_number }}"
     routes:
-      - to: cascade_remedy
+      - to: restack_remedy
   - name: depth_exceeded_gate_policy_router
     type: script
     command: pwsh
@@ -386,7 +386,7 @@ agents:
       - "-File"
       - "../scripts/resolve-unattended-cap-mode.ps1"
     routes:
-      - to: terminal_cap_auto_fail
+      - to: cap_auto_fail
         when: "{{ depth_exceeded_gate_policy_router.output.cap_mode == 'auto_fail' }}"
       - to: depth_exceeded_gate
   - name: revise_cap_gate_policy_router
@@ -397,10 +397,10 @@ agents:
       - "-File"
       - "../scripts/resolve-unattended-cap-mode.ps1"
     routes:
-      - to: terminal_cap_auto_fail
+      - to: cap_auto_fail
         when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
       - to: revise_cap_gate
-  - name: terminal_cap_auto_fail
+  - name: cap_auto_fail
     type: script
     command: pwsh
     args:
@@ -421,8 +421,8 @@ agents:
       - "-Scope"
       - "default"
     routes:
-      - to: research_dispatch
-  - name: research_dispatch
+      - to: research
+  - name: research
     type: workflow
     workflow: ./research.yaml
     input_mapping:
@@ -857,7 +857,7 @@ agents:
         }
     }
 
-    Context 'open_questions_policy --scope type field (regression: dogfood apex #3043, 2026-05-07)' {
+    Context 'open_questions_policy --scope type field (regression: dogfood root #3043, 2026-05-07)' {
 
         BeforeEach {
             $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-plan-level-typescope-$([guid]::NewGuid().ToString('N').Substring(0,8))"
@@ -892,7 +892,7 @@ agents:
         }
     }
 
-    Context 'severities_at_or_above field reference (regression: dogfood apex #3043, 2026-05-08)' {
+    Context 'severities_at_or_above field reference (regression: dogfood root #3043, 2026-05-08)' {
 
         BeforeEach {
             $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-plan-level-severities-$([guid]::NewGuid().ToString('N').Substring(0,8))"
@@ -938,7 +938,7 @@ agents:
         }
     }
 
-    Context 'parent_item_id default-filter form (regression: dogfood apex #3043, 2026-05-08)' {
+    Context 'parent_item_id default-filter form (regression: dogfood root #3043, 2026-05-08)' {
 
         BeforeEach {
             $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "lint-plan-level-pid-$([guid]::NewGuid().ToString('N').Substring(0,8))"

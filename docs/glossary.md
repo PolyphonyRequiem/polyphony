@@ -13,10 +13,11 @@
 > - `apex-driver` / `apex_driver` — the top-level workflow is `polyphony.yaml`; there is no separate "driver" noun
 > - `tree-walker` — collapsed into `polyphony.yaml`; the role description stays but the name is gone
 > - `primary_*` (as in `primary_completer`, `primary_router`) — use `root_*`
+> - `Primary*` (as in `PrimaryId`, `PrimaryRouter` — PascalCase compounds) — use `Root*`
 > - `wave` — use `batch`
 > - `cascade` (as a domain noun for the dependent-PR-tree remedy operation) — use `restack`
-> - `_dispatch` suffix on sub-workflow-invocation nodes — drop the suffix; `type: workflow` already says so
-> - `terminal_` prefix on workflow exit-state nodes — drop the prefix
+> - `*_dispatch` suffix on sub-workflow-invocation nodes — drop the suffix; `type: workflow` already says so
+> - `terminal_*` prefix on workflow exit-state nodes — drop the prefix
 
 ## Work item — relational terms
 

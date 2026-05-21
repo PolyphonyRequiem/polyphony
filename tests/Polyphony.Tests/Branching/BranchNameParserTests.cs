@@ -102,7 +102,7 @@ public sealed class BranchNameParserTests
     public void ParseOrUnrecognized_EvidenceOrphan_ReturnsEvidenceOrphanCase()
     {
         // Phase 6 added the orphan form for evidence on items that are
-        // their own apex — the redundant `{root}-{item}` would just repeat
+        // their own root — the redundant `{root}-{item}` would just repeat
         // the id, so the grammar accepts the bare-id variant.
         var parsed = BranchNameParser.ParseOrUnrecognized("evidence/9999");
 

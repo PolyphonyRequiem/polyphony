@@ -8,14 +8,14 @@ using Xunit;
 namespace Polyphony.Tests.Commands;
 
 /// <summary>
-/// Coverage for <c>polyphony worktree init-apex --apex N</c>:
+/// Coverage for <c>polyphony worktree init-root --root N</c>:
 /// argument validation, common-dir failure, the create-or-attach matrix
 /// (with path-exists winning over branch-state), remote-branch refusal,
 /// race-tolerant idempotent recovery, and JSON contract.
 ///
 /// Uses real <see cref="GitClient"/> on top of <see cref="FakeProcessRunner"/>
 /// so each git invocation is asserted at the wire level. Filesystem
-/// state (apex_root, worktree_path) lives in a per-test temp directory.
+/// state (root_root, worktree_path) lives in a per-test temp directory.
 /// </summary>
 public sealed class WorktreeCommandsInitApexTests : CommandTestBase
 {
@@ -28,7 +28,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     {
         _tempDir = Path.Combine(
             Path.GetTempPath(),
-            "polyphony-init-apex-" + Guid.NewGuid().ToString("N")[..12]);
+            "polyphony-init-root-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(_tempDir);
         _commonDir = Path.Combine(_tempDir, "polyphony.git");
         Directory.CreateDirectory(_commonDir);
@@ -52,11 +52,11 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
         base.Dispose();
     }
 
-    private (WorktreeCommands cmd, FakeProcessRunner runner, string apexRoot, string worktreePath)
-        Setup(int apex = 3085, bool stubCommonDir = true)
+    private (WorktreeCommands cmd, FakeProcessRunner runner, string rootRoot, string worktreePath)
+        Setup(int root = 3085, bool stubCommonDir = true)
     {
-        var apexRoot = Path.Combine(_runsRoot, $"apex-{apex}");
-        var worktreePath = Path.Combine(apexRoot, $"feature-{apex}");
+        var rootRoot = Path.Combine(_runsRoot, $"root-{root}");
+        var worktreePath = Path.Combine(rootRoot, $"feature-{root}");
 
         var runner = new FakeProcessRunner();
         if (stubCommonDir)
@@ -67,7 +67,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
                 new ProcessResult(0, _commonDir + "\n", ""));
         }
 
-        return (new WorktreeCommands(new GitClient(runner)), runner, apexRoot, worktreePath);
+        return (new WorktreeCommands(new GitClient(runner)), runner, rootRoot, worktreePath);
     }
 
     private static WorktreeInitApexResult Parse(string output) =>
@@ -79,57 +79,57 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     // ─── Argument validation ─────────────────────────────────────────────
 
     [Fact]
-    public async Task InitApex_MissingApex_EmitsRequiredInputEnvelope()
+    public async Task InitRoot_MissingRoot_EmitsRequiredInputEnvelope()
     {
         var (cmd, runner, _, _) = Setup(stubCommonDir: false);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex());
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot());
 
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var envelope = JsonSerializer.Deserialize(
             output, PolyphonyJsonContext.Default.RequiredInputErrorResult);
         envelope.ShouldNotBeNull();
         envelope!.Action.ShouldBe("error");
-        envelope.Verb.ShouldBe("worktree init-apex");
-        envelope.MissingArgs.ShouldContain("--apex");
+        envelope.Verb.ShouldBe("worktree init-root");
+        envelope.MissingArgs.ShouldContain("--root");
         runner.Invocations.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task InitApex_ZeroApex_EmitsInvalidApexFailure()
+    public async Task InitRoot_ZeroRoot_EmitsInvalidApexFailure()
     {
         var (cmd, runner, _, _) = Setup(stubCommonDir: false);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 0));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 0));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
-        result.Reason.ShouldBe("invalid_apex");
-        result.ApexId.ShouldBe(0);
+        result.Reason.ShouldBe("invalid_root");
+        result.RootId.ShouldBe(0);
         result.Branch.ShouldBeNull();
         runner.Invocations.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task InitApex_NegativeApex_EmitsInvalidApexFailure()
+    public async Task InitRoot_NegativeRoot_EmitsInvalidApexFailure()
     {
         var (cmd, runner, _, _) = Setup(stubCommonDir: false);
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: -1));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: -1));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
-        result.Reason.ShouldBe("invalid_apex");
-        result.ApexId.ShouldBe(-1);
+        result.Reason.ShouldBe("invalid_root");
+        result.RootId.ShouldBe(-1);
         runner.Invocations.ShouldBeEmpty();
     }
 
     // ─── Common-dir resolution ───────────────────────────────────────────
 
     [Fact]
-    public async Task InitApex_CommonDirEmpty_EmitsCommonDirUnavailable()
+    public async Task InitRoot_CommonDirEmpty_EmitsCommonDirUnavailable()
     {
         var (cmd, runner, _, _) = Setup(stubCommonDir: false);
         runner.WhenExact(
@@ -137,19 +137,19 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             new ProcessResult(0, "", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
         result.Reason.ShouldBe("common_dir_unavailable");
-        result.ApexRoot.ShouldBeNull();
+        result.RootRoot.ShouldBeNull();
         result.WorktreePath.ShouldBeNull();
         result.Branch.ShouldBeNull();
     }
 
     [Fact]
-    public async Task InitApex_CommonDirGitFailure_EmitsCommonDirUnavailable()
+    public async Task InitRoot_CommonDirGitFailure_EmitsCommonDirUnavailable()
     {
         var (cmd, runner, _, _) = Setup(stubCommonDir: false);
         runner.WhenExact(
@@ -157,7 +157,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             new ProcessResult(128, "", "fatal: not a git repository\n"));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -168,33 +168,33 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     // ─── Path-exists branch (wins over branch-state) ────────────────────
 
     [Fact]
-    public async Task InitApex_TargetIsWorktreeOnExpectedBranch_Idempotent()
+    public async Task InitRoot_TargetIsWorktreeOnExpectedBranch_Idempotent()
     {
-        var (cmd, runner, apexRoot, worktreePath) = Setup();
+        var (cmd, runner, rootRoot, worktreePath) = Setup();
         Directory.CreateDirectory(worktreePath); // simulate worktree on disk
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(worktreePath, "feature/3085"), ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("idempotent");
         result.Reason.ShouldBeNull();
         result.Branch.ShouldBe("feature/3085");
-        result.ApexRoot.ShouldNotBeNull();
-        Directory.Exists(apexRoot).ShouldBeTrue();
+        result.RootRoot.ShouldNotBeNull();
+        Directory.Exists(rootRoot).ShouldBeTrue();
     }
 
     [Fact]
-    public async Task InitApex_TargetIsWorktreeOnDifferentBranch_PathExistsWrongBranch()
+    public async Task InitRoot_TargetIsWorktreeOnDifferentBranch_PathExistsWrongBranch()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         Directory.CreateDirectory(worktreePath);
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(worktreePath, "feature/9999"), ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -204,14 +204,14 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_PathExistsAsDirectoryNotInWorktreeList_PathExistsNotWorktree()
+    public async Task InitRoot_PathExistsAsDirectoryNotInWorktreeList_PathExistsNotWorktree()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         Directory.CreateDirectory(worktreePath); // exists but not registered
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, "", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -220,15 +220,15 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_PathExistsAsFile_PathExistsNotWorktree()
+    public async Task InitRoot_PathExistsAsFile_PathExistsNotWorktree()
     {
-        var (cmd, runner, apexRoot, worktreePath) = Setup();
-        Directory.CreateDirectory(apexRoot);
+        var (cmd, runner, rootRoot, worktreePath) = Setup();
+        Directory.CreateDirectory(rootRoot);
         File.WriteAllText(worktreePath, "stray file"); // collides with worktree path
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, "", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -239,7 +239,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     // ─── Branch-state branch ─────────────────────────────────────────────
 
     [Fact]
-    public async Task InitApex_BranchMissingNoRemote_CreatedFromMain()
+    public async Task InitRoot_BranchMissingNoRemote_CreatedFromMain()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
@@ -252,7 +252,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
             ["worktree", "add", "-b", "feature/3085", worktreePath, "main"],
             new ProcessResult(0, "Preparing worktree...\n", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -262,7 +262,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_BranchMissingButRemoteExists_RemoteBranchExistsRefusal()
+    public async Task InitRoot_BranchMissingButRemoteExists_RemoteBranchExistsRefusal()
     {
         var (cmd, runner, _, _) = Setup();
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
@@ -272,7 +272,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
         runner.WhenExact("git", ["branch", "-r"],
             new ProcessResult(0, "  origin/main\n  origin/feature/3085\n", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -285,7 +285,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_BranchExistsCheckedOutElsewhere_BranchInUse()
+    public async Task InitRoot_BranchExistsCheckedOutElsewhere_BranchInUse()
     {
         var (cmd, runner, _, _) = Setup();
         var holderPath = Path.Combine(_tempDir, "elsewhere", "feature-3085");
@@ -297,7 +297,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
         runner.WhenExact("git", ["rev-parse", "--verify", "refs/heads/feature/3085"],
             new ProcessResult(0, "deadbeef\n", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -307,7 +307,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_BranchExistsNotCheckedOut_Attached()
+    public async Task InitRoot_BranchExistsNotCheckedOut_Attached()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
@@ -318,7 +318,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
             ["worktree", "add", worktreePath, "feature/3085"],
             new ProcessResult(0, "Preparing worktree...\n", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -329,7 +329,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     // ─── Race tolerance via post-failure re-list ─────────────────────────
 
     [Fact]
-    public async Task InitApex_CreateRaces_ReListShowsExpected_Idempotent()
+    public async Task InitRoot_CreateRaces_ReListShowsExpected_Idempotent()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         // First list: nothing. Second list (probe after add fails): worktree present.
@@ -346,7 +346,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
             ["worktree", "add", "-b", "feature/3085", worktreePath, "main"],
             new ProcessResult(128, "", "fatal: '" + worktreePath + "' already exists\n"));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -355,7 +355,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_CreateFails_NoRace_GitFailureWithStderr()
+    public async Task InitRoot_CreateFails_NoRace_GitFailureWithStderr()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         runner.WhenStartsWithSequence("git", ["worktree", "list", "--porcelain"],
@@ -369,7 +369,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
             ["worktree", "add", "-b", "feature/3085", worktreePath, "main"],
             new ProcessResult(128, "", "fatal: invalid reference: main\n"));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -379,7 +379,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_AttachFails_NoRace_GitFailureWithStderr()
+    public async Task InitRoot_AttachFails_NoRace_GitFailureWithStderr()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         runner.WhenStartsWithSequence("git", ["worktree", "list", "--porcelain"],
@@ -391,7 +391,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
             ["worktree", "add", worktreePath, "feature/3085"],
             new ProcessResult(128, "", "fatal: cannot create worktree: permission denied\n"));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -403,13 +403,13 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     // ─── List failure / parse failure ────────────────────────────────────
 
     [Fact]
-    public async Task InitApex_WorktreeListGitFails_GitFailure()
+    public async Task InitRoot_WorktreeListGitFails_GitFailure()
     {
         var (cmd, runner, _, _) = Setup();
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(128, "", "fatal: corrupt index\n"));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -419,14 +419,14 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_WorktreeListMalformedPorcelain_GitFailure()
+    public async Task InitRoot_WorktreeListMalformedPorcelain_GitFailure()
     {
         var (cmd, runner, _, _) = Setup();
         // Porcelain block missing leading `worktree` line — ParsePorcelain throws FormatException.
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, "HEAD deadbeef\nbranch refs/heads/main\n\n", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -435,22 +435,22 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
         result.Error!.ShouldContain("Could not parse");
     }
 
-    // ─── Filesystem failure: apex_root is a file ─────────────────────────
+    // ─── Filesystem failure: root_root is a file ─────────────────────────
 
     [Fact]
-    public async Task InitApex_ApexRootIsAFile_FilesystemFailure()
+    public async Task InitRoot_RootRootIsAFile_FilesystemFailure()
     {
-        var (cmd, runner, apexRoot, _) = Setup();
+        var (cmd, runner, rootRoot, _) = Setup();
         Directory.CreateDirectory(_runsRoot);
-        File.WriteAllText(apexRoot, "stray file"); // CreateDirectory will throw
+        File.WriteAllText(rootRoot, "stray file"); // CreateDirectory will throw
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
         result.Outcome.ShouldBe("failed");
         result.Reason.ShouldBe("filesystem_failure");
-        result.Error!.ShouldContain(apexRoot);
+        result.Error!.ShouldContain(rootRoot);
         // No worktree-list call should have happened — we failed before the matrix.
         runner.Invocations.ShouldNotContain(i =>
             i.Arguments.Count >= 2 && i.Arguments[0] == "worktree" && i.Arguments[1] == "list");
@@ -459,18 +459,18 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     // ─── JSON contract ───────────────────────────────────────────────────
 
     [Fact]
-    public async Task InitApex_SnakeCaseFieldNames_PresentInRawJson()
+    public async Task InitRoot_SnakeCaseFieldNames_PresentInRawJson()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         Directory.CreateDirectory(worktreePath);
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(worktreePath, "feature/3085"), ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
-        output.ShouldContain("\"apex_id\"");
-        output.ShouldContain("\"apex_root\"");
+        output.ShouldContain("\"root_id\"");
+        output.ShouldContain("\"root_root\"");
         output.ShouldContain("\"worktree_path\"");
         output.ShouldContain("\"branch\"");
         output.ShouldContain("\"outcome\"");
@@ -478,12 +478,12 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
         output.ShouldNotContain("\"reason\"");
         output.ShouldNotContain("\"error\"");
         // PascalCase forms must NOT appear
-        output.ShouldNotContain("ApexId");
+        output.ShouldNotContain("RootId");
         output.ShouldNotContain("WorktreePath");
     }
 
     [Fact]
-    public async Task InitApex_NullPathFields_OmittedOnPreResolutionFailure()
+    public async Task InitRoot_NullPathFields_OmittedOnPreResolutionFailure()
     {
         var (cmd, runner, _, _) = Setup(stubCommonDir: false);
         runner.WhenExact(
@@ -491,10 +491,10 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             new ProcessResult(0, "", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
-        output.ShouldNotContain("\"apex_root\"");
+        output.ShouldNotContain("\"root_root\"");
         output.ShouldNotContain("\"worktree_path\"");
         output.ShouldNotContain("\"branch\"");
         output.ShouldContain("\"reason\":\"common_dir_unavailable\"");
@@ -503,14 +503,14 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     // ─── Resolved-paths surfacing (PR 3 launcher dependency) ────────────
 
     [Fact]
-    public async Task InitApex_SuccessfulOutcome_PopulatesRunsRootAndMainWorktreePath()
+    public async Task InitRoot_SuccessfulOutcome_PopulatesRunsRootAndMainWorktreePath()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         Directory.CreateDirectory(worktreePath);
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(worktreePath, "feature/3085"), ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -523,14 +523,14 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_FailureAfterPathResolution_PopulatesRunsRootAndMainWorktreePath()
+    public async Task InitRoot_FailureAfterPathResolution_PopulatesRunsRootAndMainWorktreePath()
     {
         var (cmd, runner, _, worktreePath) = Setup();
         Directory.CreateDirectory(worktreePath);
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(worktreePath, "feature/9999"), ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -545,13 +545,13 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     // ─── Dry-run mode (PR 3 launcher dependency) ────────────────────────
 
     [Fact]
-    public async Task InitApex_DryRun_NewBranchPath_NoMutations_EmitsDryRunOutcome()
+    public async Task InitRoot_DryRun_NewBranchPath_NoMutations_EmitsDryRunOutcome()
     {
-        var (cmd, runner, apexRoot, worktreePath) = Setup();
+        var (cmd, runner, rootRoot, worktreePath) = Setup();
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(_mainPath, "main"), ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085, dryRun: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -562,25 +562,25 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
         result.RunsRoot.ShouldBe(_runsRoot);
         result.MainWorktreePath.ShouldBe(_mainPath);
         // Mutating side effects must NOT have happened.
-        Directory.Exists(apexRoot).ShouldBeFalse();
+        Directory.Exists(rootRoot).ShouldBeFalse();
         Directory.Exists(worktreePath).ShouldBeFalse();
-        // No worktree add / rev-parse for the apex branch should have run.
+        // No worktree add / rev-parse for the root branch should have run.
         runner.Invocations.ShouldNotContain(i =>
             i.Arguments.Count >= 2 && i.Arguments[0] == "worktree" && i.Arguments[1] == "add");
     }
 
     [Fact]
-    public async Task InitApex_DryRun_AlreadyOnExpectedBranch_StillEmitsDryRunOutcome()
+    public async Task InitRoot_DryRun_AlreadyOnExpectedBranch_StillEmitsDryRunOutcome()
     {
         // Even when the matrix would have classified as 'idempotent',
         // dry-run reports 'dry_run'. Operator can infer "no work needed"
         // from the absence of a needs-create indicator.
-        var (cmd, runner, apexRoot, worktreePath) = Setup();
+        var (cmd, runner, rootRoot, worktreePath) = Setup();
         Directory.CreateDirectory(worktreePath);
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(worktreePath, "feature/3085"), ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085, dryRun: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -589,7 +589,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_DryRun_PathExistsWrongBranch_PropagatesFailure()
+    public async Task InitRoot_DryRun_PathExistsWrongBranch_PropagatesFailure()
     {
         // Hard-refusal cases must surface at dry-run time so the operator
         // sees the problem before -Commit (the launcher's contract).
@@ -598,7 +598,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(worktreePath, "feature/9999"), ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085, dryRun: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -608,14 +608,14 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_DryRun_BranchInUse_PropagatesFailure()
+    public async Task InitRoot_DryRun_BranchInUse_PropagatesFailure()
     {
         var (cmd, runner, _, _) = Setup();
         var stalePath = Path.Combine(_tempDir, "polyphony-old", "feature-3085");
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(stalePath, "feature/3085"), ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085, dryRun: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -625,15 +625,15 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_DryRun_PathExistsNotWorktree_PropagatesFailure()
+    public async Task InitRoot_DryRun_PathExistsNotWorktree_PropagatesFailure()
     {
-        var (cmd, runner, apexRoot, worktreePath) = Setup();
-        Directory.CreateDirectory(apexRoot);
+        var (cmd, runner, rootRoot, worktreePath) = Setup();
+        Directory.CreateDirectory(rootRoot);
         Directory.CreateDirectory(worktreePath);
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, "", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085, dryRun: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
@@ -643,7 +643,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitApex_DryRun_PreResolutionFailure_DryRunFlagPreserved()
+    public async Task InitRoot_DryRun_PreResolutionFailure_DryRunFlagPreserved()
     {
         // Even on common_dir failure, dry_run flag must round-trip so
         // the launcher can distinguish "dry-run that hit an error" from
@@ -654,7 +654,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             new ProcessResult(0, "", ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitApex(apex: 3085, dryRun: true));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.InitRoot(root: 3085, dryRun: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);

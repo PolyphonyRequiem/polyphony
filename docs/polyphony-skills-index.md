@@ -70,7 +70,7 @@ You are not changing anything; you want the model.
   `C:\Users\dangreen\projects\twig2\`.
 - **The `conductor` workflow engine** — YAML schema, routing semantics,
   re-entry, human gates. Use the **conductor** skill.
-- **The polyphony SDLC workflow suite** — `apex-driver.yaml` (the canonical
+- **The polyphony SDLC workflow suite** — `polyphony.yaml` (the canonical
   entry point) plus the sub-workflow library (`plan-level`, `actionable`,
   `implement-merge-group`, `implement-mg`, `feature-pr`, `github-pr`, `ado-pr`,
   `close-out`, …), recursion budget, parallel PG execution. Use the

@@ -15,7 +15,7 @@
         the workflow falls through to the human gate (today's behavior)
         rather than tripping conductor's StrictUndefined and failing the
         entire run. Same defensive posture as `renegotiation_policy` in
-        apex-driver.yaml.
+        polyphony.yaml.
       - The `source` and `policy_error` fields let the manual gate's
         prompt surface "policy resolution failed; falling back to
         manual" so a typo in policy.yaml doesn't hide silently behind

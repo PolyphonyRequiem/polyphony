@@ -8,7 +8,7 @@
 #
 #   - retry → re-runs the assertion (would loop forever in the harness
 #             because the cli_scripts stub keeps returning mismatch)
-#   - abort → terminal_abort_run → $end
+#   - abort → abort_run → $end
 #
 # Under --skip-gates alone the harness would auto-pick the first option
 # (retry) and loop until conductor's max_iterations cap or the
@@ -16,10 +16,10 @@
 # prove the abort recovery path actually terminates the workflow.
 #
 # Entry chain (5 polyphony verbs, all shim-interceptable, zero agents):
-#   branch_ensure_mg → primary_router → impl_branch_ensure
+#   branch_ensure_mg → root_router → impl_branch_ensure
 #     → guidance_loader → branch_assert_on_impl_pre_coder
 #     → pre_coder_branch_mismatch_gate (scripted=abort)
-#     → terminal_abort_run → $end
+#     → abort_run → $end
 
 workflow: .conductor/registry/workflows/implement-merge-group.yaml
 
@@ -58,8 +58,8 @@ cli_scripts:
     stdout: |
       {
         "action": "implement_item",
-        "primary_id": 9999,
-        "primary_title": "AB#3210 harness fixture task"
+        "root_id": 9999,
+        "root_title": "AB#3210 harness fixture task"
       }
     exit_code: 0
 
@@ -102,19 +102,19 @@ cli_scripts:
 expected_trace:
   agents_executed:
     - branch_ensure_mg
-    - primary_router
+    - root_router
     - impl_branch_ensure
     - guidance_loader
     - branch_assert_on_impl_pre_coder
     - pre_coder_branch_mismatch_gate
-    - terminal_abort_run
+    - abort_run
   scripts_executed:
     - branch_ensure_mg
-    - primary_router
+    - root_router
     - impl_branch_ensure
     - guidance_loader
     - branch_assert_on_impl_pre_coder
-    - terminal_abort_run
+    - abort_run
   gates_presented:
     - pre_coder_branch_mismatch_gate
   gates_resolved:

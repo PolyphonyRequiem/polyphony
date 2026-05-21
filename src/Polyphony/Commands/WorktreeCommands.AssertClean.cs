@@ -7,7 +7,7 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// <c>polyphony worktree assert-clean</c> — pre-flight gate for the launcher
-/// and the apex driver. Asserts that the worktree at <c>--path</c> exists,
+/// and the root driver. Asserts that the worktree at <c>--path</c> exists,
 /// has no in-progress git operation, is clean (no <c>git status --porcelain</c>
 /// entries), and (when <c>--expected-branch</c> is supplied) is checked out
 /// to that branch.

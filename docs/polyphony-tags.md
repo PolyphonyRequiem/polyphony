@@ -160,13 +160,13 @@ Every `tag` / `untag` / `declare` verb is idempotent:
 - `changed: false` is returned in that case.
 - `changed: true` only when ADO was actually written.
 
-This is critical for resume-safe workflows: a tree-walker that re-enters a partially-completed run must not double-stamp tags or generate spurious ADO history.
+This is critical for resume-safe workflows: a worklist driver that re-enters a partially-completed run must not double-stamp tags or generate spurious ADO history.
 
 ## Workflow integration (preview)
 
-Phase 7's tree-walker workflow uses these verbs as follows:
+Phase 7's worklist driver uses these verbs as follows:
 
-1. **Entry**: tree-walker receives `root_id` as input. Calls `polyphony root declare {root_id}` (idempotent) to stamp the root tag.
+1. **Entry**: the worklist driver receives `root_id` as input. Calls `polyphony root declare {root_id}` (idempotent) to stamp the root tag.
 2. **Worklist build**: calls `polyphony scope list {root_id}` to enumerate in-scope items.
 3. **Per item**: when seeding children during planning, the seeder calls `polyphony scope tag {child_id}` so the new children appear in subsequent worklist rebuilds.
 4. **Sub-workflow re-entry**: a directly-invoked sub-workflow (e.g., `plan-level`) calls `polyphony root resolve {item_id}`. If `fallback_required: true`, the workflow fires the root fallback gate.
@@ -175,6 +175,6 @@ Phase 7's tree-walker workflow uses these verbs as follows:
 
 - Phase 1: verbs ship; existing `polyphony:planned` semantics unchanged; nothing reads/writes `polyphony` or `polyphony:root` from workflows yet.
 - Phase 2: workflow integration begins; the existing planner adds `polyphony:planned` AND a `polyphony scope tag` call when seeding children.
-- Phase 7: tree-walker uses `root resolve` and `scope list` as primary inputs.
+- Phase 7: the worklist driver uses `root resolve` and `scope list` as primary inputs.
 
 No back-compat concerns — these tags are new.

@@ -87,7 +87,7 @@ public sealed class BranchNameBuilderTests
     [Fact]
     public void EvidenceOrphan_CollapsesToBareItemId()
     {
-        // Phase 6 design: when the work item is its own apex the redundant
+        // Phase 6 design: when the work item is its own root the redundant
         // {root}-{item} would just repeat the id, so the builder collapses
         // to evidence/{item}. The collapse decision lives in the verb;
         // the builder just exposes the orphan form for callers that have

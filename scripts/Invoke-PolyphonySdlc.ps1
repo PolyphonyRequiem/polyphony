@@ -1,13 +1,13 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Canonical wrapper for `conductor run apex-driver@polyphony` — the polyphony
+    Canonical wrapper for `conductor run polyphony@polyphony` — the polyphony
     SDLC entry point. Enforces the AB#3085 bare-repo + per-run-worktree layout.
 
 .DESCRIPTION
     The launcher self-derives the conductor's worktree from
-    `polyphony worktree init-apex --apex {ApexId}`, which produces (and reports)
-    a worktree at `{runs_root}/apex-{N}/feature-{N}/`. The operator's cwd is
+    `polyphony worktree init-root --root {RootId}`, which produces (and reports)
+    a worktree at `{runs_root}/root-{N}/feature-{N}/`. The operator's cwd is
     expected to be the canonical main worktree (or any worktree of the bare
     repo); the conductor never runs in the main worktree.
 
@@ -18,30 +18,30 @@
          resolves to or inside the main-worktree path.
       2. Cross-contamination — the previous shared-worktree model meant
          parallel SDLC runs collided on `git stash` / `worktree dirty`. The new
-         contract puts each apex run in its own per-apex tree under
-         `{runs_root}/apex-{N}/`.
+         contract puts each root run in its own per-root tree under
+         `{runs_root}/root-{N}/`.
 
     See docs/per-run-worktree-layout.md for the layout contract and
     scripts/Migrate-ToBareRepo.ps1 for migrating an existing non-bare clone.
 
     Closes AB#3011 (the original wrapper) and AB#3098 (this rework).
 
-.PARAMETER ApexId
-    Apex (run-root) work item ID. Required.
+.PARAMETER RootId
+    Root (run-root) work item ID. Required.
 
 .PARAMETER Intent
-    Apex-driver intent enum: `new` | `resume` | `replan` | `reset`. Default: `new`.
-    `-Intent resume` refuses to dispatch when init-apex reports outcome=created
+    polyphony intent enum: `new` | `resume` | `replan` | `reset`. Default: `new`.
+    `-Intent resume` refuses to dispatch when init-root reports outcome=created
     (no prior state to resume).
-    `-Intent reset` invokes the apex-scoped redispatch reset
-    (`reset-apex@polyphony`) instead of the apex driver. The reset path skips
-    init-apex / worktree hydration / assert-clean / terminal-state checks
+    `-Intent reset` invokes the root-scoped redispatch reset
+    (`reset-root@polyphony`) instead of the root driver. The reset path skips
+    init-root / worktree hydration / assert-clean / terminal-state checks
     because the workflow's whole purpose is to tear down a completed run.
     Combine with `-Execute` to mutate (defaults to dry-run preview).
 
 .PARAMETER WorktreeRoot
     OPTIONAL EXPERT OVERRIDE of the conductor's worktree path. When supplied,
-    must canonicalize to the same path init-apex returns; otherwise the launcher
+    must canonicalize to the same path init-root returns; otherwise the launcher
     refuses with a clear message. The normal flow is to omit this and let the
     launcher self-derive.
 
@@ -71,7 +71,7 @@
 
 .PARAMETER GitRepo
     Source-of-truth git repo path metadata field. Default: the canonical main
-    worktree path returned by init-apex (no longer derived from the WorktreeRoot
+    worktree path returned by init-root (no longer derived from the WorktreeRoot
     sibling-name heuristic, which is wrong under the new layout).
 
 .PARAMETER NoDetach
@@ -88,7 +88,7 @@
 
 .PARAMETER DryRun
     Print the resolved command and exit without executing. Calls
-    `polyphony worktree init-apex --dry-run` so no worktrees are created.
+    `polyphony worktree init-root --dry-run` so no worktrees are created.
     Returns the JSON envelope that would otherwise be emitted on launch.
 
 .PARAMETER SkipLayoutCheck
@@ -99,7 +99,7 @@
 
 .PARAMETER SkipStateCheck
     ESCAPE HATCH for the AB#3165 Item 2 terminal-state pre-flight refusal.
-    Skips the `twig show $ApexId` call that refuses to dispatch when the
+    Skips the `twig show $RootId` call that refuses to dispatch when the
     work item is in a terminal state (Done, Closed, Removed, Resolved).
     Use only when intentionally re-running an already-completed item with
     full understanding that the empty-MG / scope-revise-cap loop is the
@@ -116,8 +116,8 @@
     see policy-fasttrack.yaml for the list.
 
 .PARAMETER Execute
-    `-Intent reset` only. Forwarded to `reset-apex@polyphony` as
-    `execute=true`, which forwards to `polyphony reset apex --execute` and
+    `-Intent reset` only. Forwarded to `reset-root@polyphony` as
+    `execute=true`, which forwards to `polyphony reset root --execute` and
     mutates state. Default (omit the switch): dry-run preview only.
 
 .PARAMETER AutoConfirm
@@ -128,46 +128,46 @@
 
 .PARAMETER SkipState
     `-Intent reset` only. Forwarded to
-    `polyphony reset apex --skip-state` — runs the cleanup chain but does
-    NOT advance the per-apex `polyphony:run-started-at` watermark. Use for
+    `polyphony reset root --skip-state` — runs the cleanup chain but does
+    NOT advance the per-root `polyphony:run-started-at` watermark. Use for
     hygiene sweeps that should not flip the satisfaction floor.
 
 .PARAMETER Comment
     `-Intent reset` only. Optional override for the closing comment
     posted on each abandoned PR. Empty string (default) uses
-    `polyphony reset apex`'s built-in reset comment.
+    `polyphony reset root`'s built-in reset comment.
 
 .EXAMPLE
     cd ~/projects/polyphony
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 -Intent new
-    Bootstraps `~/projects/polyphony-runs/apex-3085/feature-3085/` and launches
-    apex-driver against work item 3085 inside it.
+    ./scripts/Invoke-PolyphonySdlc.ps1 -RootId 3085 -Intent new
+    Bootstraps `~/projects/polyphony-runs/root-3085/feature-3085/` and launches
+    polyphony against work item 3085 inside it.
 
 .EXAMPLE
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 -DryRun | ConvertFrom-Json
+    ./scripts/Invoke-PolyphonySdlc.ps1 -RootId 3085 -DryRun | ConvertFrom-Json
     Resolves the worktree path + conductor command without creating worktrees
     or launching anything.
 
 .EXAMPLE
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 `
+    ./scripts/Invoke-PolyphonySdlc.ps1 -RootId 3085 `
         -PolicyPath .polyphony-config/policy-fasttrack.yaml
-    Launches apex-driver with the fast-track policy active for the entire
+    Launches polyphony with the fast-track policy active for the entire
     conductor subtree (auto-approve, auto-merge, auto-resolve renegotiation
     and root-fallback).
 .EXAMPLE
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 62286666 -Intent reset
-    Dry-run preview of the apex-scoped reset chain (`reset-apex@polyphony`).
+    ./scripts/Invoke-PolyphonySdlc.ps1 -RootId 62286666 -Intent reset
+    Dry-run preview of the root-scoped reset chain (`reset-root@polyphony`).
     No mutations. Shows the operator what would be torn down.
 
 .EXAMPLE
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 62286666 -Intent reset -Execute
+    ./scripts/Invoke-PolyphonySdlc.ps1 -RootId 62286666 -Intent reset -Execute
     Same as above but surfaces a confirmation gate after preview, then
-    runs `polyphony reset apex --apex 62286666 --execute` (mutating).
+    runs `polyphony reset root --root 62286666 --execute` (mutating).
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [int]$ApexId,
+    [int]$RootId,
 
     [ValidateSet('new', 'resume', 'replan', 'reset')]
     [string]$Intent = 'new',
@@ -210,7 +210,7 @@ $ErrorActionPreference = 'Stop'
 # ─── Reset-only param guard for non-reset intents ─────────────────────────────
 #
 # Catch misuse: -Execute / -AutoConfirm / -SkipState / -Comment are reset-only.
-# Silently ignoring them on apex-driver dispatches would mask operator
+# Silently ignoring them on polyphony dispatches would mask operator
 # intent (e.g. "I passed -Execute but nothing destructive happened").
 if ($Intent -ne 'reset') {
     foreach ($resetOnly in @('Execute', 'AutoConfirm', 'SkipState', 'Comment')) {
@@ -266,7 +266,7 @@ function Invoke-PolyphonyJson {
     }
 }
 
-# ─── Helper: recursively copy missing .twig/ entries from main into apex ─────
+# ─── Helper: recursively copy missing .twig/ entries from main into root ─────
 # Implementation lives in Twig-Hydration.ps1 (sibling file) so Pester can
 # unit-test it independently of the launcher's full pipeline.
 
@@ -275,7 +275,7 @@ function Invoke-PolyphonyJson {
 # ─── Phase 1: cwd is a worktree of a git repo ────────────────────────────────
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    throw "[polyphony-sdlc] git is not on PATH. Install git before invoking apex-driver."
+    throw "[polyphony-sdlc] git is not on PATH. Install git before invoking polyphony."
 }
 
 $cwd = (Get-Location).Path
@@ -327,33 +327,33 @@ To migrate:
 For background, see $script:LayoutDoc.
 
 To bypass this gate (NOT recommended, transition period only):
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -SkipLayoutCheck
+    ./scripts/Invoke-PolyphonySdlc.ps1 -RootId $RootId -SkipLayoutCheck
 "@
     }
 }
 
 # ─── Reset intent diversion ──────────────────────────────────────────────────
 #
-# When -Intent reset, we are NOT launching apex-driver and we want NONE of
-# the apex-worktree machinery (init-apex creates worktrees; the reset
+# When -Intent reset, we are NOT launching polyphony and we want NONE of
+# the root-worktree machinery (init-root creates worktrees; the reset
 # workflow's job is to remove them). We also explicitly want to operate on
 # completed items — Phase 2.5's terminal-state refusal is the opposite of
 # what reset needs.
 #
 # We run conductor from the operator's current cwd (which Phase 1 already
-# verified is a worktree of the bare repo). polyphony reset apex resolves
+# verified is a worktree of the bare repo). polyphony reset root resolves
 # the main worktree + git common-dir internally via the same helpers as
 # every other verb, so it does not matter which worktree of the bare repo
 # the operator launched from.
 #
 # Refused parameter combinations are caught here rather than silently
-# ignored, so an operator who accidentally passes apex-driver knobs to
+# ignored, so an operator who accidentally passes polyphony knobs to
 # reset gets a clear error instead of confusing behaviour.
 
 if ($Intent -eq 'reset') {
     foreach ($incompatible in @('WorktreeRoot', 'GitRepo', 'Repository', 'RepoOrganization', 'RepoProject')) {
         if ($PSBoundParameters.ContainsKey($incompatible)) {
-            throw "[polyphony-sdlc] -$incompatible is not valid with -Intent reset. The reset workflow operates from the operator's cwd and resolves the apex's branches/PRs internally."
+            throw "[polyphony-sdlc] -$incompatible is not valid with -Intent reset. The reset workflow operates from the operator's cwd and resolves the root's branches/PRs internally."
         }
     }
 
@@ -374,7 +374,7 @@ if ($Intent -eq 'reset') {
         }
     }
 
-    # Pin a web port (consistent with apex-driver launches; lets abort
+    # Pin a web port (consistent with polyphony launches; lets abort
     # scripts find /api/stop without scanning).
     $resetWebPort = $null
     $resetListener = $null
@@ -392,23 +392,23 @@ if ($Intent -eq 'reset') {
     $skipStateBool   = if ($SkipState) { 'true' } else { 'false' }
 
     $resetArgs = @(
-        'run', 'reset-apex@polyphony'
+        'run', 'reset-root@polyphony'
         '--web'
         '--web-port', "$resetWebPort"
-        '--input', "apex_id=$ApexId"
+        '--input', "root_id=$RootId"
         '--input', "execute=$executeBool"
         '--input', "auto_confirm=$autoConfirmBool"
         '--input', "skip_state=$skipStateBool"
         '--input', "comment=$Comment"
-        '-m', "workitem_id=$ApexId"
+        '-m', "workitem_id=$RootId"
         '-m', "cwd=$cwd"
     )
 
     $resetResolved = [pscustomobject]@{
         success      = $true
-        workflow     = 'reset-apex@polyphony'
+        workflow     = 'reset-root@polyphony'
         intent       = 'reset'
-        apex_id      = $ApexId
+        root_id      = $RootId
         execute      = [bool]$Execute
         auto_confirm = [bool]$AutoConfirm
         skip_state   = [bool]$SkipState
@@ -428,7 +428,7 @@ if ($Intent -eq 'reset') {
     }
 
     if (-not (Get-Command conductor -ErrorAction SilentlyContinue)) {
-        throw "[polyphony-sdlc] conductor is not on PATH. Install it before invoking reset-apex."
+        throw "[polyphony-sdlc] conductor is not on PATH. Install it before invoking reset-root."
     }
 
     # gh identity pinning when on github — the PR-abandonment leg needs it.
@@ -458,12 +458,12 @@ if ($Intent -eq 'reset') {
         return
     }
 
-    # Detached spawn — same transcript + exit-sidecar shape as apex-driver.
+    # Detached spawn — same transcript + exit-sidecar shape as polyphony.
     $resetLogDir = Join-Path ([System.IO.Path]::GetTempPath()) 'polyphony-sdlc-runs'
     [void](New-Item -ItemType Directory -Path $resetLogDir -Force)
     $resetTs = (Get-Date -Format 'yyyyMMdd-HHmmss')
-    $resetTranscript = Join-Path $resetLogDir "reset-apex-${ApexId}-${resetTs}-transcript.log"
-    $resetSidecar    = Join-Path $resetLogDir "reset-apex-${ApexId}-${resetTs}-exit.json"
+    $resetTranscript = Join-Path $resetLogDir "reset-root-${RootId}-${resetTs}-transcript.log"
+    $resetSidecar    = Join-Path $resetLogDir "reset-root-${RootId}-${resetTs}-exit.json"
 
     $resetCmd = 'conductor ' + (($resetArgs | ForEach-Object {
         if ($_ -match '[\s"'']') { "'" + ($_ -replace "'", "''") + "'" }
@@ -472,7 +472,7 @@ if ($Intent -eq 'reset') {
 
     $resetChild = @"
 Set-Location -LiteralPath '$($cwd.Replace("'","''"))'
-`$Host.UI.RawUI.WindowTitle = 'polyphony-sdlc reset apex=$ApexId'
+`$Host.UI.RawUI.WindowTitle = 'polyphony-sdlc reset root=$RootId'
 Write-Host '[polyphony-sdlc] Cwd       : $cwd' -ForegroundColor Cyan
 Write-Host '[polyphony-sdlc] Command   : $resetCmd' -ForegroundColor Cyan
 Write-Host '[polyphony-sdlc] Transcript: $resetTranscript' -ForegroundColor Cyan
@@ -488,8 +488,8 @@ try {
 } finally {
     Stop-Transcript | Out-Null
     `$exitPayload = [ordered]@{
-        apex_id      = '$ApexId'
-        workflow     = 'reset-apex@polyphony'
+        root_id      = '$RootId'
+        workflow     = 'reset-root@polyphony'
         exit_code    = `$exit
         completed_at = (Get-Date).ToString('o')
         transcript   = '$resetTranscript'
@@ -535,53 +535,53 @@ if (-not $SkipStateCheck -and $Intent -eq 'new') {
 Install twig (per docs/onboarding-guide.md) or pass -SkipStateCheck to bypass.
 "@
     }
-    $twigStdout = & twig show $ApexId --output json 2>&1
+    $twigStdout = & twig show $RootId --output json 2>&1
     $twigExit = $LASTEXITCODE
     $global:LASTEXITCODE = 0
     if ($twigExit -ne 0) {
         throw @"
-[polyphony-sdlc] twig show $ApexId failed (exit $twigExit). Cannot pre-flight work-item state.
+[polyphony-sdlc] twig show $RootId failed (exit $twigExit). Cannot pre-flight work-item state.
 Output: $twigStdout
 
-Run 'twig set $ApexId' to fetch the item, or pass -SkipStateCheck to bypass.
+Run 'twig set $RootId' to fetch the item, or pass -SkipStateCheck to bypass.
 "@
     }
     $wi = $null
     try {
         $wi = ($twigStdout -join "`n") | ConvertFrom-Json
     } catch {
-        throw "[polyphony-sdlc] twig show $ApexId emitted unparseable JSON: $($_.Exception.Message)`nOutput: $twigStdout"
+        throw "[polyphony-sdlc] twig show $RootId emitted unparseable JSON: $($_.Exception.Message)`nOutput: $twigStdout"
     }
     $state = "$($wi.state)".Trim()
     if ($script:TerminalStates -contains $state) {
         throw @"
-[polyphony-sdlc] Pre-flight refusal: AB#$ApexId is in terminal state '$state'.
-Re-running the apex driver against a completed work item produces a
+[polyphony-sdlc] Pre-flight refusal: AB#$RootId is in terminal state '$state'.
+Re-running the root driver against a completed work item produces a
 false-positive empty_merge_group_structural_violation at scope_revise_cap_gate
 (AB#3165 — re-run idempotency). The work this item describes is already on
 main; the implementer agent has nothing to do; the scope reviewer mistakes
 the empty MG for an upstream classifier failure.
 
 To proceed:
-    twig state $ApexId 'To Do'                                # reopen the work item
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId
+    twig state $RootId 'To Do'                                # reopen the work item
+    ./scripts/Invoke-PolyphonySdlc.ps1 -RootId $RootId
 
 Or, if you intentionally want to re-attach to an existing run:
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -Intent resume
+    ./scripts/Invoke-PolyphonySdlc.ps1 -RootId $RootId -Intent resume
 
 To bypass this gate (NOT recommended):
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -SkipStateCheck
+    ./scripts/Invoke-PolyphonySdlc.ps1 -RootId $RootId -SkipStateCheck
 "@
     }
 }
 
-# ─── Phase 3: invoke init-apex (--dry-run if -DryRun) ────────────────────────
+# ─── Phase 3: invoke init-root (--dry-run if -DryRun) ────────────────────────
 
-# init-apex self-derives the apex worktree path from the common-dir. It MUST
-# run from a worktree of the bare repo (the operator's cwd is fine; init-apex
+# init-root self-derives the root worktree path from the common-dir. It MUST
+# run from a worktree of the bare repo (the operator's cwd is fine; init-root
 # does not refuse cwd-inside-main because the launcher legitimately calls it
 # from main during bootstrap).
-$initArgs = @('worktree', 'init-apex', '--apex', $ApexId)
+$initArgs = @('worktree', 'init-root', '--root', $RootId)
 if ($DryRun) { $initArgs += '--dry-run' }
 $initResult = Invoke-PolyphonyJson -ArgList $initArgs
 
@@ -590,10 +590,10 @@ if ($initResult.outcome -eq 'failed') {
         'branch_in_use' {
             "The branch is checked out in another worktree. Run 'git worktree list' " +
             "to find it; either remove that worktree (`git worktree remove <path>`) or " +
-            "use -Intent resume to attach to the existing apex run."
+            "use -Intent resume to attach to the existing root run."
         }
         'path_exists_wrong_branch' {
-            "The apex worktree exists but is on the wrong branch. Inspect the path " +
+            "The root worktree exists but is on the wrong branch. Inspect the path " +
             "and either remove it (`git worktree remove $($initResult.worktree_path)`) " +
             "or check out the expected branch in place."
         }
@@ -610,7 +610,7 @@ if ($initResult.outcome -eq 'failed') {
         default                  { '' }
     }
     throw @"
-[polyphony-sdlc] worktree init-apex failed.
+[polyphony-sdlc] worktree init-root failed.
 Reason: $($initResult.reason)
 Error:  $($initResult.error)
 $remediation
@@ -624,21 +624,21 @@ $expectedBranch  = $initResult.branch
 $initOutcome     = $initResult.outcome
 
 if (-not $derivedWorktree -or -not $mainWorktree) {
-    throw "[polyphony-sdlc] init-apex returned outcome=$initOutcome but did not populate worktree_path / main_worktree_path. Update polyphony to a version that supports the new fields."
+    throw "[polyphony-sdlc] init-root returned outcome=$initOutcome but did not populate worktree_path / main_worktree_path. Update polyphony to a version that supports the new fields."
 }
 
 # ─── Phase 4: hijack-refusal (defense in depth) ──────────────────────────────
 
-# init-apex's PathBoundary check already prevents the derived path from being
+# init-root's PathBoundary check already prevents the derived path from being
 # the main worktree, but the launcher checks again because nothing legitimate
 # should ever pass.
 if (Test-IsSameOrInside -Candidate $derivedWorktree -Container $mainWorktree) {
     throw @"
-[polyphony-sdlc] HIJACK REFUSAL — derived apex worktree is or is inside the main worktree.
+[polyphony-sdlc] HIJACK REFUSAL — derived root worktree is or is inside the main worktree.
   Derived worktree: $derivedWorktree
   Main worktree:    $mainWorktree
 
-This is a defense-in-depth check; init-apex should have already refused.
+This is a defense-in-depth check; init-root should have already refused.
 File a bug against polyphony if you see this. See $script:LayoutDoc.
 "@
 }
@@ -647,7 +647,7 @@ File a bug against polyphony if you see this. See $script:LayoutDoc.
 
 if ($PSBoundParameters.ContainsKey('WorktreeRoot')) {
     if (-not (Test-Path $WorktreeRoot)) {
-        # Allow a non-existent override only when init-apex would have created
+        # Allow a non-existent override only when init-root would have created
         # the same path. The path must canonicalize to the derived path.
     }
     $canonicalOverride = Get-CanonicalPath $WorktreeRoot
@@ -659,11 +659,11 @@ if ($PSBoundParameters.ContainsKey('WorktreeRoot')) {
     }
     if (-not [string]::Equals($canonicalOverride, $canonicalDerived, $cmp)) {
         throw @"
-[polyphony-sdlc] -WorktreeRoot override does not match the canonical apex worktree.
+[polyphony-sdlc] -WorktreeRoot override does not match the canonical root worktree.
   Override:  $canonicalOverride
   Canonical: $canonicalDerived
 
-The canonical worktree for apex $ApexId is determined by the bare repo's layout
+The canonical worktree for root $RootId is determined by the bare repo's layout
 (see $script:LayoutDoc). The override was added so advanced operators could
 verify their assumptions; if your intent was to use the canonical path, omit
 -WorktreeRoot.
@@ -677,44 +677,44 @@ $WorktreeRoot = $derivedWorktree
 
 if ($Intent -eq 'resume' -and $initOutcome -eq 'created') {
     throw @"
-[polyphony-sdlc] -Intent resume refused: init-apex reported outcome=created.
-  Apex worktree: $WorktreeRoot
+[polyphony-sdlc] -Intent resume refused: init-root reported outcome=created.
+  Root worktree: $WorktreeRoot
   Branch:        $expectedBranch
 
-There is no prior state to resume — the apex worktree was just created. If you
+There is no prior state to resume — the root worktree was just created. If you
 intended to start a new run, re-invoke with -Intent new (the default).
 "@
 }
 
-# ─── Phase 7: hydrate apex .twig/ workspace from main ────────────────────────
+# ─── Phase 7: hydrate root .twig/ workspace from main ────────────────────────
 
 # `git worktree add` materializes only TRACKED files. `.twig/config` IS tracked
 # (committed); `.twig/<org>/<project>/twig.db` (workspace DB) and
 # `.twig/prompt.json` are GITIGNORED (`.twig/*` + `!.twig/config` is the
-# canonical pattern). So a freshly-created apex worktree has `.twig/config`
+# canonical pattern). So a freshly-created root worktree has `.twig/config`
 # present but no usable workspace — twig in that worktree throws
 # `WorkspaceNotFoundException` on its first DI resolution.
 #
-# We hydrate the apex `.twig/` from main, preserving any operator-curated
-# state already in apex (resume safety). We then assert the workspace DB is
+# We hydrate the root `.twig/` from main, preserving any operator-curated
+# state already in root (resume safety). We then assert the workspace DB is
 # present at the expected path; if not, we fail fast with remediation rather
 # than letting conductor crash.
 
 $mainTwigDir   = Join-Path $mainWorktree '.twig'
-$apexTwigDir   = Join-Path $WorktreeRoot '.twig'
+$rootTwigDir   = Join-Path $WorktreeRoot '.twig'
 $mainConfigPath = Join-Path $mainTwigDir 'config'
-$apexConfigPath = Join-Path $apexTwigDir 'config'
+$rootConfigPath = Join-Path $rootTwigDir 'config'
 
 if (-not (Test-Path $mainTwigDir -PathType Container)) {
     throw @"
 [polyphony-sdlc] No .twig/ directory found in main worktree.
 Main worktree: $mainWorktree
 
-apex-driver requires twig for work-item context. Bootstrap twig in the main
+polyphony requires twig for work-item context. Bootstrap twig in the main
 worktree first:
     cd $mainWorktree
     twig init <organization> <project>
-    twig set $ApexId
+    twig set $RootId
 "@
 }
 if (-not (Test-Path $mainConfigPath -PathType Leaf)) {
@@ -722,39 +722,39 @@ if (-not (Test-Path $mainConfigPath -PathType Leaf)) {
 }
 
 if (-not $DryRun) {
-    # 1. Ensure apex .twig/ exists. The tracked config usually materializes
-    #    it, but we belt-and-braces in case a stale apex was pre-cleaned.
-    if (-not (Test-Path $apexTwigDir -PathType Container)) {
-        New-Item -ItemType Directory -Path $apexTwigDir -Force | Out-Null
+    # 1. Ensure root .twig/ exists. The tracked config usually materializes
+    #    it, but we belt-and-braces in case a stale root was pre-cleaned.
+    if (-not (Test-Path $rootTwigDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $rootTwigDir -Force | Out-Null
     }
-    # 2. Ensure apex has a config file. If the tracked file did not
+    # 2. Ensure root has a config file. If the tracked file did not
     #    materialize (defense-in-depth), seed from main.
-    if (-not (Test-Path $apexConfigPath -PathType Leaf)) {
-        Copy-Item -LiteralPath $mainConfigPath -Destination $apexConfigPath -Force
+    if (-not (Test-Path $rootConfigPath -PathType Leaf)) {
+        Copy-Item -LiteralPath $mainConfigPath -Destination $rootConfigPath -Force
     }
-    # 3. Recursively copy missing children from main's .twig/ into apex's,
-    #    preserving any apex-local state. 'config' is excluded because the
-    #    apex worktree's tracked config is canonical (and may be the older
+    # 3. Recursively copy missing children from main's .twig/ into root's,
+    #    preserving any root-local state. 'config' is excluded because the
+    #    root worktree's tracked config is canonical (and may be the older
     #    schema if twig in main has silently migrated; that's a separate bug).
-    Copy-MissingTwigEntries -SourceRoot $mainTwigDir -DestinationRoot $apexTwigDir -ExcludeAtRoot @('config')
+    Copy-MissingTwigEntries -SourceRoot $mainTwigDir -DestinationRoot $rootTwigDir -ExcludeAtRoot @('config')
 }
 
-$twigConfigPath = if (Test-Path $apexConfigPath -PathType Leaf) { $apexConfigPath } else { $mainConfigPath }
+$twigConfigPath = if (Test-Path $rootConfigPath -PathType Leaf) { $rootConfigPath } else { $mainConfigPath }
 $twigConfig = Get-Content $twigConfigPath -Raw | ConvertFrom-Json
 if (-not $twigConfig.organization -or -not $twigConfig.project) {
     throw "[polyphony-sdlc] twig config at $twigConfigPath is missing 'organization' or 'project'."
 }
 
-# 4. Post-hydration invariant: the apex twig workspace DB MUST exist at
+# 4. Post-hydration invariant: the root twig workspace DB MUST exist at
 #    .twig/<org>/<project>/twig.db. If it doesn't, main never had it either —
 #    fail fast here with operator remediation, instead of letting conductor
 #    crash later with WorkspaceNotFoundException.
 if (-not $DryRun) {
-    Assert-ApexTwigWorkspace `
-        -ApexTwigDir $apexTwigDir `
+    Assert-RootTwigWorkspace `
+        -RootTwigDir $rootTwigDir `
         -Organization $twigConfig.organization `
         -Project $twigConfig.project `
-        -ApexId $ApexId `
+        -RootId $RootId `
         -MainWorktree $mainWorktree
 }
 
@@ -786,11 +786,11 @@ if (-not $DryRun) {
                 "Complete or abort it before launching."
             }
             'not_a_worktree' {
-                "Path is not a registered git worktree. init-apex should have ensured this; " +
+                "Path is not a registered git worktree. init-root should have ensured this; " +
                 "re-run the launcher to retry, or remove the path manually."
             }
             'path_missing' {
-                "Path does not exist. init-apex should have ensured this; " +
+                "Path does not exist. init-root should have ensured this; " +
                 "re-run the launcher to retry."
             }
             default { '' }
@@ -806,7 +806,7 @@ $remediation
 
 # ─── Phase 8.5: destination-worktree preflight (#421) ────────────────────────
 #
-# Re-run preflight from inside the apex worktree so worktree-specific
+# Re-run preflight from inside the root worktree so worktree-specific
 # issues (missing twig db, ADO credentials not visible from this
 # directory, etc.) surface BEFORE we hand off to conductor. The earlier
 # launcher only ever ran preflight in the main worktree (per the bootstrap
@@ -820,7 +820,7 @@ $remediation
 if (-not $DryRun) {
     Push-Location $WorktreeRoot
     try {
-        $preflightArgs = @('state', 'preflight', '--work-item', $ApexId)
+        $preflightArgs = @('state', 'preflight', '--work-item', $RootId)
         $preflightOutput = & polyphony @preflightArgs 2>&1
         $preflightExit = $LASTEXITCODE
         $global:LASTEXITCODE = 0
@@ -852,7 +852,7 @@ $projectUrl = 'https://dev.azure.com/{0}/{1}' -f $twigConfig.organization, $twig
 $worktreeName = Split-Path -Leaf $WorktreeRoot
 
 if (-not $GitRepo) {
-    # Default to the canonical main worktree (NOT the apex worktree, which is
+    # Default to the canonical main worktree (NOT the root worktree, which is
     # a per-run scratch space). Downstream consumers (dashboard, observation,
     # post-mortem skills) treat git_repo as the source-of-truth checkout.
     $GitRepo = $mainWorktree
@@ -860,7 +860,7 @@ if (-not $GitRepo) {
 
 # Auto-detect platform + repository from git remote URL of the MAIN WORKTREE.
 # The previous launcher detected from $WorktreeRoot, which was wrong under
-# the new layout (apex worktree shares the bare's remotes anyway, but reading
+# the new layout (root worktree shares the bare's remotes anyway, but reading
 # from main is the intentful choice — main is the canonical source-of-truth).
 #
 # REPO vs TRACKER identity (cross-project repos): for ADO platforms we ALSO
@@ -952,10 +952,10 @@ $env:CONDUCTOR_WEB_PORT = $webPort
 Write-Host "[polyphony-sdlc] Pinned conductor web port: $webPort (CONDUCTOR_WEB_PORT exported for /api/stop discovery)" -ForegroundColor Cyan
 
 $conductorArgs = @(
-    'run', 'apex-driver@polyphony'
+    'run', 'polyphony@polyphony'
     '--web'
     '--web-port', "$webPort"
-    '--input', "apex_id=$ApexId"
+    '--input', "root_id=$RootId"
     '--input', "intent=$Intent"
     '--input', "platform=$Platform"
     '--input', "organization=$RepoOrganization"
@@ -964,15 +964,15 @@ $conductorArgs = @(
     '-m', "tracker=ado"
     '-m', "project_url=$projectUrl"
     '-m', "git_repo=$GitRepo"
-    '-m', "workitem_id=$ApexId"
+    '-m', "workitem_id=$RootId"
     '-m', "worktree_name=$worktreeName"
     '-m', "cwd=$WorktreeRoot"
 )
 
 $resolved = [pscustomobject]@{
     success            = $true
-    workflow           = 'apex-driver@polyphony'
-    apex_id            = $ApexId
+    workflow           = 'polyphony@polyphony'
+    root_id            = $RootId
     intent             = $Intent
     platform           = $Platform
     repository         = $Repository
@@ -984,9 +984,9 @@ $resolved = [pscustomobject]@{
     worktree_root      = $WorktreeRoot
     main_worktree_path = $mainWorktree
     runs_root          = $runsRoot
-    apex_root          = $initResult.apex_root
+    root_root          = $initResult.root_root
     branch             = $expectedBranch
-    init_apex_outcome  = $initOutcome
+    init_root_outcome  = $initOutcome
     git_repo           = $GitRepo
     project_url        = $projectUrl
     command            = "conductor $($conductorArgs -join ' ')"
@@ -1034,7 +1034,7 @@ if ($PolicyPath) {
 # ─── Launch conductor ────────────────────────────────────────────────────────
 
 if (-not (Get-Command conductor -ErrorAction SilentlyContinue)) {
-    throw "[polyphony-sdlc] conductor is not on PATH. Install it before invoking apex-driver."
+    throw "[polyphony-sdlc] conductor is not on PATH. Install it before invoking polyphony."
 }
 
 if ($NoDetach) {
@@ -1069,8 +1069,8 @@ if ($NoDetach) {
 $logDir = Join-Path ([System.IO.Path]::GetTempPath()) 'polyphony-sdlc-runs'
 [void](New-Item -ItemType Directory -Path $logDir -Force)
 $logTimestamp = (Get-Date -Format 'yyyyMMdd-HHmmss')
-$transcriptLog = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-transcript.log"
-$exitSidecar = Join-Path $logDir "apex-${ApexId}-${logTimestamp}-exit.json"
+$transcriptLog = Join-Path $logDir "root-${RootId}-${logTimestamp}-transcript.log"
+$exitSidecar = Join-Path $logDir "root-${RootId}-${logTimestamp}-exit.json"
 
 # Spawn conductor inside a new PowerShell console window. Pattern unchanged
 # from PR #302 — TTY-attached so gate agents can read stdin and the
@@ -1088,7 +1088,7 @@ $conductorCmd = 'conductor ' + (($conductorArgs | ForEach-Object {
 # signal even if the transcript itself truncates for any other reason.
 $childCommand = @"
 Set-Location -LiteralPath '$($WorktreeRoot.Replace("'","''"))'
-`$Host.UI.RawUI.WindowTitle = 'polyphony-sdlc apex=$ApexId'
+`$Host.UI.RawUI.WindowTitle = 'polyphony-sdlc root=$RootId'
 Write-Host '[polyphony-sdlc] Worktree: $WorktreeRoot' -ForegroundColor Cyan
 Write-Host '[polyphony-sdlc] Command : $conductorCmd' -ForegroundColor Cyan
 Write-Host '[polyphony-sdlc] Transcript: $transcriptLog' -ForegroundColor Cyan
@@ -1104,7 +1104,7 @@ try {
 } finally {
     Stop-Transcript | Out-Null
     `$exitPayload = [ordered]@{
-        apex_id      = '$ApexId'
+        root_id      = '$RootId'
         exit_code    = `$exit
         completed_at = (Get-Date).ToString('o')
         transcript   = '$transcriptLog'

@@ -528,10 +528,10 @@ public sealed partial class SplitCommands
 
         It 'handles primary constructors on the type (does not treat the class body as a method body)' {
             $repo = New-CommandsSandbox {
-                Write-CommandFile 'PrimaryCtor.cs' @'
+                Write-CommandFile 'RootCtor.cs' @'
 namespace Polyphony.Commands;
 
-public sealed class PrimaryCtorCommands(
+public sealed class RootCtorCommands(
     ITwigClient twig,
     IWorkItemRepository repo)
 {

@@ -22,7 +22,7 @@
         fall through the workflow's catch-all to `workflow_error_gate`
         before any side-effecting verb runs.
       • Agent prompt template threads inputs and upstream verb output
-        the design pins (work_item_id, apex_id, evidence branch,
+        the design pins (work_item_id, root_id, evidence branch,
         compose_addendum's skills/mcps/guidance, revise-loop comment).
 
     These checks complement (do not duplicate) `lint-actionable.ps1`
@@ -274,9 +274,9 @@ Describe 'actionable.yaml e2e — Polyphony agent prompt threading' {
         $script:AgentPrompt = $script:Agents['actionable_agent'].prompt
     }
 
-    It 'Threads work_item_id, apex_id, and evidence branch context into the agent prompt' {
+    It 'Threads work_item_id, root_id, and evidence branch context into the agent prompt' {
         $script:AgentPrompt | Should -Match 'workflow\.input\.work_item_id'
-        $script:AgentPrompt | Should -Match 'workflow\.input\.apex_id'
+        $script:AgentPrompt | Should -Match 'workflow\.input\.root_id'
         $script:AgentPrompt | Should -Match 'ensure_evidence_branch\.output\.branch'
         $script:AgentPrompt | Should -Match 'ensure_evidence_branch\.output\.base_branch'
     }

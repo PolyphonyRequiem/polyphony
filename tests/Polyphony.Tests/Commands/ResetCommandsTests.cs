@@ -15,7 +15,7 @@ namespace Polyphony.Tests.Commands;
 /// Round-trip tests for the <c>polyphony reset</c> verb family —
 /// <c>reset state</c>, <c>reset prs</c>, <c>reset branches</c>,
 /// <c>reset worktrees</c>, <c>reset manifest</c>, and the
-/// <c>reset apex</c> composite.
+/// <c>reset root</c> composite.
 ///
 /// <para>Mirrors the stubbing pattern from
 /// <see cref="BranchCommandsMarkImplMergedTests"/>: real
@@ -106,7 +106,7 @@ public sealed class ResetCommandsTests : CommandTestBase
     // ---------- reset state -----------------------------------------------
 
     [Fact]
-    public async Task ResetState_MissingApex_Halts()
+    public async Task ResetState_MissingRoot_Halts()
     {
         var (cmd, _) = CreateCommand();
         var (exit, _) = await CaptureConsoleAsync(() => cmd.ResetState());
@@ -121,12 +121,12 @@ public sealed class ResetCommandsTests : CommandTestBase
         StubTagsRoundTrip(runner, 100, "polyphony:root");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetState(apex: 100, execute: false));
+            () => cmd.ResetState(root: 100, execute: false));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetStateResult);
         result.ShouldNotBeNull();
-        result.Apex.ShouldBe(100);
+        result.Root.ShouldBe(100);
         result.Success.ShouldBeTrue();
         result.DryRun.ShouldBeTrue();
         result.NewWatermark.ShouldNotBeNullOrEmpty();
@@ -143,7 +143,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             "polyphony:root; polyphony:run-started-at=2024-01-01T00:00:00.000Z");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetState(apex: 100, execute: true));
+            () => cmd.ResetState(root: 100, execute: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetStateResult);
@@ -169,7 +169,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             "polyphony:root; polyphony:run-started-at=2024-01-01T00:00:00.000Z; polyphony:run-started-at=2024-02-01T00:00:00.000Z");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetState(apex: 100, execute: true));
+            () => cmd.ResetState(root: 100, execute: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetStateResult);
@@ -204,7 +204,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             (_, _) => Task.FromResult(new ProcessResult(0, "", "")));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetBranches(apex: 100, execute: false));
+            () => cmd.ResetBranches(root: 100, execute: false));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetBranchesResult);
@@ -222,12 +222,12 @@ public sealed class ResetCommandsTests : CommandTestBase
     }
 
     /// <summary>
-    /// Regression for the MG branch-pattern delimiter bug: the apex
+    /// Regression for the MG branch-pattern delimiter bug: the root
     /// branch-pattern table must use `_` between root_id and mg_path
     /// (per docs/decisions/branch-model.md §Branch names —
     /// `mg/{root_id}_{mg_path}`), not `-`. An earlier revision used `-`,
     /// which silently failed to match any real MG branch and left
-    /// mg/* refs on origin after reset — so apex redispatch detected
+    /// mg/* refs on origin after reset — so root redispatch detected
     /// the stale merged MG state and short-circuited the run.
     /// </summary>
     [Fact]
@@ -235,7 +235,7 @@ public sealed class ResetCommandsTests : CommandTestBase
     {
         var (cmd, runner) = CreateCommand();
 
-        // Stub ls-remote to mimic an apex (root_id=100) with the canonical
+        // Stub ls-remote to mimic an root (root_id=100) with the canonical
         // branch shapes: plan/, feature/, mg/{root}_{mg_path}, impl/{root}-{item}.
         runner.WhenAsync(
             (e, a) => e == "git" && a.Count >= 4 && a[0] == "ls-remote" && a[1] == "--heads",
@@ -260,14 +260,14 @@ public sealed class ResetCommandsTests : CommandTestBase
             (_, _) => Task.FromResult(new ProcessResult(0, "", "")));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetBranches(apex: 100, execute: false));
+            () => cmd.ResetBranches(root: 100, execute: false));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetBranchesResult);
         result.ShouldNotBeNull();
         var branches = result.DeletedBranches.Select(b => b.Branch).ToList();
         branches.ShouldContain("mg/100_pg-100",
-            customMessage: "top-level MG branch (mg/{root_id}_{mg_id}) must be discovered by the apex-pattern enumerator");
+            customMessage: "top-level MG branch (mg/{root_id}_{mg_id}) must be discovered by the root-pattern enumerator");
         branches.ShouldContain("mg/100_data-layer_migrations",
             customMessage: "nested MG branch (mg/{root_id}_{parent_mg_id}_{nested_mg_id}) must be discovered too");
     }
@@ -275,7 +275,7 @@ public sealed class ResetCommandsTests : CommandTestBase
     // ---------- reset worktrees -------------------------------------------
 
     [Fact]
-    public async Task ResetWorktrees_NoWorktreesUnderApex_SucceedsWithEmptyList()
+    public async Task ResetWorktrees_NoWorktreesUnderRoot_SucceedsWithEmptyList()
     {
         var (cmd, runner) = CreateCommand();
         runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -285,7 +285,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             new ProcessResult(0, "", ""));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetWorktrees(apex: 100, execute: false));
+            () => cmd.ResetWorktrees(root: 100, execute: false));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetWorktreesResult);
@@ -293,7 +293,7 @@ public sealed class ResetCommandsTests : CommandTestBase
         result.Success.ShouldBeTrue();
         result.DryRun.ShouldBeTrue();
         result.RemovedWorktrees.Count.ShouldBe(0);
-        result.ApexRunsRoot.ShouldEndWith("apex-100");
+        result.RootRunsRoot.ShouldEndWith("root-100");
     }
 
     // ---------- reset manifest --------------------------------------------
@@ -307,7 +307,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             (_, _) => Task.FromResult(new ProcessResult(0, "", "")));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetManifest(apex: 100, execute: false));
+            () => cmd.ResetManifest(root: 100, execute: false));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetManifestResult);
@@ -331,7 +331,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             (_, _) => Task.FromResult(new ProcessResult(0, "", "")));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetPrs(apex: 100, execute: false));
+            () => cmd.ResetPrs(root: 100, execute: false));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetPrsResult);
@@ -341,17 +341,17 @@ public sealed class ResetCommandsTests : CommandTestBase
         result.FailedPrs.Count.ShouldBe(0);
     }
 
-    // ---------- reset apex composite --------------------------------------
+    // ---------- reset root composite --------------------------------------
 
     [Fact]
-    public async Task ResetApex_SkipState_OmitsStateStep()
+    public async Task ResetRoot_SkipState_OmitsStateStep()
     {
         var (cmd, runner) = CreateCommand();
         StubGitHubIdentity(runner);
-        // facets step walks the apex via the hierarchy walker (real
-        // SqliteWorkItemRepository); seed the apex so the walk finds it.
+        // facets step walks the root via the hierarchy walker (real
+        // SqliteWorkItemRepository); seed the root so the walk finds it.
         await SeedAsync(new WorkItemBuilder()
-            .WithId(100).WithType("Issue").WithTitle("Apex").WithState("To Do").Build());
+            .WithId(100).WithType("Issue").WithTitle("Root").WithState("To Do").Build());
         StubSync(runner);
         StubTagsRoundTrip(runner, 100, "polyphony:root");
         runner.WhenAsync(
@@ -366,7 +366,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             new ProcessResult(0, "", ""));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetApex(apex: 100, execute: false, skipState: true));
+            () => cmd.ResetRoot(root: 100, execute: false, skipState: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetApexResult);
@@ -390,12 +390,12 @@ public sealed class ResetCommandsTests : CommandTestBase
     }
 
     [Fact]
-    public async Task ResetApex_FacetsRunsBetweenBranchesAndManifest()
+    public async Task ResetRoot_FacetsRunsBetweenBranchesAndManifest()
     {
         var (cmd, runner) = CreateCommand();
         StubGitHubIdentity(runner);
         await SeedAsync(new WorkItemBuilder()
-            .WithId(100).WithType("Issue").WithTitle("Apex").WithState("To Do").Build());
+            .WithId(100).WithType("Issue").WithTitle("Root").WithState("To Do").Build());
         StubSync(runner);
         StubTagsRoundTrip(runner, 100, "polyphony:root");
         runner.WhenAsync(
@@ -410,7 +410,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             new ProcessResult(0, "", ""));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetApex(apex: 100, execute: false));
+            () => cmd.ResetRoot(root: 100, execute: false));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetApexResult);
@@ -425,13 +425,13 @@ public sealed class ResetCommandsTests : CommandTestBase
         idxFacets.ShouldBeGreaterThan(idxBranches);
         idxManifest.ShouldBeGreaterThan(idxFacets);
         result.Facets.ShouldNotBeNull();
-        result.Facets.Apex.ShouldBe(100);
+        result.Facets.Root.ShouldBe(100);
     }
 
     // ---------- reset facets ----------------------------------------------
 
     [Fact]
-    public async Task ResetFacets_MissingApex_Halts()
+    public async Task ResetFacets_MissingRoot_Halts()
     {
         var (cmd, _) = CreateCommand();
         var (exit, _) = await CaptureConsoleAsync(() => cmd.ResetFacets());
@@ -439,14 +439,14 @@ public sealed class ResetCommandsTests : CommandTestBase
     }
 
     [Fact]
-    public async Task ResetFacets_ApexNotInCache_ReportsErrorWithoutPatching()
+    public async Task ResetFacets_RootNotInCache_ReportsErrorWithoutPatching()
     {
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
-        // Do NOT seed the apex — walker.WalkAsync returns null.
+        // Do NOT seed the root — walker.WalkAsync returns null.
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetFacets(apex: 999, execute: true));
+            () => cmd.ResetFacets(root: 999, execute: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetFacetsResult);
@@ -462,13 +462,13 @@ public sealed class ResetCommandsTests : CommandTestBase
     {
         var (cmd, runner) = CreateCommand();
         await SeedAsync(new WorkItemBuilder()
-            .WithId(100).WithType("Issue").WithTitle("Apex").WithState("To Do")
+            .WithId(100).WithType("Issue").WithTitle("Root").WithState("To Do")
             .WithTags("polyphony:root")
             .Build());
         StubSync(runner);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetFacets(apex: 100, execute: true));
+            () => cmd.ResetFacets(root: 100, execute: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetFacetsResult);
@@ -487,13 +487,13 @@ public sealed class ResetCommandsTests : CommandTestBase
     {
         var (cmd, runner) = CreateCommand();
         await SeedAsync(new WorkItemBuilder()
-            .WithId(100).WithType("Issue").WithTitle("Apex").WithState("To Do")
+            .WithId(100).WithType("Issue").WithTitle("Root").WithState("To Do")
             .WithTags("polyphony:root; polyphony:facets=implementable; polyphony:planned")
             .Build());
         StubSync(runner);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetFacets(apex: 100, execute: false));
+            () => cmd.ResetFacets(root: 100, execute: false));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetFacetsResult);
@@ -519,7 +519,7 @@ public sealed class ResetCommandsTests : CommandTestBase
     {
         var (cmd, runner) = CreateCommand();
         await SeedAsync(new WorkItemBuilder()
-            .WithId(100).WithType("Issue").WithTitle("Apex").WithState("To Do")
+            .WithId(100).WithType("Issue").WithTitle("Root").WithState("To Do")
             .WithTags("polyphony:root; polyphony:facets=implementable; polyphony:planned")
             .Build());
         StubSync(runner);
@@ -527,7 +527,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             "polyphony:root; polyphony:facets=implementable; polyphony:planned");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetFacets(apex: 100, execute: true));
+            () => cmd.ResetFacets(root: 100, execute: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetFacetsResult);
@@ -553,10 +553,10 @@ public sealed class ResetCommandsTests : CommandTestBase
     public async Task ResetFacets_Execute_WalksDescendantsAndPatchesEach()
     {
         var (cmd, runner) = CreateCommand();
-        // Apex has a child plannable parent that ALSO carries a facets
+        // Root has a child plannable parent that ALSO carries a facets
         // override. Both must be cleaned in a single walk.
-        var apex = new WorkItemBuilder()
-            .WithId(100).WithType("Issue").WithTitle("Apex").WithState("To Do")
+        var root = new WorkItemBuilder()
+            .WithId(100).WithType("Issue").WithTitle("Root").WithState("To Do")
             .WithTags("polyphony:root; polyphony:facets=implementable")
             .Build();
         var child = new WorkItemBuilder()
@@ -564,13 +564,13 @@ public sealed class ResetCommandsTests : CommandTestBase
             .WithParentId(100)
             .WithTags("polyphony:planned")
             .Build();
-        await SeedAsync(apex, child);
+        await SeedAsync(root, child);
         StubSync(runner);
         StubTagsRoundTrip(runner, 100, "polyphony:root; polyphony:facets=implementable");
         StubTagsRoundTrip(runner, 101, "polyphony:planned");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetFacets(apex: 100, execute: true));
+            () => cmd.ResetFacets(root: 100, execute: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetFacetsResult);
@@ -595,7 +595,7 @@ public sealed class ResetCommandsTests : CommandTestBase
     {
         var (cmd, runner) = CreateCommand();
         await SeedAsync(new WorkItemBuilder()
-            .WithId(100).WithType("Issue").WithTitle("Apex").WithState("To Do")
+            .WithId(100).WithType("Issue").WithTitle("Root").WithState("To Do")
             .WithTags("polyphony:root; polyphony:facets=implementable")
             .Build());
         StubSync(runner);
@@ -613,7 +613,7 @@ public sealed class ResetCommandsTests : CommandTestBase
             (_, _) => Task.FromResult(new ProcessResult(0, "{}", "")));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetFacets(apex: 100, execute: true));
+            () => cmd.ResetFacets(root: 100, execute: true));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetFacetsResult);

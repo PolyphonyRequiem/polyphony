@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    CI lint — `primary_completer` in implement-merge-group.yaml MUST be
+    CI lint — `root_completer` in implement-merge-group.yaml MUST be
     reachable only via the squash-coverage trust chain (AB#3214).
 
 .DESCRIPTION
     Encodes the AB#3214 trust-chain invariant as a structural lint.
 
-    Background. AB#3175 incident (2026-05-14, apex run 3165): the
-    `primary_completer` step transitioned a child task to its template's
+    Background. AB#3175 incident (2026-05-14, root run 3165): the
+    `root_completer` step transitioned a child task to its template's
     done state in ADO while the implementing commit was stranded on a
     sibling task's impl branch and the squash-merge to the MG carried
     zero diff. Net result: ADO reported the work as Done while
@@ -17,7 +17,7 @@
     PRs #401 (AB#3210, impl-branch routing assertion) and #402 (AB#3211,
     `pr assert-impl-pr-coverage`) plug the upstream root causes. After
     they ship, the AB#3175 failure mode is structurally impossible —
-    PROVIDED `primary_completer` is reachable ONLY via the
+    PROVIDED `root_completer` is reachable ONLY via the
     coverage-asserted path. AB#3214 tracks the contract: prove that
     invariant structurally, so future routing edits cannot reintroduce
     a path that bypasses coverage.
@@ -25,7 +25,7 @@
     Invariants enforced by this lint (against
     `.conductor/registry/workflows/implement-merge-group.yaml`):
 
-      I1. Every route whose `to:` is `primary_completer` must originate
+      I1. Every route whose `to:` is `root_completer` must originate
           from a step named `delete_impl_branch`.
 
       I2. Every route whose `to:` is `delete_impl_branch` must
@@ -35,7 +35,7 @@
               `force_accept` route, which is a deliberate operator
               override after manual inspection).
 
-    These two invariants together guarantee that `primary_completer`
+    These two invariants together guarantee that `root_completer`
     fires only after `assert_impl_pr_coverage` returned `ok` (or the
     operator explicitly acknowledged a mismatch), making the AB#3175
     green-wash structurally impossible.
@@ -84,7 +84,7 @@ if (-not (Test-Path -LiteralPath $WorkflowPath)) {
 }
 
 if (-not (Get-Module -ListAvailable -Name 'powershell-yaml')) {
-    Write-Error "FATAL: the powershell-yaml module is required by lint-primary-completer-trust-chain.ps1.`nInstall with: Install-Module -Name powershell-yaml -Force -SkipPublisherCheck -Scope CurrentUser"
+    Write-Error "FATAL: the powershell-yaml module is required by lint-root-completer-trust-chain.ps1.`nInstall with: Install-Module -Name powershell-yaml -Force -SkipPublisherCheck -Scope CurrentUser"
     exit 2
 }
 
@@ -132,18 +132,18 @@ foreach ($agent in $agents) {
 
 $violations = New-Object System.Collections.Generic.List[hashtable]
 
-# I1: primary_completer's only predecessor must be delete_impl_branch.
+# I1: root_completer's only predecessor must be delete_impl_branch.
 $expectedPrimaryCompleterPreds = @('delete_impl_branch')
 $actualPrimaryCompleterPreds = @()
-if ($predecessors.ContainsKey('primary_completer')) {
-    $actualPrimaryCompleterPreds = @($predecessors['primary_completer']) | Sort-Object
+if ($predecessors.ContainsKey('root_completer')) {
+    $actualPrimaryCompleterPreds = @($predecessors['root_completer']) | Sort-Object
 }
 $unexpectedPCP = $actualPrimaryCompleterPreds | Where-Object { $_ -notin $expectedPrimaryCompleterPreds }
 $missingPCP = $expectedPrimaryCompleterPreds | Where-Object { $_ -notin $actualPrimaryCompleterPreds }
 if ($unexpectedPCP -or $missingPCP) {
     $violations.Add(@{
         invariant = 'I1'
-        step = 'primary_completer'
+        step = 'root_completer'
         actual = $actualPrimaryCompleterPreds
         expected = $expectedPrimaryCompleterPreds
         unexpected = $unexpectedPCP
@@ -171,7 +171,7 @@ if ($unexpectedDIB -or $missingDIB) {
 }
 
 if ($violations.Count -eq 0) {
-    Write-Host "PASS: primary_completer trust chain is intact ($WorkflowPath)" -ForegroundColor Green
+    Write-Host "PASS: root_completer trust chain is intact ($WorkflowPath)" -ForegroundColor Green
     exit 0
 }
 
@@ -187,8 +187,8 @@ foreach ($v in $violations) {
 }
 
 Write-Host ""
-Write-Host "Fix: route into primary_completer must come only from delete_impl_branch," -ForegroundColor Yellow
+Write-Host "Fix: route into root_completer must come only from delete_impl_branch," -ForegroundColor Yellow
 Write-Host "and route into delete_impl_branch must come only from assert_impl_pr_coverage" -ForegroundColor Yellow
 Write-Host "(action='ok') or squash_coverage_mismatch_gate (force_accept). See AB#3214" -ForegroundColor Yellow
-Write-Host "and the trust-chain comment block above primary_completer in the workflow." -ForegroundColor Yellow
+Write-Host "and the trust-chain comment block above root_completer in the workflow." -ForegroundColor Yellow
 exit 1

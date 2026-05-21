@@ -1,9 +1,9 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output envelope for <c>polyphony reset state --apex N</c> — stamps the
-/// per-apex run-watermark tag (<c>polyphony:run-started-at=&lt;ISO-8601&gt;</c>)
-/// on the apex root work item.
+/// Output envelope for <c>polyphony reset state --root N</c> — stamps the
+/// per-root run-watermark tag (<c>polyphony:run-started-at=&lt;ISO-8601&gt;</c>)
+/// on the root root work item.
 ///
 /// <para>This is the ONLY writer of the watermark. Read-side filtering lives
 /// in <see cref="Sdlc.Observers.PlanObserver"/> +
@@ -15,8 +15,8 @@ namespace Polyphony;
 /// </summary>
 public sealed record ResetStateResult
 {
-    /// <summary>Apex root work-item ID (mirrors <c>--apex</c>).</summary>
-    public required int Apex { get; init; }
+    /// <summary>Root root work-item ID (mirrors <c>--root</c>).</summary>
+    public required int Root { get; init; }
 
     /// <summary>True when the watermark was successfully stamped (or already correct in dry-run).</summary>
     public required bool Success { get; init; }
@@ -25,7 +25,7 @@ public sealed record ResetStateResult
     public required bool DryRun { get; init; }
 
     /// <summary>
-    /// The previous watermark value parsed from the apex's tag set, formatted
+    /// The previous watermark value parsed from the root's tag set, formatted
     /// as ISO-8601 UTC. Null when no prior <c>polyphony:run-started-at</c>
     /// tag existed.
     /// </summary>

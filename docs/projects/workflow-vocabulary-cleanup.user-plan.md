@@ -109,8 +109,8 @@ The architect should refine into ordered Tasks/PGs. This is the v1 scope:
 
 3. **Schema field renames** in `pg-router.ps1`, `impl-router.ps1`,
    `dependency-check.ps1`, and any contract tests:
-   - `task_id`, `task_title` → `primary_id`, `primary_title`
-   - `task_ids` → `primary_ids`
+   - `task_id`, `task_title` → `root_id`, `root_title`
+   - `task_ids` → `root_ids`
    - `issue_id`, `issue_title` → `container_id`, `container_title`
    - `issue_ids` → `container_ids`
    - `dependency_check.blocking_items[].id`/`.title`/`.state` — audit; these

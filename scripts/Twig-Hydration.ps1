@@ -1,7 +1,7 @@
 # Twig-Hydration.ps1
 # Dot-sourced by Invoke-PolyphonySdlc.ps1 and by its Pester tests.
-# Provides `Copy-MissingTwigEntries` and `Assert-ApexTwigWorkspace` for
-# hydrating a per-apex worktree's `.twig/` from the main worktree's `.twig/`
+# Provides `Copy-MissingTwigEntries` and `Assert-RootTwigWorkspace` for
+# hydrating a per-root worktree's `.twig/` from the main worktree's `.twig/`
 # without overwriting any operator-curated state.
 
 Set-StrictMode -Version Latest
@@ -41,29 +41,29 @@ function Copy-MissingTwigEntries {
     }
 }
 
-# Verify the apex `.twig/` workspace has the DB file twig will look for at
+# Verify the root `.twig/` workspace has the DB file twig will look for at
 # DI-resolution time. Throws with operator remediation if missing.
-function Assert-ApexTwigWorkspace {
+function Assert-RootTwigWorkspace {
     param(
-        [Parameter(Mandatory)][string]$ApexTwigDir,
+        [Parameter(Mandatory)][string]$RootTwigDir,
         [Parameter(Mandatory)][string]$Organization,
         [Parameter(Mandatory)][string]$Project,
-        [Parameter(Mandatory)][int]   $ApexId,
+        [Parameter(Mandatory)][int]   $RootId,
         [Parameter(Mandatory)][string]$MainWorktree
     )
-    $expectedDb = Join-Path $ApexTwigDir (Join-Path $Organization (Join-Path $Project 'twig.db'))
+    $expectedDb = Join-Path $RootTwigDir (Join-Path $Organization (Join-Path $Project 'twig.db'))
     if (-not (Test-Path $expectedDb -PathType Leaf)) {
         throw @"
-[polyphony-sdlc] Apex twig workspace is missing its DB:
+[polyphony-sdlc] Root twig workspace is missing its DB:
   $expectedDb
 
 Main worktree's .twig/ also lacks the workspace DB for $Organization/$Project,
-so the launcher cannot hydrate the apex worktree from it.
+so the launcher cannot hydrate the root worktree from it.
 
 Bootstrap twig in the main worktree first:
     cd $MainWorktree
     twig init $Organization $Project
-    twig set $ApexId
+    twig set $RootId
 
 Then re-run the launcher.
 "@

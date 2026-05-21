@@ -86,9 +86,9 @@ public sealed partial class BranchCommands
                 current = classified
                     .FirstOrDefault(c => string.Equals(c.Group.Name, $"PG-{pgNumber}", StringComparison.Ordinal));
 
-                // Indivisible-apex fallback (F6 / F10 follow-up): when the hierarchy
+                // Indivisible-root fallback (F6 / F10 follow-up): when the hierarchy
                 // carries no MG tags, BuildRouteGroups synthesizes a single fallback
-                // group named "PG-1". Callers commonly pass the apex work-item ID as
+                // group named "PG-1". Callers commonly pass the root work-item ID as
                 // --pg-number (e.g. 3064), which will never match "PG-1". Rather than
                 // silently returning "all_complete" (the false-satisfied bug pattern),
                 // accept the lone synthesized fallback as the answer — there is no

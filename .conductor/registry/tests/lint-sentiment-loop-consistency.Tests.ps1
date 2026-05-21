@@ -26,7 +26,7 @@ BeforeAll {
     routes:
       - to: $NextNode
         when: "{{ pr_feedback_analyzer.output.has_negative_feedback == true }}"
-      - to: terminal_emitter
+      - to: emitter
 "@
     }
 
@@ -41,7 +41,7 @@ BeforeAll {
       - "-Command"
       - "echo conductor-$Prefix-revise-{{ workflow.input.work_item_id }}.json"
     routes:
-      - to: terminal_emitter
+      - to: emitter
 
   - name: pending_poll_counter
     type: script
@@ -51,7 +51,7 @@ BeforeAll {
       - "-Command"
       - "echo conductor-$Prefix-pending-poll-{{ workflow.input.work_item_id }}.json"
     routes:
-      - to: terminal_emitter
+      - to: emitter
 "@
     }
 
@@ -84,7 +84,7 @@ $planAnalyzer
 
 $planCounters
 
-  - name: terminal_emitter
+  - name: emitter
     type: script
     command: echo
     args: ["done"]
@@ -119,7 +119,7 @@ $githubCounters
     args: ["closed-unmerged"]
     routes: []
 
-  - name: terminal_emitter
+  - name: emitter
     type: script
     command: echo
     args: ["done"]
@@ -153,7 +153,7 @@ $adoCounters
     args: ["closed-unmerged"]
     routes: []
 
-  - name: terminal_emitter
+  - name: emitter
     type: script
     command: echo
     args: ["done"]
@@ -295,7 +295,7 @@ Describe 'lint-sentiment-loop-consistency.ps1' {
         It 'Fails when ado-pr.yaml drops closed_unmerged_emitter' {
             $dir = New-FixtureSet
             $path = Join-Path $dir 'ado-pr.yaml'
-            (Get-Content $path -Raw) -replace '(?ms)^  - name: closed_unmerged_emitter.*?(?=^  - name: terminal_emitter)', '' |
+            (Get-Content $path -Raw) -replace '(?ms)^  - name: closed_unmerged_emitter.*?(?=^  - name: emitter)', '' |
                 Set-Content -Path $path -Encoding utf8
             $r = Invoke-Lint -Dir $dir
             $r.ExitCode | Should -Be 1

@@ -3,7 +3,7 @@ namespace Polyphony.Manifest;
 /// <summary>
 /// In-memory mutator for <see cref="RunManifest.Rebases"/>. Encapsulates the
 /// idempotency rules for "record this rebase event" so every consumer
-/// (P9 cascade remedy, manual record-rebase verbs, future rebase-emitting
+/// (P9 restack remedy, manual record-rebase verbs, future rebase-emitting
 /// flows) applies the same key and the same allow-list of reasons.
 ///
 /// <para>Pure with respect to disk: mutates the supplied
@@ -12,7 +12,7 @@ namespace Polyphony.Manifest;
 /// load/save lifecycle.</para>
 ///
 /// <para><b>Idempotency key:</b> the triple <c>(branch, commit, reason)</c>.
-/// A retry of a partially-completed cascade-remedy run replays the same
+/// A retry of a partially-completed restack-remedy run replays the same
 /// triple; <see cref="Apply"/> recognises it and returns
 /// <see cref="RebaseLedgerOutcome.DuplicateSkipped"/> without mutating —
 /// so the caller can safely re-record after a manifest-push race.</para>
@@ -42,7 +42,7 @@ public static class ManifestRebaseLedger
     /// </summary>
     /// <param name="manifest">Loaded manifest. Mutated when the outcome is <see cref="RebaseLedgerOutcome.Appended"/>.</param>
     /// <param name="branch">Branch that was rebased (e.g. <c>plan/100-200</c>). Required, non-empty.</param>
-    /// <param name="commit">New HEAD SHA after the rebase. Required, non-empty. <see cref="RebaseRecord.Onto"/> is intentionally NOT part of this surface — this PR ships a minimal ledger sufficient for the cascade remedy and follow-up callers can add an <c>onto</c> overload if they need it.</param>
+    /// <param name="commit">New HEAD SHA after the rebase. Required, non-empty. <see cref="RebaseRecord.Onto"/> is intentionally NOT part of this surface — this PR ships a minimal ledger sufficient for the restack remedy and follow-up callers can add an <c>onto</c> overload if they need it.</param>
     /// <param name="reason">One of <see cref="AllowedReasons"/>. Anything else returns <see cref="RebaseLedgerOutcome.InvalidReason"/> without mutation.</param>
     /// <param name="recordedAt">Timestamp written into a fresh ledger entry. Injected for tests.</param>
     public static RebaseLedgerOutcome Apply(
@@ -75,7 +75,7 @@ public static class ManifestRebaseLedger
         var record = new RebaseRecord
         {
             Branch = branch,
-            // The cascade-remedy verb owns the `Onto` value (the parent's
+            // The restack-remedy verb owns the `Onto` value (the parent's
             // refname); this minimal ledger leaves it empty and lets the
             // verb patch it in if desired. Future overload may accept it
             // as a parameter.

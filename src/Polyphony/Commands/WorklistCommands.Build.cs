@@ -10,8 +10,8 @@ using Twig.Domain.Aggregates;
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony worklist build</c> — compute the ordered, wave-grouped
-/// list of plan-tree work items that the apex driver workflow will
+/// <c>polyphony worklist build</c> — compute the ordered, batch-grouped
+/// list of plan-tree work items that the root driver workflow will
 /// dispatch in parallel.
 ///
 /// <para>Pure inspection verb: walks children from
@@ -25,9 +25,9 @@ namespace Polyphony.Commands;
 /// for plan-PR ledger entries and generation counters, and emits a
 /// <see cref="WorklistResult"/>. No manifest mutation, no platform calls.</para>
 ///
-/// <para>Wave assignment is by topological depth over the union graph
+/// <para>Batch assignment is by topological depth over the union graph
 /// (within-item edges ∪ definitional cross-item edges, plus mode-injected
-/// edges per <see cref="ExecutionModeInjector"/>). Wave 0 contains items
+/// edges per <see cref="ExecutionModeInjector"/>). Batch 0 contains items
 /// whose entry requirements have no inbound cross-item edges — typically
 /// the run root, plus items whose parent is a non-plannable container.
 /// On a definitional plan tree (every parent plannable + decomposable),
@@ -54,7 +54,7 @@ public sealed partial class WorklistCommands
     /// <see cref="Polyphony.Infrastructure.Paths.PolyphonyStatePaths"/>.
     /// Pass an explicit path only as a testing seam.</param>
     /// <param name="json">Emit machine-readable JSON instead of the
-    /// human-readable wave summary. The JSON shape is
+    /// human-readable batch summary. The JSON shape is
     /// <see cref="WorklistResult"/>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("build")]
@@ -176,14 +176,14 @@ public sealed partial class WorklistCommands
         if (conflicts.Length > 0)
         {
             // Conflict gate: emit empty waves + populated conflicts. Exit 0
-            // routing-style — the apex driver decides whether to halt.
+            // routing-style — the root driver decides whether to halt.
             EmitWorklist(new WorklistResult
             {
                 RootId = rootId,
                 ItemsWalked = walked.Count,
                 HasConflicts = true,
                 Conflicts = conflicts,
-                Waves = Array.Empty<WorklistWave>(),
+                Waves = Array.Empty<WorklistBatch>(),
             }, json);
             return ExitCodes.Success;
         }
@@ -279,7 +279,7 @@ public sealed partial class WorklistCommands
             }
 
             // Per-item facet override (closed-loop PR #7): architect-declared
-            // apex_facets surface as a polyphony:facets=... tag. Replaces
+            // root_facets surface as a polyphony:facets=... tag. Replaces
             // type-config facets when present.
             var overrideFacets = ExtractFacetOverride(w.Item);
 
@@ -321,11 +321,11 @@ public sealed partial class WorklistCommands
 
     /// <summary>
     /// Projects <see cref="EdgeGraph.ToWaves"/> output (item ids only)
-    /// into <see cref="WorklistWave"/>s carrying full per-item manifest
+    /// into <see cref="WorklistBatch"/>s carrying full per-item manifest
     /// metadata.
     /// </summary>
-    private static IReadOnlyList<WorklistWave> ProjectWaves(
-        IReadOnlyList<EdgeGraphWave> waves,
+    private static IReadOnlyList<WorklistBatch> ProjectWaves(
+        IReadOnlyList<EdgeGraphBatch> waves,
         IReadOnlyList<WalkedItem> walked,
         RunManifest manifest,
         int rootId)
@@ -336,16 +336,16 @@ public sealed partial class WorklistCommands
             parentById[w.Item.Id] = w.ParentItemId;
         }
 
-        var projected = new List<WorklistWave>(waves.Count);
-        foreach (var wave in waves)
+        var projected = new List<WorklistBatch>(waves.Count);
+        foreach (var batch in waves)
         {
-            var items = new List<WorklistItem>(wave.ItemIds.Count);
-            foreach (var itemId in wave.ItemIds)
+            var items = new List<WorklistItem>(batch.ItemIds.Count);
+            foreach (var itemId in batch.ItemIds)
             {
                 var parentItemId = parentById.TryGetValue(itemId, out var pid) ? pid : 0;
                 items.Add(BuildItem(itemId, parentItemId, manifest, rootId));
             }
-            projected.Add(new WorklistWave(wave.WaveIndex, items));
+            projected.Add(new WorklistBatch(batch.BatchIndex, items));
         }
         return projected;
     }
@@ -403,7 +403,7 @@ public sealed partial class WorklistCommands
             ItemsWalked = 0,
             HasConflicts = false,
             Conflicts = Array.Empty<EdgesCheckConflict>(),
-            Waves = Array.Empty<WorklistWave>(),
+            Waves = Array.Empty<WorklistBatch>(),
             Error = error,
             ErrorCode = errorCode,
         };
@@ -424,9 +424,9 @@ public sealed partial class WorklistCommands
     /// Renders the human-readable form. Layout:
     /// <code>
     /// worklist: root=100  items=3  waves=2
-    ///   wave 0:
+    ///   batch 0:
     ///     item 100  parent=0    status=merged   pr=#42  generation=1
-    ///   wave 1:
+    ///   batch 1:
     ///     item 250  parent=100  status=pending  generation=0
     ///     item 310  parent=100  status=pending  generation=0
     /// </code>
@@ -463,10 +463,10 @@ public sealed partial class WorklistCommands
             return sb.ToString().TrimEnd();
         }
 
-        foreach (var wave in result.Waves)
+        foreach (var batch in result.Waves)
         {
-            sb.Append("  wave ").Append(wave.WaveIndex.ToString(CultureInfo.InvariantCulture)).AppendLine(":");
-            foreach (var item in wave.Items)
+            sb.Append("  batch ").Append(batch.BatchIndex.ToString(CultureInfo.InvariantCulture)).AppendLine(":");
+            foreach (var item in batch.Items)
             {
                 sb.Append("    item ").Append(item.ItemId.ToString(CultureInfo.InvariantCulture));
                 sb.Append("  parent=").Append(item.ParentItemId.ToString(CultureInfo.InvariantCulture));

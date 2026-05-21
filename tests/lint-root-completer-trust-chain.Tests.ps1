@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Pester tests for tests/lint-primary-completer-trust-chain.ps1.
+    Pester tests for tests/lint-root-completer-trust-chain.ps1.
 
 .DESCRIPTION
     Hermetic fixture-based tests. Constructs synthetic
@@ -14,7 +14,7 @@
 param()
 
 BeforeAll {
-    $script:LintScript = Join-Path $PSScriptRoot 'lint-primary-completer-trust-chain.ps1'
+    $script:LintScript = Join-Path $PSScriptRoot 'lint-root-completer-trust-chain.ps1'
     $script:RepoRoot = Split-Path -Parent $PSScriptRoot
 
     function script:New-WorkflowFixture {
@@ -36,11 +36,11 @@ BeforeAll {
     }
 }
 
-Describe 'lint-primary-completer-trust-chain.ps1' {
+Describe 'lint-root-completer-trust-chain.ps1' {
 
     Context 'PASS scenarios' {
 
-        It 'PASSes when primary_completer ← delete_impl_branch ← {assert_impl_pr_coverage, squash_coverage_mismatch_gate}' {
+        It 'PASSes when root_completer ← delete_impl_branch ← {assert_impl_pr_coverage, squash_coverage_mismatch_gate}' {
             $body = @'
 agents:
   - name: assert_impl_pr_coverage
@@ -60,11 +60,11 @@ agents:
   - name: delete_impl_branch
     type: script
     routes:
-      - to: primary_completer
-  - name: primary_completer
+      - to: root_completer
+  - name: root_completer
     type: script
     routes:
-      - to: primary_router
+      - to: root_router
 '@
             $path = New-WorkflowFixture -Body $body
             $r = Invoke-Lint -WorkflowPath $path
@@ -84,7 +84,7 @@ agents:
 
     Context 'FAIL scenarios' {
 
-        It 'FAILs when a step bypasses delete_impl_branch and routes directly into primary_completer' {
+        It 'FAILs when a step bypasses delete_impl_branch and routes directly into root_completer' {
             $body = @'
 agents:
   - name: assert_impl_pr_coverage
@@ -100,15 +100,15 @@ agents:
   - name: delete_impl_branch
     type: script
     routes:
-      - to: primary_completer
+      - to: root_completer
   - name: rogue_skipper
     type: script
     routes:
-      - to: primary_completer
-  - name: primary_completer
+      - to: root_completer
+  - name: root_completer
     type: script
     routes:
-      - to: primary_router
+      - to: root_router
 '@
             $path = New-WorkflowFixture -Body $body
             $r = Invoke-Lint -WorkflowPath $path
@@ -137,11 +137,11 @@ agents:
   - name: delete_impl_branch
     type: script
     routes:
-      - to: primary_completer
-  - name: primary_completer
+      - to: root_completer
+  - name: root_completer
     type: script
     routes:
-      - to: primary_router
+      - to: root_router
 '@
             $path = New-WorkflowFixture -Body $body
             $r = Invoke-Lint -WorkflowPath $path
@@ -161,11 +161,11 @@ agents:
   - name: delete_impl_branch
     type: script
     routes:
-      - to: primary_completer
-  - name: primary_completer
+      - to: root_completer
+  - name: root_completer
     type: script
     routes:
-      - to: primary_router
+      - to: root_router
 '@
             $path = New-WorkflowFixture -Body $body
             $r = Invoke-Lint -WorkflowPath $path

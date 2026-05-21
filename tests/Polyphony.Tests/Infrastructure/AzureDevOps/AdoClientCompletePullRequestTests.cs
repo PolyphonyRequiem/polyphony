@@ -447,7 +447,7 @@ public sealed class AdoClientCompletePullRequestTests
                 Org, Project, Repo, PrId, HeadSha, AdoMergeStrategy.NoFastForward, deleteSourceBranch: false, cts.Token));
     }
 
-    // ─── apex-62286666: don't trust preview-SHA on an active PR ──────────
+    // ─── root-62286666: don't trust preview-SHA on an active PR ──────────
 
     /// <summary>
     /// PR detail body where ADO has reported a merge-preview SHA in
@@ -474,7 +474,7 @@ public sealed class AdoClientCompletePullRequestTests
     [Fact]
     public async Task CompletePullRequestAsync_PatchReturnsActiveWithPreviewSha_DoesNotReportCompleted()
     {
-        // Regression for the apex-62286666 dogfood incident: ADO returned
+        // Regression for the root-62286666 dogfood incident: ADO returned
         // 200 OK to the PATCH with status="active" and a populated
         // lastMergeCommit (preview SHA). The verb must NOT report
         // Status="completed" with that SHA — it would be a SHA that

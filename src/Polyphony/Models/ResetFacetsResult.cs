@@ -1,14 +1,14 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output envelope for <c>polyphony reset facets --apex N</c> — strips
-/// the two persisted "planning is already done" tags from the apex root
+/// Output envelope for <c>polyphony reset facets --root N</c> — strips
+/// the two persisted "planning is already done" tags from the root root
 /// and every descendant in scope:
 ///
 /// <list type="bullet">
 ///   <item><c>polyphony:facets=&lt;csv&gt;</c> — the per-item facet
 ///         override stamped by <see cref="Commands.PlanCommands.SeedChildren"/>
-///         when the architect declared <c>apex_facets</c> in plan
+///         when the architect declared <c>root_facets</c> in plan
 ///         front-matter. While present, <c>Sdlc.RequirementInputResolver</c>
 ///         overrides the type-config default facet set and the work item
 ///         skips the <c>plannable</c> facet on classify-lifecycle.</item>
@@ -25,7 +25,7 @@ namespace Polyphony;
 /// branch via <see cref="Commands.ResetCommands.ResetBranches"/>, the
 /// matching facet/planned tags would survive on the work item and steer
 /// the next classify-lifecycle call away from <c>plan-level</c> —
-/// reproducing the apex 62286666 incident
+/// reproducing the root 62286666 incident
 /// (<c>docs/decisions/run-reset.md</c> §"Why facets cleanup is separate
 /// from watermark").</para>
 ///
@@ -41,8 +41,8 @@ namespace Polyphony;
 /// </summary>
 public sealed record ResetFacetsResult
 {
-    /// <summary>Apex root work-item ID (mirrors <c>--apex</c>).</summary>
-    public required int Apex { get; init; }
+    /// <summary>Root root work-item ID (mirrors <c>--root</c>).</summary>
+    public required int Root { get; init; }
 
     /// <summary>True when the walk and per-item processing completed without a verb-wide error.</summary>
     public required bool Success { get; init; }
@@ -50,7 +50,7 @@ public sealed record ResetFacetsResult
     /// <summary>True when this was a dry-run preview (no writes performed).</summary>
     public required bool DryRun { get; init; }
 
-    /// <summary>Number of work items visited in the apex subtree (root + descendants).</summary>
+    /// <summary>Number of work items visited in the root subtree (root + descendants).</summary>
     public int ItemsScanned { get; init; }
 
     /// <summary>

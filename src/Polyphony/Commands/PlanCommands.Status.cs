@@ -455,7 +455,7 @@ public sealed partial class PlanCommands
     /// <code>
     /// plan status: root=100  items=4  needed=1 open=1 merged=1 abandoned=0 n/a=1  pending_revisions=0
     ///   ITEM    STATUS      PR    GENERATION  TITLE
-    ///   100     merged      #142  1           Apex epic
+    ///   100     merged      #142  1           Root epic
     ///   1101    open*       #145  2           Sub-issue A          (* = changes requested)
     ///   1102    n/a         -     -           Sub-issue B (no plan facet)
     ///   1103    needed      -     -           Sub-issue C (planning needed but not started)

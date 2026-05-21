@@ -164,7 +164,7 @@ public sealed record PrPollPolicy
 /// <c>--include-metadata</c> is set. Two well-known keys:
 /// <list type="bullet">
 ///   <item><c>requests_parent_change</c>: bool — child plan PR is requesting a change to its parent's plan.</item>
-///   <item><c>ancestor_plan_generations</c>: map of ancestor item id → generation snapshot at branch creation. Used by the cascade rule.</item>
+///   <item><c>ancestor_plan_generations</c>: map of ancestor item id → generation snapshot at branch creation. Used by the restack rule.</item>
 /// </list>
 /// Always populated when <c>--include-metadata</c> is set; missing keys
 /// default to <c>requests_parent_change: false</c> and an empty

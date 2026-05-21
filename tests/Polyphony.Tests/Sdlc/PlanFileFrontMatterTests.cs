@@ -40,7 +40,7 @@ public sealed class PlanFileFrontMatterTests
     {
         // Leading prose disqualifies the fence (prevents misreading
         // arbitrary mid-document YAML blocks as front-matter).
-        const string body = "intro line\n---\napex_facets:\n  - implementable\n---\n";
+        const string body = "intro line\n---\nroot_facets:\n  - implementable\n---\n";
         PlanFileFrontMatter.Parse(body).Status.ShouldBe(PlanFileFrontMatterStatus.Absent);
     }
 
@@ -53,58 +53,58 @@ public sealed class PlanFileFrontMatterTests
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Present);
-        result.ApexFacets.ShouldBeEmpty();
+        result.RootFacets.ShouldBeEmpty();
     }
 
     [Fact]
     public void Parse_PresentWithSingleFacet_FlowSequence()
     {
-        const string body = "---\napex_facets: [implementable]\n---\n# body\n";
+        const string body = "---\nroot_facets: [implementable]\n---\n# body\n";
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Present);
-        result.ApexFacets.ShouldBe(["implementable"]);
+        result.RootFacets.ShouldBe(["implementable"]);
     }
 
     [Fact]
     public void Parse_PresentWithSingleFacet_BlockSequence()
     {
-        const string body = "---\napex_facets:\n  - implementable\n---\n# body\n";
+        const string body = "---\nroot_facets:\n  - implementable\n---\n# body\n";
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Present);
-        result.ApexFacets.ShouldBe(["implementable"]);
+        result.RootFacets.ShouldBe(["implementable"]);
     }
 
     [Fact]
     public void Parse_PresentWithMultipleFacets_NormalisesAlphabetical()
     {
-        const string body = "---\napex_facets:\n  - implementable\n  - actionable\n---\n# body\n";
+        const string body = "---\nroot_facets:\n  - implementable\n  - actionable\n---\n# body\n";
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Present);
-        result.ApexFacets.ShouldBe(["actionable", "implementable"]);
+        result.RootFacets.ShouldBe(["actionable", "implementable"]);
     }
 
     [Fact]
     public void Parse_PresentWithMixedCase_LowercasesAndDedupes()
     {
-        const string body = "---\napex_facets:\n  - Implementable\n  - implementable\n---\n# body\n";
+        const string body = "---\nroot_facets:\n  - Implementable\n  - implementable\n---\n# body\n";
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Present);
-        result.ApexFacets.ShouldBe(["implementable"]);
+        result.RootFacets.ShouldBe(["implementable"]);
     }
 
     [Fact]
     public void Parse_UnknownKeysIgnored_StillPresent()
     {
         // Forward-compat: unknown front-matter keys must not trip the parser.
-        const string body = "---\napex_facets: [implementable]\nfuture_field: 42\n---\n";
+        const string body = "---\nroot_facets: [implementable]\nfuture_field: 42\n---\n";
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Present);
-        result.ApexFacets.ShouldBe(["implementable"]);
+        result.RootFacets.ShouldBe(["implementable"]);
     }
 
     // ── Malformed ────────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ public sealed class PlanFileFrontMatterTests
     [Fact]
     public void Parse_BadYaml_IsMalformed()
     {
-        const string body = "---\napex_facets: [implementable\n---\n";
+        const string body = "---\nroot_facets: [implementable\n---\n";
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Malformed);
@@ -120,29 +120,29 @@ public sealed class PlanFileFrontMatterTests
     }
 
     [Fact]
-    public void Parse_ApexFacetsScalar_IsMalformed()
+    public void Parse_RootFacetsScalar_IsMalformed()
     {
-        const string body = "---\napex_facets: implementable\n---\n";
+        const string body = "---\nroot_facets: implementable\n---\n";
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Malformed);
         result.ErrorDetail.ShouldNotBeNull();
-        result.ErrorDetail.ShouldContain("apex_facets");
+        result.ErrorDetail.ShouldContain("root_facets");
     }
 
     [Fact]
-    public void Parse_ApexFacetsMapping_IsMalformed()
+    public void Parse_RootFacetsMapping_IsMalformed()
     {
-        const string body = "---\napex_facets:\n  primary: implementable\n---\n";
+        const string body = "---\nroot_facets:\n  primary: implementable\n---\n";
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Malformed);
     }
 
     [Fact]
-    public void Parse_ApexFacetsUnknownToken_IsMalformed_AndReportsToken()
+    public void Parse_RootFacetsUnknownToken_IsMalformed_AndReportsToken()
     {
-        const string body = "---\napex_facets:\n  - bogus\n---\n";
+        const string body = "---\nroot_facets:\n  - bogus\n---\n";
         var result = PlanFileFrontMatter.Parse(body);
 
         result.Status.ShouldBe(PlanFileFrontMatterStatus.Malformed);

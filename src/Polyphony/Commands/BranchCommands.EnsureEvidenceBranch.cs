@@ -12,25 +12,25 @@ public sealed partial class BranchCommands
     /// Idempotently ensure an evidence branch exists locally and on the
     /// remote. The branch name is built from the Rev 4 grammar via
     /// <see cref="BranchNameBuilder.Evidence(RootId, WorkItemId)"/> when
-    /// <paramref name="apexId"/> differs from <paramref name="workItemId"/>,
+    /// <paramref name="rootId"/> differs from <paramref name="workItemId"/>,
     /// or via <see cref="BranchNameBuilder.EvidenceOrphan(WorkItemId)"/>
-    /// when they match (the work item is its own apex).
+    /// when they match (the work item is its own root).
     ///
-    /// <para>The base branch defaults to <c>feature/{apex_id}</c>; pass
+    /// <para>The base branch defaults to <c>feature/{root_id}</c>; pass
     /// <paramref name="fromRef"/> to override (e.g. branch off a sibling MG
     /// branch for layered evidence). If the base does not exist on the
     /// remote, the verb fails with <see cref="ExitCodes.RoutingFailure"/>.</para>
     /// </summary>
     /// <param name="workItemId">ADO work item id the evidence is for.</param>
-    /// <param name="apexId">Apex (root) work-item id. Defaults to <paramref name="workItemId"/>; when equal, the orphan branch form <c>evidence/{item}</c> is used.</param>
-    /// <param name="fromRef">Optional base branch override. When empty, defaults to <c>feature/{apex_id}</c>.</param>
+    /// <param name="rootId">Root (root) work-item id. Defaults to <paramref name="workItemId"/>; when equal, the orphan branch form <c>evidence/{item}</c> is used.</param>
+    /// <param name="fromRef">Optional base branch override. When empty, defaults to <c>feature/{root_id}</c>.</param>
     /// <param name="remote">Git remote name.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-evidence-branch")]
     [VerbResult(typeof(BranchEnsureEvidenceResult))]
     public async Task<int> EnsureEvidenceBranch(
         int workItemId = RequiredInput.MissingInt,
-        int apexId = 0,
+        int rootId = 0,
         string fromRef = "",
         string remote = "origin",
         CancellationToken ct = default)
@@ -42,23 +42,23 @@ public sealed partial class BranchCommands
         // ── 1. Validate inputs up front so bad CLI args produce ConfigError. ─
         if (!WorkItemId.TryParse(workItemId, out var item))
         {
-            EmitEvidenceError(workItemId, apexId, fromRef, $"workItemId must be positive (got {workItemId})");
+            EmitEvidenceError(workItemId, rootId, fromRef, $"workItemId must be positive (got {workItemId})");
             return ExitCodes.ConfigError;
         }
 
-        // Default apex to the work item itself (orphan evidence). A
-        // negative explicit apex is a config error so callers don't get a
-        // silent collapse to orphan when they meant to pass a real apex.
-        if (apexId < 0)
+        // Default root to the work item itself (orphan evidence). A
+        // negative explicit root is a config error so callers don't get a
+        // silent collapse to orphan when they meant to pass a real root.
+        if (rootId < 0)
         {
-            EmitEvidenceError(workItemId, apexId, fromRef, $"apexId must be non-negative (got {apexId})");
+            EmitEvidenceError(workItemId, rootId, fromRef, $"rootId must be non-negative (got {rootId})");
             return ExitCodes.ConfigError;
         }
 
-        var resolvedApexId = apexId == 0 ? workItemId : apexId;
-        if (!RootId.TryParse(resolvedApexId, out var apex))
+        var resolvedApexId = rootId == 0 ? workItemId : rootId;
+        if (!RootId.TryParse(resolvedApexId, out var root))
         {
-            EmitEvidenceError(workItemId, apexId, fromRef, $"apexId must be positive (got {resolvedApexId})");
+            EmitEvidenceError(workItemId, rootId, fromRef, $"rootId must be positive (got {resolvedApexId})");
             return ExitCodes.ConfigError;
         }
 
@@ -66,10 +66,10 @@ public sealed partial class BranchCommands
         var orphan = resolvedApexId == workItemId;
         var branch = orphan
             ? BranchNameBuilder.EvidenceOrphan(item).Value
-            : BranchNameBuilder.Evidence(apex, item).Value;
+            : BranchNameBuilder.Evidence(root, item).Value;
 
         var baseBranch = string.IsNullOrEmpty(fromRef)
-            ? BranchNameBuilder.Feature(apex).Value
+            ? BranchNameBuilder.Feature(root).Value
             : fromRef;
 
         try
@@ -100,7 +100,7 @@ public sealed partial class BranchCommands
 
                 // Base is irrelevant when the target already exists locally,
                 // but we still report whether it's on the remote so the
-                // workflow can distinguish "evidence exists, but the apex
+                // workflow can distinguish "evidence exists, but the root
                 // feature has been deleted" from a fully wired state.
                 baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, ct).ConfigureAwait(false);
             }
@@ -119,11 +119,11 @@ public sealed partial class BranchCommands
                 {
                     EmitEvidenceError(
                         workItemId,
-                        apexId,
+                        rootId,
                         fromRef,
                         $"base branch '{baseBranch}' does not exist on remote '{remote}'. " +
                         (string.IsNullOrEmpty(fromRef)
-                            ? $"Run 'polyphony branch ensure-feature' for apex {resolvedApexId} first, or pass --from-ref to base evidence on a different branch."
+                            ? $"Run 'polyphony branch ensure-feature' for root {resolvedApexId} first, or pass --from-ref to base evidence on a different branch."
                             : "Verify the --from-ref value points at a branch that exists on the remote."),
                         branch: branch,
                         baseBranch: baseBranch,
@@ -158,7 +158,7 @@ public sealed partial class BranchCommands
                 BaseRemoteExisted = baseRemoteExisted,
                 BaseFetched = baseFetched,
                 CreatedFrom = createdFrom,
-                ApexId = resolvedApexId,
+                RootId = resolvedApexId,
                 ItemId = workItemId,
                 Orphan = orphan,
                 FromRef = fromRef,
@@ -171,7 +171,7 @@ public sealed partial class BranchCommands
         {
             EmitEvidenceError(
                 workItemId,
-                apexId,
+                rootId,
                 fromRef,
                 ex.Message,
                 branch: branch,
@@ -187,14 +187,14 @@ public sealed partial class BranchCommands
 
     private static void EmitEvidenceError(
         int workItemId,
-        int apexId,
+        int rootId,
         string fromRef,
         string message,
         string branch = "",
         string baseBranch = "",
         bool orphan = false)
     {
-        var resolvedApexId = apexId == 0 ? workItemId : apexId;
+        var resolvedApexId = rootId == 0 ? workItemId : rootId;
         var result = new BranchEnsureEvidenceResult
         {
             Branch = branch,
@@ -204,7 +204,7 @@ public sealed partial class BranchCommands
             Pushed = false,
             BaseRemoteExisted = false,
             BaseFetched = false,
-            ApexId = resolvedApexId,
+            RootId = resolvedApexId,
             ItemId = workItemId,
             Orphan = orphan,
             FromRef = fromRef,

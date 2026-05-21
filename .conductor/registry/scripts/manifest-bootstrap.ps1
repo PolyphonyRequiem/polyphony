@@ -2,12 +2,12 @@
 <#
 .SYNOPSIS
 Initialize the per-run manifest under
-`<git-common-dir>/polyphony/<root_id>/run.yaml` for an apex run, or
-validate an existing manifest matches the requested apex.
+`<git-common-dir>/polyphony/<root_id>/run.yaml` for an root run, or
+validate an existing manifest matches the requested root.
 
 .DESCRIPTION
 Routing-style helper used by the `init_manifest` agent in
-`apex-driver.yaml`. Responsible for one of two outcomes:
+`polyphony.yaml`. Responsible for one of two outcomes:
 
 1. **Manifest absent** → synthesizes `--platform-project` from the
    workflow's `organization` and `project` inputs (the work-item
@@ -38,7 +38,7 @@ via `error_code`:
                                          for a reason OTHER than `manifest_not_found`
                                          or `manifest_root_mismatch`.
   manifest_parse_failed                - `polyphony manifest read` stdout wasn't JSON.
-  manifest_root_mismatch               - manifest root_id != ApexId (AB#3067 guard).
+  manifest_root_mismatch               - manifest root_id != RootId (AB#3067 guard).
   manifest_platform_project_mismatch   - stored manifest platform_project does not
                                          match the invocation's
                                          `dev.azure.com/{org}/{project}` (GH #166).
@@ -50,10 +50,10 @@ via `error_code`:
 Topology-hash drift on resume (manifest topology vs current ADO tree) is
 intentionally NOT validated here. That is a deferred follow-up - see
 `docs/decisions/branch-model.md` for the resume contract. Tracked in
-the apex-driver pipeline-audit-fix PR body.
+the polyphony pipeline-audit-fix PR body.
 
-.PARAMETER ApexId
-ADO work-item id of the apex (run-root) being executed.
+.PARAMETER RootId
+ADO work-item id of the root (run-root) being executed.
 
 .PARAMETER Organization
 ADO organization name. Required when initialising a fresh manifest.
@@ -70,7 +70,7 @@ Override for the polyphony executable path. Defaults to `polyphony`.
 #>
 param(
     [Parameter(Mandatory)]
-    [int]$ApexId,
+    [int]$RootId,
 
     [string]$Organization = '',
     [string]$Project = '',
@@ -113,7 +113,7 @@ if (-not (Get-Command $PolyphonyExe -ErrorAction SilentlyContinue)) {
 }
 
 # -- Probe via CLI (the manifest now lives under the git common dir) ----
-$read = Invoke-Polyphony @('manifest', 'read', '--root-id', "$ApexId")
+$read = Invoke-Polyphony @('manifest', 'read', '--root-id', "$RootId")
 
 if ($read.Exit -eq 0) {
     try {
@@ -147,7 +147,7 @@ if ($read.Exit -eq 0) {
             success    = $false
             error_code = 'invalid_inputs'
             error      = "manifest reuse validation requires both organization and project when either is supplied (got organization='$Organization', project='$Project')"
-            apex_id    = $ApexId
+            root_id    = $RootId
         }
         exit 0
     }
@@ -165,7 +165,7 @@ if ($read.Exit -eq 0) {
                 success                     = $false
                 error_code                  = 'manifest_platform_project_mismatch'
                 error                       = "manifest platform_project '$storedPlatformProject' does not match invocation '$expectedPlatformProject'; delete the manifest or correct the invocation"
-                apex_id                     = $ApexId
+                root_id                     = $RootId
                 manifest_platform_project   = $storedPlatformProject
                 invocation_platform_project = $expectedPlatformProject
             }
@@ -203,7 +203,7 @@ if ($readErrorCode -eq 'manifest_root_mismatch') {
         error_code         = 'manifest_root_mismatch'
         error              = "$($readPayload.error)"
         manifest_root_id   = $readPayload.manifest_root_id
-        apex_id            = $ApexId
+        root_id            = $RootId
     }
     exit 0
 }
@@ -233,7 +233,7 @@ if (-not $Organization -or -not $Project) {
 }
 $platformProject = "dev.azure.com/$Organization/$Project"
 
-$init = Invoke-Polyphony @('manifest', 'init', '--root-id', "$ApexId", '--platform-project', $platformProject)
+$init = Invoke-Polyphony @('manifest', 'init', '--root-id', "$RootId", '--platform-project', $platformProject)
 if ($init.Exit -ne 0) {
     Emit-Envelope @{
         success    = $false

@@ -23,7 +23,7 @@ The actionable facet is recorded on every actionable item (see the
   performed; no evidence branch, no agent, no PR.
 
 The two paths overlap in **almost nothing** at the agent / step level —
-yet they share the same workflow inputs (`work_item_id`, `apex_id`,
+yet they share the same workflow inputs (`work_item_id`, `root_id`,
 `platform`, etc.), the same workflow outputs (`satisfied`, `executor`),
 and the same surrounding driver semantics (one workflow invocation per
 actionable requirement). They are two legs of the same conceptual unit:
@@ -95,7 +95,7 @@ Concretely:
 2. **Inline the router as a Jinja `route.when` chain on the first real
    step** (no script). Rejected — `executor` validation (rejecting
    unknown values) needs somewhere to live; a one-line script is
-   clearer than a three-armed `when:` cascade with a fallthrough hack.
+   clearer than a three-armed `when:` restack with a fallthrough hack.
    Also keeps the precedent for future routers (e.g., `platform_router`
    in `feature-pr.yaml`).
 

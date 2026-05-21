@@ -34,7 +34,7 @@ namespace Polyphony.Commands;
 ///         the watermark; the others are purely best-effort sweeps.</item>
 /// </list>
 ///
-/// <para><b>Composite ordering</b> (see <see cref="ResetApex"/>):
+/// <para><b>Composite ordering</b> (see <see cref="ResetRoot"/>):
 /// PRs → worktrees → branches → manifest → state. The state stamp lands
 /// LAST so that a crash anywhere in the cleanup chain leaves the system
 /// "still mid-reset" rather than "watermark advanced but PRs/branches
@@ -55,9 +55,9 @@ public sealed partial class ResetCommands(
     private readonly Polyphony.Routing.HierarchyWalker _walker = walker;
 
     /// <summary>
-    /// Canonical apex-scoped branch prefix set. Used by <c>reset prs</c>
+    /// Canonical root-scoped branch prefix set. Used by <c>reset prs</c>
     /// and <c>reset branches</c> to enumerate every branch the polyphony
-    /// pipeline may have created for an apex.
+    /// pipeline may have created for an root.
     ///
     /// <para>Patterns are passed to <c>git ls-remote --heads origin {pattern}</c>
     /// where <c>refs/heads/</c> is prepended; for purely-local enumeration
@@ -67,21 +67,21 @@ public sealed partial class ResetCommands(
     /// <c>{root}-{item}</c> and <c>{root}-{pgPath}</c> shapes documented
     /// in <c>docs/decisions/branch-model.md</c>.</para>
     /// </summary>
-    internal static IReadOnlyList<string> ApexBranchPatterns(int apex)
+    internal static IReadOnlyList<string> RootBranchPatterns(int root)
     {
-        var apexStr = apex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var rootStr = root.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return [
-            $"plan/{apexStr}",
+            $"plan/{rootStr}",
             // MG branches use `_` between root_id and mg_path (see
             // docs/decisions/branch-model.md §Branch names: `mg/{root_id}_{mg_path}`).
             // The `_` is unambiguous because mg_id segments match
             // `^[a-z][a-z0-9-]{0,30}$`, which excludes `_`. Earlier
             // revisions used `-` here, which silently failed to match
             // any MG branch and left mg/* refs on origin after reset.
-            $"mg/{apexStr}_*",
-            $"impl/{apexStr}-*",
-            $"evidence/{apexStr}-*",
-            $"feature/{apexStr}",
+            $"mg/{rootStr}_*",
+            $"impl/{rootStr}-*",
+            $"evidence/{rootStr}-*",
+            $"feature/{rootStr}",
         ];
     }
 }

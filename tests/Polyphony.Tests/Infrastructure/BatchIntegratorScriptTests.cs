@@ -7,25 +7,25 @@ namespace Polyphony.Tests.Infrastructure;
 
 /// <summary>
 /// Pins the JSON envelope shape produced by
-/// <c>.conductor/registry/scripts/wave-integrator.ps1</c> — the
-/// post-wave branch integrator for the apex-driver dispatch loop.
+/// <c>.conductor/registry/scripts/batch-integrator.ps1</c> — the
+/// post-batch branch integrator for the polyphony dispatch loop.
 /// </summary>
 /// <remarks>
-/// After a wave completes, the apex-driver invokes this script to merge
-/// each completed child branch (sdlc/apex/&lt;id&gt;) back into the apex
+/// After a batch completes, the polyphony invokes this script to merge
+/// each completed child branch (sdlc/root/&lt;id&gt;) back into the root
 /// feature branch in topological order. This script's envelope is the
-/// workflow's input schema for the wave_failed_gate routing step.
+/// workflow's input schema for the batch_failed_gate routing step.
 ///
 /// Tests focus on envelope shape and surface-level error paths
 /// (polyphony missing, edges check failure). Live integration with
 /// real branches is covered by the Phase 7 e2e PR (forward reference).
 /// </remarks>
 [Trait("Category", "Slow")] // see #286 — forks pwsh per test
-public sealed class WaveIntegratorScriptTests
+public sealed class BatchIntegratorScriptTests
 {
     private static readonly string ScriptPath = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..",
-            ".conductor", "registry", "scripts", "wave-integrator.ps1"));
+            ".conductor", "registry", "scripts", "batch-integrator.ps1"));
 
     private static bool PwshAvailable
     {
@@ -77,7 +77,7 @@ public sealed class WaveIntegratorScriptTests
     public void ScriptFile_Exists()
     {
         File.Exists(ScriptPath).ShouldBeTrue(
-            $"wave-integrator.ps1 must live at {ScriptPath}");
+            $"batch-integrator.ps1 must live at {ScriptPath}");
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public sealed class WaveIntegratorScriptTests
         if (!PwshAvailable) return;
 
         var (exitCode, stdout, _) = await RunScriptAsync(
-            "-ApexId 1 -WaveIndex 0 -PolyphonyExe nonexistent_polyphony_xyz");
+            "-RootId 1 -BatchIndex 0 -PolyphonyExe nonexistent_polyphony_xyz");
 
         exitCode.ShouldBe(0);
 
@@ -95,8 +95,8 @@ public sealed class WaveIntegratorScriptTests
 
         root.GetProperty("success").GetBoolean().ShouldBeFalse();
         root.GetProperty("error_code").GetString().ShouldBe("polyphony_unavailable");
-        root.GetProperty("apex_id").GetInt32().ShouldBe(1);
-        root.GetProperty("wave_index").GetInt32().ShouldBe(0);
+        root.GetProperty("root_id").GetInt32().ShouldBe(1);
+        root.GetProperty("batch_index").GetInt32().ShouldBe(0);
     }
 
     [Fact]
@@ -104,13 +104,13 @@ public sealed class WaveIntegratorScriptTests
     {
         if (!PwshAvailable) return;
 
-        // The default feature branch is feature/<ApexId> per the
-        // branch-model spec; this is an apex-driver contract that
+        // The default feature branch is feature/<RootId> per the
+        // branch-model spec; this is an polyphony contract that
         // worktree-manager.ps1 + the workflow itself rely on. Pre-PR-176
-        // the script defaulted to feature/apex-<ApexId>; that apex-
+        // the script defaulted to feature/root-<RootId>; that root-
         // sub-prefix was a YAML/script drift bypassing BranchNameBuilder.
         var (_, stdout, _) = await RunScriptAsync(
-            "-ApexId 9876 -WaveIndex 0 -PolyphonyExe nonexistent_polyphony_xyz");
+            "-RootId 9876 -BatchIndex 0 -PolyphonyExe nonexistent_polyphony_xyz");
 
         using var doc = JsonDocument.Parse(stdout);
         doc.RootElement.GetProperty("feature_branch").GetString().ShouldBe("feature/9876");
@@ -122,7 +122,7 @@ public sealed class WaveIntegratorScriptTests
         if (!PwshAvailable) return;
 
         var (_, stdout, _) = await RunScriptAsync(
-            "-ApexId 1 -WaveIndex 0 -FeatureBranch custom/feature -PolyphonyExe nonexistent_polyphony_xyz");
+            "-RootId 1 -BatchIndex 0 -FeatureBranch custom/feature -PolyphonyExe nonexistent_polyphony_xyz");
 
         using var doc = JsonDocument.Parse(stdout);
         doc.RootElement.GetProperty("feature_branch").GetString().ShouldBe("custom/feature");
@@ -134,7 +134,7 @@ public sealed class WaveIntegratorScriptTests
         if (!PwshAvailable) return;
 
         var (_, stdout, _) = await RunScriptAsync(
-            "-ApexId 1 -WaveIndex 0 -PolyphonyExe nonexistent_polyphony_xyz");
+            "-RootId 1 -BatchIndex 0 -PolyphonyExe nonexistent_polyphony_xyz");
 
         using var doc = JsonDocument.Parse(stdout);
         doc.RootElement.GetProperty("merge_strategy").GetString().ShouldBe("no-ff");
@@ -147,13 +147,13 @@ public sealed class WaveIntegratorScriptTests
 
         var requiredKeys = new[]
         {
-            "success", "wave_index", "apex_id", "feature_branch",
+            "success", "batch_index", "root_id", "feature_branch",
             "merge_strategy", "branches_integrated", "skipped",
             "conflicts", "error_code", "error_message",
         };
 
         var (exitCode, stdout, stderr) = await RunScriptAsync(
-            "-ApexId 1 -WaveIndex 0 -PolyphonyExe nonexistent_polyphony_xyz");
+            "-RootId 1 -BatchIndex 0 -PolyphonyExe nonexistent_polyphony_xyz");
         exitCode.ShouldBe(0, $"stderr: {stderr}");
 
         using var doc = JsonDocument.Parse(stdout);

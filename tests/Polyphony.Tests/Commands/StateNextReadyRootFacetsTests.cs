@@ -18,7 +18,7 @@ namespace Polyphony.Tests.Commands;
 /// <c>polyphony:facets=&lt;csv&gt;</c> tag (PR #7) through
 /// <see cref="StateCommands.NextReady"/> via
 /// <see cref="RequirementInputResolver"/>. Architects stamp this tag on
-/// an apex when they choose NOT to decompose; the resolver then derives
+/// an root when they choose NOT to decompose; the resolver then derives
 /// the per-item requirement set against the declared facet subset
 /// instead of the type-config default.
 /// </summary>
@@ -45,7 +45,7 @@ namespace Polyphony.Tests.Commands;
 /// </remarks>
 public sealed class StateNextReadyApexFacetsTests : CommandTestBase
 {
-    private const int ApexId = 4001;
+    private const int RootId = 4001;
     private const string OriginUrl = "https://github.com/acme/repo.git";
 
     private StateCommands CreateCommand(FakeProcessRunner runner)
@@ -69,7 +69,7 @@ public sealed class StateNextReadyApexFacetsTests : CommandTestBase
         runner.WhenStartsWith("git", ["ls-remote"], new ProcessResult(0, "", ""));
         runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(0, "[]", ""));
         runner.WhenStartsWith("twig", ["show"], new ProcessResult(0,
-            $$"""{"id":{{ApexId}},"title":"Apex","tags":""}""", ""));
+            $$"""{"id":{{RootId}},"title":"Root","tags":""}""", ""));
     }
 
     // ─── Override applied → derived set narrows to declared facets ─────
@@ -88,7 +88,7 @@ public sealed class StateNextReadyApexFacetsTests : CommandTestBase
         // RequirementInputResolver.Resolve(overrideFacets:) →
         // RequirementSetDeriver, which is the whole new wiring.
         var item = new WorkItemBuilder()
-            .WithId(ApexId).WithType("Issue").WithTitle("Apex 4001").WithState("Doing")
+            .WithId(RootId).WithType("Issue").WithTitle("Root 4001").WithState("Doing")
             .WithTags($"polyphony;{PolyphonyTags.FacetsPrefix}={Facet.Plannable}")
             .Build();
         await SeedAsync(item);
@@ -96,7 +96,7 @@ public sealed class StateNextReadyApexFacetsTests : CommandTestBase
         BindBaseline(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -121,14 +121,14 @@ public sealed class StateNextReadyApexFacetsTests : CommandTestBase
         // a regression that always treated the override branch as the
         // hot path would only show up in an end-to-end harness.
         var item = new WorkItemBuilder()
-            .WithId(ApexId).WithType("Issue").WithTitle("Apex 4001").WithState("Doing")
+            .WithId(RootId).WithType("Issue").WithTitle("Root 4001").WithState("Doing")
             .Build();
         await SeedAsync(item);
         var runner = new FakeProcessRunner();
         BindBaseline(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -165,7 +165,7 @@ public sealed class StateNextReadyApexFacetsTests : CommandTestBase
         // CLI output alone.
         const string badToken = "garbage";
         var item = new WorkItemBuilder()
-            .WithId(ApexId).WithType("Issue").WithTitle("Apex 4001").WithState("Doing")
+            .WithId(RootId).WithType("Issue").WithTitle("Root 4001").WithState("Doing")
             .WithTags($"{PolyphonyTags.FacetsPrefix}={badToken}")
             .Build();
         await SeedAsync(item);
@@ -173,7 +173,7 @@ public sealed class StateNextReadyApexFacetsTests : CommandTestBase
         BindBaseline(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.ConfigError);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;

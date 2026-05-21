@@ -51,9 +51,9 @@ workflow:
       type: number
 
 output:
-  root_id: "{% if terminal_use_active_item_prompted is defined %}{{ workflow.input.active_work_item_id }}{% else %}0{% endif %}"
-  decision: "{% if terminal_use_active_item_prompted is defined %}use_active_item{% else %}abort{% endif %}"
-  auto_policy_applied: "{% if terminal_use_active_item_auto is defined %}true{% else %}false{% endif %}"
+  root_id: "{% if use_active_item_prompted is defined %}{{ workflow.input.active_work_item_id }}{% else %}0{% endif %}"
+  decision: "{% if use_active_item_prompted is defined %}use_active_item{% else %}abort{% endif %}"
+  auto_policy_applied: "{% if use_active_item_auto is defined %}true{% else %}false{% endif %}"
 
 agents:
   - name: load_policy
@@ -63,9 +63,9 @@ agents:
     routes:
       - to: prompt_user
         when: "{{ load_policy.output.root_fallback.auto_decide == 'prompt' }}"
-      - to: terminal_use_active_item_auto
+      - to: use_active_item_auto
         when: "{{ load_policy.output.root_fallback.auto_decide == 'use_active_item' }}"
-      - to: terminal_abort_auto
+      - to: abort_auto
         when: "{{ load_policy.output.root_fallback.auto_decide == 'abort' }}"
       - to: prompt_user
 
@@ -75,33 +75,33 @@ agents:
     options:
       - label: "Use active"
         value: use_active_item
-        route: terminal_use_active_item_prompted
+        route: use_active_item_prompted
       - label: "Abort"
         value: abort
-        route: terminal_abort_prompted
+        route: abort_prompted
 
-  - name: terminal_use_active_item_prompted
+  - name: use_active_item_prompted
     type: script
     command: pwsh
     args: ["-NoProfile", "-Command", "@{ decision = 'use_active_item'; auto_policy_applied = $false; root_id = 1 } | ConvertTo-Json -Compress"]
     routes:
       - to: $end
 
-  - name: terminal_abort_prompted
+  - name: abort_prompted
     type: script
     command: pwsh
     args: ["-NoProfile", "-Command", "@{ decision = 'abort'; auto_policy_applied = $false; root_id = 0 } | ConvertTo-Json -Compress"]
     routes:
       - to: $end
 
-  - name: terminal_use_active_item_auto
+  - name: use_active_item_auto
     type: script
     command: pwsh
     args: ["-NoProfile", "-Command", "@{ decision = 'auto_resolved'; auto_policy_applied = $true; root_id = 1 } | ConvertTo-Json -Compress"]
     routes:
       - to: $end
 
-  - name: terminal_abort_auto
+  - name: abort_auto
     type: script
     command: pwsh
     args: ["-NoProfile", "-Command", "@{ decision = 'abort'; auto_policy_applied = $true; root_id = 0 } | ConvertTo-Json -Compress"]
@@ -178,11 +178,11 @@ agents:
         }
 
         It 'Fails when an auto terminal is missing' {
-            $yaml = ($script:ValidYaml) -replace 'name: terminal_use_active_item_auto', 'name: terminal_auto_pick'
+            $yaml = ($script:ValidYaml) -replace 'name: use_active_item_auto', 'name: auto_pick'
             Set-Content (Join-Path $script:WorkflowsDir 'root-fallback-gate.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-root-fallback-gate.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'missing-node.*terminal_use_active_item_auto'
+            ($output | Out-String) | Should -Match 'missing-node.*use_active_item_auto'
         }
 
         It 'Fails when policy load is not invoked' {
@@ -202,7 +202,7 @@ agents:
         }
 
         It 'Fails when a route target references a non-existent agent' {
-            $yaml = ($script:ValidYaml) -replace 'to: terminal_abort_auto', 'to: not_a_real_terminal'
+            $yaml = ($script:ValidYaml) -replace 'to: abort_auto', 'to: not_a_real_terminal'
             Set-Content (Join-Path $script:WorkflowsDir 'root-fallback-gate.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-root-fallback-gate.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
@@ -236,19 +236,19 @@ agents:
         It 'Fails when an auto terminal emits the wrong decision value' {
             # Swap the prompted-pick `use_active_item` decision into the
             # auto terminal — auto MUST emit `auto_resolved`.
-            $yaml = ($script:ValidYaml) -replace "(name: terminal_use_active_item_auto[\s\S]*?decision = ')auto_resolved", "`$1use_active_item"
+            $yaml = ($script:ValidYaml) -replace "(name: use_active_item_auto[\s\S]*?decision = ')auto_resolved", "`$1use_active_item"
             Set-Content (Join-Path $script:WorkflowsDir 'root-fallback-gate.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-root-fallback-gate.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'wrong-terminal-decision.*terminal_use_active_item_auto'
+            ($output | Out-String) | Should -Match 'wrong-terminal-decision.*use_active_item_auto'
         }
 
         It 'Fails when an auto terminal emits auto_policy_applied=$false' {
-            $yaml = ($script:ValidYaml) -replace "(name: terminal_abort_auto[\s\S]*?auto_policy_applied = )\`$true", "`$1`$false"
+            $yaml = ($script:ValidYaml) -replace "(name: abort_auto[\s\S]*?auto_policy_applied = )\`$true", "`$1`$false"
             Set-Content (Join-Path $script:WorkflowsDir 'root-fallback-gate.yaml') $yaml
             $output = pwsh -NoProfile -File (Join-Path $script:TestsDir 'lint-root-fallback-gate.ps1') 2>&1
             $LASTEXITCODE | Should -Be 1
-            ($output | Out-String) | Should -Match 'wrong-terminal-auto-policy-applied.*terminal_abort_auto'
+            ($output | Out-String) | Should -Match 'wrong-terminal-auto-policy-applied.*abort_auto'
         }
     }
 }

@@ -13,7 +13,7 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// <c>polyphony plan recreate-stale-descendant</c> — the second policy
-/// outcome of the Phase 3 P9 cascade-remedy. When a stale descendant plan
+/// outcome of the Phase 3 P9 restack-remedy. When a stale descendant plan
 /// PR cannot (or should not) be auto-rebased, this verb closes the stale PR,
 /// removes its head branch (best-effort), re-creates the plan branch from
 /// the current parent-plan tip, opens a fresh PR with an up-to-date
@@ -21,13 +21,13 @@ namespace Polyphony.Commands;
 /// the manifest's rebase ledger under reason <c>child_plan_drift</c>.
 ///
 /// <para>This GitHub-only implementation matches the reach of the rebase
-/// sibling shipped in #107. ADO P9 cascade is a separate later workstream.</para>
+/// sibling shipped in #107. ADO P9 restack is a separate later workstream.</para>
 ///
 /// <para><b>Compound transactional sequence</b> (mirrors the discipline of
 /// <c>plan rebase-stale-descendant</c> step-by-step):</para>
 /// <list type="bullet">
 ///   <item><b>Lock-before-read</b>: same-root run lock at <c>.polyphony/locks/run-{rootId}.lock</c> acquired before any read of the manifest, so concurrent remedies on the same root cannot race.</item>
-///   <item><b>Cascade-precondition</b>: refuses with <c>parent_stale</c> if the parent plan PR's snapshot is itself behind the manifest — recreating onto a stale parent would just re-stage the staleness.</item>
+///   <item><b>Restack-precondition</b>: refuses with <c>parent_stale</c> if the parent plan PR's snapshot is itself behind the manifest — recreating onto a stale parent would just re-stage the staleness.</item>
 ///   <item><b>Identity-verified close</b>: PR poll captures head/base refs first; refuses with <c>pr_identity_mismatch</c> if either is not what the verb expects.</item>
 ///   <item><b>Best-effort branch delete</b>: <c>git push origin --delete {head}</c> failure is a warning, not a terminal error — branch may already have been removed.</item>
 ///   <item><b>Build-the-replay-safety-net before pushing manifest</b>: branch + PR + manifest mutations land in that order. Failure between any two leaves the verb in a state that re-running can complete via the noop / partial-success paths.</item>
@@ -316,7 +316,7 @@ public sealed partial class PlanCommands
         var ancestorKeys = ParseAncestorKeysForRecreate(ancestorIds, snapshotInBody);
         var desiredSnapshot = ProjectManifestOntoAncestorsForRecreate(manifest.PlanGenerations, ancestorKeys, snapshotInBody);
 
-        // ── 9. Cascade-precondition: parent plan branch must be fresh. ─────
+        // ── 9. Restack-precondition: parent plan branch must be fresh. ─────
         var parentFreshness = await CheckParentFreshnessForRecreateAsync(identity, parentPlanBranch, manifest, ct).ConfigureAwait(false);
         if (parentFreshness is { } parentMessage)
         {
@@ -360,7 +360,7 @@ public sealed partial class PlanCommands
         if (!string.Equals(poll.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "pr_state_invalid",
-                $"PR #{prNumber} is in state '{poll.State}'; only OPEN PRs are eligible for cascade recreate (and the noop replay condition was not satisfied).",
+                $"PR #{prNumber} is in state '{poll.State}'; only OPEN PRs are eligible for restack recreate (and the noop replay condition was not satisfied).",
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch,
                 oldPrUrl: oldPrUrl);
         }

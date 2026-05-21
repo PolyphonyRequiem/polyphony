@@ -1,8 +1,8 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output envelope for <c>polyphony reset manifest --apex N</c> — reports
-/// on the per-apex run manifest at
+/// Output envelope for <c>polyphony reset manifest --root N</c> — reports
+/// on the per-root run manifest at
 /// <c>feature/{N}:.polyphony/run.yaml</c>.
 ///
 /// <para>The manifest is co-located with the feature branch, so deletion
@@ -13,12 +13,12 @@ namespace Polyphony;
 /// <list type="bullet">
 ///   <item>It surfaces the manifest's state for operator inspection
 ///         (does a manifest exist? what generation does it claim?).</item>
-///   <item>It provides a stable hook for PR 3's reset-apex.yaml workflow
+///   <item>It provides a stable hook for PR 3's reset-root.yaml workflow
 ///         and any future need to clear the manifest without nuking the
 ///         whole feature branch (e.g. partial-reset scenarios).</item>
 /// </list>
 ///
-/// <para>Current behavior: read-only inspection. When the apex feature
+/// <para>Current behavior: read-only inspection. When the root feature
 /// branch + manifest are present, <see cref="ManifestPath"/> and
 /// <see cref="ManifestPresent"/> describe what's there. Actual clearing
 /// is deferred to <c>reset branches</c>. PR 3 may extend this verb to
@@ -29,7 +29,7 @@ namespace Polyphony;
 /// </summary>
 public sealed record ResetManifestResult
 {
-    public required int Apex { get; init; }
+    public required int Root { get; init; }
     public required bool Success { get; init; }
     public required bool DryRun { get; init; }
 

@@ -221,7 +221,7 @@ if ($capGateBlock -and $capGateBlock -notmatch "cap_reason\s*==\s*'no_commit_stu
 # routes:
 #   auto_proceed → workflow-specific target (the "force one more / accept"
 #                  semantic for this site; not checked here — site-specific)
-#   auto_fail    → terminal_cap_auto_fail
+#   auto_fail    → cap_auto_fail
 #   (fallthrough)→ the cap-hit gate itself (manual + catch-all)
 #
 # These checks enumerate the concrete cap-hit gates known to this
@@ -246,10 +246,10 @@ foreach ($gate in @('revise_cap_gate')) {
             Detail = "AB#3186: '$routerName' must invoke the shared 'resolve-unattended-cap-mode.ps1' helper, not inline policy lookup."
         }
     }
-    if ($routerBlock -notmatch 'to:\s*terminal_cap_auto_fail\b') {
+    if ($routerBlock -notmatch 'to:\s*cap_auto_fail\b') {
         $violations += [PSCustomObject]@{
             Rule   = "cap-mode-router-missing-auto-fail-route-$gate"
-            Detail = "AB#3186: '$routerName' must include a 'to: terminal_cap_auto_fail' route guarded by cap_mode == 'auto_fail'."
+            Detail = "AB#3186: '$routerName' must include a 'to: cap_auto_fail' route guarded by cap_mode == 'auto_fail'."
         }
     }
     if ($routerBlock -notmatch "to:\s*$([regex]::Escape($gate))\b") {
@@ -260,17 +260,17 @@ foreach ($gate in @('revise_cap_gate')) {
     }
 }
 
-if ($content -notmatch 'name:\s*terminal_cap_auto_fail\b') {
+if ($content -notmatch 'name:\s*cap_auto_fail\b') {
     $violations += [PSCustomObject]@{
         Rule   = 'missing-terminal-cap-auto-fail'
-        Detail = "AB#3186: 'terminal_cap_auto_fail' terminal node missing. Required as the auto_fail target for cap-mode policy routers; must invoke abort-run.ps1 with -Reason 'cap-auto-fail'."
+        Detail = "AB#3186: 'cap_auto_fail' terminal node missing. Required as the auto_fail target for cap-mode policy routers; must invoke abort-run.ps1 with -Reason 'cap-auto-fail'."
     }
 } else {
-    $terminalMatch = [regex]::Match($content, '(?s)- name:\s*terminal_cap_auto_fail\b.*?(?=\n  - name: |\Z)')
+    $terminalMatch = [regex]::Match($content, '(?s)- name:\s*cap_auto_fail\b.*?(?=\n  - name: |\Z)')
     if ($terminalMatch.Success -and $terminalMatch.Value -notmatch '"cap-auto-fail"') {
         $violations += [PSCustomObject]@{
             Rule   = 'terminal-cap-auto-fail-wrong-reason'
-            Detail = "AB#3186: 'terminal_cap_auto_fail' must invoke abort-run.ps1 with -Reason 'cap-auto-fail' (the discriminator vs 'operator-abort' for post-mortem diagnostics)."
+            Detail = "AB#3186: 'cap_auto_fail' must invoke abort-run.ps1 with -Reason 'cap-auto-fail' (the discriminator vs 'operator-abort' for post-mortem diagnostics)."
         }
     }
 }
@@ -314,7 +314,7 @@ if ($content -notmatch 'name:\s*terminal_cap_auto_fail\b') {
         if ($content -notmatch 'name:\s*pr_pre_merge_gate\b') {
             $violations += [PSCustomObject]@{
                 Rule   = 'missing-pre-merge-gate'
-                Detail = "AB#3184: 'pr_pre_merge_gate' human_gate missing. Required as the mode=='manual' divert target; must offer approve→pr_merger / defer→pending_review_gate / abort→terminal_abort_run options."
+                Detail = "AB#3184: 'pr_pre_merge_gate' human_gate missing. Required as the mode=='manual' divert target; must offer approve→pr_merger / defer→pending_review_gate / abort→abort_run options."
             }
         }
 

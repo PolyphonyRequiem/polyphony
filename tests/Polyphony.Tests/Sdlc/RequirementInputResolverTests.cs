@@ -298,7 +298,7 @@ public sealed class RequirementInputResolverTests
     [Fact]
     public void Resolve_OverrideFacetsNonEmpty_ReplacesTypeConfigFacets()
     {
-        // Override wins — the architect-declared apex_facets is a stronger
+        // Override wins — the architect-declared root_facets is a stronger
         // signal than the type-config default.
         var resolved = RequirementInputResolver.Resolve(
             Type(facets: ["plannable"]),

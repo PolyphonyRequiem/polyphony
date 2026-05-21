@@ -24,7 +24,7 @@ public sealed partial class PrCommands
     /// the verb fetches its body, parses the embedded snapshot, and:
     /// <list type="bullet">
     ///   <item>If the snapshot matches the current manifest, returns the existing PR (<c>created=false, stale=false</c>) — the verb is idempotent.</item>
-    ///   <item>If the snapshot is stale (any ancestor's manifest generation has advanced past the embedded value), returns <c>created=false, stale=true</c> with a non-zero exit code so the operator can decide. The verb refuses to silently rewrite the PR body — that's a P9 concern (ancestor cascade).</item>
+    ///   <item>If the snapshot is stale (any ancestor's manifest generation has advanced past the embedded value), returns <c>created=false, stale=true</c> with a non-zero exit code so the operator can decide. The verb refuses to silently rewrite the PR body — that's a P9 concern (ancestor restack).</item>
     /// </list>
     /// Fails with <c>RoutingFailure</c> when the head/base branch is missing on the remote, or with <c>CacheError</c> when the manifest cannot be read from <c>origin/feature/{root}</c>.
     /// </summary>

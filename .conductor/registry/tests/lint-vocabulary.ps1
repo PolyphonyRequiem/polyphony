@@ -52,8 +52,7 @@ $ErrorActionPreference = 'Stop'
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $regexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
 $deferredSpecFiles = @(
-    'docs/proposals/polyphony-journal.md',
-    'docs/proposals/conductor-failure-model.md'
+    'docs/proposals/polyphony-journal.md'
 )
 $skippedFenceLanguages = @('text', 'console', 'output', 'diff')
 
@@ -132,7 +131,52 @@ function New-ForbiddenTermSpec {
         [Parameter(Mandatory)] [string]$Replacement
     )
 
-    if ($Term.EndsWith('*')) {
+    if ($Term.StartsWith('*_')) {
+        # Token-suffix: `*_dispatch` matches `<word>_dispatch` only at end of an
+        # identifier — i.e. preceded by [A-Za-z0-9] and not followed by another
+        # [A-Za-z0-9_]. This prevents false positives like `items_dispatched_count`
+        # (where `_dispatch` is mid-identifier, not a true suffix).
+        $literalSuffix = $Term.Substring(1)
+        $escaped = [regex]::Escape($literalSuffix)
+        $pattern = "(?<=[A-Za-z0-9])$escaped(?![A-Za-z0-9_])"
+        $regex = [regex]::new($pattern, $regexOptions)
+        $kind = 'token-suffix'
+    } elseif ($Term.EndsWith('_*')) {
+        # Token-prefix snake_case: `primary_*` / `terminal_*` matches
+        # `<prefix>_<word>` only at start of an identifier — preceded by
+        # non-[A-Za-z0-9_] (or start of line) and immediately followed by [A-Za-z].
+        # Case-insensitive: also catches `Primary_`, `PRIMARY_`, `Terminal_`.
+        # PascalCase compound forms (e.g. `PrimaryId`, `TerminalState`) are
+        # deliberately NOT caught here — see the dedicated `<Name>*` rule below.
+        # Why split? The snake_case `terminal_*` is a workflow-node-name
+        # convention and the snake_case form is the only locus to police; the
+        # English-noun usage of "terminal" in lifecycle-event variables
+        # (`$terminalKinds`, `$hasTerminalReady`) is semantically distinct and
+        # must NOT be falsely flagged. The hyphenated form (`terminal-satisfied`,
+        # `primary-constructor`) is also legitimate English compound usage
+        # (or external language terminology) and is NOT policed here.
+        # Domain-noun renames that should ALSO cover PascalCase (like
+        # `Primary` → `Root`) get an explicit second bullet using `<Name>*` shape.
+        $literalPrefix = $Term.Substring(0, $Term.Length - 1)
+        $escaped = [regex]::Escape($literalPrefix)
+        $pattern = "(?<![A-Za-z0-9_])$escaped(?=[A-Za-z])"
+        $regex = [regex]::new($pattern, $regexOptions)
+        $kind = 'token-prefix'
+    } elseif ($Term -cmatch '^[A-Z][a-z]+\*$') {
+        # PascalCase token-prefix: `Primary*` matches `Primary[A-Z]` exactly
+        # at the start of an identifier. CASE-SENSITIVE — `primary` does NOT
+        # match this rule (the lowercase form is covered by `primary_*` above).
+        # The trailing uppercase requirement (`(?=[A-Z])`) means we catch
+        # PascalCase compounds like `PrimaryId`, `PrimaryRouter` but skip the
+        # bare PascalCase word `Primary` (which would have no uppercase boundary).
+        $literalPrefix = $Term.Substring(0, $Term.Length - 1)  # e.g. 'Primary'
+        $escaped = [regex]::Escape($literalPrefix)
+        $pattern = "(?<![A-Za-z0-9_])$escaped(?=[A-Z])"
+        $regex = [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::Compiled)
+        $kind = 'pascal-prefix'
+    } elseif ($Term.EndsWith('*')) {
+        # Legacy literal-prefix (substring match) — kept for backwards compat
+        # with any future bullet that uses bare `prefix*` (no underscore).
         $literalPrefix = $Term.Substring(0, $Term.Length - 1)
         $pattern = [regex]::Escape($literalPrefix)
         $regex = [regex]::new($pattern, $regexOptions)
@@ -148,7 +192,36 @@ function New-ForbiddenTermSpec {
         # For pure-alpha terms, also treat PascalCase transitions as a boundary
         # so tokens like `ApexId` are caught without matching `apexes`.
         if ($Term -match '^[A-Za-z]+$') {
-            $pattern = "(?<![A-Za-z0-9])$escaped(?![A-Za-z0-9])|(?<![A-Za-z0-9])$escaped(?=(?-i:[A-Z]))"
+            # Pure-alpha terms match at THREE positions:
+            # 1. `(?<![A-Za-z0-9])apex(?![A-Za-z0-9])` — full-word boundary,
+            #    matches snake_case and bare-word usage (`apex`, `apex_x`,
+            #    `_apex`). Does not match `apexes`. Also matches at start of
+            #    string. Additionally accepts a C-style escape (`\n`, `\r`,
+            #    `\t`, `\0`) immediately preceding — without that disjunct,
+            #    occurrences inside C#/JSON string literals like
+            #    `"...\napex_facets..."` slip through because the literal `n`
+            #    of `\n` is alphanumeric and defeats the simple lookbehind.
+            # 2. `(?<![A-Za-z0-9])apex(?=(?-i:[A-Z]))` — PascalCase compound at
+            #    identifier START (case-insensitive overall but the lookahead
+            #    forces a literal uppercase boundary). Catches `ApexId`,
+            #    `ApexDriver` but not `apexx`.
+            # 3. `(?<=(?-i:[a-z0-9]))(?-i:Apex)(?![A-Za-z0-9])` — PascalCase
+            #    compound at identifier SUFFIX. Catches `ResetApex`,
+            #    `EdgeGraphWave`, `InitApex` (preceded by lowercase, then the
+            #    capitalized form of the term at the end of an identifier).
+            #    Without this alternative, suffix usages slip through the lint
+            #    and the rename script can't see them either — a bug class
+            #    discovered during the AB#3259 mechanical rename when 84
+            #    `ResetApex`/`EdgeGraphWave`-style identifiers shipped past the
+            #    original rule unchanged.
+            $titleFirst = ([char]::ToUpper($Term[0])) + $Term.Substring(1).ToLowerInvariant()
+            $titleEscaped = [regex]::Escape($titleFirst)
+            $suffixPattern = "(?<=(?-i:[a-z0-9]))(?-i:$titleEscaped)(?![A-Za-z0-9])"
+            # Lookbehind alternation: (no alnum) OR (preceded by a C-style
+            # escape: backslash + n/r/t/0). .NET regex supports variable-length
+            # lookbehind so the disjunct is permitted.
+            $boundaryLB = "(?<![A-Za-z0-9])|(?<=\\[nrt0])"
+            $pattern = "(?:$boundaryLB)$escaped(?![A-Za-z0-9])|(?:$boundaryLB)$escaped(?=(?-i:[A-Z]))|$suffixPattern"
             $kind = 'identifier-boundary+pascal-case'
         } else {
             $pattern = "(?<![A-Za-z0-9])$escaped(?![A-Za-z0-9])"
@@ -248,6 +321,14 @@ function Get-PathDisposition {
 
     if ($path -eq 'docs/glossary.md') { return 'skip' }
     if ($path -eq 'CHANGELOG.md') { return 'skip' }
+    # The vocab lint and its Pester tests intentionally contain forbidden
+    # terms (the lint as regex literals; the tests as detection fixtures).
+    # Skipping prevents self-flags and prevents the mechanical rename pass
+    # from rewriting the lint's own pattern strings or the test's assertion
+    # fixtures — a real bug class hit during the AB#3259 rename when the
+    # apply-rename pass corrupted both files.
+    if ($path -eq '.conductor/registry/tests/lint-vocabulary.ps1') { return 'skip' }
+    if ($path -eq '.conductor/registry/tests/lint-vocabulary.Tests.ps1') { return 'skip' }
     if ($path -like 'tests/fixtures/lint-vocabulary/*') { return 'skip' }
     if ($path -like 'tests/harness/*') { return 'skip' }
     if ($path -match '(^|/)(\.git|bin|obj|node_modules)(/|$)') { return 'skip' }
@@ -286,7 +367,11 @@ function Get-ScanFiles {
 
     $testsDir = Join-Path $RepoRoot 'tests'
     if (Test-Path -LiteralPath $testsDir) {
-        $allFiles += Get-ChildItem -LiteralPath $testsDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -eq '.ps1' }
+        # Tests live alongside production code and use the same glossary —
+        # any drift here means a future code change could regress the rename.
+        # Scan both PowerShell and C# tests for forbidden terms; the path
+        # disposition filter (fixtures, harness) still applies.
+        $allFiles += Get-ChildItem -LiteralPath $testsDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.ps1', '.cs' }
     }
 
     $deduped = @{}

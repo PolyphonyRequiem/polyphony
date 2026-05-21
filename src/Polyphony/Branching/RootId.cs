@@ -1,7 +1,7 @@
 namespace Polyphony.Branching;
 
 /// <summary>
-/// The work-item id of the run's apex (focus) item. Always positive, since
+/// The work-item id of the run's root (focus) item. Always positive, since
 /// it indexes a real Azure DevOps work item. Distinct from <see cref="WorkItemId"/>
 /// to make method signatures self-documenting at the call site
 /// (e.g. <c>Build(rootId, itemId)</c> reads better than <c>Build(int, int)</c>

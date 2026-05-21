@@ -24,7 +24,7 @@
 #
 # Invariants:
 #   Pre:  Work item carries the actionable facet. When executor=polyphony,
-#         the `feature/{apex_id}` branch (or the explicit --from-ref)
+#         the `feature/{root_id}` branch (or the explicit --from-ref)
 #         exists on the remote.
 #   Post: Either workflow_completed (item is satisfied — evidence PR
 #         merged for polyphony executor; gate "satisfied" recorded for
@@ -83,16 +83,16 @@ workflow:
       description: >-
         ADO work item id of the actionable item being satisfied. Type is
         runtime-injected; do not hardcode type names.
-    apex_id:
+    root_id:
       type: number
       required: false
       default: 0
       description: >-
-        Optional apex (run-root feature) work-item id used to compose the
+        Optional root (run-root feature) work-item id used to compose the
         evidence branch and PR base. When omitted (or zero), defaults to
         `work_item_id` (orphan evidence — branch `evidence/{work_item_id}`,
-        base `main`). When supplied, branch is `evidence/{apex}-{item}`
-        and base is `feature/{apex}`.
+        base `main`). When supplied, branch is `evidence/{root}-{item}`
+        and base is `feature/{root}`.
     executor:
       type: string
       required: false
@@ -141,7 +141,7 @@ workflow:
       description: >-
         Optional base branch override for the evidence branch. When
         empty, `branch ensure-evidence-branch` defaults to
-        `feature/{apex_id}`. Pass a sibling MG branch name (or any other
+        `feature/{root_id}`. Pass a sibling MG branch name (or any other
         ref that exists on the remote) for layered evidence.
 
 tools:
@@ -205,9 +205,9 @@ agents:
 
   # ── Evidence branch ensure (polyphony leg) ──────────────────────────────
   #
-  # Idempotently materializes `evidence/{apex}-{item}` (or the orphan
-  # form `evidence/{item}` when apex equals item) from the base branch.
-  # Base defaults to `feature/{apex_id}`; `from_ref` overrides.
+  # Idempotently materializes `evidence/{root}-{item}` (or the orphan
+  # form `evidence/{item}` when root equals item) from the base branch.
+  # Base defaults to `feature/{root_id}`; `from_ref` overrides.
   #
   # Routing-style failure handling: per the verb's contract
   # (BranchEnsureEvidenceResult.Action == "error" with a populated
@@ -217,7 +217,7 @@ agents:
   # that catch the error and produce an envelope.
   #
   # Invariants:
-  #   Pre:  When apex differs from item, `feature/{apex_id}` (or the
+  #   Pre:  When root differs from item, `feature/{root_id}` (or the
   #         supplied `from_ref`) exists on the remote.
   #   Post: The evidence branch is checked out locally and pushed to
   #         the remote; output.branch and output.base_branch are set.
@@ -230,8 +230,8 @@ agents:
       - "ensure-evidence-branch"
       - "--work-item-id"
       - "{{ workflow.input.work_item_id }}"
-      - "--apex-id"
-      - "{{ workflow.input.apex_id }}"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
       - "--from-ref"
       - "{{ workflow.input.from_ref }}"
     routes:
@@ -351,7 +351,7 @@ agents:
       ## Context
 
       - **Work item id:** {{ workflow.input.work_item_id }}
-      - **Apex (run-root) id:** {{ workflow.input.apex_id }} (0 means orphan — work item is its own apex)
+      - **Root (run-root) id:** {{ workflow.input.root_id }} (0 means orphan — work item is its own root)
       - **Evidence branch:** `{{ ensure_evidence_branch.output.branch }}`
       - **Base branch:** `{{ ensure_evidence_branch.output.base_branch }}`
       {% if compose_addendum is defined and compose_addendum.output.facets is defined and compose_addendum.output.facets | length > 0 %}
@@ -456,7 +456,7 @@ agents:
   #
   # Opens (or reuses) the evidence PR via `polyphony pr open-evidence-pr`.
   # Head defaults to the evidence branch composed by ensure_evidence_branch;
-  # base defaults to `feature/{apex_id}` (or `main` for the orphan case).
+  # base defaults to `feature/{root_id}` (or `main` for the orphan case).
   # Idempotent — reuses an existing OPEN PR for the same head/base pair.
   #
   # Per M3 the head and base flags are derived from the upstream
@@ -476,8 +476,8 @@ agents:
       - "open-evidence-pr"
       - "--work-item"
       - "{{ workflow.input.work_item_id }}"
-      - "--apex-id"
-      - "{{ workflow.input.apex_id }}"
+      - "--root-id"
+      - "{{ workflow.input.root_id }}"
       - "--head"
       - "{{ ensure_evidence_branch.output.branch }}"
       - "--base-branch"

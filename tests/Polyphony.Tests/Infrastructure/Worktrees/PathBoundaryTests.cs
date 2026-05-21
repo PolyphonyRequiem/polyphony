@@ -33,7 +33,7 @@ public sealed class PathBoundaryTests
     public void IsSameOrSubpath_DirectChild_ReturnsTrue()
     {
         var parent = Tmp("polyphony-runs");
-        var child = Tmp("polyphony-runs", "apex-3085");
+        var child = Tmp("polyphony-runs", "root-3085");
         PathBoundary.IsSameOrSubpath(parent, child).ShouldBeTrue();
     }
 
@@ -41,7 +41,7 @@ public sealed class PathBoundaryTests
     public void IsSameOrSubpath_NestedChild_ReturnsTrue()
     {
         var parent = Tmp("polyphony-runs");
-        var child = Tmp("polyphony-runs", "apex-3085", "feature-3085");
+        var child = Tmp("polyphony-runs", "root-3085", "feature-3085");
         PathBoundary.IsSameOrSubpath(parent, child).ShouldBeTrue();
     }
 
@@ -51,7 +51,7 @@ public sealed class PathBoundaryTests
         // The headline reason this helper exists. polyphony-runs is a
         // sibling of polyphony in the AB#3085 layout, NOT a descendant.
         var parent = Tmp("polyphony");
-        var child = Tmp("polyphony-runs", "apex-3085", "feature-3085");
+        var child = Tmp("polyphony-runs", "root-3085", "feature-3085");
         PathBoundary.IsSameOrSubpath(parent, child).ShouldBeFalse();
     }
 

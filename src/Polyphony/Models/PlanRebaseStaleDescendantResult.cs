@@ -13,12 +13,12 @@ namespace Polyphony;
 /// <see cref="CommentPosted"/>). The verb is always exit-0 (routing-style);
 /// non-zero exits indicate a genuinely unexpected exception.</para>
 ///
-/// <para><b>Outcome taxonomy</b> (see Phase 3 P9 cascade-remedy design doc):</para>
+/// <para><b>Outcome taxonomy</b> (see Phase 3 P9 restack-remedy design doc):</para>
 /// <list type="bullet">
 ///   <item><c>rebased</c> — Clean rebase, push, body, manifest all OK. Comment may have failed (warning).</item>
 ///   <item><c>noop</c> — All three freshness facts already true (branch ancestor, body fresh, ledger present).</item>
 ///   <item><c>conflict</c> — Rebase conflicts; aborted; workflow should route to human_gate.</item>
-///   <item><c>parent_stale</c> — Cascade precondition violation (parent plan PR is itself stale).</item>
+///   <item><c>parent_stale</c> — Restack precondition violation (parent plan PR is itself stale).</item>
 ///   <item><c>pr_head_changed</c> — Lease failure or fetch-vs-poll race.</item>
 ///   <item><c>pr_state_invalid</c> / <c>pr_identity_mismatch</c> / <c>pr_not_found</c> — PR doesn't match expectations.</item>
 ///   <item><c>lock_held</c> — Run lock held by someone else.</item>

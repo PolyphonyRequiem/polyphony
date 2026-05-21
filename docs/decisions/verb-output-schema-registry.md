@@ -356,7 +356,7 @@ PR doesn't earn:
 |---|---|---|
 | **#6** (PR #168) | YAML reads `type_loader.output.type_name`; verb emits `type`. | ✅ Field-name drift — registry knows the verb's actual fields. |
 | **#8** (PR #170) | `derive-ancestor-chain.parent_item_id` (`int?`) elided by `WhenWritingNull` on the root path. | ✅ `can_omit_when_null` flag tells the lint to require a guard. |
-| **#11** (PR #183) | apex-item-dispatch terminal nodes emitted `{}` instead of the canonical 12-field envelope. | ❌ Workflow-author bug. The terminals are not polyphony verbs; their output schemas live in YAML, not C#. A separate workflow-level "terminal envelope conformance" lint is needed (out of scope here). |
+| **#11** (PR #183) | root-item-dispatch terminal nodes emitted `{}` instead of the canonical 12-field envelope. | ❌ Workflow-author bug. The terminals are not polyphony verbs; their output schemas live in YAML, not C#. A separate workflow-level "terminal envelope conformance" lint is needed (out of scope here). |
 | **#13a** (iter 9) | `preflight_failure_gate.prompt` references `commit_and_push_manifest.output.error` before the agent has run. | ❌ Control-flow availability, not schema resolution. Requires dominance/reachability analysis over the workflow graph (separate lint). |
 
 Bugs #11 and #13a still belong to the same disease (cross-layer

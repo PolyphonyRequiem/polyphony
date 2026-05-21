@@ -209,7 +209,7 @@ public sealed class PlanCommandsDeriveAncestorChainTests : CommandTestBase
 
     // ─────────────────────────────────────────────────────────────────────────
     // Wire-shape regression: parent_item_id is always emitted (bug #8 — dogfood
-    // apex #3043, 2026-05-08). The PolyphonyJsonContext default is
+    // root #3043, 2026-05-08). The PolyphonyJsonContext default is
     // WhenWritingNull, but ParentItemId is per-property pinned to Never so
     // workflow Jinja under strict_undefined can reference
     // `output.parent_item_id` unconditionally without raising on a missing

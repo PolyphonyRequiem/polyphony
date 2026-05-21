@@ -1,7 +1,7 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output envelope for <c>polyphony reset apex --apex N</c> — the composite
+/// Output envelope for <c>polyphony reset root --root N</c> — the composite
 /// reset verb that orchestrates the five primitives in the canonical
 /// cleanup order (PRs → worktrees → branches → manifest → state).
 ///
@@ -11,7 +11,7 @@ namespace Polyphony;
 ///
 /// <para>Routing-style envelope: always exits 0. <see cref="Success"/>
 /// reflects "every step exited 0 and the per-step <c>Success</c> field is
-/// true"; an individual step's per-item failures do NOT mark the apex
+/// true"; an individual step's per-item failures do NOT mark the root
 /// reset as failed (those surface as entries in <see cref="StepsFailed"/>
 /// only when the WHOLE step reported <c>Success</c> = false).</para>
 ///
@@ -25,16 +25,16 @@ namespace Polyphony;
 ///         a branch that's checked out in any worktree. Worktree removal
 ///         frees the branches for deletion.</item>
 ///   <item><c>branches</c> next: now that nothing references them, drop
-///         every polyphony branch (local + origin) for the apex. This
+///         every polyphony branch (local + origin) for the root. This
 ///         also takes the manifest blob with it (the manifest lives on
 ///         <c>feature/{N}</c>).</item>
 ///   <item><c>facets</c> after branches, before manifest: strip the
 ///         persisted <c>polyphony:facets=*</c> and <c>polyphony:planned</c>
-///         tags from the apex subtree. Watermark filtering cannot
+///         tags from the root subtree. Watermark filtering cannot
 ///         demote these — they're persisted planning decisions, not PR
 ///         observations — so without this step the next
-///         <c>state classify-lifecycle</c> on a re-dispatched apex
-///         silently skips planning (apex 62286666 incident; see
+///         <c>state classify-lifecycle</c> on a re-dispatched root
+///         silently skips planning (root 62286666 incident; see
 ///         <c>docs/decisions/run-reset.md</c>). Must come BEFORE state
 ///         because state advances the watermark and "clean tags" is
 ///         part of the watermark-bump invariant.</item>
@@ -44,13 +44,13 @@ namespace Polyphony;
 ///         partial-reset scenarios.</item>
 ///   <item><c>state</c> LAST: stamp the new <c>polyphony:run-started-at</c>
 ///         watermark only after the world is clean. A crash before this
-///         step is benign — the operator just reruns reset apex; the
+///         step is benign — the operator just reruns reset root; the
 ///         only thing not-yet-done is the watermark bump.</item>
 /// </list>
 /// </summary>
 public sealed record ResetApexResult
 {
-    public required int Apex { get; init; }
+    public required int Root { get; init; }
     public required bool Success { get; init; }
     public required bool DryRun { get; init; }
 

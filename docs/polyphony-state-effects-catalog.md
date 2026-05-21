@@ -1,7 +1,7 @@
 # Polyphony State-Effects Catalog (Living)
 
 > **Status: Bootstrapping.** This catalog is grown incrementally as we
-> exercise the apex pipeline. It is **not** a completeness guarantee and
+> exercise the root pipeline. It is **not** a completeness guarantee and
 > **not** a substitute for runtime instrumentation (deferred — see
 > follow-up issues). It is "Strategy 1" of the four discussed in PR #159's
 > wake (mechanical side-effect catalog from source); strategies 2–4
@@ -11,7 +11,7 @@
 ## Why this exists
 
 Bug #5 (the `root declare` DI NPE) and bug #4 (`root declare` never wired
-into apex-driver) both showed that a call-site signature audit (PR #159)
+into polyphony) both showed that a call-site signature audit (PR #159)
 is insufficient. Per-step **pre-conditions** and **post-conditions**
 matter as much as the call signature. This catalog captures, for each
 verb and helper script, what state it expects on entry and what state it
@@ -104,7 +104,7 @@ introduce new dependencies.
 - **History**: had a DI registration bug (`ScopeCommands` not registered)
   that made the verb NPE on every call until PR #160 fixed it.
 - **Workflow integration**: documented at `docs/polyphony-tags.md:169`
-  as part of tree-walker entry. Wired into apex-driver in PR #161.
+  as part of worklist-driver entry. Wired into polyphony in PR #161.
 
 ### `polyphony root resolve --work-item <N>`
 - **Purpose**: walk ancestors of N looking for `polyphony:root` tag.
@@ -118,21 +118,21 @@ introduce new dependencies.
 ### `polyphony worklist build --root-id <N> [--manifest-path P] [--json]`
 - **Purpose**: walk the work-item tree under N and emit dispatch waves.
 - **Pre**: manifest exists with matching `root_id`; ADO reachable.
-- **Post**: emits `{root_id, waves: [{wave_index, items: [...]}, ...]}`.
+- **Post**: emits `{root_id, waves: [{batch_index, items: [...]}, ...]}`.
 - **Side effects**: none (read-only).
 - **Idempotent**: yes.
 - **Gotcha**: pre-PR #159 the workflow passed positional instead of
   `--root-id N` — verb errored, emitted no JSON, downstream
   `output.waves` was `Undefined`.
 
-### `polyphony edges check <ApexId> [--render json]`
+### `polyphony edges check <RootId> [--render json]`
 - **Purpose**: detect dispatch-blocking dependency conflicts within the
-  scope of `ApexId`.
-- **Pre**: manifest + worklist computable for ApexId.
+  scope of `RootId`.
+- **Pre**: manifest + worklist computable for RootId.
 - **Post**: emits `{has_conflicts, conflicts: [...]}`.
 - **Side effects**: none (read-only).
 - **Idempotent**: yes.
-- **History**: PR #158 made the apex id positional (was `--work-item N`).
+- **History**: PR #158 made the root id positional (was `--work-item N`).
 
 ### `polyphony validate --work-item <N> --event <E>`
 - **Purpose**: validate that event E is allowed on work item N per
@@ -152,7 +152,7 @@ introduce new dependencies.
 - **Side effects**: none.
 - **Idempotent**: yes.
 - **Field-name gotcha**: the success field is `type`, NOT `type_name`.
-  Bug #6 (dogfood apex #3043, 2026-05-07) had a workflow reference
+  Bug #6 (dogfood root #3043, 2026-05-07) had a workflow reference
   `type_loader.output.type_name` — render returned the literal string
   `type:` at lint time, then exploded with strict_undefined at
   runtime. Pinned by lint check `open-questions-policy-bad-type-field`
@@ -160,7 +160,7 @@ introduce new dependencies.
 
 ### `polyphony plan derive-ancestor-chain --root-id R --item-id I`
 - **Purpose**: derive the parent-chain (ancestors from root → leaf) for
-  an item under a given apex root. Workflows feed the result into
+  an item under a given root root. Workflows feed the result into
   recursive planning to know who the parent plan branch is.
 - **Pre**: ADO reachable; `R > 0`, `I > 0`.
 - **Post**: emits `{root_id, item_id, is_root_plan, parent_item_id,
@@ -173,7 +173,7 @@ introduce new dependencies.
   `null` for the root-plan case (`item_id == root_id`) and for direct
   children of root, and an integer for deeper descendants.
 
-  Bug #8 (dogfood apex #3043, 2026-05-08, two iterations) had the field
+  Bug #8 (dogfood root #3043, 2026-05-08, two iterations) had the field
   elided on the root path; conductor's `strict_undefined` then raised
   `'dict object' has no attribute 'parent_item_id'` when the workflow
   tried to thread it into the recursive `for_each` step.
@@ -208,7 +208,7 @@ introduce new dependencies.
 - **Severity-list gotcha**: workflows MUST reference
   `open_questions_policy.output.severities_at_or_above` as a field, NOT
   call `severities_at_or_above(...)` as a function. Bug #7 (dogfood
-  apex #3043, 2026-05-08) had two `severities_at_or_above(...)`
+  root #3043, 2026-05-08) had two `severities_at_or_above(...)`
   function-call references in `plan-level.yaml`; conductor 0.1.14 has
   no such Jinja extension and crashed with `'severities_at_or_above'
   is undefined`. Lint check `severities-at-or-above-as-function` in
@@ -218,7 +218,7 @@ introduce new dependencies.
 
 ## Helper scripts
 
-### `manifest-bootstrap.ps1 -ApexId N -Organization O -Project P [-ManifestPath]`
+### `manifest-bootstrap.ps1 -RootId N -Organization O -Project P [-ManifestPath]`
 - **Purpose**: create-or-validate `.polyphony/run.yaml` for the run.
 - **Pre**: ADO reachable; polyphony on PATH.
 - **Post**: manifest exists with `root_id == N`; emits routing-style
@@ -235,14 +235,14 @@ introduce new dependencies.
   Partial identity (exactly one of Organization/Project supplied) is
   rejected with `error_code: invalid_inputs`.
 - **Limitations**: does **not** validate topology-hash drift on resume
-  (deferred — tracked in apex-driver pipeline-audit-fix PR body).
+  (deferred — tracked in polyphony pipeline-audit-fix PR body).
 
-### `lifecycle-router.ps1 -WorkItemId N -ApexId A`
+### `lifecycle-router.ps1 -WorkItemId N -RootId A`
 - **Purpose**: classify item N's next dispatch lifecycle (plan-level /
   actionable / implement-merge-group / feature-pr).
 - **Pre**: ADO reachable.
 - **Post**: emits `{success, route: <enum>, ...}` consumed by
-  `apex-item-dispatch.yaml`'s branch-on-router.
+  `root-item-dispatch.yaml`'s branch-on-router.
 - **Side effects**: none (read-only — wraps `polyphony state next-ready`).
 - **Idempotent**: yes.
 
@@ -256,12 +256,12 @@ introduce new dependencies.
 - **Idempotent**: spawn is idempotent (re-uses existing worktree);
   teardown is idempotent (no-op if absent).
 
-### `wave-integrator.ps1 -ApexId A -WaveIndex W -ManifestPath P`
-- **Purpose**: integrate a completed wave's per-item branches into the
-  apex feature branch.
-- **Pre**: all impl PRs in wave W have merged into their MG branches;
+### `batch-integrator.ps1 -RootId A -BatchIndex W -ManifestPath P`
+- **Purpose**: integrate a completed batch's per-item branches into the
+  root feature branch.
+- **Pre**: all impl PRs in batch W have merged into their MG branches;
   edges check reports no conflicts.
-- **Post**: MG branches for wave W merged into `feature/{A}`; emits
+- **Post**: MG branches for batch W merged into `feature/{A}`; emits
   `{success, integrated_mg_paths, ...}`.
 - **Side effects**: git merge; PR creates / merges (depending on policy).
 - **Idempotent**: TBD — exercise during dogfood, document here.
@@ -283,7 +283,7 @@ introduce new dependencies.
   via the contract test suite in PR #159; the underlying CLI behavior
   is tracked: [#165](https://github.com/PolyphonyRequiem/polyphony/issues/165).
 - **Jinja template field references go un-checked at lint time**: only
-  surface at runtime via `strict_undefined`. Bug #6 (dogfood apex
+  surface at runtime via `strict_undefined`. Bug #6 (dogfood root
   #3043, 2026-05-07) had `plan-level.yaml` reference
   `type_loader.output.type_name` when `polyphony plan load-type` emits
   `type` — slipped past `conductor validate` and PR #157's lint sweep,
@@ -293,7 +293,7 @@ introduce new dependencies.
   addressable under [#163](https://github.com/PolyphonyRequiem/polyphony/issues/163)
   (property-based testing) but really wants its own pass.
 - **Lint can enforce a Jinja contract conductor doesn't honor**: bug
-  #7 (dogfood apex #3043, 2026-05-08) had `lint-plan-level.ps1` Check 7
+  #7 (dogfood root #3043, 2026-05-08) had `lint-plan-level.ps1` Check 7
   *requiring* `severities_at_or_above(open_questions_policy.output.min_severity)`
   — a custom Jinja function the conductor runtime never registered.
   Lint and workflow agreed; conductor crashed at runtime. Same
@@ -311,7 +311,7 @@ introduce new dependencies.
   field (`int?`, `string?`, etc.) is silently elided when its value is
   null. Conductor renders agent prompts with `strict_undefined`, which
   raises on attribute access for missing dict keys *before* any
-  `default()` filter can apply. Bug #8 (dogfood apex #3043,
+  `default()` filter can apply. Bug #8 (dogfood root #3043,
   2026-05-08) was the first instance: `plan derive-ancestor-chain`'s
   `parent_item_id` was elided on the root path, blowing up the
   recursive `for_each` consumer. Compounding gotcha: even when the
@@ -323,9 +323,9 @@ introduce new dependencies.
   would tax every error-envelope shape and is deferred as a systematic
   decision. **This pattern affects every nullable verb-output field**
   reachable from a `strict_undefined` Jinja consumer — audit needed.
-- **Wave integration idempotency**: not yet exercised; document after
-  first wave-integration smoke.
-- **`apex-wave-dispatch.yaml` and per-lifecycle sub-workflows**: not
+- **Batch integration idempotency**: not yet exercised; document after
+  first batch-integration smoke.
+- **`root-batch-dispatch.yaml` and per-lifecycle sub-workflows**: not
   yet cataloged. Add as we exercise them.
 
 ## Future work tracked separately

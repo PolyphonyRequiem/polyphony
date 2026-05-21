@@ -149,7 +149,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(WorktreeGcResult))]
 [JsonSerializable(typeof(WorktreeGcCandidate))]
 [JsonSerializable(typeof(WorklistResult))]
-[JsonSerializable(typeof(WorklistWave))]
+[JsonSerializable(typeof(WorklistBatch))]
 [JsonSerializable(typeof(WorklistItem))]
 [JsonSerializable(typeof(EdgesCheckResult))]
 [JsonSerializable(typeof(EdgesCheckConflict))]

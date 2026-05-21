@@ -27,7 +27,7 @@ namespace Polyphony.Tests.Commands;
 /// </remarks>
 public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
 {
-    private const int ApexId = 3043;
+    private const int RootId = 3043;
     private const string PlanBranch = "plan/3043";
     private const string OriginUrl = "https://github.com/acme/repo.git";
 
@@ -35,24 +35,24 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     {
         var runner = new FakeProcessRunner();
         runner.WhenExact("git", ["remote", "get-url", "origin"], new ProcessResult(0, OriginUrl + "\n", ""));
-        // Default: apex root has no run-started-at tag → null watermark
+        // Default: root root has no run-started-at tag → null watermark
         // → "no filter" (legacy behavior). Tests that need a populated
         // watermark should re-stub after NewRunnerWithRemote returns.
-        StubApexWatermarkAbsent(runner, ApexId);
+        StubApexWatermarkAbsent(runner, RootId);
         return runner;
     }
 
     /// <summary>
-    /// Stub the apex-root <c>twig show</c> with an empty tag set so
+    /// Stub the root-root <c>twig show</c> with an empty tag set so
     /// next-ready's run-watermark fetch (PR 1 of the run-reset family)
     /// returns null → "no filter" → legacy PR-state composer behavior.
     /// Without this, the fetch fails closed (per
     /// <c>docs/decisions/run-reset.md</c>) and every plan-kind
     /// composer forces a Needed disposition with a fetch-error reason.
     /// </summary>
-    private static void StubApexWatermarkAbsent(FakeProcessRunner runner, int apexId)
-        => runner.WhenExact("twig", ["show", apexId.ToString(), "--output", "json"],
-            new ProcessResult(0, $$"""{"id":{{apexId}},"title":"Apex","tags":"polyphony"}""", ""));
+    private static void StubApexWatermarkAbsent(FakeProcessRunner runner, int rootId)
+        => runner.WhenExact("twig", ["show", rootId.ToString(), "--output", "json"],
+            new ProcessResult(0, $$"""{"id":{{rootId}},"title":"Root","tags":"polyphony"}""", ""));
 
     private StateCommands CreateCommand(FakeProcessRunner runner, ProcessConfig? configOverride = null)
     {
@@ -105,7 +105,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     private async Task SeedApexAsync()
     {
         var item = new WorkItemBuilder()
-            .WithId(ApexId).WithType("Issue").WithTitle("Apex 3043").WithState("Doing").Build();
+            .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState("Doing").Build();
         await SeedAsync(item);
     }
 
@@ -120,7 +120,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         StubPrListEmpty(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -151,7 +151,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         StubPrPoll(runner, 204, state: "OPEN", headRef: PlanBranch, reviewDecision: "REVIEW_REQUIRED");
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -174,7 +174,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     [Fact]
     public async Task NextReady_MergedPlanPr_AllPlanKinds_Satisfied_FixesSmokingGun()
     {
-        // Reproduces the apex 3043 smoking-gun from
+        // Reproduces the root 3043 smoking-gun from
         // files/closed-loop-state-plan.md §2: plan PR merged → all three
         // plan-kind requirements should be Satisfied. Pre-PR-#2 the verb
         // returned all three as Needed because *.plan.md no longer exists.
@@ -185,7 +185,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         StubPrPoll(runner, 204, state: "MERGED", headRef: PlanBranch, reviewDecision: "APPROVED");
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -215,7 +215,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         StubPrPoll(runner, 204, state: "OPEN", headRef: PlanBranch, reviewDecision: "APPROVED");
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -241,7 +241,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(1, "", "boom"));
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -270,10 +270,10 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         runner.WhenExact("git", ["remote", "get-url", "origin"],
             new ProcessResult(128, "", "fatal: No such remote 'origin'"));
         StubLsRemote(runner, PlanBranch, exists: false);
-        StubApexWatermarkAbsent(runner, ApexId);
+        StubApexWatermarkAbsent(runner, RootId);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -300,7 +300,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         StubPrPoll(runner, 204, state: "CLOSED", headRef: PlanBranch, reviewDecision: "REVIEW_REQUIRED");
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -319,14 +319,14 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     [Fact]
     public async Task NextReady_DescendantItem_ResolvesRootId_AndUsesHyphenPlanBranch()
     {
-        // Apex 3043 with a descendant 3050; the verb must walk parents to
+        // Root 3043 with a descendant 3050; the verb must walk parents to
         // discover that 3043 is the root and inspect plan/3043-3050, not
         // plan/3050.
-        var apex = new WorkItemBuilder().WithId(3043).WithType("Issue")
-            .WithTitle("Apex").WithState("Doing").Build();
+        var root = new WorkItemBuilder().WithId(3043).WithType("Issue")
+            .WithTitle("Root").WithState("Doing").Build();
         var child = new WorkItemBuilder().WithId(3050).WithType("Issue")
             .WithTitle("Child").WithState("To Do").WithParentId(3043).Build();
-        await SeedAsync(apex, child);
+        await SeedAsync(root, child);
 
         const string descPlanBranch = "plan/3043-3050";
         var runner = NewRunnerWithRemote();

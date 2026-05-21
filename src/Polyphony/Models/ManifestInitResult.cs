@@ -6,7 +6,7 @@ public sealed record ManifestInitResult
     /// <summary>Absolute or relative path the manifest was written to.</summary>
     public required string Path { get; init; }
 
-    /// <summary>The run's apex (focus) work-item id.</summary>
+    /// <summary>The run's root (focus) work-item id.</summary>
     public required int RootId { get; init; }
 
     /// <summary>The platform-qualified project identifier.</summary>

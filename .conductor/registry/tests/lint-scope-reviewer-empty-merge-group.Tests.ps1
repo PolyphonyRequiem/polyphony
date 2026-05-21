@@ -13,7 +13,7 @@
 # Surface that motivated this check: AB#3064 dogfood 2026-05-09 — the
 # scope_reviewer observed `0 tasks, no mg/3064_pg-0 branch exists in the
 # repo` accurately, then approved with `the human reviewer should
-# confirm at user_acceptance that the apex requirements really are
+# confirm at user_acceptance that the root requirements really are
 # covered elsewhere`. That's the wrong layer for that confirmation; the
 # MG layer is responsible for the work it was dispatched with, and an
 # empty MG is a bug somewhere upstream that the reviewer must surface
@@ -52,7 +52,7 @@ Describe 'implement-merge-group.yaml — scope_reviewer empty-MG structural chec
     It 'scope_reviewer prompt forbids punting to user_acceptance on empty MG' {
         # The protective language must explicitly discourage the rationalization
         # observed in the AB#3064 dogfood ("the human reviewer should confirm at
-        # user_acceptance that the apex requirements really are covered elsewhere").
+        # user_acceptance that the root requirements really are covered elsewhere").
         # Match across-line wrapping (YAML indent breaks "covered\n  elsewhere").
         $script:Prompt | Should -Match 'covered\s+elsewhere' -Because (
             'the prompt should call out and refuse this exact rationalization pattern that produced the AB#3064 false-approval')

@@ -342,10 +342,10 @@ agents:
       - "-File"
       - "../scripts/resolve-unattended-cap-mode.ps1"
     routes:
-      - to: terminal_cap_auto_fail
+      - to: cap_auto_fail
         when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
       - to: revise_cap_gate
-  - name: terminal_cap_auto_fail
+  - name: cap_auto_fail
     type: script
     command: pwsh
     args:

@@ -51,7 +51,7 @@ workflow:
   input:
     work_item_id:
       type: number
-    apex_id:
+    root_id:
       type: number
     executor:
       type: string

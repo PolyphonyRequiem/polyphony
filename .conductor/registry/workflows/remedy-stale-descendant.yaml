@@ -1,7 +1,7 @@
 # remedy-stale-descendant — Per-PR remedy for one stale descendant plan PR.
 #
 # Phase 3 P9 step 4 (per-entry sub-workflow). Invoked once per stale entry
-# from cascade-remedy.yaml's for_each block. Tries the cheap remedy
+# from restack-remedy.yaml's for_each block. Tries the cheap remedy
 # (auto-rebase) first; falls back to recreate when rebase reports a
 # conflict or a parent-stale precondition; surfaces a per-PR human gate
 # only on terminal failure modes.
@@ -12,8 +12,8 @@
 #   ───────────────────────────────────────────
 #   rebased | noop        →  $end (success)
 #   conflict              →  recreate verb
-#   parent_stale          →  $end (cascade-remedy reorders)
-#   pr_head_changed       →  $end (operator re-runs cascade)
+#   parent_stale          →  $end (restack-remedy reorders)
+#   pr_head_changed       →  $end (operator re-runs restack)
 #   worktree_dirty        →  $end (operator cleans workspace)
 #   lock_held             →  $end (concurrent run will retry)
 #   <other error_code>    →  per-PR human gate
@@ -30,13 +30,13 @@
 #   Pre:  PR exists; root_id, item_id, parent_item_id, pr_number provided
 #         from classify-stale-descendants output.
 #   Post: PR is rebased OR recreated OR surfaced to human; no partial
-#         state left in flight that the next cascade run can't observe.
+#         state left in flight that the next restack run can't observe.
 
 workflow:
   name: remedy-stale-descendant
   description: >-
     Apply auto-rebase → (on conflict) recreate → (on terminal failure)
-    human gate to a single stale plan PR. Composed by cascade-remedy.yaml's
+    human gate to a single stale plan PR. Composed by restack-remedy.yaml's
     for_each. Returns outcome via run-level output for the parent loop's
     error/success aggregation.
   version: "2.4.8"
@@ -93,7 +93,7 @@ workflow:
       description: ADO repository identifier. Required when platform=ado.
 
 # Workflow-scope output: bare Jinja template strings (M7). The outcome
-# string is consumed by cascade-remedy.yaml's for_each error/success
+# string is consumed by restack-remedy.yaml's for_each error/success
 # aggregation via remedy_group.outputs[*].outcome.
 output:
   outcome: "{{ rebase_attempt.output.outcome | default('unknown') }}"
@@ -135,7 +135,7 @@ agents:
       # Recoverable via recreate.
       - to: recreate_attempt
         when: "{{ rebase_attempt.output.outcome == 'conflict' }}"
-      # Cascade re-orders these — let the parent loop re-classify on next run.
+      # Restack re-orders these — let the parent loop re-classify on next run.
       - to: $end
         when: "{{ rebase_attempt.output.outcome == 'parent_stale' }}"
       # Operator-actionable, no retry inside this workflow.
@@ -196,8 +196,8 @@ agents:
   # ── 3a. Rebase failure gate ───────────────────────────────────────────
   #
   # Surfaces a non-recoverable rebase outcome (anything not handled above).
-  # Operator chooses to acknowledge (let cascade move on) or abort the
-  # whole cascade.
+  # Operator chooses to acknowledge (let restack move on) or abort the
+  # whole restack.
   - name: rebase_failure_gate
     type: human_gate
     prompt: |
@@ -212,21 +212,21 @@ agents:
       - **Error code:** `{{ rebase_attempt.output.error_code | default('') }}`
       - **Error:** {{ rebase_attempt.output.error | default('(none)') }}
 
-      The cascade can continue with the remaining stale PRs once you
-      acknowledge. Aborting cancels the cascade for the entire root.
+      The restack can continue with the remaining stale PRs once you
+      acknowledge. Aborting cancels the restack for the entire root.
 
       ---
 
       Choose an action:
-      - **Acknowledge** — leave this PR for manual reconciliation; continue cascade.
-      - **Abort** — stop the cascade.
+      - **Acknowledge** — leave this PR for manual reconciliation; continue restack.
+      - **Abort** — stop the restack.
     options:
       - label: "✅ Acknowledge"
         value: acknowledge
         route: $end
-      - label: "🛑 Abort cascade"
+      - label: "🛑 Abort restack"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── 3b. Recreate failure gate ─────────────────────────────────────────
   - name: recreate_failure_gate
@@ -243,29 +243,29 @@ agents:
       - **Error code:** `{{ recreate_attempt.output.error_code | default('') }}`
       - **Error:** {{ recreate_attempt.output.error | default('(none)') }}
 
-      Manual reconciliation required. The cascade can continue with the
+      Manual reconciliation required. The restack can continue with the
       remaining stale PRs once you acknowledge.
 
       ---
 
       Choose an action:
-      - **Acknowledge** — leave this PR for manual reconciliation; continue cascade.
-      - **Abort** — stop the cascade.
+      - **Acknowledge** — leave this PR for manual reconciliation; continue restack.
+      - **Abort** — stop the restack.
     options:
       - label: "✅ Acknowledge"
         value: acknowledge
         route: $end
-      - label: "🛑 Abort cascade"
+      - label: "🛑 Abort restack"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Terminal abort (operator chose Abort on an error gate) ────────────
   #
-  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # Identical to plan-level.yaml's abort_run. Invokes
   # abort-run.ps1, which POSTs to conductor's /api/stop endpoint. The
   # engine raises InterruptError at every nested between-agent check,
   # unwinding the entire run cleanly (no process-kill, no zombies).
-  - name: terminal_abort_run
+  - name: abort_run
     type: script
     description: Operator-initiated full-run abort — POSTs /api/stop to halt the run cleanly
     command: pwsh

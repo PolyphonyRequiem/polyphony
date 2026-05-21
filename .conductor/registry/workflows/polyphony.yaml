@@ -1,28 +1,28 @@
-# apex-driver — Phase 7 keystone SDLC orchestrator.
+# polyphony — Phase 7 keystone SDLC orchestrator.
 #
-# Replaces the deleted `polyphony-full.yaml`. Walks the apex
+# Replaces the deleted `polyphony-full.yaml`. Walks the root
 # (run-root) work item's tree as discovered by `polyphony worklist
 # build`, edge-checks the result, and dispatches each item into the
-# right lifecycle sub-workflow per wave. Per-item worktrees keep
-# parallel dispatches isolated; topological wave integration merges
-# completed branches back into the apex feature branch in
+# right lifecycle sub-workflow per batch. Per-item worktrees keep
+# parallel dispatches isolated; topological batch integration merges
+# completed branches back into the root feature branch in
 # edge-correct order.
 #
 # Four-input contract:
 #
-#   apex_id  — REQUIRED. The apex (run-root feature) work-item id.
+#   root_id  — REQUIRED. The root (run-root feature) work-item id.
 #              Treated as the tree root for `polyphony worklist build`.
 #   intent   — REQUIRED. One of `new` / `resume` / `replan`. Drives
 #              preflight behavior; the dispatch loop itself is purely
 #              observable-state-driven (P3) and identical across all
 #              three intents.
 #
-# Design picks (signed off — see docs/decisions/apex-driver.md):
+# Design picks (signed off — see docs/decisions/polyphony.md):
 #
-#   Q1 — Dispatch granularity is parallel-by-default within wave with
+#   Q1 — Dispatch granularity is parallel-by-default within batch with
 #        per-item worktree isolation. `isolation_scope: per_mg`
 #        (planner-declared on the parent MG container) serializes the
-#        wave's items inside a shared MG worktree; `per_item` (default)
+#        batch's items inside a shared MG worktree; `per_item` (default)
 #        spawns a fresh worktree per item and runs them in parallel
 #        bounded by `concurrency.max_concurrent_children`. MVP ships
 #        per_item; per_mg serialization is a stub (defers to per_item
@@ -52,46 +52,46 @@
 #                             items before the next loop pass.
 #          - `ignore`       — skip the gate and treat the child plan as
 #                             accepted; route directly to
-#                             `apex_completion_gate_policy_router`
+#                             `root_completion_gate_policy_router`
 #                             (semantically equivalent to the operator
 #                             picking `override`).
 #        plan-level.yaml DOES emit the four bubble-up outputs as of
 #        PR #144 (`renegotiation_pending`, `renegotiation_request`,
 #        `validate_scope_verdict`, `scope_violation_files`). The
 #        bubble-up is now wired end-to-end:
-#           plan-level → apex-item-dispatch.output.renegotiation_pending
-#           apex-item-dispatch → apex-wave-dispatch.aggregate_renegotiation
-#           apex-wave-dispatch → apex-driver.renegotiation_summary
-#           apex-driver.renegotiation_summary → renegotiation_policy
+#           plan-level → root-item-dispatch.output.renegotiation_pending
+#           root-item-dispatch → root-batch-dispatch.aggregate_renegotiation
+#           root-batch-dispatch → polyphony.renegotiation_summary
+#           polyphony.renegotiation_summary → renegotiation_policy
 #               (auto_restart) → outer_loop_evaluator
-#               (ignore)       → apex_completion_gate_policy_router
+#               (ignore)       → root_completion_gate_policy_router
 #               (prompt)       → renegotiation_gate.
 #
 #   Q4 — Resume is pure observable-state re-entry. `intent: resume`
 #        re-runs `worklist build` + `edges check` and lets the
 #        dispatch loop pick up wherever the prior run left off. The
-#        apex-driver writes NO checkpoint state of its own; the source
+#        polyphony writes NO checkpoint state of its own; the source
 #        of truth is the work-item tree (P1).
 #
 #   Q5 — Outer iterate-until-stable loop (PR #9, Option α). Wraps the
-#        existing wave dispatch loop so multi-facet items
+#        existing batch dispatch loop so multi-facet items
 #        (plannable+implementable, etc.) traverse their facets in a
-#        SINGLE apex-driver invocation rather than one invocation per
+#        SINGLE polyphony invocation rather than one invocation per
 #        facet. Each outer iteration:
 #          1. (Re)builds the worklist via `polyphony worklist build` —
 #             observers see post-merge state from prior iterations
 #             (P1: source-of-truth is the work-item tree).
-#          2. Dispatches every wave (existing flow).
-#          3. Aggregates per-iteration progress via the wave-level
+#          2. Dispatches every batch (existing flow).
+#          3. Aggregates per-iteration progress via the batch-level
 #             `items_satisfied_count` and `items_dispatched_count`
-#             (added to apex-wave-dispatch.yaml in the same PR).
-#          4. Consults `polyphony state next-ready --work-item {apex_id}`
+#             (added to root-batch-dispatch.yaml in the same PR).
+#          4. Consults `polyphony state next-ready --work-item {root_id}`
 #             — `item_satisfied: Satisfied` here is closed-loop honest
 #             as of PR #5.
 #          5. Decides `complete | cap | blocked | continue`.
 #        Cap defaults to 10 (override via
-#        POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS); see `outer_loop_evaluator`
-#        below. Option β (per-facet wave fan-out in worklist build) was
+#        POLYPHONY_ROOT_MAX_DISPATCH_ITERATIONS); see `outer_loop_evaluator`
+#        below. Option β (per-facet batch fan-out in worklist build) was
 #        deliberately deferred — see closed-loop-state-plan §4 PR #9
 #        footnote for revisit conditions.
 #
@@ -110,23 +110,23 @@
 #   M8  for_each `source:` is a BARE dotted path (not Jinja-quoted);
 #       errors-array surfaced as `<group>.errors`; results in `<group>.outputs`.
 #   M9  `max_iterations` raised well above default 10 — the dispatch
-#       loop is a wave for_each over a worklist that may contain
+#       loop is a batch for_each over a worklist that may contain
 #       hundreds of items.
 #
 # Forward references (DEFERRED — DO NOT add in this PR):
-#   * E2E execution tests (separate PR p7-tree-walker-e2e).
+#   * E2E execution tests (separate PR p7-worklist-e2e).
 #   * Per-MG worktree serialization (currently per_item only).
 #   * Auto-restart on renegotiation (currently prompt-equivalent).
-#   * Caller cutover (no production caller wired to apex-driver yet).
+#   * Caller cutover (no production caller wired to polyphony yet).
 
 workflow:
-  name: apex-driver
+  name: polyphony
   description: >-
-    Tree-walking apex-level SDLC orchestrator. Dispatches each work
-    item under `apex_id` into the right lifecycle sub-workflow
+    Tree-walking root-level SDLC orchestrator. Dispatches each work
+    item under `root_id` into the right lifecycle sub-workflow
     (plan-level / actionable / implement-merge-group / feature-pr / fast-path)
-    in topological wave order, with per-item worktree isolation and
-    edge-correct wave integration. Wraps the wave dispatch in an
+    in topological batch order, with per-item worktree isolation and
+    edge-correct batch integration. Wraps the batch dispatch in an
     outer iterate-until-stable loop (PR #9) so multi-facet items
     (plannable+implementable, etc.) traverse plan → impl → close in a
     single invocation rather than requiring per-facet re-invocation.
@@ -136,19 +136,19 @@ workflow:
   metadata:
     min_polyphony_version: "2.4.8"
   limits:
-    # The dispatch loop is a for_each over waves; each wave is itself a
+    # The dispatch loop is a for_each over waves; each batch is itself a
     # for_each over items; each item invocation is a sub-workflow. The
-    # default 10 is wildly insufficient. 500 covers an apex tree with up
+    # default 10 is wildly insufficient. 500 covers an root tree with up
     # to ~30 waves of ~16 items each comfortably; raise further if
     # workspaces routinely exceed.
     max_iterations: 500
 
   input:
-    apex_id:
+    root_id:
       type: number
       required: true
       description: >-
-        ADO work item id of the apex (run-root feature). Treated as the
+        ADO work item id of the root (run-root feature). Treated as the
         tree root for `polyphony worklist build`. Type is
         runtime-injected (P5 — type-agnostic).
     intent:
@@ -158,24 +158,24 @@ workflow:
       description: >-
         One of `new` / `resume` / `replan`. Drives preflight behavior:
         - new     — fresh start; ensure feature branch from origin/main.
-        - resume  — re-enter an in-flight apex; re-run worklist + edges
+        - resume  — re-enter an in-flight root; re-run worklist + edges
                     and let the dispatch loop pick up.
         - replan  — same as `new` for now; reserved for a future hook
-                    that re-invokes plan-level on the apex.
+                    that re-invokes plan-level on the root.
     platform:
       type: string
       required: false
       default: ado
       description: >-
         Work-item source platform. Threaded through to lifecycle
-        sub-workflows verbatim; apex-driver itself is platform-agnostic.
+        sub-workflows verbatim; polyphony itself is platform-agnostic.
     organization:
       type: string
       required: true
       description: >-
         ADO organization name. Required by every preflight step that
         touches ADO (manifest-bootstrap, feature-pr, plan-level).
-        Threaded through the wave/item dispatch fan-out so per-item
+        Threaded through the batch/item dispatch fan-out so per-item
         lifecycles see it without each caller having to special-case.
         Declared `required: true` (not `default: ""`) so conductor
         rejects the run at the door rather than letting downstream
@@ -199,40 +199,40 @@ tools:
 # `| string | lower` so the parent receives a real bool not capital
 # "True" / "False".
 output:
-  apex_id: "{{ workflow.input.apex_id }}"
+  root_id: "{{ workflow.input.root_id }}"
   satisfied: >-
-    {%- if terminal_apex_satisfied is defined -%}true
+    {%- if root_satisfied is defined -%}true
     {%- else -%}false{%- endif -%}
   abandoned: >-
-    {%- if terminal_apex_abandoned is defined -%}true
+    {%- if root_abandoned is defined -%}true
     {%- else -%}false{%- endif -%}
   preflight_failed: >-
-    {%- if terminal_preflight_failed is defined -%}true
+    {%- if preflight_failed is defined -%}true
     {%- else -%}false{%- endif -%}
   # ── Outer-loop terminals (PR #9) ───────────────────────────────────────
-  # `iteration_cap_hit` fires when the apex.max_dispatch_iterations
+  # `iteration_cap_hit` fires when the root.max_dispatch_iterations
   # ceiling was reached without `item_satisfied` rolling all the way
   # up. `blocked` fires when an iteration produced zero new dispatches
-  # AND the apex isn't satisfied — the workflow can't progress under
+  # AND the root isn't satisfied — the workflow can't progress under
   # its own steam (typically: an external dependency, a missing agent
   # corridor, or a true human-input gap).
   iteration_cap_hit: >-
-    {%- if terminal_apex_iteration_cap is defined -%}true
+    {%- if root_iteration_cap is defined -%}true
     {%- else -%}false{%- endif -%}
   blocked: >-
-    {%- if terminal_apex_blocked is defined -%}true
+    {%- if root_blocked is defined -%}true
     {%- else -%}false{%- endif -%}
   # ── Dispatch-failure telemetry (AB#3067 — outer-loop visibility) ───────
   # `dispatch_failures` fires when one or more per-item sub-workflow
   # invocations failed inside `dispatch_items` (which runs with
-  # `failure_mode: continue_on_error`). Per-wave failures are aggregated
+  # `failure_mode: continue_on_error`). Per-batch failures are aggregated
   # by `aggregate_renegotiation` into `items_failed_count` + a JSON
   # `failed_items` array, then rolled up across waves by
   # `outer_loop_evaluator`. Without these surfaces, item failures
-  # silently flipped the apex to `terminal_apex_blocked` with no
+  # silently flipped the root to `root_blocked` with no
   # actionable detail.
   dispatch_failures: >-
-    {%- if terminal_apex_dispatch_failures is defined -%}true
+    {%- if root_dispatch_failures is defined -%}true
     {%- else -%}false{%- endif -%}
   items_failed_count: >-
     {%- if outer_loop_evaluator is defined -%}{{ outer_loop_evaluator.output.items_failed_this_iteration | default(0) }}
@@ -251,8 +251,8 @@ agents:
   # ─────────────────────────────────────────────────────────────────────────
   # SECTION 1 — Preflight
   #
-  # Sync work-item state, validate the apex resolves, and ensure the
-  # apex feature branch exists. All preflight steps are idempotent so
+  # Sync work-item state, validate the root resolves, and ensure the
+  # root feature branch exists. All preflight steps are idempotent so
   # `intent: resume` re-runs them safely.
   # ─────────────────────────────────────────────────────────────────────────
 
@@ -273,31 +273,31 @@ agents:
       - "sync"
     routes:
       # M4 catch-all — twig sync failures shouldn't halt the run;
-      # apex-driver continues with stale cache and the operator can
+      # polyphony continues with stale cache and the operator can
       # re-invoke if dispatch picks up wrong state.
-      - to: preflight_apex_state
+      - to: preflight_root_state
 
-  # ── Preflight: validate apex via state next-ready ─────────────────────────
+  # ── Preflight: validate root via state next-ready ─────────────────────────
   #
-  # Confirms the apex id resolves to a real, dispatchable tree. Uses
+  # Confirms the root id resolves to a real, dispatchable tree. Uses
   # `polyphony state next-ready` rather than a custom validator — it
   # already knows how to resolve work-item types and emits a structured
-  # status. If the apex is satisfied or empty already, fast-path to the
+  # status. If the root is satisfied or empty already, fast-path to the
   # close section.
   #
   # Invariants:
-  #   Pre:  workflow.input.apex_id is a positive integer.
-  #   Post: preflight_apex_state.output.status is one of
+  #   Pre:  workflow.input.root_id is a positive integer.
+  #   Post: preflight_root_state.output.status is one of
   #         {dispatchable, monitoring, satisfied, empty, blocked, error}.
-  - name: preflight_apex_state
+  - name: preflight_root_state
     type: script
-    description: Validate apex resolves and inspect its starting status
+    description: Validate root resolves and inspect its starting status
     command: polyphony
     args:
       - "state"
       - "next-ready"
       - "--work-item"
-      - "{{ workflow.input.apex_id }}"
+      - "{{ workflow.input.root_id }}"
       - "--platform"
       - "{{ workflow.input.platform }}"
       - "--organization"
@@ -308,17 +308,17 @@ agents:
       - "{{ workflow.input.repository }}"
     routes:
       - to: preflight_ensure_branch
-        when: "{{ preflight_apex_state.output.status == 'dispatchable' }}"
+        when: "{{ preflight_root_state.output.status == 'dispatchable' }}"
       - to: preflight_ensure_branch
-        when: "{{ preflight_apex_state.output.status == 'monitoring' }}"
+        when: "{{ preflight_root_state.output.status == 'monitoring' }}"
       - to: preflight_ensure_branch
-        when: "{{ preflight_apex_state.output.status == 'blocked' }}"
-      - to: terminal_apex_satisfied
-        when: "{{ preflight_apex_state.output.status == 'satisfied' }}"
-      - to: terminal_apex_satisfied
-        when: "{{ preflight_apex_state.output.status == 'empty' }}"
+        when: "{{ preflight_root_state.output.status == 'blocked' }}"
+      - to: root_satisfied
+        when: "{{ preflight_root_state.output.status == 'satisfied' }}"
+      - to: root_satisfied
+        when: "{{ preflight_root_state.output.status == 'empty' }}"
       - to: preflight_failure_gate
-        when: "{{ preflight_apex_state.output.status == 'error' }}"
+        when: "{{ preflight_root_state.output.status == 'error' }}"
       # M4 catch-all — unknown statuses surface via the failure gate.
       - to: preflight_failure_gate
 
@@ -329,17 +329,17 @@ agents:
   # run; on resume, the branch is already there and the verb is a no-op.
   #
   # Invariants:
-  #   Pre:  preflight_apex_state confirmed a dispatchable tree.
-  #   Post: feature/{apex_id} exists locally.
+  #   Pre:  preflight_root_state confirmed a dispatchable tree.
+  #   Post: feature/{root_id} exists locally.
   - name: preflight_ensure_branch
     type: script
-    description: Ensure feature/{apex_id} exists (idempotent)
+    description: Ensure feature/{root_id} exists (idempotent)
     command: polyphony
     args:
       - "branch"
       - "ensure-feature"
       - "--branch"
-      - "feature/{{ workflow.input.apex_id }}"
+      - "feature/{{ workflow.input.root_id }}"
     routes:
       - to: init_manifest
         when: "{{ preflight_ensure_branch.output.error is not defined or preflight_ensure_branch.output.error == '' }}"
@@ -349,7 +349,7 @@ agents:
   # ── Preflight: initialize run manifest ───────────────────────────────────
   #
   # Creates `.polyphony/run.yaml` if missing; validates an existing
-  # manifest matches the requested apex (root_id). The manifest is the
+  # manifest matches the requested root (root_id). The manifest is the
   # canonical resume key — `polyphony worklist build` reads it.
   #
   # Topology-hash validation against the live ADO tree is intentionally
@@ -359,7 +359,7 @@ agents:
   #
   # Invariants:
   #   Pre:  feature branch ensured.
-  #   Post: .polyphony/run.yaml exists AND its root_id matches apex_id.
+  #   Post: .polyphony/run.yaml exists AND its root_id matches root_id.
   - name: init_manifest
     type: script
     description: Initialize or validate the per-run manifest under <git-common-dir>/polyphony/<root_id>/run.yaml
@@ -368,8 +368,8 @@ agents:
       - "-NoProfile"
       - "-File"
       - "{{ workflow.dir }}/../scripts/manifest-bootstrap.ps1"
-      - "-ApexId"
-      - "{{ workflow.input.apex_id }}"
+      - "-RootId"
+      - "{{ workflow.input.root_id }}"
       - "-Organization"
       - "{{ workflow.input.organization }}"
       - "-Project"
@@ -383,7 +383,7 @@ agents:
   # ── Preflight: stamp the polyphony:root marker tag ───────────────────────
   #
   # Per docs/polyphony-tags.md §"Workflow integration":
-  # > Entry: tree-walker receives root_id as input. Calls
+  # > Entry: the worklist driver receives root_id as input. Calls
   # > `polyphony root declare {root_id}` (idempotent) to stamp the root tag.
   #
   # Without this stamp, `polyphony root resolve` (used inside lifecycle
@@ -392,17 +392,17 @@ agents:
   # on resumes; emits `changed: false` when the tag already exists.
   #
   # Invariants:
-  #   Pre:  apex_id is a valid ADO work item.
-  #   Post: apex_id carries the `polyphony:root` system tag.
+  #   Pre:  root_id is a valid ADO work item.
+  #   Post: root_id carries the `polyphony:root` system tag.
   - name: declare_root
     type: script
-    description: Stamp polyphony:root on the apex item (idempotent)
+    description: Stamp polyphony:root on the root item (idempotent)
     command: polyphony
     args:
       - "root"
       - "declare"
       - "--work-item"
-      - "{{ workflow.input.apex_id }}"
+      - "{{ workflow.input.root_id }}"
     routes:
       - to: outer_loop_init
         when: "{{ declare_root.output.error is not defined or declare_root.output.error == '' }}"
@@ -411,35 +411,35 @@ agents:
       # success path, defeating defense-in-depth.)
       - to: preflight_failure_gate
 
-  # ── Outer loop init (PR #9 — apex-driver iterate-until-stable) ────────────
+  # ── Outer loop init (PR #9 — polyphony iterate-until-stable) ────────────
   #
-  # Resets the per-apex iteration counter file so a fresh invocation
-  # starts from iteration 0. Counter is keyed on apex_id and lives
+  # Resets the per-root iteration counter file so a fresh invocation
+  # starts from iteration 0. Counter is keyed on root_id and lives
   # under [System.IO.Path]::GetTempPath() so it survives across the
   # workflow's own steps (each script step is a fresh PowerShell process)
-  # but is naturally scoped to the apex.
+  # but is naturally scoped to the root.
   #
   # The outer loop body lives between `build_worklist` and
-  # `outer_loop_evaluator` (post-wave-loop). Each pass through the
+  # `outer_loop_evaluator` (post-batch-loop). Each pass through the
   # body increments the counter; the evaluator decides whether to loop
   # back, terminate happy, or terminate as cap/blocked. See
-  # `apex.max_dispatch_iterations` (default 10) below.
+  # `root.max_dispatch_iterations` (default 10) below.
   #
   # Invariants:
   #   Pre:  declare_root succeeded.
   #   Post: counter file exists with value "0".
   - name: outer_loop_init
     type: script
-    description: Reset the per-apex outer-loop iteration counter (PR #9)
+    description: Reset the per-root outer-loop iteration counter (PR #9)
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - >-
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "apex-driver-iter-{{ workflow.input.apex_id }}";
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "polyphony-iter-{{ workflow.input.root_id }}";
         Set-Content -Path $counterFile -Value "0" -NoNewline;
         [ordered]@{
-          apex_id = {{ workflow.input.apex_id }};
+          root_id = {{ workflow.input.root_id }};
           iteration = 0;
           counter_file = $counterFile;
           reset = $true;
@@ -450,7 +450,7 @@ agents:
   # ─────────────────────────────────────────────────────────────────────────
   # SECTION 2 — Dispatch loop
   #
-  # The heart of the apex-driver. Each pass:
+  # The heart of the polyphony. Each pass:
   #   1. Build the worklist (waves of work items in topological order).
   #   2. Edge-check for cross-item conflicts.
   #   3. Iterate waves, dispatching each item into its lifecycle
@@ -458,30 +458,30 @@ agents:
   #   4. Integrate completed branches back into the feature branch.
   #
   # Re-entry note (P3): the loop is purely observable-state-driven.
-  # On `intent: resume` the worklist build returns the current wave
+  # On `intent: resume` the worklist build returns the current batch
   # structure; already-satisfied items classify as `fast-path` and
   # short-circuit; in-flight items classify as `monitoring`.
   # ─────────────────────────────────────────────────────────────────────────
 
   # ── Build worklist ────────────────────────────────────────────────────────
   #
-  # Walks the apex tree and groups work items into topological waves.
+  # Walks the root tree and groups work items into topological waves.
   # Always exit 0 (routing-style); has_conflicts surfaces via the
   # envelope.
   #
   # Invariants:
-  #   Pre:  apex_id resolves to a tree containing at least one item.
+  #   Pre:  root_id resolves to a tree containing at least one item.
   #   Post: build_worklist.output.waves is an array of
-  #         { wave_index, items[] } in topological order.
+  #         { batch_index, items[] } in topological order.
   - name: build_worklist
     type: script
-    description: Build the apex worklist (topological waves)
+    description: Build the root worklist (topological waves)
     command: polyphony
     args:
       - "worklist"
       - "build"
       - "--root-id"
-      - "{{ workflow.input.apex_id }}"
+      - "{{ workflow.input.root_id }}"
       - "--json"
     routes:
       - to: check_conflicts
@@ -493,7 +493,7 @@ agents:
   #
   # Cross-item conflict detection is run separately from worklist build
   # so the conflict list can be surfaced through its own dedicated gate
-  # without losing the wave structure on a re-run.
+  # without losing the batch structure on a re-run.
   #
   # Invariants:
   #   Pre:  build_worklist succeeded.
@@ -501,12 +501,12 @@ agents:
   #         is non-empty when has_conflicts is true.
   - name: check_conflicts
     type: script
-    description: Edge-check the apex tree for cross-item conflicts
+    description: Edge-check the root tree for cross-item conflicts
     command: polyphony
     args:
       - "edges"
       - "check"
-      - "{{ workflow.input.apex_id }}"
+      - "{{ workflow.input.root_id }}"
       - "--render"
       - "json"
     routes:
@@ -518,27 +518,27 @@ agents:
         when: "{{ check_conflicts.output.error is defined and check_conflicts.output.error != '' }}"
       - to: conflict_resolution_gate
         when: "{{ check_conflicts.output.has_conflicts | string | lower == 'true' }}"
-      - to: reset_wave_failure_flags
+      - to: reset_batch_failure_flags
         when: "{{ check_conflicts.output.has_conflicts | string | lower == 'false' }}"
       # M4 catch-all — undefined has_conflicts means the JSON envelope
       # wasn't shaped as expected; treat as a worklist-layer failure.
       - to: worklist_failure_gate
 
-  # ── Reset wave failure flags ─────────────────────────────────────────────
+  # ── Reset batch failure flags ─────────────────────────────────────────────
   #
-  # Per-pass cleanup of the wave-failure sentinel store (see
-  # scripts/wave-dispatch-guard.ps1). Runs IMMEDIATELY before every entry
-  # into wave_dispatch_loop so each dispatch pass starts with a clean
+  # Per-pass cleanup of the batch-failure sentinel store (see
+  # scripts/batch-dispatch-guard.ps1). Runs IMMEDIATELY before every entry
+  # into batch_dispatch_loop so each dispatch pass starts with a clean
   # slate:
   #
   #   * First-time entry from build_worklist → check_conflicts.
   #   * Operator retries the conflict_resolution_gate → build_worklist.
   #   * Outer loop continues (decision='continue') → build_worklist
   #     → check_conflicts → here.
-  #   * Operator picks `retry` at wave_failed_gate or `renegotiate` at
+  #   * Operator picks `retry` at batch_failed_gate or `renegotiate` at
   #     renegotiation_gate — both route back to build_worklist.
   #
-  # No path back into wave_dispatch_loop bypasses check_conflicts (and
+  # No path back into batch_dispatch_loop bypasses check_conflicts (and
   # therefore this step), so we never inherit a stale flag from a prior
   # dispatch pass.
   #
@@ -546,20 +546,20 @@ agents:
   # envelope reports `error_code: git_common_dir_failed` but routing
   # proceeds — the system degrades to today's continue_on_error behavior
   # rather than blocking the loop.
-  - name: reset_wave_failure_flags
+  - name: reset_batch_failure_flags
     type: script
-    description: Clear stale per-wave failure sentinels at the start of every dispatch pass
+    description: Clear stale per-batch failure sentinels at the start of every dispatch pass
     command: pwsh
     args:
       - "-NoProfile"
       - "-File"
-      - "{{ workflow.dir }}/../scripts/wave-dispatch-guard.ps1"
+      - "{{ workflow.dir }}/../scripts/batch-dispatch-guard.ps1"
       - "-Op"
       - "clear"
       - "-RootId"
-      - "{{ workflow.input.apex_id }}"
+      - "{{ workflow.input.root_id }}"
     routes:
-      - to: wave_dispatch_loop
+      - to: batch_dispatch_loop
 
   # ── Conflict resolution gate ─────────────────────────────────────────────
   #
@@ -572,10 +572,10 @@ agents:
     type: human_gate
     description: Edge conflicts detected — operator decides retry or abort
     prompt: |
-      ## ⚠️ Edge conflicts detected in the apex tree
+      ## ⚠️ Edge conflicts detected in the root tree
 
       `polyphony edges check` reported cross-item conflicts in the
-      worklist for apex **#{{ workflow.input.apex_id }}**. The dispatch
+      worklist for root **#{{ workflow.input.root_id }}**. The dispatch
       loop cannot proceed until they are resolved.
 
       ### Conflicts
@@ -589,7 +589,7 @@ agents:
       - **Retry** — fix the offending items in ADO (re-parent, mark
         satisfied, etc.) then retry the dispatch loop. This re-runs
         worklist build + edge check from scratch.
-      - **Abort** — halt the workflow with `apex_satisfied=false`. Use
+      - **Abort** — halt the workflow with `root_satisfied=false`. Use
         this when the conflict reveals a structural problem worth
         re-planning at a higher level.
     options:
@@ -598,32 +598,32 @@ agents:
         route: build_worklist
       - label: "🛑 Abort"
         value: abort
-        route: terminal_apex_abandoned
+        route: root_abandoned
 
-  # ── Wave dispatch loop ────────────────────────────────────────────────────
+  # ── Batch dispatch loop ────────────────────────────────────────────────────
   #
-  # See top-level `for_each: wave_dispatch_loop` at end of file. Conductor
+  # See top-level `for_each: batch_dispatch_loop` at end of file. Conductor
   # schema requires for_each blocks to live in their own top-level section,
   # not nested under `agents:` (M8). Routes cross sections — agents here
-  # route to `wave_dispatch_loop`, and `wave_dispatch_loop` routes back to
-  # `wave_loop_summary` below.
+  # route to `batch_dispatch_loop`, and `batch_dispatch_loop` routes back to
+  # `batch_loop_summary` below.
 
-  # ── Wave loop summary ────────────────────────────────────────────────────
+  # ── Batch loop summary ────────────────────────────────────────────────────
   #
   # Inspects the for_each `errors` array (per M8 there's no
   # `failed_count`; we derive it via length). When all waves succeeded,
-  # transitions to the apex_completion_gate. When any wave failed,
-  # surface via wave_failed_gate.
-  - name: wave_loop_summary
+  # transitions to the root_completion_gate. When any batch failed,
+  # surface via batch_failed_gate.
+  - name: batch_loop_summary
     type: script
-    description: Summarize the wave dispatch loop outcome
+    description: Summarize the batch dispatch loop outcome
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - >-
-        $failed = [int]'{{ wave_dispatch_loop.errors | length }}';
-        $total  = [int]'{{ wave_dispatch_loop.count }}';
+        $failed = [int]'{{ batch_dispatch_loop.errors | length }}';
+        $total  = [int]'{{ batch_dispatch_loop.count }}';
         [ordered]@{
           total_waves   = $total;
           failed_waves  = $failed;
@@ -631,42 +631,42 @@ agents:
         } | ConvertTo-Json -Compress
     routes:
       - to: renegotiation_summary
-        when: "{{ wave_loop_summary.output.all_succeeded | string | lower == 'true' }}"
+        when: "{{ batch_loop_summary.output.all_succeeded | string | lower == 'true' }}"
       # M4 catch-all — fail-safe to gate on error / template eval edge cases.
-      - to: wave_failed_gate
+      - to: batch_failed_gate
 
   # ── Renegotiation summary ────────────────────────────────────────────────
   #
-  # Aggregates `renegotiation_pending` across the wave dispatch loop's
-  # outputs. Each wave's apex-wave-dispatch.output.renegotiation_pending
-  # is a "true" | "false" string (per M7). When ANY wave bubbled up
+  # Aggregates `renegotiation_pending` across the batch dispatch loop's
+  # outputs. Each batch's root-batch-dispatch.output.renegotiation_pending
+  # is a "true" | "false" string (per M7). When ANY batch bubbled up
   # `true`, route to `renegotiation_gate`; otherwise straight on to
-  # `apex_completion_gate`.
+  # `root_completion_gate`.
   #
-  # Per M8 there is no `output:` on the for_each group; per-wave outputs
-  # live under `wave_dispatch_loop.outputs.<key>`. We `tojson` the
+  # Per M8 there is no `output:` on the for_each group; per-batch outputs
+  # live under `batch_dispatch_loop.outputs.<key>`. We `tojson` the
   # outputs dict and parse it inside pwsh — same pattern as
-  # apex-wave-dispatch's `aggregate_renegotiation` step.
+  # root-batch-dispatch's `aggregate_renegotiation` step.
   - name: renegotiation_summary
     type: script
-    description: Aggregate renegotiation_pending across the wave dispatch loop
+    description: Aggregate renegotiation_pending across the batch dispatch loop
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - |
         $raw = @'
-        {{ wave_dispatch_loop.outputs | tojson }}
+        {{ batch_dispatch_loop.outputs | tojson }}
         '@;
         $items = @();
         $any = $false;
         try {
-          # `wave_dispatch_loop` for_each has no `key_by`, so conductor
-          # emits `.outputs` as a JSON array of per-wave outputs. Wrap
+          # `batch_dispatch_loop` for_each has no `key_by`, so conductor
+          # emits `.outputs` as a JSON array of per-batch outputs. Wrap
           # with `@(...)` so that PowerShell's pipeline-unwrapping of a
           # single-element array doesn't collapse `[{...}]` to a bare
-          # PSObject — otherwise a 1-wave run was misread as the FIELDS
-          # of the single wave's output and `renegotiation_pending` was
+          # PSObject — otherwise a 1-batch run was misread as the FIELDS
+          # of the single batch's output and `renegotiation_pending` was
           # never detected. Surfaced live by the AB#3064 dogfood
           # (2026-05-09).
           $values = @($raw | ConvertFrom-Json);
@@ -680,7 +680,7 @@ agents:
             if ($pending) {
               $any = $true;
               $items += [ordered]@{
-                wave_index = $v.wave_index;
+                batch_index = $v.batch_index;
                 renegotiation_items = $v.renegotiation_items;
               };
             }
@@ -692,7 +692,7 @@ agents:
         [ordered]@{
           any_pending = $any;
           waves = ($items | ConvertTo-Json -Compress -Depth 6);
-          wave_count = $items.Count;
+          batch_count = $items.Count;
         } | ConvertTo-Json -Compress -Depth 6
     routes:
       - to: renegotiation_policy
@@ -713,7 +713,7 @@ agents:
   #     to `build_worklist` for the next dispatch pass. Equivalent to
   #     the operator picking "renegotiate" at the gate, plus the
   #     iteration-cap safety net.
-  #   - `ignore` → skip the gate and proceed to apex completion
+  #   - `ignore` → skip the gate and proceed to root completion
   #     (equivalent to the operator picking "override"). Use when the
   #     renegotiation flag is advisory rather than blocking.
   #   - `prompt` (default) → fall through to `renegotiation_gate` for
@@ -754,7 +754,7 @@ agents:
     routes:
       - to: outer_loop_evaluator
         when: "{{ renegotiation_policy.output.auto_decide == 'auto_restart' }}"
-      - to: apex_completion_gate_policy_router
+      - to: root_completion_gate_policy_router
         when: "{{ renegotiation_policy.output.auto_decide == 'ignore' }}"
       - to: renegotiation_gate
         when: "{{ renegotiation_policy.output.auto_decide == 'prompt' }}"
@@ -765,43 +765,43 @@ agents:
 
   # ── Outer loop evaluator (PR #9 — iterate-until-stable) ──────────────────
   #
-  # Decides what to do after one full pass through the wave dispatch
+  # Decides what to do after one full pass through the batch dispatch
   # loop. Implements Option α (per closed-loop-state-plan §3.4 + §4
-  # PR #9): re-classify the apex tree on the next iteration rather
+  # PR #9): re-classify the root tree on the next iteration rather
   # than fan out per-facet up front.
   #
   # Inputs read:
   #   * Counter file (incremented by this step).
-  #   * `wave_dispatch_loop.outputs` — sums of per-wave items_satisfied_count
+  #   * `batch_dispatch_loop.outputs` — sums of per-batch items_satisfied_count
   #     and items_dispatched_count tell us whether THIS iteration made
   #     progress (something either reached terminal-satisfied or got
   #     handed off to a corridor).
-  #   * `polyphony state next-ready --work-item {apex_id}` — closed-loop
+  #   * `polyphony state next-ready --work-item {root_id}` — closed-loop
   #     honest as of PR #5; reports `item_satisfied: Satisfied` only when
   #     all facet-driven kinds are Satisfied AND children rolled up.
   #
   # Decision priority (per PR #9 brief):
-  #   1. apex `item_satisfied: Satisfied` → `complete` → apex_completion_gate.
+  #   1. root `item_satisfied: Satisfied` → `complete` → root_completion_gate.
   #   2. iteration counter ≥ max_dispatch_iterations → `cap` →
-  #      terminal_apex_iteration_cap.
+  #      root_iteration_cap.
   #   3. zero new dispatches AND zero new satisfactions → `blocked` →
-  #      terminal_apex_blocked.
+  #      root_blocked.
   #   4. otherwise → `continue` → loop back to build_worklist.
   #
-  # `apex.max_dispatch_iterations` defaults to 10. Override via the
-  # POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS env var if a particularly
+  # `root.max_dispatch_iterations` defaults to 10. Override via the
+  # POLYPHONY_ROOT_MAX_DISPATCH_ITERATIONS env var if a particularly
   # deep tree needs more passes (the cap is a safety net, not a
   # performance ceiling).
   #
-  # Known limitation (PR #6 carry-forward): apex_satisfied is observed
+  # Known limitation (PR #6 carry-forward): root_satisfied is observed
   # via `next-ready` directly. If the validator-driven `item_satisfied`
   # event is not configured in `.polyphony-config/process-config.yaml > transitions`,
-  # the apex's ADO state will stay un-transitioned even though the outer
+  # the root's ADO state will stay un-transitioned even though the outer
   # loop terminates `complete`. Documented in PR #220's body and again
   # in PR #9's PR body for the dogfood follow-up.
   #
   # Invariants:
-  #   Pre:  wave_loop_summary succeeded; renegotiation_summary fired.
+  #   Pre:  batch_loop_summary succeeded; renegotiation_summary fired.
   #   Post: outer_loop_evaluator.output.decision is one of
   #         {complete, cap, blocked, continue}; iteration counter
   #         incremented exactly once.
@@ -813,24 +813,24 @@ agents:
       - "-NoProfile"
       - "-Command"
       - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "apex-driver-iter-{{ workflow.input.apex_id }}";
+        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "polyphony-iter-{{ workflow.input.root_id }}";
         $iteration = if (Test-Path $counterFile) { [int]((Get-Content $counterFile -Raw).Trim()) + 1 } else { 1 };
         Set-Content -Path $counterFile -Value "$iteration" -NoNewline;
 
-        $maxIterations = if ($env:POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS) { [int]$env:POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS } else { 10 };
+        $maxIterations = if ($env:POLYPHONY_ROOT_MAX_DISPATCH_ITERATIONS) { [int]$env:POLYPHONY_ROOT_MAX_DISPATCH_ITERATIONS } else { 10 };
 
         $satisfiedDelta = 0; $dispatchedDelta = 0; $failedDelta = 0; $totalItems = 0;
         $failedItemsAgg = @();
         $raw = @'
-        {{ wave_dispatch_loop.outputs | tojson }}
+        {{ batch_dispatch_loop.outputs | tojson }}
         '@;
         try {
-          # `wave_dispatch_loop` for_each has no `key_by`, so conductor
-          # emits `.outputs` as a JSON array of per-wave outputs. Wrap
+          # `batch_dispatch_loop` for_each has no `key_by`, so conductor
+          # emits `.outputs` as a JSON array of per-batch outputs. Wrap
           # with `@(...)` so that PowerShell's pipeline-unwrapping of a
           # single-element array doesn't collapse `[{...}]` to a bare
-          # PSObject — otherwise a 1-wave iteration was misread as the
-          # FIELDS of the single wave's output and the progress counters
+          # PSObject — otherwise a 1-batch iteration was misread as the
+          # FIELDS of the single batch's output and the progress counters
           # silently reported 0, falsely flipping the loop decision to
           # `blocked`. Surfaced live by the AB#3064 dogfood (2026-05-09).
           $values = @($raw | ConvertFrom-Json);
@@ -839,8 +839,8 @@ agents:
             if ($v.PSObject.Properties.Name -contains 'items_satisfied_count') { $satisfiedDelta += [int]$v.items_satisfied_count }
             if ($v.PSObject.Properties.Name -contains 'items_dispatched_count') { $dispatchedDelta += [int]$v.items_dispatched_count }
             if ($v.PSObject.Properties.Name -contains 'item_count') { $totalItems += [int]$v.item_count }
-            # ── AB#3067 — roll up per-wave dispatch failures so the outer
-            # loop can route to terminal_apex_dispatch_failures instead of
+            # ── AB#3067 — roll up per-batch dispatch failures so the outer
+            # loop can route to root_dispatch_failures instead of
             # silently flipping to `blocked` when items failed.
             if ($v.PSObject.Properties.Name -contains 'items_failed_count') {
               $failedDelta += [int]$v.items_failed_count;
@@ -854,7 +854,7 @@ agents:
                 foreach ($fi in $perWaveFailed) {
                   if ($null -eq $fi) { continue }
                   $failedItemsAgg += [ordered]@{
-                    wave_index      = $v.wave_index;
+                    batch_index      = $v.batch_index;
                     iteration_index = $fi.iteration_index;
                     work_item_id    = $fi.work_item_id;
                     error           = $fi.error;
@@ -868,7 +868,7 @@ agents:
         $madeProgress = ($satisfiedDelta -gt 0) -or ($dispatchedDelta -gt 0);
         $hasDispatchFailures = ($failedDelta -gt 0);
 
-        # Apex satisfaction: trust state next-ready's top-level `status`
+        # Root satisfaction: trust state next-ready's top-level `status`
         # routing hint (PR #5; StateNextReadyResult.cs). `status: satisfied`
         # is emitted when every requirement (including item_satisfied) is at
         # Disposition.Satisfied — the canonical "everything done" signal.
@@ -876,13 +876,13 @@ agents:
         # not-satisfied and let the progress / cap signals decide. Do NOT
         # parse the reason text; truncation observability is by demotion
         # (PR #5 hand-off note).
-        $apexSatisfied = $false;
+        $rootSatisfied = $false;
         try {
-          $nextRaw = polyphony state next-ready --work-item {{ workflow.input.apex_id }} --platform {{ workflow.input.platform }} --organization "{{ workflow.input.organization }}" --project "{{ workflow.input.project }}" --repository "{{ workflow.input.repository }}" 2>$null;
+          $nextRaw = polyphony state next-ready --work-item {{ workflow.input.root_id }} --platform {{ workflow.input.platform }} --organization "{{ workflow.input.organization }}" --project "{{ workflow.input.project }}" --repository "{{ workflow.input.repository }}" 2>$null;
           if ($nextRaw) {
             $next = $nextRaw | ConvertFrom-Json;
             if ($null -ne $next -and $next.PSObject.Properties.Name -contains 'status') {
-              if ("$($next.status)" -eq 'satisfied') { $apexSatisfied = $true }
+              if ("$($next.status)" -eq 'satisfied') { $rootSatisfied = $true }
             }
           }
         } catch { }
@@ -890,17 +890,17 @@ agents:
         $capReached = $iteration -ge $maxIterations;
 
         # AB#3067 — `dispatch_failures` is FIRST priority (above complete).
-        # A satisfied apex with concurrent sub-workflow failures is almost
+        # A satisfied root with concurrent sub-workflow failures is almost
         # certainly a stale validator read; the operator must see the
         # failures before we declare success. Failures are loud by design.
         $decision = if ($hasDispatchFailures) { 'dispatch_failures' }
-                    elseif ($apexSatisfied) { 'complete' }
+                    elseif ($rootSatisfied) { 'complete' }
                     elseif ($capReached) { 'cap' }
                     elseif (-not $madeProgress) { 'blocked' }
                     else { 'continue' };
 
         [ordered]@{
-          apex_id = {{ workflow.input.apex_id }};
+          root_id = {{ workflow.input.root_id }};
           iteration = $iteration;
           max_iterations = $maxIterations;
           items_satisfied_this_iteration = $satisfiedDelta;
@@ -910,24 +910,24 @@ agents:
           total_items_observed = $totalItems;
           made_progress = $madeProgress;
           has_dispatch_failures = $hasDispatchFailures;
-          apex_satisfied = $apexSatisfied;
+          root_satisfied = $rootSatisfied;
           cap_reached = $capReached;
           decision = $decision;
         } | ConvertTo-Json -Compress
     routes:
-      - to: terminal_apex_dispatch_failures
+      - to: root_dispatch_failures
         when: "{{ outer_loop_evaluator.output.decision == 'dispatch_failures' }}"
-      - to: apex_completion_gate_policy_router
+      - to: root_completion_gate_policy_router
         when: "{{ outer_loop_evaluator.output.decision == 'complete' }}"
-      - to: terminal_apex_iteration_cap
+      - to: root_iteration_cap
         when: "{{ outer_loop_evaluator.output.decision == 'cap' }}"
-      - to: terminal_apex_blocked
+      - to: root_blocked
         when: "{{ outer_loop_evaluator.output.decision == 'blocked' }}"
       - to: build_worklist
         when: "{{ outer_loop_evaluator.output.decision == 'continue' }}"
       # M4 catch-all — defensive: undefined or malformed envelope
-      # falls into terminal_apex_blocked rather than silently looping.
-      - to: terminal_apex_blocked
+      # falls into root_blocked rather than silently looping.
+      - to: root_blocked
 
   # ── Renegotiation gate ───────────────────────────────────────────────────
   #
@@ -936,15 +936,15 @@ agents:
   #   - renegotiate: route back to build_worklist so the next loop
   #     pass picks up the (presumably mutated) tree.
   #   - override: ignore the renegotiation request and proceed to
-  #     apex completion as if the child plan was accepted.
-  #   - abort: halt the workflow with apex_satisfied=false.
+  #     root completion as if the child plan was accepted.
+  #   - abort: halt the workflow with root_satisfied=false.
   #
   # `policy.renegotiation.auto_decide` is now wired (AB#3185) via the
   # `renegotiation_policy` resolver step above:
   #   - `auto_restart` → routes to `outer_loop_evaluator` (iteration
   #     cap counts the cycle; on `continue` it goes to `build_worklist`).
   #     Operator's "renegotiate" choice with the cap safety net.
-  #   - `ignore` → routes directly to `apex_completion_gate_policy_router`
+  #   - `ignore` → routes directly to `root_completion_gate_policy_router`
   #     (skips this gate; operator's "override" choice).
   #   - `prompt` (default) → falls through to this gate.
   # Abort remains operator-only — auto-failing on a renegotiation
@@ -955,8 +955,8 @@ agents:
     prompt: |
       ## 📝 Renegotiation requested
 
-      One or more child planner invocations under apex
-      **#{{ workflow.input.apex_id }}** completed but flagged that the
+      One or more child planner invocations under root
+      **#{{ workflow.input.root_id }}** completed but flagged that the
       assigned scope is unworkable as-is. Per
       `.polyphony-config/policy.yaml > renegotiation.auto_decide` (default
       `prompt`) the operator decides next.
@@ -967,10 +967,10 @@ agents:
       {{ renegotiation_summary.output.waves }}
       ```
 
-      ### Wave summary
+      ### Batch summary
 
-      - Total waves: **{{ wave_loop_summary.output.total_waves }}**
-      - Failed waves: **{{ wave_loop_summary.output.failed_waves }}**
+      - Total waves: **{{ batch_loop_summary.output.total_waves }}**
+      - Failed waves: **{{ batch_loop_summary.output.failed_waves }}**
 
       ### Options
 
@@ -978,44 +978,44 @@ agents:
         re-evaluated against the (presumably edited) tree. The
         operator should mutate the tree in ADO before choosing this.
       - **Override** — accept the child plans as-is and proceed to
-        apex completion. Use when the renegotiation request is
+        root completion. Use when the renegotiation request is
         advisory rather than blocking.
-      - **Abort** — halt with `apex_satisfied=false`.
+      - **Abort** — halt with `root_satisfied=false`.
     options:
       - label: "🔁 Renegotiate — re-enter the dispatch loop"
         value: renegotiate
         route: build_worklist
       - label: "✅ Override — accept the child plans, proceed to completion"
         value: override
-        route: apex_completion_gate_policy_router
+        route: root_completion_gate_policy_router
       - label: "🛑 Abort"
         value: abort
-        route: terminal_apex_abandoned
+        route: root_abandoned
 
-  # ── Wave failed gate ─────────────────────────────────────────────────────
+  # ── Batch failed gate ─────────────────────────────────────────────────────
   #
   # Surfaces failed waves to a human. Operator picks `retry` (re-enter
   # the dispatch loop — items the prior run satisfied will fast-path on
-  # the next iteration), `abort` (halt with apex_satisfied=false), or
-  # `escalate_renegotiation` (re-author the apex's plan; deferred).
-  - name: wave_failed_gate
+  # the next iteration), `abort` (halt with root_satisfied=false), or
+  # `escalate_renegotiation` (re-author the root's plan; deferred).
+  - name: batch_failed_gate
     type: human_gate
     description: One or more waves failed — operator decides next step
     prompt: |
-      ## ❌ Wave dispatch failures
+      ## ❌ Batch dispatch failures
 
-      The apex-driver dispatch loop completed with one or more wave
-      failures for apex **#{{ workflow.input.apex_id }}**.
+      The polyphony dispatch loop completed with one or more batch
+      failures for root **#{{ workflow.input.root_id }}**.
 
-      ### Wave summary
+      ### Batch summary
 
-      - Total waves: **{{ wave_loop_summary.output.total_waves }}**
-      - Failed waves: **{{ wave_loop_summary.output.failed_waves }}**
+      - Total waves: **{{ batch_loop_summary.output.total_waves }}**
+      - Failed waves: **{{ batch_loop_summary.output.failed_waves }}**
 
-      ### Failed wave details
+      ### Failed batch details
 
       ```
-      {{ wave_dispatch_loop.errors | tojson(indent=2) }}
+      {{ batch_dispatch_loop.errors | tojson(indent=2) }}
       ```
 
       ### Options
@@ -1023,8 +1023,8 @@ agents:
       - **Retry** — re-enter the dispatch loop. Items the prior run
         already satisfied will fast-path; failed items will be
         re-dispatched against their current state.
-      - **Abort** — halt the workflow with `apex_satisfied=false`.
-      - **Renegotiate (deferred)** — re-author the apex's plan to
+      - **Abort** — halt the workflow with `root_satisfied=false`.
+      - **Renegotiate (deferred)** — re-author the root's plan to
         accommodate the failures. MVP routes this to abort; a
         follow-up wires the renegotiation loop.
     options:
@@ -1033,10 +1033,10 @@ agents:
         route: build_worklist
       - label: "🛑 Abort"
         value: abort
-        route: terminal_apex_abandoned
+        route: root_abandoned
       - label: "📝 Renegotiate (deferred — routes to abort in MVP)"
         value: renegotiate
-        route: terminal_apex_abandoned
+        route: root_abandoned
 
   # ── Worklist failure gate ────────────────────────────────────────────────
   #
@@ -1048,8 +1048,8 @@ agents:
     prompt: |
       ## ❌ `polyphony worklist build` failed
 
-      The apex-driver could not build a worklist for apex
-      **#{{ workflow.input.apex_id }}**. This usually indicates a
+      The polyphony could not build a worklist for root
+      **#{{ workflow.input.root_id }}**. This usually indicates a
       transient ADO outage, a misconfigured tag chain, or a
       structural problem in the work-item tree.
 
@@ -1067,33 +1067,33 @@ agents:
 
       - **Retry** — re-run worklist build (e.g. after fixing the tag
         chain in ADO).
-      - **Abort** — halt the workflow with `apex_satisfied=false`.
+      - **Abort** — halt the workflow with `root_satisfied=false`.
     options:
       - label: "🔁 Retry"
         value: retry
         route: build_worklist
       - label: "🛑 Abort"
         value: abort
-        route: terminal_apex_abandoned
+        route: root_abandoned
 
   # ── Preflight failure gate ───────────────────────────────────────────────
   #
   # Fires when `polyphony state next-ready` returns status=error during
-  # preflight. The apex id may be invalid, the type may be unknown, or
+  # preflight. The root id may be invalid, the type may be unknown, or
   # ADO may be unreachable. Operator decides whether to retry or fail.
   - name: preflight_failure_gate
     type: human_gate
-    description: Apex preflight validation failed — operator decides next step
+    description: Root preflight validation failed — operator decides next step
     prompt: |
-      ## ❌ Apex preflight failed
+      ## ❌ Root preflight failed
 
-      A preflight step for apex **#{{ workflow.input.apex_id }}** did
+      A preflight step for root **#{{ workflow.input.root_id }}** did
       not produce a clean envelope. One of the following is the cause:
 
       ### `polyphony state next-ready` error
       ```
-      {%- if preflight_apex_state is defined and preflight_apex_state.output is defined and preflight_apex_state.output.error is defined and preflight_apex_state.output.error != '' -%}
-      {{ preflight_apex_state.output.error }}
+      {%- if preflight_root_state is defined and preflight_root_state.output is defined and preflight_root_state.output.error is defined and preflight_root_state.output.error != '' -%}
+      {{ preflight_root_state.output.error }}
       {%- else -%}
       (no error — this step succeeded or did not run)
       {%- endif -%}
@@ -1129,25 +1129,25 @@ agents:
       ### Options
 
       - **Retry preflight** — re-run state next-ready (e.g. after
-        fixing the apex's type config in ADO, repairing the working
+        fixing the root's type config in ADO, repairing the working
         tree, or removing a stale `.polyphony/run.yaml`).
       - **Abort** — terminate the workflow with `preflight_failed=true`.
     options:
       - label: "🔁 Retry preflight"
         value: retry
-        route: preflight_apex_state
+        route: preflight_root_state
       - label: "🛑 Abort"
         value: abort
-        route: terminal_preflight_failed
+        route: preflight_failed
 
   # ─────────────────────────────────────────────────────────────────────────
-  # SECTION 3 — Apex completion gate
+  # SECTION 3 — Root completion gate
   # ─────────────────────────────────────────────────────────────────────────
 
-  # ── Apex completion gate policy router (AB#3104) ─────────────────────────
+  # ── Root completion gate policy router (AB#3104) ─────────────────────────
   #
   # Reads `policy.unattended.acceptance_mode` and either bypasses the
-  # apex_completion_gate (auto → close_mark_satisfied, the route the
+  # root_completion_gate (auto → close_mark_satisfied, the route the
   # operator's "confirm" option would have selected) or falls through
   # to the human gate.
   #
@@ -1155,39 +1155,39 @@ agents:
   #   Pre:  outer_loop_evaluator decided `complete`.
   #   Post: load_policy.output.unattended.acceptance_mode is
   #         {manual, auto} (validated by the loader).
-  - name: apex_completion_gate_policy_router
+  - name: root_completion_gate_policy_router
     type: script
-    description: Bypass apex_completion_gate when policy.unattended.acceptance_mode=auto
+    description: Bypass root_completion_gate when policy.unattended.acceptance_mode=auto
     command: polyphony
     args:
       - "policy"
       - "load"
     routes:
       - to: promote_feature_to_main
-        when: "{{ apex_completion_gate_policy_router.output.unattended.acceptance_mode == 'auto' }}"
+        when: "{{ root_completion_gate_policy_router.output.unattended.acceptance_mode == 'auto' }}"
       # Default + 'manual' + any unknown → surface the human gate.
-      - to: apex_completion_gate
+      - to: root_completion_gate
 
-  # ── Apex completion gate ─────────────────────────────────────────────────
+  # ── Root completion gate ─────────────────────────────────────────────────
   #
-  # Surfaces the assembled apex to a human for final sign-off before
-  # marking it satisfied. P6 — this is the apex-level human gate that
+  # Surfaces the assembled root to a human for final sign-off before
+  # marking it satisfied. P6 — this is the root-level human gate that
   # mirrors the per-item satisfaction gates in the lifecycle workflows.
   #
   # Invariants:
-  #   Pre:  every wave dispatched and integrated successfully.
+  #   Pre:  every batch dispatched and integrated successfully.
   #   Post: operator confirmed satisfaction or chose to abandon.
-  - name: apex_completion_gate
+  - name: root_completion_gate
     type: human_gate
-    description: Final apex sign-off before marking satisfied
+    description: Final root sign-off before marking satisfied
     prompt: |
-      ## ✅ Apex dispatch complete
+      ## ✅ Root dispatch complete
 
-      The outer dispatch loop for apex **#{{ workflow.input.apex_id }}**
+      The outer dispatch loop for root **#{{ workflow.input.root_id }}**
       reached `decision=complete` — `polyphony state next-ready` reports
-      the apex is `item_satisfied: Satisfied` (every facet-driven kind
+      the root is `item_satisfied: Satisfied` (every facet-driven kind
       Satisfied AND children's `item_satisfied` rolled up). Confirm
-      satisfaction to mark the apex done and close the workflow.
+      satisfaction to mark the root done and close the workflow.
 
       ### Iteration summary
 
@@ -1195,25 +1195,25 @@ agents:
       - Last iteration items satisfied: **{{ outer_loop_evaluator.output.items_satisfied_this_iteration | default('?') }}**
       - Last iteration items dispatched: **{{ outer_loop_evaluator.output.items_dispatched_this_iteration | default('?') }}**
 
-      ### Wave summary (most recent iteration)
+      ### Batch summary (most recent iteration)
 
-      - Total waves: **{{ wave_loop_summary.output.total_waves }}**
-      - Failed waves: **{{ wave_loop_summary.output.failed_waves }}**
+      - Total waves: **{{ batch_loop_summary.output.total_waves }}**
+      - Failed waves: **{{ batch_loop_summary.output.failed_waves }}**
 
       ### Options
 
-      - **Confirm** — mark the apex item_satisfied via
+      - **Confirm** — mark the root item_satisfied via
         `polyphony validate` + `twig state` and close.
-      - **Abandon** — record `apex_satisfied=false` and close. Use
+      - **Abandon** — record `root_satisfied=false` and close. Use
         this when the integrated work is not what was intended even
         though every step technically succeeded.
     options:
-      - label: "✅ Confirm — mark apex satisfied"
+      - label: "✅ Confirm — mark root satisfied"
         value: confirm
         route: promote_feature_to_main
       - label: "🛑 Abandon"
         value: abandon
-        route: terminal_apex_abandoned
+        route: root_abandoned
 
   # ─────────────────────────────────────────────────────────────────────────
   # SECTION 4 — Close
@@ -1221,33 +1221,33 @@ agents:
 
   # ── Promote feature → target (AB#3168) ───────────────────────────────────
   #
-  # Indivisible apex roots (those whose `lifecycle_router` only ever
+  # Indivisible root roots (those whose `lifecycle_router` only ever
   # classifies their own work, never decomposing into ADO children) never
   # had `feature_pr` invoked under their item-dispatch lifecycle path.
   # Instead, the classifier flips through `implement-merge-group` for the
-  # MG → impl-PR cascade, then `ObserveImplementationMergedAsync` marks
+  # MG → impl-PR restack, then `ObserveImplementationMergedAsync` marks
   # `implementation_merged` Satisfied as soon as the impl PR merges into
   # `mg/{root}` (which itself merges into `feature/{root}`). The work is
   # ON `feature/{root}` but never reaches `main`, and `close_mark_satisfied`
-  # used to fire while the apex's own feature branch was still ahead of
+  # used to fire while the root's own feature branch was still ahead of
   # main — leaving a satisfied work item with un-promoted commits.
   #
   # This pair of nodes (script gate + workflow dispatch) inserts a
   # promotion check between every path into `close_mark_satisfied` and
-  # `close_mark_satisfied` itself. When `feature/{apex_id}` is ahead of
+  # `close_mark_satisfied` itself. When `feature/{root_id}` is ahead of
   # the target branch, we hand off to `feature-pr.yaml` (the same
   # lifecycle the per-item dispatch uses for decomposed apexes) to open
   # the PR, drive review/CI, and merge to `main`. When already in sync
-  # (e.g. fast-pathed apex, or the human chose `confirm` after a manual
+  # (e.g. fast-pathed root, or the human chose `confirm` after a manual
   # promotion), we fall straight through to `close_mark_satisfied`.
   #
   # `target_branch` is hard-coded to `main`, matching the existing
-  # `feature_pr_dispatch` invocation in apex-item-dispatch.yaml. If we
-  # ever support per-apex target branches, this is the second of two
+  # `feature_pr` invocation in root-item-dispatch.yaml. If we
+  # ever support per-root target branches, this is the second of two
   # sites to update.
   - name: promote_feature_to_main
     type: script
-    description: Check whether feature/{apex_id} is ahead of main; route to feature-pr.yaml when promotion is needed
+    description: Check whether feature/{root_id} is ahead of main; route to feature-pr.yaml when promotion is needed
     command: pwsh
     args:
       - "-NoProfile"
@@ -1255,8 +1255,8 @@ agents:
       - >-
         $ErrorActionPreference = 'Stop';
         $PSNativeCommandUseErrorActionPreference = $true;
-        $apexId = '{{ workflow.input.apex_id }}';
-        $featureBranch = "feature/$apexId";
+        $rootId = '{{ workflow.input.root_id }}';
+        $featureBranch = "feature/$rootId";
         $targetBranch = 'main';
         $needsPromotion = $false;
         $featureMissing = $false;
@@ -1273,7 +1273,7 @@ agents:
           $featureMissing = $true;
         }
         [ordered]@{
-          apex_id          = [int]$apexId;
+          root_id          = [int]$rootId;
           feature_branch   = $featureBranch;
           target_branch    = $targetBranch;
           needs_promotion  = $needsPromotion;
@@ -1287,9 +1287,9 @@ agents:
 
   # ── Strip polyphony planning artifacts ───────────────────────────────────
   #
-  # Removes the polyphony-managed working files from the apex feature
+  # Removes the polyphony-managed working files from the root feature
   # branch BEFORE the feature PR is opened against main, so the PR diff
-  # is focused on the actual deliverable rather than the cascade of plan
+  # is focused on the actual deliverable rather than the restack of plan
   # files that drove the work.
   #
   # The strip is conservative — only files matching polyphony's own
@@ -1301,7 +1301,7 @@ agents:
   #
   # Files outside that convention (e.g. plans/strategy.md authored by
   # humans) are preserved. Idempotent: a re-run after a successful strip
-  # (or a fast-pathed apex with no plan files) routes through with
+  # (or a fast-pathed root with no plan files) routes through with
   # already_clean=true.
   #
   # The script is routing-style (always exits 0); failures surface via
@@ -1314,20 +1314,20 @@ agents:
       - "-NoProfile"
       - "-File"
       - "{{ workflow.dir }}/../scripts/strip-planning-artifacts.ps1"
-      - "-ApexId"
-      - "{{ workflow.input.apex_id }}"
+      - "-RootId"
+      - "{{ workflow.input.root_id }}"
       - "-FeatureBranch"
       - "{{ promote_feature_to_main.output.feature_branch }}"
     routes:
       - to: strip_planning_artifacts_failed_gate
         when: "{{ strip_planning_artifacts.output.error_code != '' }}"
-      - to: promote_feature_pr_dispatch
+      - to: promote_feature_pr
 
   # ── Strip failure gate ───────────────────────────────────────────────────
   #
   # The strip step failed (rm, commit, or push error). Operator decides
   # whether to retry the strip, skip it (and ship the PR with plan files
-  # in the diff), or abort the apex without opening the feature PR.
+  # in the diff), or abort the root without opening the feature PR.
   - name: strip_planning_artifacts_failed_gate
     type: human_gate
     description: Plan-strip step failed — operator decides retry, skip, or abort
@@ -1349,8 +1349,8 @@ agents:
         plan files still in the diff. Use this if the strip is
         permanently blocked (e.g. branch protection on
         `{{ promote_feature_to_main.output.feature_branch }}`) and
-        you'd rather ship the PR than block the apex.
-      - **Abort** — halt the apex without opening the feature PR.
+        you'd rather ship the PR than block the root.
+      - **Abort** — halt the root without opening the feature PR.
         The feature branch is left as-is for manual cleanup.
     options:
       - label: "🔁 Retry — re-run the strip step"
@@ -1358,10 +1358,10 @@ agents:
         route: strip_planning_artifacts
       - label: "⏭️ Skip — ship PR with plan files included"
         value: skip
-        route: promote_feature_pr_dispatch
+        route: promote_feature_pr
       - label: "🛑 Abort"
         value: abort
-        route: terminal_apex_abandoned
+        route: root_abandoned
 
   # ── Promote feature → target via feature-pr.yaml ─────────────────────────
   #
@@ -1372,12 +1372,12 @@ agents:
   # has its own escalation gates for non-merge outcomes (it surfaces a
   # human gate after the remediation cap), so a quiet fall-through here
   # is safe.
-  - name: promote_feature_pr_dispatch
+  - name: promote_feature_pr
     type: workflow
-    description: Open and merge feature/{apex_id} → main via feature-pr.yaml (AB#3168)
+    description: Open and merge feature/{root_id} → main via feature-pr.yaml (AB#3168)
     workflow: ./feature-pr.yaml
     input_mapping:
-      work_item_id: "{{ workflow.input.apex_id }}"
+      work_item_id: "{{ workflow.input.root_id }}"
       feature_branch: "{{ promote_feature_to_main.output.feature_branch }}"
       target_branch: "{{ promote_feature_to_main.output.target_branch }}"
       platform: "{{ workflow.input.platform }}"
@@ -1387,23 +1387,23 @@ agents:
     routes:
       - to: close_mark_satisfied
 
-  # ── Close: mark apex satisfied ───────────────────────────────────────────
+  # ── Close: mark root satisfied ───────────────────────────────────────────
   #
   # Sync ADO once more (so the validate event sees a fresh cache),
-  # validate the satisfaction event against the apex's type config,
+  # validate the satisfaction event against the root's type config,
   # then transition state via twig — and flush that transition with a
   # post-state `twig sync` so the change is durable in ADO before the
   # workflow terminates (AB#3129, sister-bug to AB#3126). Without the
-  # second sync, the apex's terminal-state transition sits in twig's
+  # second sync, the root's terminal-state transition sits in twig's
   # local pending queue and is never pushed; subsequent processes
-  # reading ADO see the apex still in its non-terminal state.
+  # reading ADO see the root still in its non-terminal state.
   # AUDIT (AB#3066): No try/catch wrapper here — intentional. Unlike
-  # `terminal_satisfied` in apex-item-dispatch.yaml (the per-item wave
-  # corridor, where a swallow lets the wave complete and the outer loop
-  # re-evaluate next-ready), this is the apex-level close-out. A failure
+  # `satisfied` in root-item-dispatch.yaml (the per-item batch
+  # corridor, where a swallow lets the batch complete and the outer loop
+  # re-evaluate next-ready), this is the root-level close-out. A failure
   # here SHOULD fail the workflow loudly so the operator sees that the
-  # apex didn't transition. If a try/catch is later added here, mirror
-  # the apex-item-dispatch.yaml > terminal_satisfied shape — log to
+  # root didn't transition. If a try/catch is later added here, mirror
+  # the root-item-dispatch.yaml > satisfied shape — log to
   # stderr AND surface in structured output.
   # `$ErrorActionPreference = 'Stop'` and
   # `$PSNativeCommandUseErrorActionPreference = $true` reinforce the
@@ -1411,7 +1411,7 @@ agents:
   # auth) halts the script rather than silently propagating stale state.
   - name: close_mark_satisfied
     type: script
-    description: Sync, validate, and transition apex to its satisfied state
+    description: Sync, validate, and transition root to its satisfied state
     command: pwsh
     args:
       - "-NoProfile"
@@ -1420,47 +1420,47 @@ agents:
         $ErrorActionPreference = 'Stop';
         $PSNativeCommandUseErrorActionPreference = $true;
         twig sync;
-        $validate = polyphony validate --work-item {{ workflow.input.apex_id }} --event item_satisfied | ConvertFrom-Json;
+        $validate = polyphony validate --work-item {{ workflow.input.root_id }} --event item_satisfied | ConvertFrom-Json;
         if ($validate.target_state) {
-          twig state $validate.target_state --id {{ workflow.input.apex_id }};
+          twig state $validate.target_state --id {{ workflow.input.root_id }};
           twig sync;
         }
         [ordered]@{
-          apex_id      = {{ workflow.input.apex_id }};
+          root_id      = {{ workflow.input.root_id }};
           target_state = $validate.target_state;
           success      = ($null -ne $validate.target_state);
         } | ConvertTo-Json -Compress
     routes:
-      - to: terminal_apex_satisfied
+      - to: root_satisfied
 
-  # ── Terminal: apex satisfied ─────────────────────────────────────────────
-  - name: terminal_apex_satisfied
+  # ── Terminal: root satisfied ─────────────────────────────────────────────
+  - name: root_satisfied
     type: script
-    description: Terminal — apex is satisfied
+    description: Terminal — root is satisfied
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - >-
-        @{ apex_id = {{ workflow.input.apex_id }}; satisfied = $true } | ConvertTo-Json -Compress
+        @{ root_id = {{ workflow.input.root_id }}; satisfied = $true } | ConvertTo-Json -Compress
     routes:
       - to: $end
 
-  # ── Terminal: apex abandoned ─────────────────────────────────────────────
-  - name: terminal_apex_abandoned
+  # ── Terminal: root abandoned ─────────────────────────────────────────────
+  - name: root_abandoned
     type: script
-    description: Terminal — apex was abandoned by the operator
+    description: Terminal — root was abandoned by the operator
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - >-
-        @{ apex_id = {{ workflow.input.apex_id }}; satisfied = $false; abandoned = $true } | ConvertTo-Json -Compress
+        @{ root_id = {{ workflow.input.root_id }}; satisfied = $false; abandoned = $true } | ConvertTo-Json -Compress
     routes:
       - to: $end
 
   # ── Terminal: preflight failed ───────────────────────────────────────────
-  - name: terminal_preflight_failed
+  - name: preflight_failed
     type: script
     description: Terminal — preflight validation failed and operator aborted
     command: pwsh
@@ -1468,21 +1468,21 @@ agents:
       - "-NoProfile"
       - "-Command"
       - >-
-        @{ apex_id = {{ workflow.input.apex_id }}; satisfied = $false; preflight_failed = $true } | ConvertTo-Json -Compress
+        @{ root_id = {{ workflow.input.root_id }}; satisfied = $false; preflight_failed = $true } | ConvertTo-Json -Compress
     routes:
       - to: $end
 
-  # ── Terminal: apex iteration cap (PR #9) ─────────────────────────────────
+  # ── Terminal: root iteration cap (PR #9) ─────────────────────────────────
   #
-  # Fires when the outer dispatch loop exceeded apex.max_dispatch_iterations
-  # (default 10) without `item_satisfied` rolling all the way up the apex
-  # tree. Indicates either (a) a genuine multi-pass apex deeper than the
-  # cap, in which case the operator should raise POLYPHONY_APEX_MAX_DISPATCH_ITERATIONS
+  # Fires when the outer dispatch loop exceeded root.max_dispatch_iterations
+  # (default 10) without `item_satisfied` rolling all the way up the root
+  # tree. Indicates either (a) a genuine multi-pass root deeper than the
+  # cap, in which case the operator should raise POLYPHONY_ROOT_MAX_DISPATCH_ITERATIONS
   # and re-invoke (state is on disk + ADO; resume is honest), or (b)
   # reclassification flapping — symptom (iii) from the closed-loop-state-plan
-  # Option α footnote, calling for re-evaluating Option β (per-facet wave
+  # Option α footnote, calling for re-evaluating Option β (per-facet batch
   # fan-out in worklist build).
-  - name: terminal_apex_iteration_cap
+  - name: root_iteration_cap
     type: script
     description: Terminal — outer dispatch loop hit max_dispatch_iterations
     command: pwsh
@@ -1491,7 +1491,7 @@ agents:
       - "-Command"
       - >-
         @{
-          apex_id = {{ workflow.input.apex_id }};
+          root_id = {{ workflow.input.root_id }};
           satisfied = $false;
           iteration_cap_hit = $true;
           iterations_used = '{{ outer_loop_evaluator.output.iteration | default(0) }}';
@@ -1500,25 +1500,25 @@ agents:
     routes:
       - to: $end
 
-  # ── Terminal: apex blocked (PR #9) ───────────────────────────────────────
+  # ── Terminal: root blocked (PR #9) ───────────────────────────────────────
   #
   # Fires when the iteration produced zero new dispatches AND zero new
-  # satisfactions, AND the apex is not yet `item_satisfied: Satisfied`.
+  # satisfactions, AND the root is not yet `item_satisfied: Satisfied`.
   # The workflow has nothing left it can do under its own steam — every
   # remaining item classifies as monitoring/blocked/error or has no
   # eligible corridor. Operator should inspect `polyphony state next-ready
-  # --work-item {apex_id}` and the per-item dispositions before
-  # re-invoking apex-driver.
-  - name: terminal_apex_blocked
+  # --work-item {root_id}` and the per-item dispositions before
+  # re-invoking polyphony.
+  - name: root_blocked
     type: script
-    description: Terminal — outer loop is stable but apex is not satisfied
+    description: Terminal — outer loop is stable but root is not satisfied
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
       - >-
         @{
-          apex_id = {{ workflow.input.apex_id }};
+          root_id = {{ workflow.input.root_id }};
           satisfied = $false;
           blocked = $true;
           iterations_used = '{{ outer_loop_evaluator.output.iteration | default(0) }}';
@@ -1527,24 +1527,24 @@ agents:
     routes:
       - to: $end
 
-  # ── Terminal: apex dispatch failures (AB#3067) ───────────────────────────
+  # ── Terminal: root dispatch failures (AB#3067) ───────────────────────────
   #
   # Fires when one or more per-item sub-workflow invocations failed inside
   # `dispatch_items` (which runs `failure_mode: continue_on_error`). Without
-  # this terminal, those failures were swallowed by the wave's "successful"
-  # return and the outer loop flipped to `terminal_apex_blocked` with no
+  # this terminal, those failures were swallowed by the batch's "successful"
+  # return and the outer loop flipped to `root_blocked` with no
   # actionable detail. This terminal enumerates the failed items with their
   # work_item_id (when correlatable) and the underlying error message so
   # the operator can decide whether to re-invoke, fix the upstream cause,
   # or open a bug.
   #
   # Priority: this terminal is reached BEFORE complete / cap / blocked. A
-  # satisfied apex coexisting with sub-workflow failures is almost always a
+  # satisfied root coexisting with sub-workflow failures is almost always a
   # stale validator read; surface the failures first.
   #
   # NOTE: `|` (literal) — `>-` (folded) destroys the here-string the body
   # uses to pass the failed_items JSON across the Jinja boundary.
-  - name: terminal_apex_dispatch_failures
+  - name: root_dispatch_failures
     type: script
     description: Terminal — one or more for_each item dispatches failed; enumerate
     command: pwsh
@@ -1560,7 +1560,7 @@ agents:
           $failedItems = @($rawFailed | ConvertFrom-Json);
         } catch { $failedItems = @() }
         [ordered]@{
-          apex_id            = {{ workflow.input.apex_id }};
+          root_id            = {{ workflow.input.root_id }};
           satisfied          = $false;
           dispatch_failures  = $true;
           items_failed_count = [int]'{{ outer_loop_evaluator.output.items_failed_this_iteration | default(0) }}';
@@ -1571,50 +1571,50 @@ agents:
     routes:
       - to: $end
 
-# ── Wave dispatch loop (for_each) ─────────────────────────────────────────
+# ── Batch dispatch loop (for_each) ─────────────────────────────────────────
 #
 # for_each over waves. Each iteration:
-#   1. Fans the wave's items out across per-item worktrees and
+#   1. Fans the batch's items out across per-item worktrees and
 #      dispatches each into its lifecycle sub-workflow.
-#   2. Integrates the completed branches back into the apex feature
+#   2. Integrates the completed branches back into the root feature
 #      branch in topological order.
 #
 # max_concurrent: 1 — waves are sequential by definition (a later
-# wave's items depend on an earlier wave's items being complete).
-# Within a wave, the inner for_each runs items in parallel.
+# batch's items depend on an earlier batch's items being complete).
+# Within a batch, the inner for_each runs items in parallel.
 #
-# failure_mode: continue_on_error so a single wave's failures flow
-# through to the wave_failed_gate rather than aborting the loop.
+# failure_mode: continue_on_error so a single batch's failures flow
+# through to the batch_failed_gate rather than aborting the loop.
 #
 # Conductor schema: for_each lives at workflow root, not nested under
 # `agents:` (M8). `source:` is a BARE dotted path (not a Jinja
-# expression). Routes cross sections — `wave_dispatch_loop` is reached
-# from agents above and routes back to `wave_loop_summary` in the
+# expression). Routes cross sections — `batch_dispatch_loop` is reached
+# from agents above and routes back to `batch_loop_summary` in the
 # agents section.
 #
 # Invariants:
 #   Pre:  build_worklist.output.waves is non-empty.
-#   Post: every wave has been dispatched and integrated, OR the
-#         operator chose abort at wave_failed_gate.
+#   Post: every batch has been dispatched and integrated, OR the
+#         operator chose abort at batch_failed_gate.
 for_each:
-  - name: wave_dispatch_loop
+  - name: batch_dispatch_loop
     type: for_each
-    description: Sequential per-wave dispatch + integration
+    description: Sequential per-batch dispatch + integration
     source: build_worklist.output.waves
-    as: wave
+    as: batch
     max_concurrent: 1
     failure_mode: continue_on_error
     agent:
-      name: dispatch_one_wave
+      name: dispatch_one_batch
       type: workflow
-      workflow: ./apex-wave-dispatch.yaml
+      workflow: ./root-batch-dispatch.yaml
       input_mapping:
-        apex_id: "{{ workflow.input.apex_id }}"
-        wave_index: "{{ wave.wave_index }}"
-        wave_items: "{{ wave.items | tojson }}"
+        root_id: "{{ workflow.input.root_id }}"
+        batch_index: "{{ batch.batch_index }}"
+        batch_items: "{{ batch.items | tojson }}"
         platform: "{{ workflow.input.platform }}"
         organization: "{{ workflow.input.organization }}"
         project: "{{ workflow.input.project }}"
         repository: "{{ workflow.input.repository }}"
     routes:
-      - to: wave_loop_summary
+      - to: batch_loop_summary

@@ -13,7 +13,7 @@ namespace Polyphony.Tests.Commands;
 /// <summary>
 /// AB#3217 — round-trip tests for <c>polyphony branch mark-impl-merged</c>
 /// and <c>polyphony branch clear-impl-merged</c>. The marker is the key
-/// signal that lets <c>branch next-impl</c> skip an apex root whose
+/// signal that lets <c>branch next-impl</c> skip an root root whose
 /// terminal transition is deferred to <c>close_mark_satisfied</c>
 /// (AB#3169) so the same item doesn't redispatch and trigger empty-impl
 /// squash-coverage failures.

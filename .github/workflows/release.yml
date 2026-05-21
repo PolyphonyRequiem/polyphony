@@ -269,9 +269,9 @@ jobs:
 
           Operator launcher scripts (PowerShell; cross-platform via \`pwsh\`):
 
-          - \`Invoke-PolyphonySdlc.ps1\` (+ \`.sha256\`) — dispatches a full SDLC run for one apex work item
+          - \`Invoke-PolyphonySdlc.ps1\` (+ \`.sha256\`) — dispatches a full SDLC run for one root work item
           - \`Resolve-GhIdentity.ps1\` (+ \`.sha256\`) — required by the launcher (dot-sourced)
-          - \`Twig-Hydration.ps1\` (+ \`.sha256\`) — required by the launcher (dot-sourced); hydrates the per-apex worktree's twig workspace
+          - \`Twig-Hydration.ps1\` (+ \`.sha256\`) — required by the launcher (dot-sourced); hydrates the per-root worktree's twig workspace
           - \`Migrate-ToBareRepo.ps1\` (+ \`.sha256\`) — used by the launcher's bare-layout failure remediation
           - \`bootstrap-conductor.ps1\` (+ \`.sha256\`) — first-run repo onboarding (creates \`.polyphony-config/\`)
 

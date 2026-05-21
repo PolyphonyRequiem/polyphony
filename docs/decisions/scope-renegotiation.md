@@ -8,7 +8,7 @@
 ## Context
 
 Child plan PRs sometimes need to ask the parent to change. The existing
-`polyphony pr validate-plan-diff` verb (Phase 3 wave 1) already handles
+`polyphony pr validate-plan-diff` verb (Phase 3 batch 1) already handles
 that for the **plan-tree** case: it walks the plan-document hierarchy,
 classifies the diff against parent/ancestor paths it derived from a
 work-item id, and reads a YAML front-matter `requests_parent_change`
@@ -112,12 +112,12 @@ that re-planning is required. Three options were considered:
   `output:` map include `renegotiation_pending`,
   `renegotiation_request`, `validate_scope_verdict`, and
   `scope_violation_files`. Whoever invokes plan-level (eventually
-  apex-driver.yaml; today nothing) reads those outputs and decides
+  polyphony.yaml; today nothing) reads those outputs and decides
   whether to re-enter parent planning. Pros: clean boundary, no
   side-channel, matches the existing M7 contract that the workflow's
   top-level `output:` map IS the sub-workflow's public API. Cons:
   today plan-level has no caller — the signal goes nowhere until
-  apex-driver lands.
+  polyphony lands.
 
 ### Decision: (C) workflow output bubble-up
 
@@ -136,17 +136,17 @@ We pick (C). Reasons:
    over implicit state.** The renegotiation signal is data. It belongs
    on the data path.
 4. **(A) is not foreclosed if persistence is later required.** If
-   apex-driver eventually needs the renegotiation request to survive
-   workflow re-entry across sessions, apex-driver can write the
+   polyphony eventually needs the renegotiation request to survive
+   workflow re-entry across sessions, polyphony can write the
    bubbled output to twig itself with one extra `twig patch` step.
-   That is apex-driver's choice, not plan-level's; plan-level stays
+   That is polyphony's choice, not plan-level's; plan-level stays
    side-effect-free with respect to the work-item record.
 
 ### What plan-level.yaml ships in this PR
 
 - New input `child_scope_globs` (comma-separated string, default `""`).
   When empty (today's only callers), `validate_scope` is skipped and
-  the workflow merges as before. When set (apex-driver, future), the
+  the workflow merges as before. When set (polyphony, future), the
   validate_scope + scope_violation_gate path is active.
 - New script agent `validate_scope` invoked post-review, pre-merge on
   the github leg via `polyphony plan validate-scope --child-scope`.
@@ -168,9 +168,9 @@ We pick (C). Reasons:
   `| tojson` so the parent receives a real list rather than the
   default `str(list)` representation.
 
-### What apex-driver will do (downstream PR)
+### What polyphony will do (downstream PR)
 
-When apex-driver lands, its plan-PR sub-step invokes plan-level and
+When polyphony lands, its plan-PR sub-step invokes plan-level and
 reads:
 
 ```jinja
@@ -180,13 +180,13 @@ reads:
   architect's prompt addendum...
 {% elif plan_level.output.validate_scope_verdict == 'block' %}
   ...the operator chose abort at scope_violation_gate; surface as a
-  failed child planning run for the apex backlog...
+  failed child planning run for the root backlog...
 {% else %}
   ...routine merge; carry on with sibling children...
 {% endif %}
 ```
 
-apex-driver owns the parent re-entry decision. plan-level only
+polyphony owns the parent re-entry decision. plan-level only
 reports facts.
 
 ### ADO leg — deferred
@@ -209,10 +209,10 @@ workflow output templates extend to read from whichever leg ran.
 
 - plan-level.yaml's `output:` map is now a real public API. Future
   edits must preserve the four bubble-up keys (lint-plan-level.ps1
-  enforces this) or break apex-driver when it lands.
+  enforces this) or break polyphony when it lands.
 - The handler is structurally complete but **operationally inert
-  until apex-driver lands**. That is intentional — wiring the verbs
-  into plan-level now lets apex-driver be a pure consumer rather than
+  until polyphony lands**. That is intentional — wiring the verbs
+  into plan-level now lets polyphony be a pure consumer rather than
   having to bundle handler edits with its own scaffold.
 - The github-only restriction is documented here AND in the
   `validate_scope` / `extract_renegotiation_flag` agent comments in

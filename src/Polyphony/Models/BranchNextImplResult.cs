@@ -12,9 +12,9 @@ namespace Polyphony;
 public sealed record BranchNextImplResult
 {
     public required string Action { get; init; }
-    public required int PrimaryId { get; init; }
-    public required string PrimaryTitle { get; init; }
-    public required string PrimaryType { get; init; }
+    public required int RootId { get; init; }
+    public required string RootTitle { get; init; }
+    public required string RootType { get; init; }
     public required int ContainerId { get; init; }
     public required string ContainerTitle { get; init; }
     public required string ContainerType { get; init; }

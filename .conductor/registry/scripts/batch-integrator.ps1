@@ -1,19 +1,19 @@
 <#
 .SYNOPSIS
-    Integrate completed wave branches into the apex feature branch in
+    Integrate completed batch branches into the root feature branch in
     edge-correct topological order.
 
 .DESCRIPTION
-    Companion to .conductor/registry/workflows/apex-driver.yaml.
+    Companion to .conductor/registry/workflows/polyphony.yaml.
 
-    After the apex-driver fans a wave of work-items out into per-item
+    After the polyphony fans a batch of work-items out into per-item
     worktrees and each lifecycle sub-workflow has produced a child
-    branch (sdlc/apex/<id>), this script merges those child branches
-    back into the apex feature branch in the order dictated by the
+    branch (sdlc/root/<id>), this script merges those child branches
+    back into the root feature branch in the order dictated by the
     cross-item edge graph.
 
     Topological ordering is consumed from
-    `polyphony edges check <ApexId> --render json`. Items
+    `polyphony edges check <RootId> --render json`. Items
     whose `item_satisfied` requirement depends on other items are merged
     AFTER their prerequisites, so the resulting commit graph mirrors the
     declared dependency structure.
@@ -21,16 +21,16 @@
     Per the polyphony-workflow-author skill conventions:
       * ALWAYS exits 0 (routing-style envelope).
       * Conflicts surface via the `conflicts` array; the workflow's
-        wave_failed_gate routes on `success` and `conflicts.length`.
+        batch_failed_gate routes on `success` and `conflicts.length`.
       * `git merge` failures (conflicts, missing branch, etc.) are
-        captured per-branch and apex-driver decides whether to halt
-        the wave or continue based on policy.
+        captured per-branch and polyphony decides whether to halt
+        the batch or continue based on policy.
 
     Output JSON envelope:
         {
           success: <bool>,
-          wave_index: <int>,
-          apex_id: <int>,
+          batch_index: <int>,
+          root_id: <int>,
           feature_branch: '<branch>',
           merge_strategy: 'no-ff' | 'ff-only' | 'ff',
           branches_integrated: [{ work_item_id, branch, merge_commit }],
@@ -46,26 +46,26 @@
       edges_check_failed      — `polyphony edges check` exited non-zero.
       edges_check_invalid_json — non-JSON output from polyphony.
       checkout_failed         — could not check out feature branch.
-      missing_apex_id         — required apex id was not provided.
+      missing_root_id         — required root id was not provided.
 
-.PARAMETER ApexId
-    The apex root work item id. Used for `polyphony edges check` and
+.PARAMETER RootId
+    The root root work item id. Used for `polyphony edges check` and
     to derive the feature branch name when -FeatureBranch is omitted.
 
-.PARAMETER WaveIndex
-    The wave number being integrated (0-based; threaded through into
-    the envelope so apex-driver can correlate gate decisions).
+.PARAMETER BatchIndex
+    The batch number being integrated (0-based; threaded through into
+    the envelope so polyphony can correlate gate decisions).
 
 .PARAMETER WorkItemIds
-    Comma-separated list of work-item ids in the wave whose branches
+    Comma-separated list of work-item ids in the batch whose branches
     should be considered for integration. The script will only merge
     branches for items in this list AND in the topological order
     derived from `polyphony edges check`. Items absent from edge data
     are merged in the order supplied.
 
 .PARAMETER FeatureBranch
-    Override for the apex feature branch. Defaults to
-    `feature/<ApexId>` per the branch-model spec.
+    Override for the root feature branch. Defaults to
+    `feature/<RootId>` per the branch-model spec.
 
 .PARAMETER MergeStrategy
     One of `no-ff` (default — preserve merge commits per child),
@@ -75,17 +75,17 @@
     Override for the polyphony executable. Defaults to `polyphony`.
 
 .NOTES
-    Companion to .conductor/registry/workflows/apex-driver.yaml. The
+    Companion to .conductor/registry/workflows/polyphony.yaml. The
     output schema is the workflow's input schema for the
-    `wave_integrator` step; tests pin both shapes.
+    `batch_integrator` step; tests pin both shapes.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [int]$ApexId,
+    [int]$RootId,
 
     [Parameter(Mandatory)]
-    [int]$WaveIndex,
+    [int]$BatchIndex,
 
     [string]$WorkItemIds = '',
 
@@ -100,13 +100,13 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrWhiteSpace($FeatureBranch)) {
-    $FeatureBranch = "feature/$ApexId"
+    $FeatureBranch = "feature/$RootId"
 }
 
 $envelope = [ordered]@{
     success              = $false
-    wave_index           = $WaveIndex
-    apex_id              = $ApexId
+    batch_index           = $BatchIndex
+    root_id              = $RootId
     feature_branch       = $FeatureBranch
     merge_strategy       = $MergeStrategy
     branches_integrated  = @()
@@ -138,9 +138,9 @@ try {
         exit 0
     }
 
-    $waveIds = @()
+    $batchIds = @()
     if (-not [string]::IsNullOrWhiteSpace($WorkItemIds)) {
-        $waveIds = $WorkItemIds.Split(',') | ForEach-Object {
+        $batchIds = $WorkItemIds.Split(',') | ForEach-Object {
             [int]($_.Trim())
         } | Where-Object { $_ -gt 0 }
     }
@@ -150,7 +150,7 @@ try {
     # surfaces failure via `Error`/`ErrorCode` in the JSON.
     $stderrFile = [System.IO.Path]::GetTempFileName()
     try {
-        $stdout = & $PolyphonyExe edges check $ApexId --render json 2>$stderrFile
+        $stdout = & $PolyphonyExe edges check $RootId --render json 2>$stderrFile
         $exit = $LASTEXITCODE
         $stderr = Get-Content -Raw $stderrFile -ErrorAction SilentlyContinue
     }
@@ -186,26 +186,26 @@ try {
     # Compute integration order: stable preorder over WorkItemIds.
     # If edges data exposes a topological field, prefer it. Otherwise
     # fall back to the input order, which conductor's worklist build
-    # already returns in topological wave order.
+    # already returns in topological batch order.
     $ordered = @()
     $orderedIds = @()
     if ($edges.PSObject.Properties.Name -contains 'topological_order') {
         foreach ($id in $edges.topological_order) {
             $intId = [int]$id
-            if ($waveIds.Count -eq 0 -or $waveIds -contains $intId) {
+            if ($batchIds.Count -eq 0 -or $batchIds -contains $intId) {
                 $ordered += $intId
                 $orderedIds += $intId
             }
         }
-        # Append any wave ids missing from topological order at the end
-        foreach ($id in $waveIds) {
+        # Append any batch ids missing from topological order at the end
+        foreach ($id in $batchIds) {
             if ($orderedIds -notcontains $id) {
                 $ordered += $id
             }
         }
     }
     else {
-        $ordered = $waveIds
+        $ordered = $batchIds
     }
 
     # Check out the feature branch in the current working tree before merging.
@@ -236,7 +236,7 @@ try {
     $conflicts = @()
 
     foreach ($id in $ordered) {
-        $branch = "sdlc/apex/$id"
+        $branch = "sdlc/root/$id"
 
         # Verify branch exists locally; if not, skip with a reason.
         $null = & git rev-parse --verify --quiet $branch 2>$null
@@ -251,7 +251,7 @@ try {
 
         $mergeStderr = [System.IO.Path]::GetTempFileName()
         try {
-            $mergeOut = & git merge $mergeFlag --no-edit -m "Integrate $branch into $FeatureBranch (apex $ApexId, wave $WaveIndex)" $branch 2>$mergeStderr
+            $mergeOut = & git merge $mergeFlag --no-edit -m "Integrate $branch into $FeatureBranch (root $RootId, batch $BatchIndex)" $branch 2>$mergeStderr
             $mergeExit = $LASTEXITCODE
             $mergeErr = Get-Content -Raw $mergeStderr -ErrorAction SilentlyContinue
         }

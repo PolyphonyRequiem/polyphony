@@ -36,25 +36,25 @@ public sealed class StatusCommandTests : CommandTestBase
         new Polyphony.Sdlc.Observers.PullRequestReader(_gh, null));
 
     [Fact]
-    public async Task Status_MissingApex_ReturnsRoutingFailure_AndDoesNotEmitJson()
+    public async Task Status_MissingRoot_ReturnsRoutingFailure_AndDoesNotEmitJson()
     {
         var cmd = CreateCommand();
         var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status());
 
         exitCode.ShouldBe(ExitCodes.RoutingFailure);
-        output.ShouldNotContain("\"apex_id\"");
+        output.ShouldNotContain("\"root_id\"");
     }
 
     [Fact]
     public async Task Status_WorkItemNotFound_ReturnsResultWithFoundFalse_AndExitsZero()
     {
         var cmd = CreateCommand();
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(apex: 999_999));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(root: 999_999));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatusResult);
         result.ShouldNotBeNull();
-        result.ApexId.ShouldBe(999_999);
+        result.RootId.ShouldBe(999_999);
         result.Ado.Found.ShouldBeFalse();
         result.Ado.Error.ShouldNotBeNull();
         result.Ado.Error!.ShouldContain("999999");
@@ -64,19 +64,19 @@ public sealed class StatusCommandTests : CommandTestBase
     [Fact]
     public async Task Status_PlannedTagWithZeroChildren_EmitsFalseSatisfiedWarning()
     {
-        // The AB#3064 false-satisfied bug: planned tag stamped on an apex
+        // The AB#3064 false-satisfied bug: planned tag stamped on an root
         // that has no children. Headline takes the warning's wording.
-        var apex = new WorkItemBuilder()
+        var root = new WorkItemBuilder()
             .WithId(3064)
             .WithType("Issue")
-            .WithTitle("Test apex")
+            .WithTitle("Test root")
             .WithState("Doing")
             .WithTags("polyphony; polyphony:root; polyphony:planned")
             .Build();
-        await SeedAsync(apex);
+        await SeedAsync(root);
 
         var cmd = CreateCommand();
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(apex: 3064));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(root: 3064));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatusResult);
@@ -88,27 +88,27 @@ public sealed class StatusCommandTests : CommandTestBase
     }
 
     [Fact]
-    public async Task Status_ApexNotInScope_EmitsNotInScopeWarning()
+    public async Task Status_RootNotInScope_EmitsNotInScopeWarning()
     {
         // An ADO work item that exists but doesn't carry the polyphony tag.
         // The dashboard catches this — it usually means the operator pointed
         // status at the wrong work item.
-        var apex = new WorkItemBuilder()
+        var root = new WorkItemBuilder()
             .WithId(7)
             .WithType("Issue")
             .WithTitle("Wrong target")
             .WithState("To Do")
             .Build();
-        await SeedAsync(apex);
+        await SeedAsync(root);
 
         var cmd = CreateCommand();
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(apex: 7));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(root: 7));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatusResult);
         result.ShouldNotBeNull();
         result.Ado.InScope.ShouldBeFalse();
-        result.Warnings.ShouldContain(w => w.Code == "apex_not_in_scope");
+        result.Warnings.ShouldContain(w => w.Code == "root_not_in_scope");
         result.Headline.ShouldContain("not in polyphony scope");
         result.NextAction.ShouldNotBeNull();
         result.NextAction!.ShouldContain("polyphony root declare");
@@ -117,44 +117,44 @@ public sealed class StatusCommandTests : CommandTestBase
     [Fact]
     public async Task Status_InScopeButNotRoot_EmitsNotRootWarning()
     {
-        var apex = new WorkItemBuilder()
+        var root = new WorkItemBuilder()
             .WithId(42)
             .WithType("Task")
             .WithTitle("descendant")
             .WithState("Doing")
             .WithTags("polyphony")
             .Build();
-        await SeedAsync(apex);
+        await SeedAsync(root);
 
         var cmd = CreateCommand();
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(apex: 42));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(root: 42));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatusResult);
         result.ShouldNotBeNull();
         result.Ado.InScope.ShouldBeTrue();
         result.Ado.IsRoot.ShouldBeFalse();
-        result.Warnings.ShouldContain(w => w.Code == "apex_not_root");
+        result.Warnings.ShouldContain(w => w.Code == "root_not_root");
     }
 
     [Fact]
     public async Task Status_ManifestMissing_EmitsManifestMissingWarning_AndStillExitsZero()
     {
-        var apex = new WorkItemBuilder()
+        var root = new WorkItemBuilder()
             .WithId(100)
             .WithType("Issue")
-            .WithTitle("Healthy apex")
+            .WithTitle("Healthy root")
             .WithState("Doing")
             .WithTags("polyphony; polyphony:root")
             .Build();
-        await SeedAsync(apex);
+        await SeedAsync(root);
 
         using var tempDir = new TempDirectory();
         var missingManifest = Path.Combine(tempDir.Path, ".polyphony", "run.yaml");
 
         var cmd = CreateCommand();
         var (exitCode, output) = await CaptureConsoleAsync(
-            () => cmd.Status(apex: 100, manifestPath: missingManifest));
+            () => cmd.Status(root: 100, manifestPath: missingManifest));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatusResult);
@@ -166,14 +166,14 @@ public sealed class StatusCommandTests : CommandTestBase
     [Fact]
     public async Task Status_ManifestPresent_RootGenerationAndCountsSurfaced()
     {
-        var apex = new WorkItemBuilder()
+        var root = new WorkItemBuilder()
             .WithId(200)
             .WithType("Issue")
             .WithTitle("Run-in-flight")
             .WithState("Doing")
             .WithTags("polyphony; polyphony:root")
             .Build();
-        await SeedAsync(apex);
+        await SeedAsync(root);
 
         // Manifest exists, plan PRs merged, but no feature PR returned by gh.
         // That's the unmerged-progress signal — pin both the surfaced fields
@@ -207,7 +207,7 @@ public sealed class StatusCommandTests : CommandTestBase
 
         var cmd = CreateCommand();
         var (exitCode, output) = await CaptureConsoleAsync(
-            () => cmd.Status(apex: 200, manifestPath: manifestPath));
+            () => cmd.Status(root: 200, manifestPath: manifestPath));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatusResult);
@@ -229,14 +229,14 @@ public sealed class StatusCommandTests : CommandTestBase
     [Fact]
     public async Task Status_FeaturePrMerged_NoUnmergedProgressWarning_AndHeadlineReportsMerged()
     {
-        var apex = new WorkItemBuilder()
+        var root = new WorkItemBuilder()
             .WithId(300)
             .WithType("Issue")
             .WithTitle("Shipped")
             .WithState("Done")
             .WithTags("polyphony; polyphony:root")
             .Build();
-        await SeedAsync(apex);
+        await SeedAsync(root);
 
         using var tempDir = new TempDirectory();
         var manifestPath = Path.Combine(tempDir.Path, ".polyphony", "run.yaml");
@@ -272,7 +272,7 @@ public sealed class StatusCommandTests : CommandTestBase
 
         var cmd = CreateCommand();
         var (exitCode, output) = await CaptureConsoleAsync(
-            () => cmd.Status(apex: 300, manifestPath: manifestPath));
+            () => cmd.Status(root: 300, manifestPath: manifestPath));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatusResult);
@@ -287,14 +287,14 @@ public sealed class StatusCommandTests : CommandTestBase
     [Fact]
     public async Task Status_GhFails_FeaturePrSectionCarriesError_AndExitZero()
     {
-        var apex = new WorkItemBuilder()
+        var root = new WorkItemBuilder()
             .WithId(400)
             .WithType("Issue")
             .WithTitle("gh wedged")
             .WithState("Doing")
             .WithTags("polyphony; polyphony:root")
             .Build();
-        await SeedAsync(apex);
+        await SeedAsync(root);
 
         _git.GetRemoteUrlAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>("https://github.com/owner/repo"));
@@ -304,7 +304,7 @@ public sealed class StatusCommandTests : CommandTestBase
                 throw new InvalidOperationException("gh hung — buffered stderr: ..."));
 
         var cmd = CreateCommand();
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(apex: 400));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Status(root: 400));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatusResult);
@@ -317,11 +317,11 @@ public sealed class StatusCommandTests : CommandTestBase
     [Fact]
     public async Task Status_BinarySection_AlwaysPopulated()
     {
-        var apex = new WorkItemBuilder().WithId(500).Build();
-        await SeedAsync(apex);
+        var root = new WorkItemBuilder().WithId(500).Build();
+        await SeedAsync(root);
 
         var cmd = CreateCommand();
-        var (_, output) = await CaptureConsoleAsync(() => cmd.Status(apex: 500));
+        var (_, output) = await CaptureConsoleAsync(() => cmd.Status(root: 500));
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatusResult);
         result.ShouldNotBeNull();

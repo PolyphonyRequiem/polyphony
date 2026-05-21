@@ -31,13 +31,13 @@ Describe 'lint-prose-children.ps1' {
             $output | Should -BeNullOrEmpty
         }
 
-        It 'Passes when plan has prose children AND apex_facets front-matter' {
+        It 'Passes when plan has prose children AND root_facets front-matter' {
             Set-Content (Join-Path $script:PlansDir 'plan-1.md') @'
 ---
-apex_facets: [implementable]
+root_facets: [implementable]
 ---
 
-# Apex 1
+# Root 1
 
 ## Child Issues
 
@@ -55,7 +55,7 @@ children:
     title: First child
 ---
 
-# Apex 2
+# Root 2
 
 ## Child Items
 
@@ -67,7 +67,7 @@ children:
 
         It 'Passes when plan has no prose-children section regardless of front-matter' {
             Set-Content (Join-Path $script:PlansDir 'plan-3.md') @'
-# Apex 3
+# Root 3
 
 ## Strategic Objective
 
@@ -83,7 +83,7 @@ Some prose.
 
         It 'Does not match Childhood (word-boundary defense)' {
             Set-Content (Join-Path $script:PlansDir 'plan-4.md') @'
-# Apex 4
+# Root 4
 
 ## Childhood Influences
 
@@ -93,10 +93,10 @@ Prose only — Childhood is not Child(ren).
             $LASTEXITCODE | Should -Be 0
         }
 
-        It 'Recognizes apex_facets even with extra leading whitespace' {
+        It 'Recognizes root_facets even with extra leading whitespace' {
             Set-Content (Join-Path $script:PlansDir 'plan-5.md') @'
 ---
-   apex_facets:
+   root_facets:
      - implementable
 ---
 
@@ -113,7 +113,7 @@ Prose only — Childhood is not Child(ren).
 
         It 'Fails on prose children with no front-matter at all' {
             Set-Content (Join-Path $script:PlansDir 'bad-1.md') @'
-# Apex bad-1
+# Root bad-1
 
 ## Child Issues
 
@@ -126,10 +126,10 @@ Prose only — Childhood is not Child(ren).
             ($output | Out-String) | Should -Match 'Child Issues'
         }
 
-        It 'Fails on prose children with empty front-matter (no apex_facets, no children:)' {
+        It 'Fails on prose children with empty front-matter (no root_facets, no children:)' {
             Set-Content (Join-Path $script:PlansDir 'bad-2.md') @'
 ---
-title: Apex bad-2
+title: Root bad-2
 ---
 
 ## Children
@@ -143,7 +143,7 @@ title: Apex bad-2
 
         It 'Reports every violating heading in a single file' {
             Set-Content (Join-Path $script:PlansDir 'bad-3.md') @'
-# Apex bad-3
+# Root bad-3
 
 ## Child Issues
 
@@ -178,9 +178,9 @@ title: Apex bad-2
 
         It 'Front-matter terms inside the body do not count as intent' {
             Set-Content (Join-Path $script:PlansDir 'bad-4.md') @'
-# Apex bad-4
+# Root bad-4
 
-> apex_facets: [implementable]    -- this is body prose, not front matter
+> root_facets: [implementable]    -- this is body prose, not front matter
 
 ## Child Issues
 
@@ -198,10 +198,10 @@ title: Apex bad-2
 ---
 notes: |
   ## Child Issues (just a comment in front matter)
-apex_facets: [implementable]
+root_facets: [implementable]
 ---
 
-# Apex edge-1
+# Root edge-1
 
 Body has no prose-children section.
 '@
@@ -214,7 +214,7 @@ Body has no prose-children section.
 
         It 'Emits ::error annotations under -Format github' {
             Set-Content (Join-Path $script:PlansDir 'gha.md') @'
-# Apex gha
+# Root gha
 
 ## Child Issues
 

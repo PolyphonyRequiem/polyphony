@@ -43,8 +43,8 @@ public sealed class PolicyConfig
     public RootFallbackPolicy? RootFallback { get; set; }
 
     /// <summary>
-    /// Renegotiation bubble-up policy (Phase 7 apex-driver). Controls how
-    /// the <c>apex-driver</c> workflow handles a child <c>plan-level</c>
+    /// Renegotiation bubble-up policy (Phase 7 polyphony). Controls how
+    /// the <c>polyphony</c> workflow handles a child <c>plan-level</c>
     /// invocation that returns <c>renegotiation_pending=true</c>. Default
     /// is <see cref="RenegotiationAutoDecide.Prompt"/> (surface a human
     /// gate so the operator picks renegotiate / override / abort);
@@ -127,7 +127,7 @@ public static class RootFallbackAutoDecide
 }
 
 /// <summary>
-/// Renegotiation bubble-up policy. Drives apex-driver behavior when a
+/// Renegotiation bubble-up policy. Drives polyphony behavior when a
 /// child plan-level sub-workflow returns
 /// <c>renegotiation_pending=true</c> — i.e. the child planner is asking
 /// the parent to re-author its plan to accommodate the child.
@@ -153,7 +153,7 @@ public static class RenegotiationAutoDecide
     public const string Prompt = "prompt";
 
     /// <summary>Auto-resolve by re-entering the parent's plan-level workflow.
-    /// MVP: stub — the apex-driver workflow treats this identically to
+    /// MVP: stub — the polyphony workflow treats this identically to
     /// <see cref="Prompt"/> until full bubble-up wiring lands.</summary>
     public const string AutoRestart = "auto_restart";
 
@@ -175,7 +175,7 @@ public static class RenegotiationAutoDecide
 ///
 /// <list type="bullet">
 ///   <item><see cref="AcceptanceMode"/> — happy-path checkpoints
-///         (<c>user_acceptance</c>, <c>apex_completion_gate</c>,
+///         (<c>user_acceptance</c>, <c>root_completion_gate</c>,
 ///         <c>pending_review_gate</c>, <c>human_satisfaction_gate</c>).
 ///         Bypass picks the route the human would have selected on the
 ///         happy path.</item>
@@ -248,7 +248,7 @@ public static class UnattendedReviewWaitMode
     ///
     /// <para>Until that re-implementation ships, the loader rejects this
     /// value at validate-config time and the workflow router rejects it
-    /// at runtime via <c>terminal_abort_auto_mode_unsupported</c>. Use
+    /// at runtime via <c>abort_auto_mode_unsupported</c>. Use
     /// <see cref="Wait"/> (human throttle gate) or <see cref="Skip"/>
     /// (silent unattended polling) instead.</para>
     ///

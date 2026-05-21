@@ -209,7 +209,7 @@ public sealed class PlanCommandsStatusTests : CommandTestBase, IDisposable
     [Fact]
     public async Task ManifestProvidesGeneration_ForOpenPr()
     {
-        await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Apex").Build());
+        await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Root").Build());
         SaveManifest(rootId: 100, planGenerations: new() { ["root"] = 7 });
         var (cmd, runner) = CreateCommand();
         StubOrigin(runner);
@@ -257,7 +257,7 @@ public sealed class PlanCommandsStatusTests : CommandTestBase, IDisposable
     [Fact]
     public async Task PlannableRoot_NoPr_ReportsNeeded()
     {
-        await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Apex").Build());
+        await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Root").Build());
         var (cmd, runner) = CreateCommand();
         StubOrigin(runner);
         StubPrList(runner, "open", "[]");
@@ -352,7 +352,7 @@ public sealed class PlanCommandsStatusTests : CommandTestBase, IDisposable
         //                              → 120 (Issue, plannable, merged)
         //                              → 130 (Task, NOT plannable, → n/a)
         await SeedAsync(
-            new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Apex").Build(),
+            new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Root").Build(),
             new WorkItemBuilder().WithId(110).WithType("Issue").WithParentId(100).WithTitle("Sub A").Build(),
             new WorkItemBuilder().WithId(120).WithType("Issue").WithParentId(100).WithTitle("Sub B").Build(),
             new WorkItemBuilder().WithId(130).WithType("Task").WithParentId(100).WithTitle("Leaf C").Build()
@@ -508,7 +508,7 @@ public sealed class PlanCommandsStatusTests : CommandTestBase, IDisposable
     [Fact]
     public async Task HumanOutput_RendersTableWithSummary()
     {
-        await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Apex").Build());
+        await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Root").Build());
         var (cmd, runner) = CreateCommand();
         StubOrigin(runner);
         StubPrList(runner, "open", "[]");
@@ -521,7 +521,7 @@ public sealed class PlanCommandsStatusTests : CommandTestBase, IDisposable
         output.ShouldContain("plan status:");
         output.ShouldContain("root=100");
         output.ShouldContain("needed=1");
-        output.ShouldContain("Apex");
+        output.ShouldContain("Root");
         output.ShouldContain("ITEM");
     }
 
@@ -538,7 +538,7 @@ public sealed class PlanCommandsStatusTests : CommandTestBase, IDisposable
     [Fact]
     public async Task JsonOutput_UsesSnakeCase()
     {
-        await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Apex").Build());
+        await SeedAsync(new WorkItemBuilder().WithId(100).WithType("Epic").WithTitle("Root").Build());
         var (cmd, runner) = CreateCommand();
         StubOrigin(runner);
         StubPrList(runner, "open", "[]");

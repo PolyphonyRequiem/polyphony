@@ -1,7 +1,7 @@
 namespace Polyphony;
 
 /// <summary>
-/// Result envelope for <c>polyphony worktree create --apex N --branch B [--ref R]</c>.
+/// Result envelope for <c>polyphony worktree create --root N --branch B [--ref R]</c>.
 ///
 /// <para>This verb is routing-style: it always exits 0; consumers branch on
 /// <see cref="Outcome"/> and (when failed) <see cref="Reason"/>.</para>
@@ -16,13 +16,13 @@ namespace Polyphony;
 ///
 /// <para>Reasons (only set when <see cref="Outcome"/> is <c>failed</c>):</para>
 /// <list type="bullet">
-///   <item><c>invalid_apex</c> — <c>--apex</c> is not a positive int.</item>
+///   <item><c>invalid_root</c> — <c>--root</c> is not a positive int.</item>
 ///   <item><c>invalid_branch</c> — <c>--branch</c> failed <see cref="Polyphony.Infrastructure.Worktrees.BranchSlug.TryParse"/>.</item>
-///   <item><c>branch_apex_mismatch</c> — parsed root id of <c>--branch</c> does not equal <c>--apex</c>.</item>
-///   <item><c>unsupported_branch_kind</c> — <c>--branch</c> is a <c>feature/{N}</c> branch; use <c>worktree init-apex</c>.</item>
+///   <item><c>branch_root_mismatch</c> — parsed root id of <c>--branch</c> does not equal <c>--root</c>.</item>
+///   <item><c>unsupported_branch_kind</c> — <c>--branch</c> is a <c>feature/{N}</c> branch; use <c>worktree init-root</c>.</item>
 ///   <item><c>common_dir_unavailable</c> — <c>git rev-parse --git-common-dir</c> returned no usable path.</item>
 ///   <item><c>filesystem_failure</c> — derived worktree path violates the runs-root or main-worktree boundary invariant.</item>
-///   <item><c>apex_not_initialized</c> — <c>{apex_root}/feature-{N}</c> is not a registered worktree on <c>feature/{N}</c>; run <c>worktree init-apex --apex N</c> first.</item>
+///   <item><c>root_not_initialized</c> — <c>{root_root}/feature-{N}</c> is not a registered worktree on <c>feature/{N}</c>; run <c>worktree init-root --root N</c> first.</item>
 ///   <item><c>path_exists_wrong_branch</c> — target worktree path is on a different branch.</item>
 ///   <item><c>path_exists_not_worktree</c> — target path exists (file or directory) but is not a registered worktree.</item>
 ///   <item><c>branch_in_use</c> — local branch exists and is checked out at another worktree.</item>
@@ -33,8 +33,8 @@ namespace Polyphony;
 /// </summary>
 public sealed record WorktreeCreateResult
 {
-    /// <summary>Echo of the <c>--apex</c> input.</summary>
-    public required int ApexId { get; init; }
+    /// <summary>Echo of the <c>--root</c> input.</summary>
+    public required int RootId { get; init; }
 
     /// <summary>Outcome of the operation. See record-level docs for valid values.</summary>
     public required string Outcome { get; init; }
@@ -48,8 +48,8 @@ public sealed record WorktreeCreateResult
     /// <summary>Echo of the <c>--ref</c> input. Null if not supplied.</summary>
     public string? Ref { get; init; }
 
-    /// <summary>Absolute path to the per-apex container directory. Null when path resolution failed.</summary>
-    public string? ApexRoot { get; init; }
+    /// <summary>Absolute path to the per-root container directory. Null when path resolution failed.</summary>
+    public string? RootRoot { get; init; }
 
     /// <summary>Absolute path to the per-item worktree. Null when path resolution failed.</summary>
     public string? WorktreePath { get; init; }

@@ -38,13 +38,13 @@ public sealed partial class WorktreeCommands
     /// <summary>
     /// Garbage-collect stale per-run worktrees under <c>polyphony-runs/</c>.
     /// </summary>
-    /// <param name="apex">Optional apex root id to scope the scan to a single <c>apex-{N}/</c> subtree. When 0 (the default), the whole runs root is scanned.</param>
+    /// <param name="root">Optional root root id to scope the scan to a single <c>root-{N}/</c> subtree. When 0 (the default), the whole runs root is scanned.</param>
     /// <param name="commit">When true, actually remove the candidates via <c>git worktree remove --force</c>. When false (the default), only list candidates without mutation.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("gc")]
     [VerbResult(typeof(WorktreeGcResult))]
     public async Task<int> Gc(
-        int apex = 0,
+        int root = 0,
         bool commit = false,
         CancellationToken ct = default)
     {
@@ -60,14 +60,14 @@ public sealed partial class WorktreeCommands
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                EmitGc(commit, runsRoot: string.Empty, apex, [], 0, 0,
+                EmitGc(commit, runsRoot: string.Empty, root, [], 0, 0,
                     error: $"Could not resolve git common-dir: {ex.Message}");
                 return ExitCodes.Success;
             }
 
             if (string.IsNullOrEmpty(commonDir))
             {
-                EmitGc(commit, runsRoot: string.Empty, apex, [], 0, 0,
+                EmitGc(commit, runsRoot: string.Empty, root, [], 0, 0,
                     error: "Not inside a git repository (no common-dir resolvable).");
                 return ExitCodes.Success;
             }
@@ -79,20 +79,20 @@ public sealed partial class WorktreeCommands
             }
             catch (ArgumentException ex)
             {
-                EmitGc(commit, runsRoot: string.Empty, apex, [], 0, 0,
+                EmitGc(commit, runsRoot: string.Empty, root, [], 0, 0,
                     error: $"Could not resolve runs root from common-dir '{commonDir}': {ex.Message}");
                 return ExitCodes.Success;
             }
 
             // List all worktrees and filter to those under runs_root (and,
-            // when --apex is set, under apex-{N}/).
+            // when --root is set, under root-{N}/).
             var listResult = await _git.WorktreeListAsync(ct).ConfigureAwait(false);
             if (!listResult.Succeeded)
             {
                 var err = !string.IsNullOrWhiteSpace(listResult.Stderr)
                     ? listResult.Stderr.Trim()
                     : listResult.Stdout.Trim();
-                EmitGc(commit, runsRoot, apex, [], 0, 0,
+                EmitGc(commit, runsRoot, root, [], 0, 0,
                     error: string.IsNullOrEmpty(err)
                         ? $"git worktree list exited with code {listResult.ExitCode}"
                         : err);
@@ -106,12 +106,12 @@ public sealed partial class WorktreeCommands
             }
             catch (FormatException ex)
             {
-                EmitGc(commit, runsRoot, apex, [], 0, 0, error: ex.Message);
+                EmitGc(commit, runsRoot, root, [], 0, 0, error: ex.Message);
                 return ExitCodes.Success;
             }
 
-            var apexScopePath = apex > 0
-                ? Path.GetFullPath(Path.Combine(runsRoot, $"apex-{apex.ToString(CultureInfo.InvariantCulture)}"))
+            var rootScopePath = root > 0
+                ? Path.GetFullPath(Path.Combine(runsRoot, $"root-{root.ToString(CultureInfo.InvariantCulture)}"))
                 : null;
 
             var candidates = new List<WorktreeGcCandidate>();
@@ -126,7 +126,7 @@ public sealed partial class WorktreeCommands
                     Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
                 if (!IsUnder(entryPathCanonical, runsRoot)) continue;
-                if (apexScopePath is not null && !IsUnder(entryPathCanonical, apexScopePath)) continue;
+                if (rootScopePath is not null && !IsUnder(entryPathCanonical, rootScopePath)) continue;
 
                 // Classify the prune reason. directory_missing wins over
                 // branch_deleted (an entry with a missing dir is administrative
@@ -200,13 +200,13 @@ public sealed partial class WorktreeCommands
                 }
             }
 
-            EmitGc(commit, runsRoot, apex, candidates, removedCount, failedCount, error: null);
+            EmitGc(commit, runsRoot, root, candidates, removedCount, failedCount, error: null);
             return ExitCodes.Success;
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitGc(commit, runsRoot: string.Empty, apex, [], 0, 0, error: ex.Message);
+            EmitGc(commit, runsRoot: string.Empty, root, [], 0, 0, error: ex.Message);
             return ExitCodes.RoutingFailure;
         }
     }
@@ -234,7 +234,7 @@ public sealed partial class WorktreeCommands
     private static void EmitGc(
         bool commit,
         string runsRoot,
-        int apex,
+        int root,
         IReadOnlyList<WorktreeGcCandidate> candidates,
         int removedCount,
         int failedCount,
@@ -245,7 +245,7 @@ public sealed partial class WorktreeCommands
             {
                 DryRun = !commit,
                 RunsRoot = runsRoot,
-                Apex = apex,
+                Root = root,
                 Candidates = candidates,
                 RemovedCount = removedCount,
                 FailedCount = failedCount,

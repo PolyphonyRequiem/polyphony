@@ -23,8 +23,8 @@ namespace Polyphony.Commands;
 /// <para>Tree-walk semantics mirror <see cref="WorklistCommands"/>'
 /// BFS: ascending-id child order for determinism, dedup defensively.
 /// Unlike worklist build, we produce a flat list of items rather than
-/// wave groupings — conflict detection happens at the merged-graph
-/// level, not per wave.</para>
+/// batch groupings — conflict detection happens at the merged-graph
+/// level, not per batch.</para>
 /// </summary>
 public sealed partial class EdgesCommands
 {
@@ -186,8 +186,8 @@ public sealed partial class EdgesCommands
                 "type_unknown");
         }
 
-        // Per-item facet override: architects can declare apex_facets in plan
-        // front-matter for an indivisible apex; seed-children stamps the
+        // Per-item facet override: architects can declare root_facets in plan
+        // front-matter for an indivisible root; seed-children stamps the
         // resulting set as a polyphony:facets=... tag. When present and
         // well-formed, it REPLACES type-config facets for this derivation.
         // Malformed tag content is fail-fast — a bad override hiding behind

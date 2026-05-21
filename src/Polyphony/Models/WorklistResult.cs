@@ -3,7 +3,7 @@ namespace Polyphony;
 /// <summary>
 /// Output of <c>polyphony worklist build</c> — the ordered list of plan-tree
 /// work items, grouped into "waves" that can be dispatched in parallel by
-/// the (future) apex driver workflow. A wave is ready when all items in
+/// the (future) root driver workflow. A batch is ready when all items in
 /// earlier waves have reached a terminal state (e.g. plan PR merged, or
 /// skipped).
 ///
@@ -12,9 +12,9 @@ namespace Polyphony;
 /// <see cref="Error"/> / <see cref="ErrorCode"/> fields. The verb is
 /// pure-read — it never mutates the manifest or hits the platform.</para>
 ///
-/// <para>Wave ordering is computed by <see cref="Polyphony.Sdlc.EdgeGraph.ToWaves"/>
+/// <para>Batch ordering is computed by <see cref="Polyphony.Sdlc.EdgeGraph.ToWaves"/>
 /// over the merged within-item + cross-item edge graph (Phase 7 PR #7
-/// hard cutover from BFS-by-depth). Wave 0 contains items whose entry
+/// hard cutover from BFS-by-depth). Batch 0 contains items whose entry
 /// requirements have no inbound cross-item edges — typically the run
 /// root, plus items whose parent is a non-plannable container. When
 /// <see cref="HasConflicts"/> is true, <see cref="Waves"/> is the empty
@@ -55,14 +55,14 @@ public sealed record WorklistResult
     public required IReadOnlyList<EdgesCheckConflict> Conflicts { get; init; }
 
     /// <summary>
-    /// Ordered waves (wave 0 = items with no inbound cross-item edges
-    /// into their entry requirements). Each wave's items can be
-    /// dispatched in parallel; wave N depends on wave N-1 having reached
+    /// Ordered waves (batch 0 = items with no inbound cross-item edges
+    /// into their entry requirements). Each batch's items can be
+    /// dispatched in parallel; batch N depends on batch N-1 having reached
     /// a terminal state. Empty when the verb errored before walking
     /// the tree, or when <see cref="HasConflicts"/> is true (consumers
     /// must resolve conflicts before consuming waves).
     /// </summary>
-    public required IReadOnlyList<WorklistWave> Waves { get; init; }
+    public required IReadOnlyList<WorklistBatch> Waves { get; init; }
 
     /// <summary>Operator-facing error message when the worklist cannot be produced. Null on success.</summary>
     public string? Error { get; init; }
@@ -79,14 +79,14 @@ public sealed record WorklistResult
 }
 
 /// <summary>
-/// One wave in <see cref="WorklistResult.Waves"/> — a set of work items
+/// One batch in <see cref="WorklistResult.Waves"/> — a set of work items
 /// whose entry requirements all become ready at the same topological
 /// depth (per <see cref="Polyphony.Sdlc.EdgeGraph.ToWaves"/>).
 /// </summary>
-public sealed record WorklistWave(int WaveIndex, IReadOnlyList<WorklistItem> Items);
+public sealed record WorklistBatch(int BatchIndex, IReadOnlyList<WorklistItem> Items);
 
 /// <summary>
-/// One work item entry in <see cref="WorklistWave.Items"/>. Carries the
+/// One work item entry in <see cref="WorklistBatch.Items"/>. Carries the
 /// item's plan-PR status and current generation so the dispatcher can
 /// decide whether to act on it without consulting the manifest itself.
 /// </summary>

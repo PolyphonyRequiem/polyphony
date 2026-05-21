@@ -43,7 +43,7 @@ public sealed class HealthCommandTests
         result.Architecture.ShouldNotBeNullOrEmpty();
         result.DotnetVersion.ShouldNotBeNullOrEmpty();
         result.PolyphonyVersion.ShouldNotBeNullOrEmpty();
-        result.CanonicalWorkflow.ShouldBe("apex-driver@polyphony");
+        result.CanonicalWorkflow.ShouldBe("polyphony@polyphony");
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public sealed class HealthCommandTests
 
         // Breadcrumb on STDERR
         stderr.ShouldContain("Canonical SDLC entry point:");
-        stderr.ShouldContain("conductor run apex-driver@polyphony --input apex_id=<ID>");
+        stderr.ShouldContain("conductor run polyphony@polyphony --input root_id=<ID>");
         // STDOUT remains JSON only — no breadcrumb leakage that would break parsers
         stdout.ShouldNotContain("Canonical SDLC entry point");
     }
@@ -231,7 +231,7 @@ public sealed class HealthCommandTests
             Architecture = "x64",
             DotnetVersion = "7.0.0",
             PolyphonyVersion = "1.2.3",
-            CanonicalWorkflow = "apex-driver@polyphony"
+            CanonicalWorkflow = "polyphony@polyphony"
         };
         var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.HealthResult);
         var roundTrip = JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.HealthResult);
@@ -241,7 +241,7 @@ public sealed class HealthCommandTests
         roundTrip.Architecture.ShouldBe("x64");
         roundTrip.DotnetVersion.ShouldBe("7.0.0");
         roundTrip.PolyphonyVersion.ShouldBe("1.2.3");
-        roundTrip.CanonicalWorkflow.ShouldBe("apex-driver@polyphony");
+        roundTrip.CanonicalWorkflow.ShouldBe("polyphony@polyphony");
     }
 
     private static (int ExitCode, string Output) CaptureConsole(Func<int> action)
