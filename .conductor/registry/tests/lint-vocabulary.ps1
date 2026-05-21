@@ -190,7 +190,27 @@ function New-ForbiddenTermSpec {
         # For pure-alpha terms, also treat PascalCase transitions as a boundary
         # so tokens like `ApexId` are caught without matching `apexes`.
         if ($Term -match '^[A-Za-z]+$') {
-            $pattern = "(?<![A-Za-z0-9])$escaped(?![A-Za-z0-9])|(?<![A-Za-z0-9])$escaped(?=(?-i:[A-Z]))"
+            # Pure-alpha terms match at THREE positions:
+            # 1. `(?<![A-Za-z0-9])apex(?![A-Za-z0-9])` — full-word boundary,
+            #    matches snake_case and bare-word usage (`apex`, `apex_x`,
+            #    `_apex`). Does not match `apexes`.
+            # 2. `(?<![A-Za-z0-9])apex(?=(?-i:[A-Z]))` — PascalCase compound at
+            #    identifier START (case-insensitive overall but the lookahead
+            #    forces a literal uppercase boundary). Catches `ApexId`,
+            #    `ApexDriver` but not `apexx`.
+            # 3. `(?<=(?-i:[a-z0-9]))(?-i:Apex)(?![A-Za-z0-9])` — PascalCase
+            #    compound at identifier SUFFIX. Catches `ResetApex`,
+            #    `EdgeGraphWave`, `InitApex` (preceded by lowercase, then the
+            #    capitalized form of the term at the end of an identifier).
+            #    Without this alternative, suffix usages slip through the lint
+            #    and the rename script can't see them either — a bug class
+            #    discovered during the AB#3259 mechanical rename when 84
+            #    `ResetApex`/`EdgeGraphWave`-style identifiers shipped past the
+            #    original rule unchanged.
+            $titleFirst = ([char]::ToUpper($Term[0])) + $Term.Substring(1).ToLowerInvariant()
+            $titleEscaped = [regex]::Escape($titleFirst)
+            $suffixPattern = "(?<=(?-i:[a-z0-9]))(?-i:$titleEscaped)(?![A-Za-z0-9])"
+            $pattern = "(?<![A-Za-z0-9])$escaped(?![A-Za-z0-9])|(?<![A-Za-z0-9])$escaped(?=(?-i:[A-Z]))|$suffixPattern"
             $kind = 'identifier-boundary+pascal-case'
         } else {
             $pattern = "(?<![A-Za-z0-9])$escaped(?![A-Za-z0-9])"
@@ -290,6 +310,14 @@ function Get-PathDisposition {
 
     if ($path -eq 'docs/glossary.md') { return 'skip' }
     if ($path -eq 'CHANGELOG.md') { return 'skip' }
+    # The vocab lint and its Pester tests intentionally contain forbidden
+    # terms (the lint as regex literals; the tests as detection fixtures).
+    # Skipping prevents self-flags and prevents the mechanical rename pass
+    # from rewriting the lint's own pattern strings or the test's assertion
+    # fixtures — a real bug class hit during the AB#3259 rename when the
+    # apply-rename pass corrupted both files.
+    if ($path -eq '.conductor/registry/tests/lint-vocabulary.ps1') { return 'skip' }
+    if ($path -eq '.conductor/registry/tests/lint-vocabulary.Tests.ps1') { return 'skip' }
     if ($path -like 'tests/fixtures/lint-vocabulary/*') { return 'skip' }
     if ($path -like 'tests/harness/*') { return 'skip' }
     if ($path -match '(^|/)(\.git|bin|obj|node_modules)(/|$)') { return 'skip' }

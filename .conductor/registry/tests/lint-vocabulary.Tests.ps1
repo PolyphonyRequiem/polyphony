@@ -203,6 +203,46 @@ $title = "Apex"
         @($payload.violations | Where-Object term -eq 'apex').Count | Should -Be 2
     }
 
+    It 'flags pure-alpha terms as PascalCase suffix (ResetApex, EdgeGraphWave, PlanCascade)' {
+        # Mirror to the existing PascalCase-prefix coverage (ApexId, RootDriver).
+        # Without this, the rename script cannot see suffix usages either — see
+        # the AB#3259 incident note in `New-ForbiddenTermSpec`.
+        $repo = New-TestRepo -Files @{
+            'src/Polyphony/Suffix.cs' = @'
+public sealed class Suffix {
+    public int ResetApex { get; set; }
+    public string EdgeGraphWave { get; set; } = "";
+    public string PlanCascade { get; set; } = "";
+}
+'@
+        }
+
+        $result = Invoke-Lint -Root $repo -Arguments @('-OutputFormat', 'json')
+
+        $result.ExitCode | Should -Be 1
+        $payload = $result.Output | ConvertFrom-Json
+        @($payload.violations | Where-Object term -eq 'apex').Count | Should -BeGreaterOrEqual 1
+        @($payload.violations | Where-Object term -eq 'wave').Count | Should -BeGreaterOrEqual 1
+        @($payload.violations | Where-Object term -eq 'cascade').Count | Should -BeGreaterOrEqual 1
+    }
+
+    It 'does not flag PascalCase suffix when the preceding boundary is non-lowercase' {
+        # `XApex` (uppercase X before Apex) is ambiguous and not a legal
+        # PascalCase compound shape; we only catch lowercase-before-uppercase
+        # boundaries. Also: `apexes` (plural) and bare `apex` already covered
+        # by other tests but reasserted here for completeness.
+        $repo = New-TestRepo -Files @{
+            'docs/notes.md' = @'
+Historical reference to XApex pattern (not a real identifier).
+Plural form apexes is also not flagged.
+'@
+        }
+
+        $result = Invoke-Lint -Root $repo
+
+        $result.ExitCode | Should -Be 0
+    }
+
     It 'flags <prefix>_* only at start of identifier (token-prefix boundary)' {
         # primary_completer + terminal_abort_run at start of identifier → flagged.
         # something_primary_blah and a_terminal_state (mid-identifier) → NOT flagged.
