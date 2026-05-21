@@ -1,0 +1,12 @@
+workflow:
+  name: polyphony
+agents:
+  - name: root_router
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - "@{ route = 'root' } | ConvertTo-Json -Compress"
+    routes:
+      - to: $end
