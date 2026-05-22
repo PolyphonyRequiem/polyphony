@@ -314,6 +314,9 @@ public sealed class GitClient(IProcessRunner runner) : IGitClient
     public Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default)
         => runner.RunAsync(Exe, ["worktree", "list", "--porcelain"], ct);
 
+    public Task<ProcessResult> WorktreePruneAsync(CancellationToken ct = default)
+        => runner.RunAsync(Exe, ["worktree", "prune"], ct);
+ 
     public async Task<RebaseOutcome> RebaseOntoAsync(
         string newBase,
         string oldBase,

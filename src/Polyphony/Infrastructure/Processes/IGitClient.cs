@@ -291,6 +291,12 @@ public interface IGitClient
     Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// <c>git worktree prune</c>. Prunes stale administrative metadata for
+    /// worktrees whose directories no longer exist.
+    /// </summary>
+    Task<ProcessResult> WorktreePruneAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Detach onto <paramref name="head"/> and run
     /// <c>git rebase --onto {newBase} {oldBase} HEAD</c>. The rebase is
     /// expressed in explicit three-arg form (rather than
