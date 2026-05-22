@@ -51,6 +51,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(TagMutationPayload))]
 [JsonSerializable(typeof(LockMutationPayload))]
 [JsonSerializable(typeof(ManifestMutationPayload))]
+[JsonSerializable(typeof(ManualLineageRefusal))]
 [JsonSerializable(typeof(PlanWritePlanPayload))]
 [JsonSerializable(typeof(PlanCommitAndPushPayload))]
 [JsonSerializable(typeof(PlanSeedChildrenPayload))]

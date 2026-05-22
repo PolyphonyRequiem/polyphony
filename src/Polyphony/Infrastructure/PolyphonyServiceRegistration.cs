@@ -52,7 +52,14 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<RunContext>();
         services.AddSingleton<IJournalLocator, JournalLocator>();
         services.AddSingleton<IJournalStore, JournalStore>();
-        services.AddSingleton<JournaledActionDecorator>();
+        // W5 (AB#3279): production decorator runs with the manual-lineage
+        // guard ENGAGED. Test fixtures construct decorators directly
+        // without the guard for back-compat — the W5 guard is opt-in at
+        // construction time so this is the only code path that enables it.
+        services.AddSingleton<JournaledActionDecorator>(sp =>
+            new JournaledActionDecorator(
+                sp.GetRequiredService<IJournalStore>(),
+                failClosedOnManualLineage: true));
         services.AddSingleton<JournalDriftAnalyzer>();
         services.AddSingleton<ProjectionResetCoverageAnalyzer>();
         services.AddSingleton<ProjectionResetPlanner>();
