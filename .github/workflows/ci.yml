@@ -242,6 +242,19 @@ jobs:
           $result = Invoke-Pester -Path .conductor/registry/tests/lint-ci-discovery.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
 
+      - name: Test research-loop policy resolver (resolve-research-max-loops.ps1)
+        # Unit tests for the powershell helper that resolves
+        # `policy.research.defaults.max_research_loops` for the
+        # plan-level.yaml `research_loops_policy` step. Covers the
+        # happy path (numeric cap), policy-error fallback (warns and
+        # returns 3), and scope precedence (type:X > default).
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path .conductor/registry/tests/resolve-research-max-loops.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
+
       - name: Lint workflow YAMLs (sentiment-loop consistency)
         # Asserts that the sentiment-driven PR review loop is structurally
         # aligned across plan-level.yaml, github-pr.yaml, and ado-pr.yaml.
