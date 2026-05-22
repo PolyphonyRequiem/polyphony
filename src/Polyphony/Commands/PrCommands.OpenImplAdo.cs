@@ -36,6 +36,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("open-impl-ado")]
     [JournaledAction(Action = "pr_open_impl_ado")]
+    [MutatesResource(ResourceKind.AdoPr)]
     [VerbResult(typeof(PrOpenImplAdoResult))]
     public async Task<int> OpenImplAdo(
         string organization = "",
@@ -139,6 +140,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenImplAdoPayload),
+            effectsSelector: _ => SelectOpenImplAdoEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

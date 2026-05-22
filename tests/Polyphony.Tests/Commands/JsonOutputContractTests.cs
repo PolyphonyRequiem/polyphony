@@ -1580,7 +1580,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
             },
             CancellationToken.None);
 
-        await store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, CancellationToken.None);
+        await store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, null, CancellationToken.None);
         return actionId;
     }
 
@@ -1590,7 +1590,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
 
         public Task<long> RecordStartAsync(JournalEntryStart entry, CancellationToken ct) => throw new NotSupportedException();
 
-        public Task RecordEndAsync(long actionId, JournalOutcome outcome, string? errorCode, string? errorMessage, string? payloadJson, CancellationToken ct) => throw new NotSupportedException();
+        public Task RecordEndAsync(long actionId, JournalOutcome outcome, string? errorCode, string? errorMessage, string? payloadJson, IReadOnlyList<JournalResourceEffect>? effects, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<JournalEntry>> QueryAsync(JournalQuery query, CancellationToken ct) => throw new InvalidOperationException(queryError ?? "query failed");
 

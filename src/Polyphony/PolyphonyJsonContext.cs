@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
@@ -20,6 +21,12 @@ namespace Polyphony;
 [JsonSerializable(typeof(JournalEntry))]
 [JsonSerializable(typeof(JournalEntry[]))]
 [JsonSerializable(typeof(JournalOutcome))]
+[JsonSerializable(typeof(JournalResourceEffect))]
+[JsonSerializable(typeof(JournalResourceEffect[]))]
+[JsonSerializable(typeof(IReadOnlyList<JournalResourceEffect>))]
+[JsonSerializable(typeof(ResourceIntent))]
+[JsonSerializable(typeof(ResourceMutation))]
+[JsonSerializable(typeof(JsonObject))]
 [JsonSerializable(typeof(JournalExportResult))]
 [JsonSerializable(typeof(BranchEnsureEvidenceBranchPayload))]
 [JsonSerializable(typeof(BranchEnsureFeaturePayload))]

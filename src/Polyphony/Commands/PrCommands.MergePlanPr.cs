@@ -67,6 +67,8 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-plan-pr")]
     [JournaledAction(Action = "pr_merge_plan_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(PrMergePlanPrResult))]
     public async Task<int> MergePlanPr(
         int rootId = RequiredInput.MissingInt,
@@ -142,6 +144,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergePlanPrPayload),
+            effectsSelector: _ => SelectMergePlanPrEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

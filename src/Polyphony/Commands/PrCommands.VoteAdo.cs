@@ -36,6 +36,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("vote-ado")]
     [JournaledAction(Action = "pr_vote_ado")]
+    [MutatesResource(ResourceKind.AdoPrVote)]
     [VerbResult(typeof(PrVoteAdoResult))]
     public async Task<int> VoteAdo(
         string organization = "",
@@ -278,6 +279,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrVoteAdoPayload),
+            effectsSelector: _ => SelectVoteAdoEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

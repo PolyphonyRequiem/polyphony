@@ -44,6 +44,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("open-evidence-pr")]
     [JournaledAction(Action = "pr_open_evidence_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
     [VerbResult(typeof(PrOpenEvidenceResult))]
     public async Task<int> OpenEvidencePr(
         int workItem = RequiredInput.MissingInt,
@@ -318,6 +319,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenEvidencePrPayload),
+            effectsSelector: _ => SelectOpenEvidencePrEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

@@ -30,6 +30,7 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-evidence-branch")]
     [JournaledAction(Action = "branch_ensure_evidence_branch")]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(BranchEnsureEvidenceResult))]
     public async Task<int> EnsureEvidenceBranch(
         int workItemId = RequiredInput.MissingInt,
@@ -253,6 +254,7 @@ public sealed partial class BranchCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.BranchEnsureEvidenceBranchPayload),
+            effectsSelector: _ => SelectEnsureEvidenceEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

@@ -14,4 +14,5 @@ public sealed record JournalEntry
     public string? ErrorCode { get; init; }
     public string? ErrorMessage { get; init; }
     public string? PayloadJson { get; init; }
+    public IReadOnlyList<JournalResourceEffect> Effects { get; init; } = [];
 }

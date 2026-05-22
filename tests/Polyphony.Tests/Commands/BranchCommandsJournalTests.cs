@@ -43,6 +43,8 @@ public sealed class BranchCommandsJournalTests : CommandTestBase
         payload.WorkItemId.ShouldBe(200);
         payload.BranchName.ShouldBe("evidence/100-200");
         payload.Sha.ShouldBe("abc123");
+        entry.Effects.Count.ShouldBe(1);
+        AssertEffect(entry.Effects[0], ResourceKind.GitBranch, "evidence/100-200", ResourceIntent.EnsurePresent, ResourceMutation.CreatedNow, polyphonyOwned: true);
     }
 
     [Fact]
@@ -67,6 +69,8 @@ public sealed class BranchCommandsJournalTests : CommandTestBase
         payload.RootId.ShouldBe(3043);
         payload.WasMutated.ShouldBeFalse();
         payload.Sha.ShouldBe("abc123");
+        entry.Effects.Count.ShouldBe(1);
+        AssertEffect(entry.Effects[0], ResourceKind.GitBranch, "feature/3043", ResourceIntent.EnsurePresent, ResourceMutation.NoChangedExternalAlreadyPresent, polyphonyOwned: false);
     }
 
     [Fact]
@@ -92,6 +96,8 @@ public sealed class BranchCommandsJournalTests : CommandTestBase
         payload.ShouldNotBeNull();
         payload.MergeGroupPath.ShouldBe("pg-1");
         payload.Sha.ShouldBe("impl123");
+        entry.Effects.Count.ShouldBe(1);
+        AssertEffect(entry.Effects[0], ResourceKind.GitBranch, "impl/100-200", ResourceIntent.EnsurePresent, ResourceMutation.CreatedNow, polyphonyOwned: true);
     }
 
     [Fact]
@@ -117,6 +123,8 @@ public sealed class BranchCommandsJournalTests : CommandTestBase
         payload.ShouldNotBeNull();
         payload.Depth.ShouldBe(1);
         payload.Sha.ShouldBe("mg123");
+        entry.Effects.Count.ShouldBe(1);
+        AssertEffect(entry.Effects[0], ResourceKind.GitBranch, "mg/100_pg-1", ResourceIntent.EnsurePresent, ResourceMutation.CreatedNow, polyphonyOwned: true);
     }
 
     [Fact]
@@ -142,6 +150,8 @@ public sealed class BranchCommandsJournalTests : CommandTestBase
         payload.ShouldNotBeNull();
         payload.IsRootPlan.ShouldBeTrue();
         payload.Sha.ShouldBe("plan123");
+        entry.Effects.Count.ShouldBe(1);
+        AssertEffect(entry.Effects[0], ResourceKind.GitBranch, "plan/100", ResourceIntent.EnsurePresent, ResourceMutation.CreatedNow, polyphonyOwned: true);
     }
 
     [Fact]
@@ -163,6 +173,8 @@ public sealed class BranchCommandsJournalTests : CommandTestBase
         payload.ShouldNotBeNull();
         payload.AlreadyInDesiredState.ShouldBeTrue();
         payload.WasMutated.ShouldBeFalse();
+        entry.Effects.Count.ShouldBe(1);
+        AssertEffect(entry.Effects[0], ResourceKind.AdoWorkItemTag, "100:polyphony:impl-merged-in-mg=pg-1", ResourceIntent.EnsurePresent, ResourceMutation.NoChangedAlreadySatisfied, polyphonyOwned: true);
     }
 
     [Fact]
@@ -184,6 +196,8 @@ public sealed class BranchCommandsJournalTests : CommandTestBase
         payload.ShouldNotBeNull();
         payload.WasMutated.ShouldBeTrue();
         payload.AlreadyInDesiredState.ShouldBeFalse();
+        entry.Effects.Count.ShouldBe(1);
+        AssertEffect(entry.Effects[0], ResourceKind.AdoWorkItemTag, "100:polyphony:impl-merged-in-mg=pg-1", ResourceIntent.EnsureAbsent, ResourceMutation.DeletedNow, polyphonyOwned: true);
     }
 
     [Fact]
@@ -215,6 +229,24 @@ public sealed class BranchCommandsJournalTests : CommandTestBase
         payload.SelectedWorkItemId.ShouldBe(300);
         payload.TargetState.ShouldBe("Doing");
         payload.WasMutated.ShouldBeTrue();
+        entry.Effects.Count.ShouldBe(2);
+        AssertEffect(entry.Effects[0], ResourceKind.AdoWorkItemState, "workitem:300", ResourceIntent.SetState, ResourceMutation.Changed, polyphonyOwned: true);
+        AssertEffect(entry.Effects[1], ResourceKind.AdoWorkItem, "workitem:300", ResourceIntent.Observe, ResourceMutation.NoChangedAlreadySatisfied, polyphonyOwned: false);
+    }
+
+    private static void AssertEffect(
+        JournalResourceEffect effect,
+        string kind,
+        string id,
+        ResourceIntent intent,
+        ResourceMutation mutation,
+        bool polyphonyOwned)
+    {
+        effect.Kind.ShouldBe(kind);
+        effect.Id.ShouldBe(id);
+        effect.Intent.ShouldBe(intent);
+        effect.Mutation.ShouldBe(mutation);
+        effect.PolyphonyOwned.ShouldBe(polyphonyOwned);
     }
 
     private (BranchCommands Command, FakeProcessRunner Runner, JournalStore Store) CreateCommand(ProcessConfig? cfg = null, string runId = "run-journal")

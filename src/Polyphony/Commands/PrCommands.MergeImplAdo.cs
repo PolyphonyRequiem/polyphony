@@ -47,6 +47,8 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-impl-ado")]
     [JournaledAction(Action = "pr_merge_impl_ado")]
+    [MutatesResource(ResourceKind.AdoPr)]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(PrMergeImplAdoResult))]
     public async Task<int> MergeImplAdo(
         string organization = "",
@@ -139,6 +141,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergeImplAdoPayload),
+            effectsSelector: _ => SelectMergeImplAdoEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

@@ -34,7 +34,7 @@ public sealed class JournalCommandsExportTests : CommandTestBase
                 StartedAt = 1_700_000_000_000,
             },
             CancellationToken.None);
-        await _store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, CancellationToken.None);
+        await _store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, null, CancellationToken.None);
 
         var destination = Path.Combine(_tempDir, "exports", "journal-copy.db");
         var (exitCode, output) = await CaptureConsoleAsync(() => _command.Export(destination));

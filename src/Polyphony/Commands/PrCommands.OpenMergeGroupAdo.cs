@@ -37,6 +37,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("open-mg-ado")]
     [JournaledAction(Action = "pr_open_mg_ado")]
+    [MutatesResource(ResourceKind.AdoPr)]
     [VerbResult(typeof(PrOpenMergeGroupAdoResult))]
     public async Task<int> OpenMergeGroupAdo(
         string organization = "",
@@ -337,6 +338,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenMergeGroupAdoPayload),
+            effectsSelector: _ => SelectOpenMergeGroupAdoEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

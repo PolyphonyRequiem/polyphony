@@ -24,6 +24,7 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-mg")]
     [JournaledAction(Action = "branch_ensure_merge_group")]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(BranchEnsureMergeGroupResult))]
     public async Task<int> EnsureMergeGroup(
         int rootId = RequiredInput.MissingInt,
@@ -244,6 +245,7 @@ public sealed partial class BranchCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.BranchEnsureMergeGroupPayload),
+            effectsSelector: _ => SelectEnsureMergeGroupEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 
