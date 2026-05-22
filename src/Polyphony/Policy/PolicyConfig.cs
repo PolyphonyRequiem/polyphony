@@ -385,6 +385,19 @@ public sealed class ScopeRule
     public int? EscalationCap { get; set; }
 
     /// <summary>
+    /// Research domain only: maximum number of plan-level architect ↔
+    /// research_dispatch round-trips before the workflow surfaces
+    /// <c>research_cap_gate</c> for operator intervention. Distinct from
+    /// <see cref="EscalationCap"/> (which is per-topic within
+    /// <c>research.yaml</c>); this cap governs how many DIFFERENT research
+    /// requests the architect can make across a single plan invocation.
+    /// Defaults to 3 (matches the pre-policy hard-coded MVP value);
+    /// overridable per scope. Must be positive; 0 disables research entirely
+    /// (the first request routes straight to <c>research_cap_gate</c>).
+    /// </summary>
+    public int? MaxResearchLoops { get; set; }
+
+    /// <summary>
     /// PR domain only: when <c>true</c>, the
     /// <c>pr poll-status-ado</c> aggregator treats ANY reviewer's positive
     /// vote (+5 or +10) as APPROVED — not just required-reviewer

@@ -422,6 +422,31 @@ agents:
       - "default"
     routes:
       - to: research
+  - name: research_loops_policy
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/resolve-research-max-loops.ps1"
+      - "-Scope"
+      - "default"
+    routes:
+      - to: research_loop_counter
+  - name: research_loop_counter
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        `$count = 0
+        `$maxLoops = [int]'{{ research_loops_policy.output.max_research_loops }}'
+        `$capReached = `$count -ge `$maxLoops
+    routes:
+      - to: research_policy_resolver
+        when: "{{ research_loop_counter.output.cap_reached == false }}"
+      - to: research_cap_gate
   - name: research
     type: workflow
     workflow: ./research.yaml

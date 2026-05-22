@@ -545,6 +545,54 @@ foreach ($match in $directRoutes) {
     }
 }
 
+# ── Check 32: research-loop-policy — research_loops_policy node exists ───
+# Resolves policy.research.defaults.max_research_loops upstream of the
+# research_loop_counter so the counter's cap is policy-driven (not the
+# pre-policy hard-coded 3).
+if ($content -notmatch 'name:\s*research_loops_policy\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-research-loops-policy'
+        Detail = "research-loop-policy: 'research_loops_policy' script node missing. Required to resolve policy.research.defaults.max_research_loops before invoking research_loop_counter."
+    }
+} else {
+    $loopsResolverMatch = [regex]::Match($content, '(?s)- name:\s*research_loops_policy\b.*?(?=\n  - name: |\Z)')
+    $loopsResolverBlock = if ($loopsResolverMatch.Success) { $loopsResolverMatch.Value } else { '' }
+
+    # ── Check 33: resolver invokes the shared helper, not inline policy lookup
+    if ($loopsResolverBlock -notmatch 'resolve-research-max-loops\.ps1') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'research-loops-policy-wrong-helper'
+            Detail = "research-loop-policy: 'research_loops_policy' must invoke the shared 'resolve-research-max-loops.ps1' helper script."
+        }
+    }
+
+    # ── Check 34: resolver routes unconditionally to research_loop_counter
+    if ($loopsResolverBlock -notmatch '(?m)^\s*-\s*to:\s*research_loop_counter\b') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'research-loops-policy-missing-counter-route'
+            Detail = "research-loop-policy: 'research_loops_policy' must route unconditionally to 'research_loop_counter' (it is the sole inbound path)."
+        }
+    }
+}
+
+# ── Check 35: research_loop_counter reads max_loops from research_loops_policy
+$counterMatch = [regex]::Match($content, '(?s)- name:\s*research_loop_counter\b.*?(?=\n  - name: |\Z)')
+if ($counterMatch.Success) {
+    $counterBlock = $counterMatch.Value
+    if ($counterBlock -notmatch 'research_loops_policy\.output\.max_research_loops') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'research-loop-counter-missing-policy-mapping'
+            Detail = "research-loop-policy: 'research_loop_counter' must read maxLoops from 'research_loops_policy.output.max_research_loops' (not a hard-coded literal)."
+        }
+    }
+    if ($counterBlock -match '\$maxLoops\s*=\s*3\b') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'research-loop-counter-hardcoded-cap'
+            Detail = "research-loop-policy: 'research_loop_counter' has a hard-coded '\$maxLoops = 3'; this cap has been promoted to policy.research.defaults.max_research_loops. Remove the literal and read from research_loops_policy.output instead."
+        }
+    }
+}
+
 # ── Report ───────────────────────────────────────────────────────────────
 if ($violations.Count -gt 0) {
     Write-Host "`n❌ plan-level.yaml open_questions policy lint FAILED ($($violations.Count) violations):`n" -ForegroundColor Red

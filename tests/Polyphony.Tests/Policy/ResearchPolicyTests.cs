@@ -417,6 +417,261 @@ public sealed class ResearchPolicyTests : Commands.CommandTestBase
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // MaxResearchLoops (research-loop-policy)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Load_NoResearchBlock_MaxResearchLoopsDefaultsTo3()
+    {
+        var config = PolicyLoader.Parse("schema_version: 1");
+        PolicyLoader.ApplyBuiltInDefaults(config);
+
+        config.Research!.Defaults!.MaxResearchLoops.ShouldBe(3);
+    }
+
+    [Fact]
+    public void Load_ExplicitMaxResearchLoops_OverridesDefault()
+    {
+        var config = PolicyLoader.Parse("""
+            schema_version: 1
+            research:
+              defaults:
+                max_research_loops: 5
+            """);
+        PolicyLoader.ApplyBuiltInDefaults(config);
+
+        config.Research!.Defaults!.MaxResearchLoops.ShouldBe(5);
+    }
+
+    [Fact]
+    public void Load_MaxResearchLoopsRootAndByType_PreservesOverrides()
+    {
+        var config = PolicyLoader.Parse("""
+            schema_version: 1
+            research:
+              defaults:
+                max_research_loops: 3
+              root:
+                max_research_loops: 7
+              by_type:
+                Epic:
+                  max_research_loops: 10
+            """);
+        PolicyLoader.ApplyBuiltInDefaults(config);
+
+        config.Research!.Root!.MaxResearchLoops.ShouldBe(7);
+        config.Research.ByType!["Epic"].MaxResearchLoops.ShouldBe(10);
+    }
+
+    [Fact]
+    public void Resolve_ResearchDomain_DefaultScope_SurfacesMaxResearchLoops()
+    {
+        var config = LoadConfigWithResearchAndLoops(mode: "warning", cap: 1, maxLoops: 4);
+        var resolved = PolicyResolver.Resolve(config, PolicyDomain.Research, "default");
+
+        resolved.MaxResearchLoops.ShouldBe(4);
+    }
+
+    [Fact]
+    public void Resolve_ResearchDomain_RootOverridesMaxResearchLoops()
+    {
+        var config = PolicyLoader.Parse("""
+            schema_version: 1
+            research:
+              defaults:
+                max_research_loops: 3
+              root:
+                max_research_loops: 8
+            """);
+        PolicyLoader.ApplyBuiltInDefaults(config);
+        var resolved = PolicyResolver.Resolve(config, PolicyDomain.Research, "root");
+
+        resolved.MaxResearchLoops.ShouldBe(8);
+    }
+
+    [Fact]
+    public void Resolve_ResearchDomain_ByTypeOverridesMaxResearchLoops()
+    {
+        var config = PolicyLoader.Parse("""
+            schema_version: 1
+            research:
+              defaults:
+                max_research_loops: 3
+              by_type:
+                Epic:
+                  max_research_loops: 10
+            """);
+        PolicyLoader.ApplyBuiltInDefaults(config);
+        var resolved = PolicyResolver.Resolve(config, PolicyDomain.Research, "type:Epic");
+
+        resolved.MaxResearchLoops.ShouldBe(10);
+    }
+
+    [Fact]
+    public void Resolve_ApprovalsDomain_MaxResearchLoopsIsNull()
+    {
+        var config = LoadConfigWithResearchAndLoops(mode: "warning", cap: 1, maxLoops: 3);
+        var resolved = PolicyResolver.Resolve(config, PolicyDomain.Approvals, "default");
+
+        resolved.MaxResearchLoops.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Load_Command_MaxResearchLoopsReflectedInSnapshot()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            research:
+              defaults:
+                max_research_loops: 7
+            """);
+
+        var cmd = new PolicyCommands();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.Research.DefaultsMaxResearchLoops.ShouldBe(7);
+    }
+
+    [Fact]
+    public void Load_Command_MaxResearchLoopsDefault_ReflectedInSnapshot()
+    {
+        using var fx = new PolicyFileFixture();
+        // No file — uses defaults.
+        var cmd = new PolicyCommands();
+        var (exitCode, output) = CaptureConsole(() => cmd.Load(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyLoadResult);
+        result.ShouldNotBeNull();
+        result.Research.DefaultsMaxResearchLoops.ShouldBe(3);
+    }
+
+    [Fact]
+    public void Resolve_Command_ResearchDomain_SurfacesMaxResearchLoops()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            research:
+              defaults:
+                max_research_loops: 6
+            """);
+
+        var cmd = new PolicyCommands();
+        var (exitCode, output) = CaptureConsole(
+            () => cmd.Resolve(scope: "default", domain: "research", path: fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        // Use raw JSON check — ResolvedRule's MaxResearchLoops has snake_case
+        // JsonPropertyName so the script consuming the envelope can rely on it.
+        output.ShouldContain("\"max_research_loops\":6");
+    }
+
+    [Fact]
+    public void Validate_MaxResearchLoopsNegative_ReportsError()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            research:
+              defaults:
+                max_research_loops: -1
+            """);
+
+        var cmd = new PolicyCommands();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeFalse();
+        result.Errors.ShouldContain(e => e.Contains("research.defaults.max_research_loops"));
+    }
+
+    [Fact]
+    public void Validate_MaxResearchLoopsZero_Accepts()
+    {
+        // 0 disables research entirely — legal per the policy contract.
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            research:
+              defaults:
+                mode: warning
+                max_research_loops: 0
+            """);
+
+        var cmd = new PolicyCommands();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.Success);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Validate_MaxResearchLoopsRootNegative_ReportsError()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            research:
+              root:
+                max_research_loops: -5
+            """);
+
+        var cmd = new PolicyCommands();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeFalse();
+        result.Errors.ShouldContain(e => e.Contains("research.root.max_research_loops"));
+    }
+
+    [Fact]
+    public void Validate_MaxResearchLoopsByTypeNegative_ReportsError()
+    {
+        using var fx = new PolicyFileFixture();
+        fx.WritePolicy("""
+            schema_version: 1
+            research:
+              by_type:
+                Epic:
+                  max_research_loops: -10
+            """);
+
+        var cmd = new PolicyCommands();
+        var (exitCode, output) = CaptureConsole(() => cmd.Validate(fx.PolicyPath));
+
+        exitCode.ShouldBe(ExitCodes.ConfigError);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PolicyValidateResult);
+        result.ShouldNotBeNull();
+        result.Valid.ShouldBeFalse();
+        result.Errors.ShouldContain(e => e.Contains("research.by_type.Epic.max_research_loops"));
+    }
+
+    private static PolicyConfig LoadConfigWithResearchAndLoops(string mode, int cap, int maxLoops)
+    {
+        var config = PolicyLoader.Parse($$"""
+            schema_version: 1
+            research:
+              defaults:
+                mode: {{mode}}
+                escalation_cap: {{cap}}
+                max_research_loops: {{maxLoops}}
+            """);
+        PolicyLoader.ApplyBuiltInDefaults(config);
+        return config;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
 

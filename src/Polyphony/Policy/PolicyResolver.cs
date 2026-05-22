@@ -76,6 +76,7 @@ public static class PolicyResolver
             SeveritiesAtOrAbove = ComputeSeveritiesAtOrAbove(specific?.MinSeverity ?? defaults.MinSeverity),
             MaxQuestionLoops = specific?.MaxQuestionLoops ?? defaults.MaxQuestionLoops,
             EscalationCap = specific?.EscalationCap ?? defaults.EscalationCap,
+            MaxResearchLoops = specific?.MaxResearchLoops ?? defaults.MaxResearchLoops,
             QualityAvgScoreAtLeast = quality?.AvgScoreAtLeast,
             QualityBlockingCountAtMost = quality?.BlockingCountAtMost,
         };
@@ -201,6 +202,16 @@ public sealed record ResolvedRule
 
     public int? MaxQuestionLoops { get; init; }
     public int? EscalationCap { get; init; }
+
+    /// <summary>
+    /// Research domain only: plan-level cap on architect ↔ research_dispatch
+    /// round-trips. See <see cref="ScopeRule.MaxResearchLoops"/>. Consumed by
+    /// the <c>research_loop_counter</c> step in <c>plan-level.yaml</c> via
+    /// the <c>resolve-research-max-loops.ps1</c> helper.
+    /// </summary>
+    [JsonPropertyName("max_research_loops")]
+    public int? MaxResearchLoops { get; init; }
+
     public int? QualityAvgScoreAtLeast { get; init; }
     public int? QualityBlockingCountAtMost { get; init; }
 }
