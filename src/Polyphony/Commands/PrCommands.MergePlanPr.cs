@@ -4,6 +4,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Locking;
 using Polyphony.Manifest;
 
@@ -64,6 +66,7 @@ public sealed partial class PrCommands
     /// <param name="by">Lock acquirer name; defaults to <c>USERNAME</c>/<c>USER</c> env.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-plan-pr")]
+    [JournaledAction(Action = "pr_merge_plan_pr")]
     [VerbResult(typeof(PrMergePlanPrResult))]
     public async Task<int> MergePlanPr(
         int rootId = RequiredInput.MissingInt,
@@ -82,6 +85,78 @@ public sealed partial class PrCommands
             ("--item-id", itemId == RequiredInput.MissingInt),
             ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
             return halt;
+
+        PrMergePlanPrPayload? payload = null;
+
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_merge_plan_pr", PullRequestJournalTarget(prNumber), rootId, itemId),
+            async innerCt =>
+            {
+                var sw = new StringWriter();
+                var originalOut = Console.Out;
+                int exitCode;
+                try
+                {
+                    Console.SetOut(sw);
+                    exitCode = await MergePlanPrBodyAsync(rootId, itemId, prNumber, parentItemId, ancestorIds, manifestPath, admin, lockTtlHours, by, innerCt).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                }
+                var output = sw.ToString();
+                Console.Write(output);
+                PrMergePlanPrResult? result = null;
+                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrMergePlanPrResult); }
+                catch (JsonException) { }
+                payload = result is null
+                    ? new PrMergePlanPrPayload { RootId = rootId, ItemId = itemId, ParentItemId = parentItemId, PrNumber = prNumber, ItemKey = itemId == rootId ? "root" : (itemId > 0 ? itemId.ToString(CultureInfo.InvariantCulture) : ""), IsRootPlan = itemId == rootId, HeadBranch = "", BaseBranch = "", ManifestBranch = "", ResultAction = "error", Succeeded = false, WasMutated = false, AlreadyMerged = false, Error = output.Trim() }
+                    : new PrMergePlanPrPayload
+                    {
+                        RootId = result.RootId,
+                        ItemId = result.ItemId,
+                        ParentItemId = result.ParentItemId,
+                        PrNumber = result.PrNumber,
+                        ItemKey = result.ItemKey,
+                        IsRootPlan = result.IsRootPlan,
+                        HeadBranch = result.HeadBranch,
+                        BaseBranch = result.BaseBranch,
+                        ManifestBranch = result.ManifestBranch,
+                        RepoSlug = result.RepoSlug,
+                        PrUrl = null,
+                        LockToken = result.LockToken,
+                        MergeCommit = result.MergeCommit,
+                        ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.AlreadyMerged ? "already_merged" : "merged"),
+                        Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                        WasMutated = result.Merged && !result.AlreadyMerged,
+                        AlreadyMerged = result.AlreadyMerged,
+                        ManifestRecorded = result.ManifestRecorded,
+                        ManifestPushed = result.ManifestPushed,
+                        ErrorCode = result.ErrorCode?.Length > 0 ? result.ErrorCode : null,
+                        Error = result.Error,
+                    };
+                return exitCode;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergePlanPrPayload),
+            ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task<int> MergePlanPrBodyAsync(
+        int rootId,
+        int itemId,
+        int prNumber,
+        int parentItemId,
+        string ancestorIds,
+        string manifestPath,
+        bool admin,
+        int lockTtlHours,
+        string by,
+        CancellationToken ct)
+    {
 
         // ── 1. Validate inputs + derive head/base. ──────────────────────────
         if (!Branching.RootId.TryParse(rootId, out var root))
@@ -237,6 +312,7 @@ public sealed partial class PrCommands
             }
         }
     }
+
 
     private async Task<int> MergePlanPrUnderLockAsync(
         int rootId,

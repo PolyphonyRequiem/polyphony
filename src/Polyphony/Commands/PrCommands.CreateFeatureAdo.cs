@@ -6,6 +6,8 @@ using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.AzureDevOps.Auth;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -34,6 +36,7 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("create-feature-ado")]
+    [JournaledAction(Action = "pr_create_feature_ado")]
     [VerbResult(typeof(PrCreateFeatureAdoResult))]
     public async Task<int> CreateFeatureAdo(
         string organization = "",
@@ -54,7 +57,6 @@ public sealed partial class PrCommands
 
         var slug = BuildAdoSlug(organization, project, repository);
 
-        // ── 1. Validate inputs. ────────────────────────────────────────────
         if (string.IsNullOrWhiteSpace(organization)
             || string.IsNullOrWhiteSpace(project)
             || string.IsNullOrWhiteSpace(repository))
@@ -78,196 +80,386 @@ public sealed partial class PrCommands
 
         var headBranch = BranchNameBuilder.Feature(root).Value;
         var baseBranch = targetBranch;
+        PrCreateFeatureAdoPayload? payload = null;
 
-        if (ado is null)
-        {
-            EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                "ado_failed", "IAdoClient is not configured", headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-
-        // ── 2. Validate head + base exist on the remote — gives a clean
-        //      categorical error instead of letting ADO fail late with a less
-        //      actionable message. Mirrors the GitHub-side create-feature-pr
-        //      verb, which checks ls-remote for the head branch.
-        try
-        {
-            var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", ct).ConfigureAwait(false);
-            if (headRefs.Count == 0)
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation(
+                "pr_create_feature_ado",
+                BranchPairJournalTarget(headBranch, baseBranch),
+                rootId,
+                rootId),
+            async innerCt =>
             {
-                EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                    "missing_head_branch", $"head branch '{headBranch}' does not exist on remote",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
-            }
-
-            var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{baseBranch}", ct).ConfigureAwait(false);
-            if (baseRefs.Count == 0)
-            {
-                EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                    "missing_base_branch", $"base branch '{baseBranch}' does not exist on remote",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
-            }
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                "ado_failed", $"git ls-remote failed: {ex.Message}", headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-
-        var prTitle = string.IsNullOrWhiteSpace(title)
-            ? await ResolvePrTitleAsync(rootId, ct).ConfigureAwait(false)
-            : title;
-        var prBody = string.IsNullOrWhiteSpace(body)
-            ? await BuildPrBodyAsync(rootId, headBranch, baseBranch, ct).ConfigureAwait(false)
-            : body;
-
-        try
-        {
-            // ── 3. Reuse check: scan PRs for a matching source/target.
-            //      Includes Completed PRs so a retry after a successful merge
-            //      reuses the real merged PR rather than opening a degenerate
-            //      no-op duplicate (AB#3228). Active PRs win over Completed.
-            var allPrs = await ado.ListPullRequestsAsync(
-                organization, project, repository,
-                AdoPullRequestStatus.All, null, ct).ConfigureAwait(false);
-
-            if (allPrs is null)
-            {
-                EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                    "pr_not_found",
-                    $"Repository '{repository}' not found in {organization}/{project}.",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
-            }
-
-            var expectedSourceRef = "refs/heads/" + headBranch;
-            var expectedTargetRef = "refs/heads/" + baseBranch;
-            AdoPullRequest? activeMatch = null;
-            AdoPullRequest? completedMatch = null;
-            foreach (var pr in allPrs)
-            {
-                if (!string.Equals(pr.SourceRefName, expectedSourceRef, StringComparison.Ordinal)
-                    || !string.Equals(pr.TargetRefName, expectedTargetRef, StringComparison.Ordinal))
+                if (ado is null)
                 {
-                    continue;
+                    const string error = "IAdoClient is not configured";
+                    payload = new PrCreateFeatureAdoPayload
+                    {
+                        RootId = rootId,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_failed",
+                        Error = error,
+                    };
+                    EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                        "ado_failed", error, headBranch, baseBranch);
+                    return ExitCodes.Success;
                 }
-                if (string.Equals(pr.Status, "active", StringComparison.OrdinalIgnoreCase))
+
+                try
                 {
-                    activeMatch = pr;
-                    break;
+                    var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", innerCt).ConfigureAwait(false);
+                    if (headRefs.Count == 0)
+                    {
+                        var error = $"head branch '{headBranch}' does not exist on remote";
+                        payload = new PrCreateFeatureAdoPayload
+                        {
+                            RootId = rootId,
+                            Organization = organization,
+                            Project = project,
+                            Repository = repository,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            ErrorCode = "missing_head_branch",
+                            Error = error,
+                        };
+                        EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                            "missing_head_branch", error, headBranch, baseBranch);
+                        return ExitCodes.Success;
+                    }
+
+                    var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{baseBranch}", innerCt).ConfigureAwait(false);
+                    if (baseRefs.Count == 0)
+                    {
+                        var error = $"base branch '{baseBranch}' does not exist on remote";
+                        payload = new PrCreateFeatureAdoPayload
+                        {
+                            RootId = rootId,
+                            Organization = organization,
+                            Project = project,
+                            Repository = repository,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            ErrorCode = "missing_base_branch",
+                            Error = error,
+                        };
+                        EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                            "missing_base_branch", error, headBranch, baseBranch);
+                        return ExitCodes.Success;
+                    }
                 }
-                if (string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase)
-                    && (completedMatch is null || pr.CreationDate < completedMatch.CreationDate))
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
                 {
-                    // Prefer the OLDEST completed match — see PrCommands.OpenMergeGroupAdo.cs
-                    // for rationale (AB#3228 newer-phantom guard).
-                    completedMatch = pr;
+                    payload = new PrCreateFeatureAdoPayload
+                    {
+                        RootId = rootId,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_failed",
+                        Error = $"git ls-remote failed: {ex.Message}",
+                    };
+                    EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                        "ado_failed", $"git ls-remote failed: {ex.Message}", headBranch, baseBranch);
+                    return ExitCodes.Success;
                 }
-            }
 
-            // Branch-recycle staleness check (AB#3211 root cause): if the
-            // branch names were reused by a later run, the completed PR's
-            // recorded source SHA no longer matches origin/{head}. Drop the
-            // stale match so we create a fresh active PR.
-            if (activeMatch is null && completedMatch is not null)
-            {
-                var validity = await ValidateCompletedAdoPrAsync(
-                    organization, project, repository,
-                    completedMatch.PullRequestId, headBranch, baseBranch, ct).ConfigureAwait(false);
-                if (!validity.IsValid) completedMatch = null;
-            }
+                var prTitle = string.IsNullOrWhiteSpace(title)
+                    ? await ResolvePrTitleAsync(rootId, innerCt).ConfigureAwait(false)
+                    : title;
+                var prBody = string.IsNullOrWhiteSpace(body)
+                    ? await BuildPrBodyAsync(rootId, headBranch, baseBranch, innerCt).ConfigureAwait(false)
+                    : body;
 
-            var existing = activeMatch ?? completedMatch;
-
-            if (existing is not null)
-            {
-                EmitCreateFeatureAdo(new PrCreateFeatureAdoResult
+                try
                 {
-                    RootId = rootId,
-                    HeadBranch = headBranch,
-                    BaseBranch = baseBranch,
-                    Organization = organization,
-                    Project = project,
-                    Repository = repository,
-                    RepoSlug = slug,
-                    PrNumber = existing.PullRequestId,
-                    PrUrl = BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
-                    Title = prTitle,
-                    Created = false,
-                    ErrorCode = "",
-                });
-                return ExitCodes.Success;
-            }
+                    var allPrs = await ado.ListPullRequestsAsync(
+                        organization, project, repository,
+                        AdoPullRequestStatus.All, null, innerCt).ConfigureAwait(false);
 
-            // ── 4. Create the PR. ──────────────────────────────────────────
-            var created = await ado.CreatePullRequestAsync(
-                organization, project, repository,
-                sourceBranch: headBranch,
-                targetBranch: baseBranch,
-                title: prTitle,
-                description: prBody,
-                ct).ConfigureAwait(false);
+                    if (allPrs is null)
+                    {
+                        var error = $"Repository '{repository}' not found in {organization}/{project}.";
+                        payload = new PrCreateFeatureAdoPayload
+                        {
+                            RootId = rootId,
+                            Organization = organization,
+                            Project = project,
+                            Repository = repository,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            Title = prTitle,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            ErrorCode = "pr_not_found",
+                            Error = error,
+                        };
+                        EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                            "pr_not_found", error, headBranch, baseBranch);
+                        return ExitCodes.Success;
+                    }
 
-            if (created is null)
-            {
-                EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                    "pr_not_found",
-                    $"Repository '{repository}' not found in {organization}/{project}.",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
-            }
+                    var expectedSourceRef = "refs/heads/" + headBranch;
+                    var expectedTargetRef = "refs/heads/" + baseBranch;
+                    AdoPullRequest? activeMatch = null;
+                    AdoPullRequest? completedMatch = null;
+                    foreach (var pr in allPrs)
+                    {
+                        if (!string.Equals(pr.SourceRefName, expectedSourceRef, StringComparison.Ordinal)
+                            || !string.Equals(pr.TargetRefName, expectedTargetRef, StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+                        if (string.Equals(pr.Status, "active", StringComparison.OrdinalIgnoreCase))
+                        {
+                            activeMatch = pr;
+                            break;
+                        }
+                        if (string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase)
+                            && (completedMatch is null || pr.CreationDate < completedMatch.CreationDate))
+                        {
+                            completedMatch = pr;
+                        }
+                    }
 
-            EmitCreateFeatureAdo(new PrCreateFeatureAdoResult
-            {
-                RootId = rootId,
-                HeadBranch = headBranch,
-                BaseBranch = baseBranch,
-                Organization = organization,
-                Project = project,
-                Repository = repository,
-                RepoSlug = slug,
-                PrNumber = created.PullRequestId,
-                PrUrl = BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
-                Title = prTitle,
-                Created = true,
-                ErrorCode = "",
-            });
-            return ExitCodes.Success;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (AdoAuthenticationException ex)
-        {
-            // Raised by IPolyphonyAuthProvider when no ADO credential chain succeeds (PAT env or AAD).
-            EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                "no_pat", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-        catch (TimeoutException ex)
-        {
-            EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                "ado_timeout", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-        catch (HttpRequestException ex)
-        {
-            // 401/403 → no_pat (PAT is missing or rejected); everything else → ado_failed.
-            var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-                ? "no_pat"
-                : "ado_failed";
-            EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                code, ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-        catch (Exception ex)
-        {
-            EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
-                "ado_failed", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
+                    if (activeMatch is null && completedMatch is not null)
+                    {
+                        var validity = await ValidateCompletedAdoPrAsync(
+                            organization, project, repository,
+                            completedMatch.PullRequestId, headBranch, baseBranch, innerCt).ConfigureAwait(false);
+                        if (!validity.IsValid) completedMatch = null;
+                    }
+
+                    var existing = activeMatch ?? completedMatch;
+
+                    if (existing is not null)
+                    {
+                        var result = new PrCreateFeatureAdoResult
+                        {
+                            RootId = rootId,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            Organization = organization,
+                            Project = project,
+                            Repository = repository,
+                            RepoSlug = slug,
+                            PrNumber = existing.PullRequestId,
+                            PrUrl = BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
+                            Title = prTitle,
+                            Created = false,
+                            ErrorCode = "",
+                        };
+                        payload = new PrCreateFeatureAdoPayload
+                        {
+                            RootId = rootId,
+                            Organization = organization,
+                            Project = project,
+                            Repository = repository,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            PrNumber = result.PrNumber,
+                            PrUrl = result.PrUrl,
+                            Title = result.Title,
+                            ResultAction = "reused_existing_pr",
+                            Succeeded = true,
+                            WasMutated = false,
+                            ErrorCode = result.ErrorCode,
+                        };
+                        EmitCreateFeatureAdo(result);
+                        return ExitCodes.Success;
+                    }
+
+                    var created = await ado.CreatePullRequestAsync(
+                        organization, project, repository,
+                        sourceBranch: headBranch,
+                        targetBranch: baseBranch,
+                        title: prTitle,
+                        description: prBody,
+                        innerCt).ConfigureAwait(false);
+
+                    if (created is null)
+                    {
+                        var error = $"Repository '{repository}' not found in {organization}/{project}.";
+                        payload = new PrCreateFeatureAdoPayload
+                        {
+                            RootId = rootId,
+                            Organization = organization,
+                            Project = project,
+                            Repository = repository,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            Title = prTitle,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            ErrorCode = "pr_not_found",
+                            Error = error,
+                        };
+                        EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                            "pr_not_found", error, headBranch, baseBranch);
+                        return ExitCodes.Success;
+                    }
+
+                    var createdResult = new PrCreateFeatureAdoResult
+                    {
+                        RootId = rootId,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = created.PullRequestId,
+                        PrUrl = BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
+                        Title = prTitle,
+                        Created = true,
+                        ErrorCode = "",
+                    };
+                    payload = new PrCreateFeatureAdoPayload
+                    {
+                        RootId = rootId,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        PrNumber = createdResult.PrNumber,
+                        PrUrl = createdResult.PrUrl,
+                        Title = createdResult.Title,
+                        ResultAction = "created",
+                        Succeeded = true,
+                        WasMutated = true,
+                        ErrorCode = createdResult.ErrorCode,
+                    };
+                    EmitCreateFeatureAdo(createdResult);
+                    return ExitCodes.Success;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (AdoAuthenticationException ex)
+                {
+                    payload = new PrCreateFeatureAdoPayload
+                    {
+                        RootId = rootId,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        Title = prTitle,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "no_pat",
+                        Error = ex.Message,
+                    };
+                    EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                        "no_pat", ex.Message, headBranch, baseBranch);
+                    return ExitCodes.Success;
+                }
+                catch (TimeoutException ex)
+                {
+                    payload = new PrCreateFeatureAdoPayload
+                    {
+                        RootId = rootId,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        Title = prTitle,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_timeout",
+                        Error = ex.Message,
+                    };
+                    EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                        "ado_timeout", ex.Message, headBranch, baseBranch);
+                    return ExitCodes.Success;
+                }
+                catch (HttpRequestException ex)
+                {
+                    var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                        ? "no_pat"
+                        : "ado_failed";
+                    payload = new PrCreateFeatureAdoPayload
+                    {
+                        RootId = rootId,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        Title = prTitle,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = code,
+                        Error = ex.Message,
+                    };
+                    EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                        code, ex.Message, headBranch, baseBranch);
+                    return ExitCodes.Success;
+                }
+                catch (Exception ex)
+                {
+                    payload = new PrCreateFeatureAdoPayload
+                    {
+                        RootId = rootId,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        Title = prTitle,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_failed",
+                        Error = ex.Message,
+                    };
+                    EmitCreateFeatureAdoError(rootId, targetBranch, organization, project, repository, slug,
+                        "ado_failed", ex.Message, headBranch, baseBranch);
+                    return ExitCodes.Success;
+                }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrCreateFeatureAdoPayload),
+            ct: ct).ConfigureAwait(false);
     }
 
     private static void EmitCreateFeatureAdo(PrCreateFeatureAdoResult result)
