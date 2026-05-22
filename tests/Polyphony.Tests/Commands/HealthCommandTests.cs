@@ -5,6 +5,7 @@ using Xunit;
 
 namespace Polyphony.Tests.Commands;
 
+[Collection("EnvironmentSerial")]
 public sealed class HealthCommandTests
 {
     [Fact]

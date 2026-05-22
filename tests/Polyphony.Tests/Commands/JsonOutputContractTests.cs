@@ -550,6 +550,410 @@ public sealed class JsonOutputContractTests : CommandTestBase
     }
 
     [Fact]
+    public async Task JournalHas_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_259).WithType(EpicType).WithTitle("Has Root").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalHasCommand();
+        try
+        {
+            await SeedJournalEntryAsync(store, runId: "run-has-json", rootId: 3259, workItemId: 3259, action: "branch_create", target: "feature/3259", startedAt: 1_700_000_000_000);
+
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Has(3259, "branch_create"));
+
+            exitCode.ShouldBe(ExitCodes.Success);
+            output.ShouldContain("\"present\"");
+            output.ShouldContain("\"matches\"");
+            output.ShouldContain("\"entry_id\"");
+            output.ShouldContain("\"run_id\"");
+            output.ShouldContain("\"started_at\"");
+
+            AssertNoPascalCase(output, "Present");
+            AssertNoPascalCase(output, "Matches");
+            AssertNoPascalCase(output, "EntryId");
+            AssertNoPascalCase(output, "RunId");
+            AssertNoPascalCase(output, "StartedAt");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalHas_NullFieldsOmitted_WhenWritingNull()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_259).WithType(EpicType).WithTitle("Has Nulls").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalHasCommand();
+        try
+        {
+            await store.RecordStartAsync(
+                new JournalEntryStart
+                {
+                    RunId = "run-has-null",
+                    RootId = 3259,
+                    WorkItemId = null,
+                    Action = "branch_create",
+                    Target = "feature/3259",
+                    StartedAt = 1_700_000_000_010,
+                },
+                CancellationToken.None);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Has(3259, "branch_create"));
+
+            output.ShouldNotContain("\"work_item_id\"");
+            output.ShouldNotContain("\"finished_at\"");
+            output.ShouldNotContain("\"outcome\"");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalHas_DeserializationRoundTrip_FieldsMapped()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_259).WithType(EpicType).WithTitle("Has Roundtrip").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalHasCommand();
+        try
+        {
+            await SeedJournalEntryAsync(store, runId: "run-has-roundtrip", rootId: 3259, workItemId: 3259, action: "branch_create", target: "feature/3259", startedAt: 1_700_000_000_020);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Has(3259, "branch_create"));
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.JournalHasResult);
+
+            result.ShouldNotBeNull();
+            result.Present.ShouldBeTrue();
+            result.Matches.ShouldHaveSingleItem();
+            result.Matches[0].RunId.ShouldBe("run-has-roundtrip");
+            result.Matches[0].Target.ShouldBe("feature/3259");
+            result.Matches[0].Outcome.ShouldBe(JournalOutcome.Success);
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalHas_NotFound_ReturnsErrorJson_WithCacheErrorExitCode()
+    {
+        var (cmd, _, dispose) = CreateJournalHasCommand();
+        try
+        {
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Has(99_995, "branch_create"));
+
+            exitCode.ShouldBe(ExitCodes.CacheError);
+            exitCode.ShouldBe(3);
+
+            var doc = JsonDocument.Parse(output);
+            doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+            doc.RootElement.GetProperty("work_item_id").GetInt32().ShouldBe(99_995);
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalQuery_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_258).WithType(EpicType).WithTitle("Query Root").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalQueryCommand();
+        try
+        {
+            await SeedJournalEntryAsync(
+                store,
+                runId: "run-query-json",
+                rootId: 3258,
+                workItemId: 3258,
+                action: "branch_create",
+                target: "feature/3258",
+                startedAt: 1_700_000_000_030,
+                effects:
+                [
+                    new JournalResourceEffect
+                    {
+                        Kind = ResourceKind.GitBranch,
+                        Id = "feature/3258",
+                        Intent = ResourceIntent.EnsurePresent,
+                        Mutation = ResourceMutation.CreatedNow,
+                        PolyphonyOwned = true,
+                    },
+                ]);
+
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Query(3258));
+
+            exitCode.ShouldBe(ExitCodes.Success);
+            output.ShouldContain("\"root_id\"");
+            output.ShouldContain("\"effects\"");
+            output.ShouldContain("\"count\"");
+            output.ShouldContain("\"expected_state\"");
+            output.ShouldContain("\"polyphony_owned\"");
+
+            AssertNoPascalCase(output, "RootId");
+            AssertNoPascalCase(output, "Effects");
+            AssertNoPascalCase(output, "Count");
+            AssertNoPascalCase(output, "ExpectedState");
+            AssertNoPascalCase(output, "PolyphonyOwned");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalQuery_NullFieldsOmitted_WhenWritingNull()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_258).WithType(EpicType).WithTitle("Query Nulls").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalQueryCommand();
+        try
+        {
+            await SeedJournalEntryAsync(
+                store,
+                runId: "run-query-null",
+                rootId: 3258,
+                workItemId: 3258,
+                action: "branch_create",
+                target: "feature/3258",
+                startedAt: 1_700_000_000_040,
+                effects:
+                [
+                    new JournalResourceEffect
+                    {
+                        Kind = ResourceKind.GitBranch,
+                        Id = "feature/3258",
+                        Intent = ResourceIntent.EnsurePresent,
+                        Mutation = ResourceMutation.CreatedNow,
+                        PolyphonyOwned = true,
+                    },
+                ]);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Query(3258));
+
+            output.ShouldNotContain("\"platform\"");
+            output.ShouldNotContain("\"parent_id\"");
+            output.ShouldNotContain("\"attributes\"");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalQuery_DeserializationRoundTrip_FieldsMapped()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_258).WithType(EpicType).WithTitle("Query Roundtrip").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalQueryCommand();
+        try
+        {
+            await SeedJournalEntryAsync(
+                store,
+                runId: "run-query-roundtrip",
+                rootId: 3258,
+                workItemId: 3258,
+                action: "branch_create",
+                target: "feature/3258",
+                startedAt: 1_700_000_000_050,
+                effects:
+                [
+                    new JournalResourceEffect
+                    {
+                        Kind = ResourceKind.GitBranch,
+                        Id = "feature/3258",
+                        Intent = ResourceIntent.EnsurePresent,
+                        Mutation = ResourceMutation.CreatedNow,
+                        PolyphonyOwned = true,
+                    },
+                ]);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Query(3258));
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.JournalQueryResult);
+
+            result.ShouldNotBeNull();
+            result.RootId.ShouldBe(3258);
+            result.Count.ShouldBe(1);
+            result.Effects[0].Kind.ShouldBe(ResourceKind.GitBranch);
+            result.Effects[0].ExpectedState.ShouldBe("present");
+            result.Effects[0].Action.ShouldBe("branch_create");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalQuery_NotFound_ReturnsErrorJson_WithCacheErrorExitCode()
+    {
+        var (cmd, _, dispose) = CreateJournalQueryCommand();
+        try
+        {
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Query(99_994));
+
+            exitCode.ShouldBe(ExitCodes.CacheError);
+            exitCode.ShouldBe(3);
+
+            var doc = JsonDocument.Parse(output);
+            doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+            doc.RootElement.GetProperty("work_item_id").GetInt32().ShouldBe(99_994);
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalOwned_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_257).WithType(EpicType).WithTitle("Owned Root").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalOwnedCommand();
+        try
+        {
+            await SeedJournalEntryAsync(
+                store,
+                runId: "run-owned-json",
+                rootId: 3257,
+                workItemId: 3257,
+                action: "branch_create",
+                target: "feature/3257",
+                startedAt: 1_700_000_000_060,
+                effects:
+                [
+                    new JournalResourceEffect
+                    {
+                        Kind = ResourceKind.GitBranch,
+                        Id = "feature/3257",
+                        Intent = ResourceIntent.EnsurePresent,
+                        Mutation = ResourceMutation.CreatedNow,
+                        PolyphonyOwned = true,
+                    },
+                ]);
+
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Owned(3257));
+
+            exitCode.ShouldBe(ExitCodes.Success);
+            output.ShouldContain("\"root_id\"");
+            output.ShouldContain("\"owned_resources\"");
+            output.ShouldContain("\"count\"");
+            output.ShouldContain("\"expected_state\"");
+
+            AssertNoPascalCase(output, "RootId");
+            AssertNoPascalCase(output, "OwnedResources");
+            AssertNoPascalCase(output, "Count");
+            AssertNoPascalCase(output, "ExpectedState");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalOwned_NullFieldsOmitted_WhenWritingNull()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_257).WithType(EpicType).WithTitle("Owned Nulls").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalOwnedCommand();
+        try
+        {
+            await SeedJournalEntryAsync(
+                store,
+                runId: "run-owned-null",
+                rootId: 3257,
+                workItemId: 3257,
+                action: "branch_create",
+                target: "feature/3257",
+                startedAt: 1_700_000_000_070,
+                effects:
+                [
+                    new JournalResourceEffect
+                    {
+                        Kind = ResourceKind.GitBranch,
+                        Id = "feature/3257",
+                        Intent = ResourceIntent.EnsurePresent,
+                        Mutation = ResourceMutation.CreatedNow,
+                        PolyphonyOwned = true,
+                    },
+                ]);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Owned(3257));
+
+            output.ShouldNotContain("null");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalOwned_DeserializationRoundTrip_FieldsMapped()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_257).WithType(EpicType).WithTitle("Owned Roundtrip").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalOwnedCommand();
+        try
+        {
+            await SeedJournalEntryAsync(
+                store,
+                runId: "run-owned-roundtrip",
+                rootId: 3257,
+                workItemId: 3257,
+                action: "branch_create",
+                target: "feature/3257",
+                startedAt: 1_700_000_000_080,
+                effects:
+                [
+                    new JournalResourceEffect
+                    {
+                        Kind = ResourceKind.GitBranch,
+                        Id = "feature/3257",
+                        Intent = ResourceIntent.EnsurePresent,
+                        Mutation = ResourceMutation.CreatedNow,
+                        PolyphonyOwned = true,
+                    },
+                ]);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Owned(3257));
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.JournalOwnedResult);
+
+            result.ShouldNotBeNull();
+            result.RootId.ShouldBe(3257);
+            result.Count.ShouldBe(1);
+            result.OwnedResources[0].Kind.ShouldBe(ResourceKind.GitBranch);
+            result.OwnedResources[0].ExpectedState.ShouldBe("present");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalOwned_NotFound_ReturnsErrorJson_WithCacheErrorExitCode()
+    {
+        var (cmd, _, dispose) = CreateJournalOwnedCommand();
+        try
+        {
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Owned(99_993));
+
+            exitCode.ShouldBe(ExitCodes.CacheError);
+            exitCode.ShouldBe(3);
+
+            var doc = JsonDocument.Parse(output);
+            doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+            doc.RootElement.GetProperty("work_item_id").GetInt32().ShouldBe(99_993);
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
     public async Task JournalDrift_SnakeCaseFieldNames_PresentInRawJson()
     {
         await SeedAsync(new WorkItemBuilder().WithId(3_260).WithType(EpicType).WithTitle("Drift Root").WithState(InProgressState).Build());
@@ -1140,6 +1544,9 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var hierarchyCmd = CreateHierarchyCommand();
         var planCmd = CreatePlanCommands();
         var nextReadyCmd = CreateStateCommands();
+        var (journalHasCmd, _, hasDispose) = CreateJournalHasCommand();
+        var (journalQueryCmd, _, queryDispose) = CreateJournalQueryCommand();
+        var (journalOwnedCmd, _, ownedDispose) = CreateJournalOwnedCommand();
         var (journalDriftCmd, _, driftDispose) = CreateJournalDriftCommand();
         using var fx = new ConductorDirFixture();
 
@@ -1149,28 +1556,33 @@ public sealed class JsonOutputContractTests : CommandTestBase
             var (hierarchyExit, hierarchyOutput) = await CaptureConsoleAsync(() => hierarchyCmd.Hierarchy(missingId));
             var (loadTypeExit, loadTypeOutput) = await CaptureConsoleAsync(() => planCmd.LoadType(missingId, fx.ConfigDir));
             var (nextReadyExit, nextReadyOutput) = await CaptureConsoleAsync(() => nextReadyCmd.NextReady(missingId));
+            var (journalHasExit, journalHasOutput) = await CaptureConsoleAsync(() => journalHasCmd.Has(missingId, "branch_create"));
+            var (journalQueryExit, journalQueryOutput) = await CaptureConsoleAsync(() => journalQueryCmd.Query(missingId));
+            var (journalOwnedExit, journalOwnedOutput) = await CaptureConsoleAsync(() => journalOwnedCmd.Owned(missingId));
             var (journalDriftExit, journalDriftOutput) = await CaptureConsoleAsync(() => journalDriftCmd.Drift(missingId));
 
-            // All five operator-facing commands should return CacheError (3) on missing work item.
+            // All operator-facing commands should return CacheError (3) on missing work item.
             validateExit.ShouldBe(ExitCodes.CacheError);
             hierarchyExit.ShouldBe(ExitCodes.CacheError);
             loadTypeExit.ShouldBe(ExitCodes.CacheError);
             nextReadyExit.ShouldBe(ExitCodes.CacheError);
+            journalHasExit.ShouldBe(ExitCodes.CacheError);
+            journalQueryExit.ShouldBe(ExitCodes.CacheError);
+            journalOwnedExit.ShouldBe(ExitCodes.CacheError);
             journalDriftExit.ShouldBe(ExitCodes.CacheError);
 
-            // All five should produce valid JSON with an "error" field.
-            // Validate/Hierarchy/NextReady/JournalDrift include "work_item_id"; LoadType emits its own shape
-            // (PlanLoadTypeResult with empty type/definition + error), so we only assert the
-            // common "error" string contract here.
-            foreach (var output in new[] { validateOutput, hierarchyOutput, loadTypeOutput, nextReadyOutput, journalDriftOutput })
+            // All should produce valid JSON with an "error" field.
+            // LoadType emits its own shape (PlanLoadTypeResult with empty type/definition + error),
+            // so we only assert the common "error" string contract here.
+            foreach (var output in new[] { validateOutput, hierarchyOutput, loadTypeOutput, nextReadyOutput, journalHasOutput, journalQueryOutput, journalOwnedOutput, journalDriftOutput })
             {
                 var doc = JsonDocument.Parse(output);
                 doc.RootElement.TryGetProperty("error", out var errorProp).ShouldBeTrue();
                 errorProp.GetString().ShouldNotBeNullOrEmpty();
             }
 
-            // Validate/Hierarchy/NextReady/JournalDrift additionally guarantee the work_item_id field.
-            foreach (var output in new[] { validateOutput, hierarchyOutput, nextReadyOutput, journalDriftOutput })
+            // Validate/Hierarchy/NextReady/JournalHas/JournalQuery/JournalOwned/JournalDrift additionally guarantee the work_item_id field.
+            foreach (var output in new[] { validateOutput, hierarchyOutput, nextReadyOutput, journalHasOutput, journalQueryOutput, journalOwnedOutput, journalDriftOutput })
             {
                 var doc = JsonDocument.Parse(output);
                 doc.RootElement.TryGetProperty("work_item_id", out var idProp).ShouldBeTrue();
@@ -1179,6 +1591,9 @@ public sealed class JsonOutputContractTests : CommandTestBase
         }
         finally
         {
+            hasDispose();
+            queryDispose();
+            ownedDispose();
             driftDispose();
         }
     }
@@ -1781,6 +2196,39 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var store = new JournalStore(Path.Combine(dir, ".polyphony-state", "journal.db"));
         return (
             new JournalCommands(store),
+            store,
+            () => { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } });
+    }
+
+    private (JournalHasCommand Cmd, JournalStore Store, Action Dispose) CreateJournalHasCommand()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"polyphony-journal-has-contract-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var store = new JournalStore(Path.Combine(dir, ".polyphony-state", "journal.db"));
+        return (
+            new JournalHasCommand(store, new RepositoryServiceProvider(Repository)),
+            store,
+            () => { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } });
+    }
+
+    private (JournalQueryCommand Cmd, JournalStore Store, Action Dispose) CreateJournalQueryCommand()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"polyphony-journal-query-contract-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var store = new JournalStore(Path.Combine(dir, ".polyphony-state", "journal.db"));
+        return (
+            new JournalQueryCommand(store, new RepositoryServiceProvider(Repository)),
+            store,
+            () => { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } });
+    }
+
+    private (JournalOwnedCommand Cmd, JournalStore Store, Action Dispose) CreateJournalOwnedCommand()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"polyphony-journal-owned-contract-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var store = new JournalStore(Path.Combine(dir, ".polyphony-state", "journal.db"));
+        return (
+            new JournalOwnedCommand(store, new RepositoryServiceProvider(Repository)),
             store,
             () => { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } });
     }
