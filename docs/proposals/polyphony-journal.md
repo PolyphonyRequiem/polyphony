@@ -1,10 +1,19 @@
 # Polyphony Action Journal — Spec & Options
 
-**Status:** Proposal / draft for discussion
+**Status:** Proposal — D1, D2, D6, naming decided; Phase 1 scope open
 **Owner:** polyphony-internal architecture
 **Work item:** AB#3254 (parent epic: AB#3253)
 **Companion:** none (does not depend on the conductor `on_error` brief; tracks
 in parallel)
+
+## Decision log
+
+| Dimension | Decision | Date | Notes |
+|---|---|---|---|
+| D1 — Scope | Every state-mutating verb, **including polyphony-internal**, journals | 2026-05-21 | See revised D1 below |
+| D2 — Storage | **Per-root** (lives in the root worktree; sub-worktrees write through to it) | 2026-05-21 | See revised D2 below |
+| D6 — Backfill | Greenfield only. No backfill verb. In-flight runs at cutover are breakable. | 2026-05-21 | See revised D6 below |
+| Naming | `journal` | 2026-05-21 | "ledger", "actions log", "audit" all rejected |
 
 ## TL;DR
 
@@ -24,7 +33,7 @@ external systems by hand. This drives a restack of downstream pain:
 - **Idempotency is per-script.** Every state-mutating script reinvents
   "have I already done this?" using tempfiles or external lookups.
 
-The proposal: a **per-worktree action journal** that records every
+The proposal: a **per-root action journal** that records every
 state-mutating polyphony action, queryable via new `polyphony journal`
 verbs, consumed by reset / debugging / drift detection.
 
@@ -38,8 +47,8 @@ queryable, and the basis for transactional reset and drift detection.
 - **Not a replacement for conductor events.** Conductor still owns the
   workflow execution log; the journal records *polyphony actions*, which
   are a subset.
-- **Not cross-machine / cross-repo.** The journal lives per-worktree and
-  is bound to the run that produced it.
+- **Not cross-machine / cross-repo.** The journal lives per-root and
+  is bound to the root run that produced it.
 - **Not a billing / cost system.** Cost tracking *could* be built on top
   later; v1 does not solve that.
 - **Not a substitute for ADO as work-tracker.** Work-item state continues
@@ -65,11 +74,11 @@ journal is either useless (too narrow) or unmaintainable (too broad).
   uninteresting (`polyphony state next-ready` runs hundreds of times per
   root); dilutes signal.
 
-- **(b) Every state-mutating verb.** Only verbs that mutate external state
-  (`branch ensure-evidence-branch`, `pr open-evidence-pr`, watermark stamps,
-  manifest writes, ADO transitions). *Pro:* signal-rich; aligns with what
-  reset cares about. *Con:* requires classifying every verb up-front and
-  enforcing the classification.
+- **(b) Every external-state-mutating verb.** Only verbs that mutate
+  external state (`branch ensure-evidence-branch`, `pr open-evidence-pr`,
+  watermark stamps, manifest writes, ADO transitions). *Pro:* signal-rich
+  for the reset/drift use cases. *Con:* misses polyphony-internal
+  mutations that are still mutations someone might want a timeline for.
 
 - **(c) Every external side-effect, regardless of verb.** Define "action"
   at the wire boundary (git mutation, gh/az/twig invocation, ADO REST
@@ -77,43 +86,83 @@ journal is either useless (too narrow) or unmaintainable (too broad).
   scripts. *Con:* requires intercepting every shell-out; impractical
   without a centralized side-effect layer that doesn't exist today.
 
-**Recommendation: (b)** with a marker interface or attribute
-(`[JournaledAction]`) on every CLI verb that mutates external state. The
-classification is reviewable, finite (~15-20 verbs today), and grows
-linearly with the CLI surface.
+- **(d) Every state-mutating verb, internal or external.** Strict
+  superset of (b): polyphony-internal mutations (cache invalidations,
+  manifest entries, journal-internal state) journal alongside
+  externally-observable mutations. *Pro:* one rule, no boundary
+  classification disputes; future-proof against verbs that move from
+  external to internal or vice versa. *Con:* slightly higher volume
+  than (b); requires that "state-mutating" stay a clean property of a
+  verb.
 
-**Carve-outs in (b):**
+**Decision: (d).** Every verb that mutates *any* state — external (git,
+ADO, PRs, manifest) or polyphony-internal (caches, locks, journal
+metadata itself) — carries `[JournaledAction]` and journals. The
+boundary between "external" and "internal" is exactly the kind of
+slippery distinction we should not be relitigating per verb.
+
+**Carve-out (the only one):**
 - Read-only verbs (`state next-ready`, `edges check`, `policy load`,
-  `guidance extract`) do NOT journal.
-- Verbs that mutate **polyphony-internal** state only (e.g., a future
-  in-memory cache) do NOT journal.
-- Verbs that mutate **observable external state** DO journal: git
-  branches/worktrees, PRs, ADO transitions/tags/links, the manifest,
-  watermark stamps.
+  `guidance extract`, `journal show`, `journal export`, etc.) do NOT
+  journal.
+
+The decorator pattern (D5) enforces this: a verb either has
+`[JournaledAction]` (mutates → journals) or it does not (read-only).
+Reviewer responsibility at PR time.
 
 ### D2 — Storage location
 
+**Background — why "per-worktree" was the wrong frame.** Polyphony has
+*nested* worktrees: a root run gets a feature worktree, which contains
+plan/impl/evidence sub-worktrees, sometimes recursively. A
+journal-per-worktree would shred a single root's timeline across many
+files and require cross-worktree joins for any interesting query. The
+correct grain is **per-root**.
+
 **Options:**
 
-- **(a) Per-worktree** (`<worktree>/.polyphony-state/journal.db`,
-  gitignored). *Pro:* aligns with root-bound run lifecycle; natural single-
-  writer (the run lock); teardown with the worktree. *Con:* destroyed
-  with the worktree, so debugging post-cleanup requires copying it out.
+- **(a) Per-root, in the root worktree.** Journal lives at
+  `<root-worktree>/.polyphony-state/journal.db`, gitignored. Every
+  sub-worktree (impl, evidence, plan) under the root walks up the
+  worktree tree to find the root journal and writes through to it.
+  *Pro:* one journal per root run = one cohesive timeline; sub-worktree
+  actions are first-class entries in the root timeline; reset still
+  works because tearing down the root worktree also tears down the
+  journal. *Con:* the root worktree must exist before any sub-worktree
+  action journals; bootstrap order matters.
 
-- **(b) Per-repo** (`<repo>/.polyphony-state/journal.db`, outside
-  worktrees, gitignored). *Pro:* survives worktree cleanup; cross-run
-  queries trivial. *Con:* multiple concurrent root runs (different
-  worktrees, same repo) contend for the same DB; the same-root run lock
-  helps but doesn't generalize to cross-root concurrency.
+- **(b) Per-repo, outside any worktree.** Single
+  `<repo>/.polyphony-state/journal.db`. *Pro:* survives all worktree
+  teardowns; cross-root queries trivial. *Con:* multiple concurrent
+  root runs in the same repo (different roots, different worktrees)
+  contend on the same DB; we'd need a discriminator column on every row
+  and the noise of unrelated roots in every query.
 
-- **(c) Hybrid.** Per-worktree as the *write* store; copy / roll-up to
-  per-repo on root completion or reset for cross-run debugging. *Pro:*
-  best of both. *Con:* one more thing that can drift.
+- **(c) Per-root + per-repo rollup.** Per-root as the *write* store;
+  copy / roll-up to per-repo on root completion or reset for cross-run
+  debugging. *Pro:* best of both. *Con:* one more thing that can drift.
 
-**Recommendation: (a) per-worktree** for v1. The teardown loss is real but
-mitigable by `polyphony journal export <path>` before cleanup. Per-repo
-roll-up can be added later if cross-run queries become a real ask. We
-should resist over-engineering this on day one.
+**Decision: (a) per-root, in the root worktree.** Single writer per
+journal (the root run's same-root lock already serializes); single
+timeline per root; tears down with the root worktree (which is the
+right ownership boundary). Sub-worktrees discover the root journal by
+walking up the worktree parent chain until they find `.polyphony-state/`
+or hit the repo root.
+
+**Resilience against bootstrap-order issues:** the journal is created
+lazily on first write. Actions that happen before the root worktree
+exists (e.g., the verb that creates the root worktree itself) journal
+into a transient buffer that gets flushed once the journal file is
+reachable. If the create-worktree action fails, the buffer is discarded
+— there is no journal to attach it to anyway.
+
+**Resilience against teardown loss:** a `polyphony journal export
+<path>` verb dumps the journal to an arbitrary path before reset /
+worktree cleanup. Useful for post-mortem.
+
+Per-repo rollup is **deferred**. If cross-root debugging becomes a real
+ask, we can add a rollup verb later that aggregates per-root journals
+into a per-repo SQLite. We resist building it on day one.
 
 ### D3 — Storage technology
 
@@ -224,40 +273,37 @@ two patterns coexist; (b) handles the bulk.
 
 When the journal lands, in-flight runs have no history. What happens?
 
-**Options:**
+**Decision: greenfield, breakable.** Journal starts now. Runs older than
+the journal-enablement commit stay observation-only forever. In-flight
+root runs at the cut-over moment have partial journals — first half
+observation-only, second half journaled — and we **accept that as
+breakage**.
 
-- **(a) Greenfield.** Journal starts now. Runs older than the journal-
-  enablement commit stay observation-only forever. *Pro:* simple, no
-  surprises. *Con:* in-flight root runs at the cut-over moment have
-  partial journals — first half observation-only, second half journaled.
+The polyphony-wide stance is "breaking changes are good; we don't manage
+compatibility shims." Backfill is a compatibility shim by another name.
+We don't ship one.
 
-- **(b) Best-effort backfill on first journaled run.** Walk the worktree
-  and reconstruct journal entries by inspection (branches present,
-  worktrees present, manifest entries) with `outcome='inferred'`.
-  *Pro:* even old runs get a workable journal. *Con:* inferred entries
-  are lower-fidelity; reset can't trust them as strongly.
-
-- **(c) Forbid in-flight cutover.** Don't enable the journal until all
-  root runs are quiescent. *Pro:* clean. *Con:* operationally annoying
-  (we always have runs in flight) and we'd never ship.
-
-**Recommendation: (a) greenfield**, plus a separate `polyphony journal
-backfill <root>` verb that does (b) on demand for the rare case someone
-explicitly wants it. Operationally: enable the journal in a release;
-any in-flight runs get partial history; everyone moves on.
+If post-cutover an old run's reset misbehaves because its history is
+half-observed, the operator runs `polyphony reset root --force` (the
+observation-based path that exists today) and moves on. The journal
+benefits everyone *after* cutover.
 
 ### D7 — Retention
 
-**Stated without options.** Keep forever locally; ship a manual
-`polyphony journal vacuum --before <date>` for cleanup. SQLite is cheap;
-debugging value is high; auto-deletion is a hostile default.
+**Stated without options.** No retention management. Per D6, "no need
+to manage history." SQLite is cheap; debugging value is high; we journal
+forever locally. The journal lives and dies with the root worktree (per
+D2); when reset tears down the root worktree, the journal goes with it.
+There is no `journal vacuum` verb in v1.
 
 ### D8 — Concurrency
 
 **Stated without options.** WAL mode SQLite. Multiple writers within a
-single worktree are fine (a single root run can have parallel verb
-invocations under the same-root run lock). Cross-worktree concurrency is
-not possible by D2 (per-worktree storage).
+single root (the root worktree plus any number of sub-worktrees writing
+through to the root journal) are fine: the same-root run lock already
+serializes parallel verb invocations within a root run. Cross-root
+concurrency is not a concern: each root has its own journal (D2), so
+different roots never contend on the same DB.
 
 ### D9 — Visibility / query surface
 
@@ -271,7 +317,6 @@ not possible by D2 (per-worktree storage).
 | `polyphony journal show --action <name>` | per-action-type filter |
 | `polyphony journal drift --root N` | journal vs. observation diff (D10) |
 | `polyphony journal export <path>` | dump for off-worktree debugging |
-| `polyphony journal vacuum --before <date>` | retention |
 
 All emit the standard routing-style envelope; query verbs also support
 `--render text` for human reading and `--render json` (default) for
@@ -332,17 +377,20 @@ know what queries actually matter.
 
 | Phase | Scope | AC | Risk |
 |---|---|---|---|
-| **0** | ADR (this doc, post-discussion) | Approved by you | None |
-| **1** | Schema + `JournalStore` + `[JournaledAction]` decorator + `polyphony journal show` (text + json render) + `polyphony journal export` | New verb suite green; existing verbs unaffected | Low — additive |
-| **2** | Branch ops journal (`branch ensure-evidence-branch`, `branch ensure-feature-branch`, any other branch verb) | Per-root `journal show` shows real branch lifecycle | Low |
-| **3** | PR ops journal (open, comment, merge, close — both GitHub and ADO legs) | Per-root `journal show` covers PR lifecycle | Medium |
-| **4** | ADO transitions + tag mutations + watermark stamps + manifest writes journal | Drift check sees a full picture | Medium |
-| **5** | `polyphony journal drift` | Drift verb returns sane diffs on a real root | Medium |
-| **6** | `polyphony reset root` rewritten against journal; AB#3245 / AB#3246 close as side-effects | Reset reset-tests pass; residue empirically gone on a clean run | Higher — operational |
-| **7** | (optional) workflow-layer query verbs (D11) | Counter-like scripts begin retiring | Higher — workflow churn |
+| **0** | ADR (this doc) | D1, D2, D6, D7, naming **decided**; Phase 1 shape open | None |
+| **1A** | Schema + `JournalStore` + `[JournaledAction]` decorator + `polyphony journal show` (text + json render) + `polyphony journal export` | New verb suite green; existing verbs unaffected; journal is empty | Low — additive |
+| **1B** | (1A) + `[JournaledAction]` on every branch verb | Per-root `journal show` shows real branch lifecycle on day one | Low+ — slightly bigger landing |
+| **2** | PR ops journal (open, comment, merge, close — both GitHub and ADO legs) | Per-root `journal show` covers PR lifecycle | Medium |
+| **3** | ADO transitions + tag mutations + watermark stamps + manifest writes journal | Drift check sees a full picture | Medium |
+| **4** | `polyphony journal drift` | Drift verb returns sane diffs on a real root | Medium |
+| **5** | `polyphony reset root` rewritten against journal; AB#3245 / AB#3246 close as side-effects | Reset tests pass; residue empirically gone on a clean run | Higher — operational |
+| **6** | (optional) workflow-layer query verbs (D11) | Counter-like scripts begin retiring | Higher — workflow churn |
 
-Phases 1-5 are non-disruptive: nothing changes for existing workflows.
-Phase 6 is the payoff phase; phase 7 is bonus.
+Phases 1-4 are non-disruptive: nothing changes for existing workflows.
+Phase 5 is the payoff phase; phase 6 is bonus.
+
+**Phase 1A vs. 1B is the only open question.** See the Open Questions
+section above.
 
 ---
 
@@ -362,23 +410,24 @@ Phase 6 is the payoff phase; phase 7 is bonus.
 
 ## Open questions for you
 
-1. **D1 carve-out edge cases.** Are there verbs that mutate
-   *polyphony-internal* state but whose history we still want? (Examples:
-   `polyphony policy resolve` writes nothing today, but if it caches,
-   does cache invalidation belong in the journal?) My instinct: no.
-2. **D2 storage location.** Per-worktree feels right; do you want the
-   per-repo roll-up option committed to the spec as a future, or
-   genuinely punted until someone asks?
-3. **D6 backfill.** Are you OK with greenfield + on-demand backfill verb?
-   Or do you want auto-backfill on first journaled run for in-flight
-   apexes (operationally simpler but lower-fidelity history)?
-4. **Scope of phase 1.** Is `journal show` + `journal export` enough to
-   ship phase 1 standalone, or do you want phase 1 to also include the
-   first action class (branch ops) so we have something to actually
-   look at?
-5. **Naming.** "Journal" reads fine to me. Alternatives: "ledger" (more
-   accounting-feeling), "audit" (overloaded with security connotation),
-   "actions log" (verbose). Open.
+1. **Phase 1 scope.** Two shapes for Phase 1, pick one:
+   - **(A) Infra-only slice.** Schema + `JournalStore` +
+     `[JournaledAction]` decorator + `polyphony journal show` +
+     `polyphony journal export`. Zero verbs carry the attribute yet, so
+     the journal is empty until Phase 2 lights up branch ops. Risk: low.
+     Payoff: foundation present, no data yet.
+   - **(B) Slice + one action class.** Everything in (A), plus
+     `[JournaledAction]` on every branch verb (`branch
+     ensure-evidence-branch`, `branch ensure-feature-branch`, `branch
+     ensure-impl-branch`, etc.). Phase 1 ships with **real journal
+     entries on a real run**, so we can actually look at it. Risk:
+     slightly higher (decorator + verbs land together). Payoff: usable
+     end-to-end on day one.
+   - My recommendation: **(B)**. Phase 1 should be inspectable on a real
+     run, not theoretical.
+
+That's the only open question. D1, D2, D6, D7, and naming are
+decided. Everything else is implementation detail.
 
 ---
 
