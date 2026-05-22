@@ -58,8 +58,11 @@ public interface IGitClient
     /// <c>git -C {bare} rev-parse</c> fails with "fatal: cannot use bare
     /// repository ... (safe.bareRepository is 'explicit')".</para>
     ///
-    /// <para>Used by the <c>bare_repo</c> preflight advisory check (AB#3093,
-    /// epic AB#3085).</para>
+    /// <para>Diagnostic helper. Used by <c>polyphony worktree list</c> to
+    /// surface whether a repo's shared gitdir is bare; no longer wired into
+    /// preflight as a gating check. Polyphony supports both bare and
+    /// non-bare (vanilla clone) layouts as of the bare-requirement
+    /// drop.</para>
     /// </summary>
     /// <param name="commonDir">Absolute path to the shared git directory. Get this from <see cref="GetCommonDirAsync"/>.</param>
     /// <param name="ct">Cancellation token.</param>
@@ -289,6 +292,12 @@ public interface IGitClient
     /// so the command verb can route on git's exit code rather than throw.
     /// </summary>
     Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// <c>git worktree prune</c>. Prunes stale administrative metadata for
+    /// worktrees whose directories no longer exist.
+    /// </summary>
+    Task<ProcessResult> WorktreePruneAsync(CancellationToken ct = default);
 
     /// <summary>
     /// Detach onto <paramref name="head"/> and run

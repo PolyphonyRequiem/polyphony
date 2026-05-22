@@ -1,7 +1,7 @@
 # Onboarding Guide — Polyphony SDLC Configuration
 
 A step-by-step guide for onboarding a new repository to the
-`polyphony@polyphony` conductor workflow (and the wider polyphony
+`apex-driver@polyphony` conductor workflow (and the wider polyphony
 sub-workflow library). This guide uses **kyber** (a fictitious post-quantum
 cryptography library on a custom `KyberAgile` ADO process template) as a worked
 example throughout. After following this guide, you will have a working
@@ -88,18 +88,18 @@ After installing Polyphony, run `polyphony health` to verify your environment an
 
 ---
 
-## 2. Repository Layout (Bare Repo + Per-Run Worktrees)
+## 2. Repository Layout (Vanilla or Bare Repo + Per-Run Worktrees)
 
-> **Status:** the bare-repo + per-run-worktree layout is required by the SDLC orchestrator (epic AB#3085). The legacy "single non-bare clone" layout is unsupported as of the launcher rework — see [`docs/per-run-worktree-layout.md`](per-run-worktree-layout.md) for the full rationale.
+> **Status:** as of the bare-requirement drop, polyphony supports **both** a plain `git clone` (vanilla) layout and the bare-repo + per-run-worktree layout. The launcher and preflight no longer gate on bare-repo. A vanilla clone is the recommended default for new operators; the bare-repo layout remains supported for operators who prefer it. See [`docs/per-run-worktree-layout.md`](per-run-worktree-layout.md) for the per-apex worktree contract (which applies to both layouts).
 
 ### Why this layout
 
 The SDLC orchestrator dispatches agents into worktrees. If the only worktree available is the operator's main clone, two production bugs become structural:
 
 1. **Launcher hijack** — the operator's main worktree gets yanked off `main` onto a feature branch mid-conversation.
-2. **`worktree_dirty` cross-contamination** — sibling root runs (or ad-hoc operator state) race each other on the shared HEAD.
+2. **`worktree_dirty` cross-contamination** — sibling apex runs (or ad-hoc operator state) race each other on the shared HEAD.
 
-The bare-repo layout eliminates both classes by giving every root run its own worktree subtree, sibling to the operator's main worktree.
+The bare-repo layout eliminates both classes by giving every apex run its own worktree subtree, sibling to the operator's main worktree.
 
 ### Target on-disk layout
 
@@ -107,7 +107,7 @@ The bare-repo layout eliminates both classes by giving every root run its own wo
 ~/projects/<repo>.git/                bare repo (objects + refs only)
 ~/projects/<repo>/                    operator's main worktree, ALWAYS on `main`
 ~/projects/<repo>-runs/
-  root-{N}/                           container directory, NOT a worktree
+  apex-{N}/                           container directory, NOT a worktree
     feature-{N}/                        worktree on feature/{N}
     plan-{N}/                           worktree on plan/{N}
     plan-{N}-{item}/                    worktree on plan/{N}-{item}
@@ -122,7 +122,7 @@ Properties:
 
 - All worktrees share the bare's `objects` and `refs` directories — the on-disk cost of an extra worktree is just the working tree itself.
 - Branch invariants from the **polyphony-branch-model** skill are unchanged. The model changes *where* worktrees live, not how branches relate.
-- The SDLC launcher (`scripts/Invoke-PolyphonySdlc.ps1`) refuses to dispatch into the operator's main worktree; the bare-repo guard plus per-root-run path derivation makes the hijack bug structurally impossible.
+- The SDLC launcher (`scripts/Invoke-PolyphonySdlc.ps1`) refuses to dispatch into the operator's main worktree; per-apex-run path derivation makes the hijack bug structurally impossible regardless of whether the underlying source repo is bare or vanilla.
 
 ### One-time migration
 
@@ -174,14 +174,14 @@ Two preflight probes confirm the layout is wired correctly:
 polyphony state preflight --work-item <ID>
 ```
 
-Look for the `bare_repo` advisory check — `PASSED` means the common-dir resolved to `~/projects/<repo>.git/` and `git rev-parse --is-bare-repository` returned `true`.
+Look for the `bare_repo` advisory check — `PASSED` means the common-dir resolved to `~/projects/<repo>.git/` and `git rev-parse --is-bare-repository` returned `true`. (As of the bare-requirement drop this check no longer appears in preflight output — vanilla clones are first-class. If you opted into the bare-repo layout, `git --git-dir <repo>.git rev-parse --is-bare-repository` is the manual equivalent.)
 
 ```powershell
 # Quick scan of stale per-run worktrees (default is dry-run):
 polyphony worktree gc
 
-# Scoped to a single root:
-polyphony worktree gc --root <ID>
+# Scoped to a single apex:
+polyphony worktree gc --apex <ID>
 
 # Actually prune (after dry-run looks right):
 polyphony worktree gc --commit
@@ -206,9 +206,9 @@ It fast-forwards a behind-only `main`, hard-resets a squash-divergent `main` (on
 ### What this means for day-to-day work
 
 - **Edit code in `~/projects/<repo>/`.** That's your main worktree, always on `main`. The SDLC orchestrator never dispatches into it.
-- **Root runs land in `~/projects/<repo>-runs/root-{N}/`.** Each root run gets its own subtree; nothing leaks across runs.
+- **Apex runs land in `~/projects/<repo>-runs/apex-{N}/`.** Each apex run gets its own subtree; nothing leaks across runs.
 - **Agents run in per-item worktrees** (e.g. `impl-{N}-{item}/`) created on demand by `polyphony worktree create` and torn down by `polyphony worktree gc`.
-- **The launcher (`Invoke-PolyphonySdlc.ps1`) auto-derives the right worktree path** from the root id; you never need to pass `-WorktreeRoot` unless you're testing.
+- **The launcher (`Invoke-PolyphonySdlc.ps1`) auto-derives the right worktree path** from the apex id; you never need to pass `-WorktreeRoot` unless you're testing.
 
 ---
 
@@ -942,36 +942,36 @@ spaces-to-hyphens (`ConfigValidator.cs:162-163`).
 
 ## 10. First Run
 
-Once validation passes, you're ready to drive an root through the polyphony
+Once validation passes, you're ready to drive an apex through the polyphony
 SDLC pipeline.
 
 ### Invoking the Workflow
 
-The canonical SDLC entry point is `polyphony@polyphony` — a tree-walking
+The canonical SDLC entry point is `apex-driver@polyphony` — a tree-walking
 dispatcher built on the EdgeGraph + `state next-ready` model that drives an
-root (run-root) work item end-to-end. The only required input is `root_id`;
+apex (run-root) work item end-to-end. The only required input is `apex_id`;
 `intent` (`new` / `resume` / `replan`, default `new`), `platform` (default
 `ado`), and `organization` / `project` / `repository` are optional and
 threaded through to lifecycle sub-workflows. See
 `.github/skills/polyphony-sdlc/SKILL.md` *Invocation* and the ADR
-[`docs/decisions/polyphony.md`](decisions/polyphony.md) for the full
+[`docs/decisions/apex-driver.md`](decisions/apex-driver.md) for the full
 input contract and per-outcome examples.
 
 ```powershell
-# Drive a fresh root through a full SDLC pass
-conductor run polyphony@polyphony `
-  --input root_id=<ID> `
+# Drive a fresh apex through a full SDLC pass
+conductor run apex-driver@polyphony `
+  --input apex_id=<ID> `
   --web
 
-# Resume an in-flight root after a human gate or interruption
-conductor run polyphony@polyphony `
-  --input root_id=<ID> `
+# Resume an in-flight apex after a human gate or interruption
+conductor run apex-driver@polyphony `
+  --input apex_id=<ID> `
   --input intent=resume `
   --web
 
 # Full invocation with all inputs explicit (recommended for non-default platform / org)
-conductor run polyphony@polyphony `
-  --input root_id=<ID> `
+conductor run apex-driver@polyphony `
+  --input apex_id=<ID> `
   --input intent=new `
   --input platform=ado `
   --input organization=<org> `
@@ -986,27 +986,27 @@ conductor run polyphony@polyphony `
 
 ### Recommended: `Invoke-PolyphonySdlc.ps1`
 
-For day-to-day operator use, the launcher script `scripts/Invoke-PolyphonySdlc.ps1` wraps the `conductor run` invocation with the per-run worktree machinery from § 2. It auto-derives the worktree path under `~/projects/<repo>-runs/root-{N}/`, refuses to dispatch into the operator's main worktree, refuses if the target is dirty, and threads the right twig org/project + git metadata through.
+For day-to-day operator use, the launcher script `scripts/Invoke-PolyphonySdlc.ps1` wraps the `conductor run` invocation with the per-run worktree machinery from § 2. It auto-derives the worktree path under `~/projects/<repo>-runs/apex-{N}/`, refuses to dispatch into the operator's main worktree, refuses if the target is dirty, and threads the right twig org/project + git metadata through.
 
 ```powershell
 # Dry-run (default) — print the resolved worktree path and the conductor command line, do NOT launch:
-./scripts/Invoke-PolyphonySdlc.ps1 -RootId <ID>
+./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <ID>
 
 # Launch detached after dry-run looks right:
-./scripts/Invoke-PolyphonySdlc.ps1 -RootId <ID> -Commit
+./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <ID> -Commit
 
-# Resume an in-flight root:
-./scripts/Invoke-PolyphonySdlc.ps1 -RootId <ID> -Intent resume -Commit
+# Resume an in-flight apex:
+./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <ID> -Intent resume -Commit
 
 # Override the platform / org / project (defaults are read from .twig/config):
-./scripts/Invoke-PolyphonySdlc.ps1 -RootId <ID> -Platform github -Commit
+./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <ID> -Platform github -Commit
 ```
 
 Key parameters:
 
 | Parameter      | Purpose |
 |----------------|---------|
-| `-RootId`      | Root root work item id (required). |
+| `-ApexId`      | Apex root work item id (required). |
 | `-Intent`      | `new` (default), `resume`, or `replan`. |
 | `-Platform`    | `ado` (default) or `github`. |
 | `-Commit`      | Actually launch. Without `-Commit`, the script is a dry-run that prints what it would do. |
@@ -1015,11 +1015,11 @@ Key parameters:
 
 The launcher's preflight chain (11 phases) catches every common failure mode before conductor starts: stale binary, dirty target worktree, wrong branch, hijack attempt, missing `.twig/config`, etc. See `scripts/Invoke-PolyphonySdlc.ps1` for the full list and the corresponding refusal messages.
 
-The polyphony re-derives the right leg per item per batch from observable
+The apex-driver re-derives the right leg per item per wave from observable
 state, so individual sub-workflows (`plan-level`, `actionable`,
 `implement-merge-group`, `feature-pr`, …) should rarely be invoked directly. Reach
 for a sub-workflow invocation only when you want to *replay* or *override* a
-single leg of an in-flight root — see `workflows/README.md` for the per-leg
+single leg of an in-flight apex — see `workflows/README.md` for the per-leg
 contracts.
 
 ### What to Expect
@@ -1294,7 +1294,7 @@ Use this checklist when onboarding a new repo:
 - [ ] Fill in `profile.yaml` — project info, tech stack, build commands (V-14)
 - [ ] Run `polyphony validate-config --config .polyphony-config --output human`
 - [ ] Fix any errors, review warnings
-- [ ] Run `conductor run polyphony@polyphony --input root_id=<id> --web` on a test root work item
+- [ ] Run `conductor run apex-driver@polyphony --input apex_id=<id> --web` on a test apex work item
 - [ ] Verify routing, agent behavior, and PR lifecycle work correctly
 
 

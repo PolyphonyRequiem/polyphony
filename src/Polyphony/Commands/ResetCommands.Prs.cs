@@ -10,8 +10,9 @@ namespace Polyphony.Commands;
 /// <summary>
 /// <c>polyphony reset prs --root N [--execute] [--comment "..."]</c> —
 /// abandons every OPEN PR targeting any branch in the root's polyphony
-/// scope: <c>plan/{N}</c>, <c>mg/{N}-*</c>, <c>impl/{N}-*</c>,
-/// <c>evidence/{N}-*</c>, <c>feature/{N}</c>.
+/// scope: <c>plan/{N}</c>, nested <c>plan/{N}-*</c>, <c>mg/{N}-*</c>,
+/// <c>impl/{N}-*</c>, <c>evidence/{N}-*</c>, <c>feature/{N}</c>, and
+/// literal <c>sdlc/apex/{id}</c> branches for the root + descendants.
 ///
 /// <para>Branch enumeration runs against origin (<c>git ls-remote --heads
 /// origin refs/heads/{pattern}</c>) — we don't trust local branch state
@@ -247,34 +248,48 @@ public sealed partial class ResetCommands
         var result = new List<string>();
         foreach (var pattern in RootBranchPatterns(root))
         {
-            ct.ThrowIfCancellationRequested();
-            IReadOnlyList<string> heads;
-            try
-            {
-                heads = await _git.LsRemoteHeadsAsync(
-                    "origin", $"refs/heads/{pattern}", ct).ConfigureAwait(false);
-            }
-            catch (ExternalToolException)
-            {
-                // Transient network / permission failure on a single
-                // pattern — skip it. The other patterns may still
-                // succeed. The caller's per-branch enumeration error
-                // path will surface PR-list issues separately.
-                continue;
-            }
+            await AccumulateConcreteRemoteBranchesAsync(pattern, seen, result, ct).ConfigureAwait(false);
+        }
 
-            foreach (var line in heads)
-            {
-                // Each ls-remote line is "<sha>\trefs/heads/<branch>".
-                // Find the refs/heads/ suffix and strip the prefix.
-                var idx = line.IndexOf("refs/heads/", StringComparison.Ordinal);
-                if (idx < 0) continue;
-                var branch = line[(idx + "refs/heads/".Length)..].Trim();
-                if (string.IsNullOrEmpty(branch)) continue;
-                if (seen.Add(branch)) result.Add(branch);
-            }
+        foreach (var branch in await EnumerateApexSdlcBranchesAsync(root, ct).ConfigureAwait(false))
+        {
+            await AccumulateConcreteRemoteBranchesAsync(branch, seen, result, ct).ConfigureAwait(false);
         }
         return result;
+    }
+
+    private async Task AccumulateConcreteRemoteBranchesAsync(
+        string pattern,
+        HashSet<string> seen,
+        List<string> result,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        IReadOnlyList<string> heads;
+        try
+        {
+            heads = await _git.LsRemoteHeadsAsync(
+                "origin", $"refs/heads/{pattern}", ct).ConfigureAwait(false);
+        }
+        catch (ExternalToolException)
+        {
+            // Transient network / permission failure on a single
+            // pattern — skip it. The other patterns may still
+            // succeed. The caller's per-branch enumeration error
+            // path will surface PR-list issues separately.
+            return;
+        }
+
+        foreach (var line in heads)
+        {
+            // Each ls-remote line is "<sha>\trefs/heads/<branch>".
+            // Find the refs/heads/ suffix and strip the prefix.
+            var idx = line.IndexOf("refs/heads/", StringComparison.Ordinal);
+            if (idx < 0) continue;
+            var branch = line[(idx + "refs/heads/".Length)..].Trim();
+            if (string.IsNullOrEmpty(branch)) continue;
+            if (seen.Add(branch)) result.Add(branch);
+        }
     }
 
     private static void Emit(ResetPrsResult result)

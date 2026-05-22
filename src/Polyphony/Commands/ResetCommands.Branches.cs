@@ -10,8 +10,9 @@ namespace Polyphony.Commands;
 /// <summary>
 /// <c>polyphony reset branches --root N [--execute]</c> — deletes
 /// every polyphony-scoped branch for the root on both origin and the
-/// local repo: <c>plan/{N}</c>, <c>mg/{N}-*</c>, <c>impl/{N}-*</c>,
-/// <c>evidence/{N}-*</c>, <c>feature/{N}</c>.
+/// local repo: <c>plan/{N}</c>, nested <c>plan/{N}-*</c>, <c>mg/{N}-*</c>,
+/// <c>impl/{N}-*</c>, <c>evidence/{N}-*</c>, <c>feature/{N}</c>, and
+/// literal <c>sdlc/apex/{id}</c> branches for the root + descendants.
 ///
 /// <para><b>Ordering</b>: runs AFTER <c>reset worktrees</c> so no local
 /// branch is pinned by a checked-out worktree, and AFTER
@@ -203,56 +204,113 @@ public sealed partial class ResetCommands
 
         foreach (var pattern in RootBranchPatterns(root))
         {
-            ct.ThrowIfCancellationRequested();
-
-            IReadOnlyList<string> remoteRaw;
-            try
-            {
-                remoteRaw = await _git.LsRemoteHeadsAsync(
-                    "origin", $"refs/heads/{pattern}", ct).ConfigureAwait(false);
-            }
-            catch (ExternalToolException)
-            {
-                remoteRaw = [];
-            }
-
-            foreach (var line in remoteRaw)
-            {
-                var idx = line.IndexOf("refs/heads/", StringComparison.Ordinal);
-                if (idx < 0) continue;
-                var name = line[(idx + "refs/heads/".Length)..].Trim();
-                if (string.IsNullOrEmpty(name)) continue;
-                if (!sides.ContainsKey(name))
-                {
-                    sides[name] = BranchSide.None;
-                    order.Add(name);
-                }
-                sides[name] |= BranchSide.Remote;
-            }
-
-            IReadOnlyList<string> local;
-            try
-            {
-                local = await _git.ListLocalBranchesAsync(pattern, ct).ConfigureAwait(false);
-            }
-            catch (ExternalToolException)
-            {
-                local = [];
-            }
-
-            foreach (var name in local)
-            {
-                if (string.IsNullOrEmpty(name)) continue;
-                if (!sides.ContainsKey(name))
-                {
-                    sides[name] = BranchSide.None;
-                    order.Add(name);
-                }
-                sides[name] |= BranchSide.Local;
-            }
+            await AccumulateBranchesBySideAsync(pattern, sides, order, ct).ConfigureAwait(false);
         }
 
+        foreach (var branch in await EnumerateApexSdlcBranchesAsync(root, ct).ConfigureAwait(false))
+        {
+            await AccumulateBranchesBySideAsync(branch, sides, order, ct).ConfigureAwait(false);
+        }
+ 
         return order.Select(b => (b, sides[b])).ToList();
+    }
+
+    private async Task AccumulateBranchesBySideAsync(
+        string pattern,
+        Dictionary<string, BranchSide> sides,
+        List<string> order,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        IReadOnlyList<string> remoteRaw;
+        try
+        {
+            remoteRaw = await _git.LsRemoteHeadsAsync(
+                "origin", $"refs/heads/{pattern}", ct).ConfigureAwait(false);
+        }
+        catch (ExternalToolException)
+        {
+            remoteRaw = [];
+        }
+
+        foreach (var line in remoteRaw)
+        {
+            var idx = line.IndexOf("refs/heads/", StringComparison.Ordinal);
+            if (idx < 0) continue;
+            var name = line[(idx + "refs/heads/".Length)..].Trim();
+            if (string.IsNullOrEmpty(name)) continue;
+            if (!sides.ContainsKey(name))
+            {
+                sides[name] = BranchSide.None;
+                order.Add(name);
+            }
+            sides[name] |= BranchSide.Remote;
+        }
+
+        IReadOnlyList<string> local;
+        try
+        {
+            local = await _git.ListLocalBranchesAsync(pattern, ct).ConfigureAwait(false);
+        }
+        catch (ExternalToolException)
+        {
+            local = [];
+        }
+
+        foreach (var name in local)
+        {
+            if (string.IsNullOrEmpty(name)) continue;
+            if (!sides.ContainsKey(name))
+            {
+                sides[name] = BranchSide.None;
+                order.Add(name);
+            }
+            sides[name] |= BranchSide.Local;
+        }
+    }
+
+    private async Task<IReadOnlyList<string>> EnumerateApexSdlcBranchesAsync(int apex, CancellationToken ct)
+    {
+        try
+        {
+            var hierarchy = await _walker.WalkAsync(apex, maxDepth: 8, ct).ConfigureAwait(false);
+            if (hierarchy is null)
+            {
+                return [$"sdlc/apex/{apex.ToString(System.Globalization.CultureInfo.InvariantCulture)}"];
+            }
+
+            var result = new List<string>();
+            var seen = new HashSet<int>();
+
+            void Collect(HierarchyResult node)
+            {
+                if (!seen.Add(node.WorkItemId))
+                {
+                    return;
+                }
+
+                result.Add($"sdlc/apex/{node.WorkItemId.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+
+                if (node.Children is null)
+                {
+                    return;
+                }
+
+                foreach (var child in node.Children)
+                {
+                    Collect(child);
+                }
+            }
+
+            Collect(hierarchy);
+            return result;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception)
+        {
+            return [];
+        }
     }
 
     private static void Emit(ResetBranchesResult result)

@@ -330,7 +330,6 @@ Key parameters (run `Get-Help ~/.polyphony/bin/Invoke-PolyphonySdlc.ps1 -Full` f
 
 The launcher refuses to dispatch if:
 - The target work item is in a terminal state (override with `-SkipStateCheck` or use `-Intent resume`).
-- The repo is not on the bare-repo + worktree layout (override with `-SkipLayoutCheck` — discouraged).
 - (Per AB#3085) The derived `WorktreeRoot` resolves inside the main worktree.
 
 ### Common verbs

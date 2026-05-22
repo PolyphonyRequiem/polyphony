@@ -142,9 +142,9 @@ public sealed partial class ResetCommands
                     continue;
                 }
 
-                var removeResult = await _git.WorktreeRemoveAsync(entry.Path, force: true, ct)
+                var (worktreeRemoved, lastError) = await TryRemoveWorktreeWithRetryAsync(entry.Path, ct)
                     .ConfigureAwait(false);
-                if (removeResult.Succeeded)
+                if (worktreeRemoved)
                 {
                     removed.Add(new ResetRemovedWorktree
                     {
@@ -158,9 +158,21 @@ public sealed partial class ResetCommands
                     {
                         Path = entry.Path,
                         Branch = entry.Branch,
-                        Reason = $"git worktree remove exited {removeResult.ExitCode}: " +
-                                 $"{removeResult.Stderr.Trim()}",
+                        Reason = lastError ?? "git worktree remove failed after retries.",
                     });
+                }
+            }
+
+            if (execute)
+            {
+                try
+                {
+                    await _git.WorktreePruneAsync(ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception)
+                {
+                    // Best-effort cleanup only.
                 }
             }
 
@@ -173,21 +185,7 @@ public sealed partial class ResetCommands
             {
                 if (execute)
                 {
-                    try
-                    {
-                        Directory.Delete(rootRunsRoot, recursive: true);
-                        dirDeleted = !Directory.Exists(rootRunsRoot);
-                    }
-                    catch (IOException)
-                    {
-                        // Race with another process holding a file
-                        // handle; report best-effort.
-                        dirDeleted = false;
-                    }
-                    catch (UnauthorizedAccessException)
-                    {
-                        dirDeleted = false;
-                    }
+                    dirDeleted = await TryDeleteDirectoryWithRetryAsync(rootRunsRoot, ct).ConfigureAwait(false);
                 }
                 // Dry-run: dirDeleted stays false, RootDirExists implicit.
             }
@@ -226,6 +224,80 @@ public sealed partial class ResetCommands
 
         Emit(result);
         return ExitCodes.Success;
+    }
+
+    private static readonly TimeSpan[] RemoveRetryBackoff =
+    [
+        TimeSpan.FromMilliseconds(200),
+        TimeSpan.FromMilliseconds(500),
+        TimeSpan.FromMilliseconds(1000),
+    ];
+
+    private async Task<(bool removed, string? lastError)> TryRemoveWorktreeWithRetryAsync(
+        string path,
+        CancellationToken ct)
+    {
+        string? lastError = null;
+
+        for (var attempt = 0; attempt < RemoveRetryBackoff.Length; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var removeResult = await _git.WorktreeRemoveAsync(path, force: true, ct)
+                .ConfigureAwait(false);
+            if (removeResult.Succeeded)
+            {
+                return (true, null);
+            }
+
+            lastError = $"git worktree remove exited {removeResult.ExitCode}: {removeResult.Stderr.Trim()}";
+            if (!Directory.Exists(path))
+            {
+                return (true, null);
+            }
+
+            await Task.Delay(RemoveRetryBackoff[attempt], ct).ConfigureAwait(false);
+            if (!Directory.Exists(path))
+            {
+                return (true, null);
+            }
+        }
+
+        var finalExists = Directory.Exists(path);
+        return (!finalExists, finalExists ? lastError : null);
+    }
+
+    private static async Task<bool> TryDeleteDirectoryWithRetryAsync(string path, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < RemoveRetryBackoff.Length; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!Directory.Exists(path))
+            {
+                return true;
+            }
+
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                if (!Directory.Exists(path))
+                {
+                    return true;
+                }
+            }
+            catch (IOException)
+            {
+                // Race with another process holding a file handle; retry.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Another process may still be releasing a handle; retry.
+            }
+
+            await Task.Delay(RemoveRetryBackoff[attempt], ct).ConfigureAwait(false);
+        }
+
+        return !Directory.Exists(path);
     }
 
     private static void Emit(ResetWorktreesResult result)

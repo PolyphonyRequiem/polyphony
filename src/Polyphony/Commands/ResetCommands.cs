@@ -64,9 +64,10 @@ public sealed partial class ResetCommands(
     private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
 
     /// <summary>
-    /// Canonical root-scoped branch prefix set. Used by <c>reset prs</c>
-    /// and <c>reset branches</c> to enumerate every branch the polyphony
-    /// pipeline may have created for an root.
+    /// Canonical root-scoped branch prefix set for ref classes whose
+    /// root scope can be expressed as a simple pattern. Used by
+    /// <c>reset prs</c> and <c>reset branches</c> alongside the separate
+    /// descendant-aware <c>sdlc/apex/{id}</c> literal enumeration.
     ///
     /// <para>Patterns are passed to <c>git ls-remote --heads origin {pattern}</c>
     /// where <c>refs/heads/</c> is prepended; for purely-local enumeration
@@ -81,6 +82,7 @@ public sealed partial class ResetCommands(
         var rootStr = root.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return [
             $"plan/{rootStr}",
+            $"plan/{rootStr}-*",
             // MG branches use `_` between root_id and mg_path (see
             // docs/decisions/branch-model.md §Branch names: `mg/{root_id}_{mg_path}`).
             // The `_` is unambiguous because mg_id segments match

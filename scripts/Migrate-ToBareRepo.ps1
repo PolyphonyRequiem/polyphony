@@ -2,8 +2,9 @@
 
 <#
 .SYNOPSIS
-    Migrate the operator's polyphony clone to the bare-repo + per-run worktree
-    layout described in docs/per-run-worktree-layout.md (AB#3085).
+    [DEPRECATED — see banner at top of script] Migrate the operator's polyphony
+    clone to the bare-repo + per-run worktree layout described in
+    docs/per-run-worktree-layout.md (AB#3085).
 
 .DESCRIPTION
     Converts ~/projects/polyphony (a normal clone with embedded .git) into the
@@ -79,6 +80,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+Write-Warning @"
+[DEPRECATED] Migrate-ToBareRepo.ps1 is no longer required. Polyphony now
+supports vanilla (non-bare) clones as first-class — there is nothing to
+migrate to. This script remains functional for operators who still want the
+bare-repo + per-run worktree layout, but the bare-repo requirement has been
+dropped from preflight and the launcher. New onboarding should use a plain
+``git clone`` instead. See docs/onboarding-guide.md.
+"@
 
 # ── Exit code constants ──────────────────────────────────────────────────────
 $script:EXIT_SUCCESS = 0
