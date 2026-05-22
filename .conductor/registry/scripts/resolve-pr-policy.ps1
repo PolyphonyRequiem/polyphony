@@ -20,19 +20,22 @@
 
     Allowed `mode` values (from src/Polyphony/Policy/PolicyMode.cs):
       - `auto`    → never gate; auto-merge as soon as reviewer is green
-                    (current behavior).
-      - `warning` → currently aliases `auto`. Without
-                    `quality_threshold` wiring (tracked under AB#3217)
-                    there is no second sufficiency check to defer the
-                    merge on, so warning has no extra effect today.
-                    Documented in the workflow comments.
+                    (silent / current behavior).
+      - `warning` → auto-merge, but interpose `pr_warning_stamp` first
+                    so a single advisory comment is posted to the PR
+                    recording that the merge fired under
+                    `policy.pr.defaults.mode == 'warning'`. Gives
+                    operators an audit footprint without blocking the
+                    merge.
       - `manual`  → always gate at `pr_pre_merge_gate` before invoking
                     `pr_merger` on the auto-merge path.
 
-    AB#3184 intentionally wires ONLY mode here. quality_threshold and
-    max_fix_loops require reviewer-output schema work tracked under
-    AB#3217. `max_remediation_cycles` is already consumed elsewhere by
-    `pr_remediation_policy` (PR #405).
+    AB#3184 originally wired ONLY mode here with `warning` aliasing
+    `auto`. The warning/auto split landed under AB#3217, which also
+    tracks the still-deferred reviewer-output schema work for
+    `quality_threshold`. `max_fix_loops` is dead by architecture
+    (tracked separately under #3272). `max_remediation_cycles` is
+    already consumed elsewhere by `pr_remediation_policy` (PR #405).
 
     Output JSON envelope:
         {

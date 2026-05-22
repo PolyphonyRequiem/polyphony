@@ -1257,13 +1257,14 @@ agents:
     routes:
       - to: pending_review_gate_policy_router
 
-  # ── Pre-merge policy router (AB#3184) ─────────────────────────────────
+  # ── Pre-merge policy router (AB#3184 + AB#3217 warning-stamp split) ───
   #
   # Reads `policy.pr.defaults.mode` via resolve-pr-policy.ps1. Three modes:
-  #   - auto    → straight to pr_merger (current behavior).
-  #   - warning → straight to pr_merger. Without quality_threshold wiring
-  #               (tracked under AB#3217) there is no second sufficiency
-  #               check to defer on, so warning has no extra effect today.
+  #   - auto    → straight to pr_merger (silent auto-merge).
+  #   - warning → pr_warning_stamp → pr_merger. The stamp posts a single
+  #               advisory PR comment so operators have an audit trail
+  #               that the merge fired under warning-mode policy. Stamp
+  #               failure is non-blocking; the merge still proceeds.
   #   - manual  → divert to pr_pre_merge_gate for explicit operator
   #               approval before the merge fires.
   #
@@ -1289,12 +1290,44 @@ agents:
     routes:
       - to: pr_pre_merge_gate
         when: "{{ pr_pre_merge_policy_router.output.mode == 'manual' }}"
+      - to: pr_warning_stamp
+        when: "{{ pr_pre_merge_policy_router.output.mode == 'warning' }}"
       - to: pr_merger
-        when: "{{ pr_pre_merge_policy_router.output.mode in ['auto', 'warning'] }}"
-      # M4 catch-all: defensive — if mode is somehow neither, treat as
-      # manual so the operator is forced to acknowledge. Routes to the
-      # gate, not back to the router, to avoid a cycle.
+        when: "{{ pr_pre_merge_policy_router.output.mode == 'auto' }}"
+      # M4 catch-all: defensive — if mode is somehow none of the above,
+      # treat as manual so the operator is forced to acknowledge. Routes
+      # to the gate, not back to the router, to avoid a cycle.
       - to: pr_pre_merge_gate
+
+  # ── Warning-mode stamp (AB#3217) ──────────────────────────────────────
+  #
+  # Fires only when policy.pr.defaults.mode == 'warning'. Posts one
+  # advisory PR comment (via `polyphony pr post-comment-ado`) recording
+  # that the merge is policy-driven, then routes unconditionally to
+  # pr_merger. Stamp failure is logged in the output envelope but does
+  # NOT block the merge — the comment is advisory, not gating.
+  - name: pr_warning_stamp
+    type: script
+    description: Post advisory comment for policy.pr.defaults.mode == 'warning' (AB#3217)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/post-pr-warning-comment.ps1"
+      - "-Platform"
+      - "ado"
+      - "-PrNumber"
+      - "{{ workflow.input.pr_number }}"
+      - "-Organization"
+      - "{{ workflow.input.organization }}"
+      - "-Project"
+      - "{{ workflow.input.project }}"
+      - "-Repository"
+      - "{{ workflow.input.repository }}"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id | default('') }}"
+    routes:
+      - to: pr_merger
 
   # ── Pre-merge gate (AB#3184, mode=manual) ─────────────────────────────
   #

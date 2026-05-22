@@ -304,10 +304,45 @@ if ($content -notmatch 'name:\s*pr_pre_merge_policy_router\b') {
             Detail = "AB#3184: 'pr_pre_merge_policy_router' must include a 'to: pr_pre_merge_gate' route guarded by mode == 'manual'."
         }
     }
-    if ($routerBlock -notmatch 'to:\s*pr_merger\b') {
+    if ($routerBlock -notmatch "to:\s*pr_merger\b[^\n]*\r?\n\s*when:[^\n]*mode\s*==\s*'auto'") {
         $violations += [PSCustomObject]@{
             Rule   = 'pre-merge-router-missing-auto-route'
-            Detail = "AB#3184: 'pr_pre_merge_policy_router' must include a 'to: pr_merger' route for mode in ['auto', 'warning']."
+            Detail = "AB#3217: 'pr_pre_merge_policy_router' must include a 'to: pr_merger' route guarded by mode == 'auto' (auto-only; warning routes via pr_warning_stamp)."
+        }
+    }
+    if ($routerBlock -notmatch "to:\s*pr_warning_stamp\b[^\n]*\r?\n\s*when:[^\n]*mode\s*==\s*'warning'") {
+        $violations += [PSCustomObject]@{
+            Rule   = 'pre-merge-router-missing-warning-route'
+            Detail = "AB#3217: 'pr_pre_merge_policy_router' must include a 'to: pr_warning_stamp' route guarded by mode == 'warning'."
+        }
+    }
+}
+
+# ── AB#3217 — warning-mode stamp interposed before pr_merger ─────────────
+#
+# When policy.pr.defaults.mode == 'warning', the router routes to
+# `pr_warning_stamp` which posts a single advisory PR comment then
+# unconditionally routes to `pr_merger`. The stamp must invoke the
+# shared post-pr-warning-comment.ps1 helper so platform-specific comment
+# wiring lives in exactly one place.
+if ($content -notmatch 'name:\s*pr_warning_stamp\b') {
+    $violations += [PSCustomObject]@{
+        Rule   = 'missing-pr-warning-stamp'
+        Detail = "AB#3217: 'pr_warning_stamp' script node missing. Required as the mode=='warning' divert target; must invoke post-pr-warning-comment.ps1 and route unconditionally to pr_merger."
+    }
+} else {
+    $stampMatch = [regex]::Match($content, '(?s)- name:\s*pr_warning_stamp\b.*?(?=\n  - name: |\Z)')
+    $stampBlock = if ($stampMatch.Success) { $stampMatch.Value } else { '' }
+    if ($stampBlock -notmatch 'post-pr-warning-comment\.ps1') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'pr-warning-stamp-wrong-helper'
+            Detail = "AB#3217: 'pr_warning_stamp' must invoke the shared 'post-pr-warning-comment.ps1' helper, not inline gh/az comment commands."
+        }
+    }
+    if ($stampBlock -notmatch '(?m)^\s*-\s*to:\s*pr_merger\b') {
+        $violations += [PSCustomObject]@{
+            Rule   = 'pr-warning-stamp-missing-merger-route'
+            Detail = "AB#3217: 'pr_warning_stamp' must route unconditionally to 'pr_merger' (stamp failure must not block the merge)."
         }
     }
 }

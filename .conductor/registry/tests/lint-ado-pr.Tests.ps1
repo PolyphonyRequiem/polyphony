@@ -356,7 +356,7 @@ agents:
       - "cap-auto-fail"
     routes:
       - to: $end
-  # AB#3184 — pre-merge policy router + gate fixtures.
+  # AB#3184 + AB#3217 — pre-merge policy router + warning-stamp + gate fixtures.
   - name: pr_pre_merge_policy_router
     type: script
     command: pwsh
@@ -367,9 +367,24 @@ agents:
     routes:
       - to: pr_pre_merge_gate
         when: "{{ pr_pre_merge_policy_router.output.mode == 'manual' }}"
+      - to: pr_warning_stamp
+        when: "{{ pr_pre_merge_policy_router.output.mode == 'warning' }}"
       - to: pr_merger
-        when: "{{ pr_pre_merge_policy_router.output.mode in ['auto', 'warning'] }}"
+        when: "{{ pr_pre_merge_policy_router.output.mode == 'auto' }}"
       - to: pr_pre_merge_gate
+  - name: pr_warning_stamp
+    type: script
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "../scripts/post-pr-warning-comment.ps1"
+      - "-Platform"
+      - "ado"
+      - "-PrNumber"
+      - "1"
+    routes:
+      - to: pr_merger
   - name: pr_pre_merge_gate
     type: human_gate
     prompt: "Approve merge?"
