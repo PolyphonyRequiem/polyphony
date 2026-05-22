@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Journal;
+using Polyphony.Journal.Drift;
+using Polyphony.Journal.Observers;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Infrastructure.Research;
 using Polyphony.Postconditions;
@@ -49,6 +51,25 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<IJournalLocator, JournalLocator>();
         services.AddSingleton<IJournalStore, JournalStore>();
         services.AddSingleton<JournaledActionDecorator>();
+        services.AddSingleton<JournalDriftAnalyzer>();
+
+        // Journal drift observers. Every ResourceKind is explicitly accounted for here:
+        // implemented kinds register a concrete observer; deferred kinds register a
+        // DeferredResourceObserver so the omission is an intentional, reviewable choice.
+        services.AddSingleton<IResourceObserver, GitBranchObserver>();
+        services.AddSingleton<IResourceObserver, GitHubPrObserver>();
+        services.AddSingleton<IResourceObserver, AdoPrObserver>();
+        services.AddSingleton<IResourceObserver, AdoWorkItemObserver>();
+        services.AddSingleton<IResourceObserver, AdoWorkItemStateObserver>();
+        services.AddSingleton<IResourceObserver, AdoWorkItemTagObserver>();
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.GitTag, "Deferred in Phase 4: no journaled git-tag mutators currently require drift coverage."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.GitWorktree, "Deferred in Phase 4: worktree drift can land in a focused follow-up without bloating the journal drift PR."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.GitHubPrComment, "Deferred in Phase 4: PR comment drift is informational and not needed for the initial root drift fold."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.AdoPrComment, "Deferred in Phase 4: ADO PR comment drift is informational and not needed for the initial root drift fold."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.AdoPrVote, "Deferred in Phase 4: reviewer-vote drift is a follow-up once root drift is proven on branch and PR lifecycles."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.ManifestFile, "Deferred in Phase 4: manifest-file drift can ship in a follow-up file-observer slice."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.PlanFile, "Deferred in Phase 4: plan-file drift can ship in a follow-up file-observer slice."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.LockFile, "Deferred in Phase 4: lock-file drift can ship in a follow-up file-observer slice."));
 
         // Sdlc observers — singleton services that wrap IGitClient/IGhClient/IAdoClient/ITwigClient
         // to produce per-RequirementKind observations. Shared by routing-style verbs
