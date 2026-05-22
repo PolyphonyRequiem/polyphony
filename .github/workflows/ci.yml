@@ -158,7 +158,7 @@ jobs:
         if: always()
         shell: pwsh
         working-directory: polyphony
-        run: pwsh -NoProfile -File tests/lint-primary-completer-trust-chain.ps1 -Format github
+        run: pwsh -NoProfile -File tests/lint-root-completer-trust-chain.ps1 -Format github
 
       - name: Lint (workflow version drift — bundle internal consistency)
         # Asserts every workflow YAML's workflow.version matches the value in
