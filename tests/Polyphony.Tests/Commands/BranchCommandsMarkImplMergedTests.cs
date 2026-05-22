@@ -30,7 +30,9 @@ public sealed class BranchCommandsMarkImplMergedTests : CommandTestBase
         var validator = new TransitionValidator(Config);
         return (new BranchCommands(twig, walker, Repository, validator, git, Config,
             new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
-            new Polyphony.Sdlc.Observers.PullRequestReader(gh, null)), runner);
+            new Polyphony.Sdlc.Observers.PullRequestReader(gh, null),
+            JournalTestSupport.CreateRunContext(),
+            JournalTestSupport.CreateDecorator()), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)

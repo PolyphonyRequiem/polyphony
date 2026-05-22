@@ -22,7 +22,7 @@ public sealed class BranchCommandsLoadTreeTests : CommandTestBase
         var ghClient = new GhClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
         var validator = new TransitionValidator(Config);
-        return (new BranchCommands(twigClient, walker, Repository, validator, gitClient, Config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(gitClient), new Polyphony.Sdlc.Observers.PullRequestReader(ghClient, null)), runner);
+        return (new BranchCommands(twigClient, walker, Repository, validator, gitClient, Config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(gitClient), new Polyphony.Sdlc.Observers.PullRequestReader(ghClient, null), JournalTestSupport.CreateRunContext(), JournalTestSupport.CreateDecorator()), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)
