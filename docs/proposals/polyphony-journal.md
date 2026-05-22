@@ -532,8 +532,9 @@ by reset's correctness requirements; drift inherits the rigor for free.
 | **2.5** | Effect-model uplift (D13): add `JournalResourceEffect[]` to journal entries; add `[MutatesResource]` / `[MayObserveResource]` to every existing journaled verb; retrofit Phase 1B + Phase 2 payloads to emit concrete effects | Every existing journaled verb emits effects on success and no-op paths; tests assert ownership flag is correct; no behavioral change to existing verbs | Low — additive contract | ✅ shipped (PR #504) |
 | **3** | ADO transitions + tag mutations + watermark stamps + manifest writes journal — **with effect model from day one** | Drift check sees a full picture | Medium | ✅ shipped (PR #505) |
 | **4** | `polyphony journal drift` (folds effects, never actions; emits `CurrentExpectedState`, `OwnedResources`, `ResetTargets`, `ExpectedStateAt(t)` projections) | Drift verb returns sane diffs on a real root | Medium | ✅ shipped (PR #508) |
-| **5** | `polyphony reset root` rewritten against `OwnedResources` projection; AB#3245 / AB#3246 close as side-effects | Reset tests pass; residue empirically gone on a clean run | Higher — operational | 📋 next |
-| **6** | (optional) workflow-layer query verbs (D11) | Counter-like scripts begin retiring | Higher — workflow churn | |
+| **5** | `polyphony reset apex` rewritten **in place** with `--strategy projection\|pattern` against `OwnedResources` projection; coverage gate + mutation guard + self-verifying result; AB#3245 / AB#3246 already closed independently on main (PR #507) | Projection reset on a complete-coverage root leaves zero residue; pattern strategy preserved as escape hatch | Higher — operational | 🏃 in flight (AB#3270) |
+| **6a** | Workflow-layer query verbs (D11) — `journal has`, `journal query`, `journal owned`. **Verb landing only**; no workflow YAML retrofits | New read-only verbs ship with full contract tests; zero workflow YAML changes in this PR | Low — additive read-only | 🏃 in flight (AB#3271) |
+| **6b** | (optional, deferred) Retrofit workflow scripts to call the Phase 6a verbs in place of tempfile-based idempotency | Counter-like scripts begin retiring | Higher — workflow churn | 📋 future |
 
 Phases 1-4 are non-disruptive: nothing changes for existing workflows.
 Phase 5 is the payoff phase; phase 6 is bonus.
