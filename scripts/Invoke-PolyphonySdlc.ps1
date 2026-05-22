@@ -264,6 +264,12 @@ function Invoke-PolyphonyJson {
 
 . (Join-Path $PSScriptRoot 'Twig-Hydration.ps1')
 
+# ─── Helper: resolve / mint POLYPHONY_RUN_ID (W1, AB#3275) ───────────────────
+# Implementation lives in Resolve-PolyphonyRunId.ps1 (sibling file) so Pester
+# can unit-test the run-id mint / discovery without dot-sourcing the launcher.
+
+. (Join-Path $PSScriptRoot 'Resolve-PolyphonyRunId.ps1')
+
 # ─── Phase 1: cwd is a worktree of a git repo ────────────────────────────────
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -347,6 +353,21 @@ if ($Intent -eq 'reset') {
     $autoConfirmBool = if ($AutoConfirm) { 'true' } else { 'false' }
     $skipStateBool   = if ($SkipState) { 'true' } else { 'false' }
 
+    # ─── Resolve POLYPHONY_RUN_ID for lineage continuity across reset ────
+    #
+    # Reset operates on a (possibly already-broken) prior run. We want
+    # journal rows the reset workflow itself writes to carry a stable run
+    # id — ideally the same one the prior run used, so post-reset
+    # forensics can correlate. Fall back to mint when the prior manifest
+    # is gone or unreadable.
+    $resetRunsRoot = Join-Path (Split-Path -Parent $commonDir) 'polyphony-runs'
+    $resetManifest = Join-Path $resetRunsRoot ("root-$RootId\feature-$RootId\.polyphony\run.yaml")
+    $resetRunIdResolution = Resolve-PolyphonyRunId -ManifestPath $resetManifest
+    $resetRunId = $resetRunIdResolution.RunId
+    $resetRunIdSource = $resetRunIdResolution.Source
+    $env:POLYPHONY_RUN_ID = $resetRunId
+    Write-Host "[polyphony-sdlc] POLYPHONY_RUN_ID=$resetRunId (source=$resetRunIdSource)" -ForegroundColor Cyan
+
     $resetArgs = @(
         'run', 'reset-root@polyphony'
         '--web'
@@ -358,6 +379,7 @@ if ($Intent -eq 'reset') {
         '--input', "comment=$Comment"
         '-m', "workitem_id=$RootId"
         '-m', "cwd=$cwd"
+        '-m', "run_id=$resetRunId"
     )
 
     $resetResolved = [pscustomobject]@{
@@ -372,6 +394,8 @@ if ($Intent -eq 'reset') {
         platform     = $resetPlatform
         cwd          = $cwd
         web_port     = $resetWebPort
+        run_id       = $resetRunId
+        run_id_source = $resetRunIdSource
         command      = "conductor $($resetArgs -join ' ')"
         args         = $resetArgs
         detached     = -not $NoDetach
@@ -532,6 +556,21 @@ To bypass this gate (NOT recommended):
 }
 
 # ─── Phase 3: invoke init-root (--dry-run if -DryRun) ────────────────────────
+
+# Resolve POLYPHONY_RUN_ID before any nested polyphony call (W1, AB#3275).
+# Order matters: init-root may write `.polyphony/run.yaml` via the shared
+# manifest path; that path consults POLYPHONY_RUN_ID through RunContext.
+# When a manifest from a prior run already exists at the canonical path,
+# we honor its run_id for lineage continuity (resume / replan); otherwise
+# we mint a fresh ULID. Either way we export so every nested polyphony
+# subprocess and the conductor itself agree on the lineage.
+$prelaunchRunsRoot  = Join-Path (Split-Path -Parent $commonDir) 'polyphony-runs'
+$prelaunchManifest  = Join-Path $prelaunchRunsRoot ("root-$RootId\feature-$RootId\.polyphony\run.yaml")
+$runIdResolution    = Resolve-PolyphonyRunId -ManifestPath $prelaunchManifest
+$runId              = $runIdResolution.RunId
+$runIdSource        = $runIdResolution.Source
+$env:POLYPHONY_RUN_ID = $runId
+Write-Host "[polyphony-sdlc] POLYPHONY_RUN_ID=$runId (source=$runIdSource)" -ForegroundColor Cyan
 
 # init-root self-derives the root worktree path from the common-dir. It MUST
 # run from a worktree of the bare repo (the operator's cwd is fine; init-root
@@ -923,6 +962,7 @@ $conductorArgs = @(
     '-m', "workitem_id=$RootId"
     '-m', "worktree_name=$worktreeName"
     '-m', "cwd=$WorktreeRoot"
+    '-m', "run_id=$runId"
 )
 
 $resolved = [pscustomobject]@{
@@ -945,6 +985,8 @@ $resolved = [pscustomobject]@{
     init_root_outcome  = $initOutcome
     git_repo           = $GitRepo
     project_url        = $projectUrl
+    run_id             = $runId
+    run_id_source      = $runIdSource
     command            = "conductor $($conductorArgs -join ' ')"
     args               = $conductorArgs
     web_port           = $webPort
