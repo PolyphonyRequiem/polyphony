@@ -74,12 +74,13 @@ Pick any returned ID. Call it `$WI` from here on.
 
 Follow `docs/onboarding-guide.md` sections 3–9 to:
 
-- Verify (or create) the bare-repo + per-run worktree layout (§ 2)
-  - **Fresh clone** (no existing local clone): run
+- Verify (or create) a repository layout — either a **vanilla `git clone`** (the recommended default for new operators) **or** the bare-repo + per-run worktree layout (optional, for operators who prefer it). Both are first-class as of the bare-requirement drop.
+  - **Vanilla clone** (recommended): plain `git clone <url>` is enough. The launcher writes per-apex worktrees under `<runs_root>/apex-{N}/` regardless of whether the source repo is bare or vanilla.
+  - **Fresh bare-repo clone** (alternative): run
     `~/.polyphony/bin/Bootstrap-BareRepo.ps1 -RemoteUrl <url> [-ParentDir <dir>] [-Commit]`
-    to produce the canonical `<parent>/<repo>.git/ + <parent>/<repo>/ + <parent>/<repo>-runs/` layout.
-  - **Existing operator clone**: run `Migrate-ToBareRepo.ps1` instead.
-  - **Windows pitfall:** if `git config --global safe.bareRepository`
+    to produce the canonical `<parent>/<repo>.git/ + <parent>/<repo>/ + <parent>/<repo>-runs/` layout. The script is deprecated but still functional.
+  - **Existing operator clone migrating to bare**: run `Migrate-ToBareRepo.ps1` instead. Also deprecated but functional.
+  - **Windows pitfall (bare-repo only):** if `git config --global safe.bareRepository`
     is `explicit` (the Microsoft-managed-device default), plain
     `git -C <repo>.git ...` is rejected with
     `fatal: cannot use bare repository '<repo>.git' (safe.bareRepository is 'explicit')`.
@@ -318,8 +319,8 @@ leaves a freshly-checked-out worktree dirty before any work begins.
 [ ] 1.   twig workspace returns a workspace (not "no workspace found")
 [ ] 1.   Pick a real $WI to smoke-test against
 [ ] 2.   Walk docs/onboarding-guide.md sections 2-9
-[ ] 2.a  Bare-repo layout in place: ~/projects/<repo>.git + ~/projects/<repo> + ~/projects/<repo>-runs (§ 2 of onboarding guide; AB#3085)
-[ ] 2.b  polyphony state preflight --work-item $WI → bare_repo check PASSED
+[ ] 2.a  Repo layout in place: either vanilla `git clone` OR bare-repo (`~/projects/<repo>.git + ~/projects/<repo> + ~/projects/<repo>-runs`). Both are first-class. (§ 2 of onboarding guide)
+[ ] 2.b  polyphony state preflight --work-item $WI → all checks PASSED (the bare_repo check was dropped; if it appears in older builds it is advisory only)
 [ ] 2.   polyphony validate-config --config .polyphony-config → exit 0 (warnings ok)
 [ ] 3.1  validate-config exit code is 0
 [ ] 3.2  hierarchy --work-item $WI --depth 1 returns valid JSON with non-empty type
@@ -336,7 +337,7 @@ If every line passes, the repo is bootstrapped.
 
 ## 7 · Repository hygiene (post-bootstrap)
 
-The bare-repo layout means stale per-run worktrees accumulate under `~/projects/<repo>-runs/` over time (each apex run leaves an `apex-{N}/` subtree). Two verbs keep things tidy:
+Per-apex worktrees accumulate under `<runs_root>/apex-{N}/` over time (each apex run leaves an `apex-{N}/` subtree), regardless of whether your source repo is vanilla or bare. Two verbs keep things tidy:
 
 ```powershell
 # List candidates without touching anything (safe default):

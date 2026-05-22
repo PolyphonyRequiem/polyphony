@@ -2,10 +2,11 @@
 
 <#
 .SYNOPSIS
-    Reconcile the operator's bare-repo + worktree layout after a remote
-    squash-merge (#419). Sister script to scripts/Migrate-ToBareRepo.ps1
-    (convert-existing-clone) and scripts/Bootstrap-BareRepo.ps1
-    (fresh-clone). This one runs AFTER a PR merges to clean up:
+    [DEPRECATED — see banner at top of script] Reconcile the operator's
+    bare-repo + worktree layout after a remote squash-merge (#419). Sister
+    script to scripts/Migrate-ToBareRepo.ps1 (convert-existing-clone) and
+    scripts/Bootstrap-BareRepo.ps1 (fresh-clone). This one runs AFTER a PR
+    merges to clean up:
 
       1. Squash-merge divergence — local `main` is 1-ahead/N-behind
          `origin/main` with identical content. Resets local main to
@@ -76,6 +77,14 @@ param(
     [switch]$NoPrune,
     [switch]$Commit
 )
+
+Write-Warning @"
+[DEPRECATED] Sync-BareRepo.ps1 is bare-layout-specific. Polyphony now
+supports vanilla (non-bare) clones as first-class — vanilla operators can
+reconcile main with a plain ``git pull`` (or ``git fetch --prune`` + ``git
+reset --hard origin/main``) without this helper. This script remains
+functional for operators on the bare-repo layout. See docs/onboarding-guide.md.
+"@
 
 # ── Exit code constants ──────────────────────────────────────────────────────
 $script:EXIT_SUCCESS = 0

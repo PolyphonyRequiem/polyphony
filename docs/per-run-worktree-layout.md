@@ -1,6 +1,6 @@
 # Per-run worktree layout
 
-> **Status:** in flight (AB#3085 epic). The runtime tooling that produces and consumes this layout ships as a stack of small PRs; this document is the authoritative description of the target end-state.
+> **Status:** the per-apex worktree contract (operator's main worktree is never a dispatch target; every apex run gets its own `<runs_root>/apex-{N}/` subtree) is shipped and stable. The original AB#3085 stack additionally required the *source repo* to be bare; that requirement has since been **dropped** — vanilla `git clone` and bare-repo layouts are both first-class. The per-apex worktree model below applies to both. The bare-repo migration / bootstrap scripts remain functional but are no longer required.
 
 ## Why
 
@@ -34,11 +34,9 @@ Properties:
 - Per-apex root holds a manifest of its child worktrees so `polyphony worktree gc` can recurse.
 - Branch invariants from the **polyphony-branch-model** skill are unchanged. The model changes *where* worktrees live, not how branches relate.
 
-## Detection
+## Detection (historical — no longer enforced)
 
-`polyphony state preflight` runs an advisory check named **`bare_repo`** at the start of every SDLC apex run. The check resolves the git common-dir and probes `git --git-dir={commonDir} rev-parse --is-bare-repository`. When that returns `false`, the check fails with a remediation pointer to this document.
-
-The check is **advisory** until the migration tooling ships — required-now would gate every SDLC apex run before operators have any way to migrate. Once `scripts/Migrate-ToBareRepo.ps1` (PR 2 of the AB#3085 stack) lands, the check flips to required on both `polyphony state preflight` and `polyphony state preflight-lite`.
+`polyphony state preflight` previously ran an advisory `bare_repo` check at the start of every SDLC apex run. That check has been **removed** as part of the bare-requirement drop — the launcher and preflight no longer gate on whether the source repo is bare. The probe semantics below are retained as reference for operators who still run on the bare-repo layout.
 
 ## Probe semantics
 

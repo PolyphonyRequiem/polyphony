@@ -2,16 +2,17 @@
 <#
 .SYNOPSIS
     Canonical wrapper for `conductor run apex-driver@polyphony` — the polyphony
-    SDLC entry point. Enforces the AB#3085 bare-repo + per-run-worktree layout.
+    SDLC entry point. Drives the per-apex worktree layout regardless of whether
+    the operator's source-of-truth checkout is a bare repo or a vanilla clone.
 
 .DESCRIPTION
     The launcher self-derives the conductor's worktree from
     `polyphony worktree init-apex --apex {ApexId}`, which produces (and reports)
     a worktree at `{runs_root}/apex-{N}/feature-{N}/`. The operator's cwd is
-    expected to be the canonical main worktree (or any worktree of the bare
-    repo); the conductor never runs in the main worktree.
+    expected to be the canonical main worktree (or any worktree of the source
+    repo, bare or vanilla); the conductor never runs in the main worktree.
 
-    Two production bugs the new contract eliminates by construction:
+    Two production bugs the per-apex worktree contract eliminates by construction:
       1. Hijack — the previous launcher defaulted WorktreeRoot to (Get-Location).
          Running from `~/projects/polyphony` (the main worktree) made conductor
          hammer main directly. The new contract refuses any WorktreeRoot that
@@ -21,8 +22,8 @@
          contract puts each apex run in its own per-apex tree under
          `{runs_root}/apex-{N}/`.
 
-    See docs/per-run-worktree-layout.md for the layout contract and
-    scripts/Migrate-ToBareRepo.ps1 for migrating an existing non-bare clone.
+    See docs/per-run-worktree-layout.md for the runs-root + per-apex worktree
+    contract.
 
     Closes AB#3011 (the original wrapper) and AB#3098 (this rework).
 
@@ -90,12 +91,6 @@
     Print the resolved command and exit without executing. Calls
     `polyphony worktree init-apex --dry-run` so no worktrees are created.
     Returns the JSON envelope that would otherwise be emitted on launch.
-
-.PARAMETER SkipLayoutCheck
-    ESCAPE HATCH for legacy non-bare layouts. Skips the bare-repo preflight.
-    Strongly discouraged; intended for transition-period operators who have
-    not yet run scripts/Migrate-ToBareRepo.ps1. Will be removed once all
-    operators have migrated.
 
 .PARAMETER SkipStateCheck
     ESCAPE HATCH for the AB#3165 Item 2 terminal-state pre-flight refusal.
@@ -189,8 +184,6 @@ param(
 
     [switch]$DryRun,
 
-    [switch]$SkipLayoutCheck,
-
     [switch]$SkipStateCheck,
 
     [string]$PolicyPath,
@@ -223,7 +216,6 @@ if ($Intent -ne 'reset') {
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 $script:LayoutDoc        = 'docs/per-run-worktree-layout.md'
-$script:MigrationScript  = 'scripts/Migrate-ToBareRepo.ps1'
 
 # ─── Helper: canonical path comparison (boundary-aware, OS-aware) ─────────────
 
@@ -286,51 +278,15 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commonDir)) {
 [polyphony-sdlc] Cwd is not inside a git repository.
 Cwd: $cwd
 
-Launch from a worktree of the polyphony bare repo (the canonical main worktree
-is the conventional choice). See $script:LayoutDoc.
+Launch from a worktree of the polyphony source repo (the canonical main
+worktree is the conventional choice). See $script:LayoutDoc.
 "@
 }
 $commonDir = $commonDir.Trim()
 
-# ─── Phase 2: bare-repo layout preflight ─────────────────────────────────────
-
-# Inline check (2 git calls) is faster than `polyphony state preflight`, which
-# drags in GH-auth + dotnet SDK probes and is the wrong granularity for a
-# fail-fast launcher gate. This duplicates the bare_repo check in
-# StateCommands.cs (Name="bare_repo"); both paths converge on the same
-# remediation (per docs/per-run-worktree-layout.md + Migrate-ToBareRepo.ps1).
-if (-not $SkipLayoutCheck) {
-    $isBare = & git --git-dir $commonDir rev-parse --is-bare-repository 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        $global:LASTEXITCODE = 0
-        throw @"
-[polyphony-sdlc] Could not probe bare-repo state of common-dir.
-Common-dir: $commonDir
-Output:     $isBare
-
-This usually means the common-dir is corrupted. See $script:LayoutDoc.
-"@
-    }
-    if ($isBare.Trim().ToLower() -ne 'true') {
-        throw @"
-[polyphony-sdlc] Repo-layout preflight FAILED.
-Common-dir: $commonDir
-This is a non-bare clone (legacy layout).
-
-The AB#3085 SDLC orchestration requires the bare-repo + per-run-worktree
-layout to prevent the hijack and cross-contamination bugs by construction.
-
-To migrate:
-    ./$script:MigrationScript            # dry-run (default) — see what would happen
-    ./$script:MigrationScript -Commit    # execute (with risk-material refusal)
-
-For background, see $script:LayoutDoc.
-
-To bypass this gate (NOT recommended, transition period only):
-    ./scripts/Invoke-PolyphonySdlc.ps1 -ApexId $ApexId -SkipLayoutCheck
-"@
-    }
-}
+# Both bare and vanilla (non-bare clone) layouts are first-class. The
+# per-apex worktree contract operates against $commonDir regardless of
+# whether $commonDir is `<repo>.git/` (bare) or `<repo>/.git/` (vanilla).
 
 # ─── Reset intent diversion ──────────────────────────────────────────────────
 #
@@ -993,7 +949,6 @@ $resolved = [pscustomobject]@{
     args               = $conductorArgs
     web_port           = $webPort
     detached           = -not $NoDetach
-    layout_check_skipped = [bool]$SkipLayoutCheck
 }
 
 if ($DryRun) {
