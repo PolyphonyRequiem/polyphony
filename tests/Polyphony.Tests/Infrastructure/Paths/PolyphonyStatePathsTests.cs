@@ -141,6 +141,7 @@ public sealed class PolyphonyStatePathsTests
         public Task<ProcessResult> WorktreeAddAttachAsync(string branch, string path, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<ProcessResult> WorktreeRemoveAsync(string path, bool force, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<ProcessResult> WorktreeListAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ProcessResult> WorktreePruneAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<RebaseOutcome> RebaseOntoAsync(string newBase, string oldBase, string head, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<string?> MergeBaseAsync(string a, string b, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<bool> IsAncestorAsync(string maybeAncestor, string descendant, CancellationToken ct = default) => throw new NotSupportedException();
