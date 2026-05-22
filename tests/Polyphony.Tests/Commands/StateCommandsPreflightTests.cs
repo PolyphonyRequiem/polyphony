@@ -55,50 +55,12 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         => runner.WhenExact("dotnet", ["--version"],
             new ProcessResult(version is null ? 1 : 0, version ?? "", ""));
 
-    /// <summary>
-    /// Stubs both the common-dir resolution and the is-bare-repository
-    /// probe used by the bare_repo preflight advisory check (AB#3093).
-    /// Default <paramref name="isBare"/>=true so existing happy-path
-    /// tests do not gain an unexpected advisory warning.
-    /// </summary>
-    private static void StubBareRepo(FakeProcessRunner runner, bool isBare = true, string commonDir = "/repo/.git")
-    {
-        runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            new ProcessResult(0, commonDir, ""));
-        runner.WhenExact("git", ["--git-dir", commonDir, "rev-parse", "--is-bare-repository"],
-            new ProcessResult(0, isBare ? "true" : "false", ""));
-    }
-
-    /// <summary>
-    /// Stubs the common-dir resolution to fail (simulates "not in a git
-    /// repo" or other rev-parse failure).
-    /// </summary>
-    private static void StubBareRepoCommonDirFails(FakeProcessRunner runner)
-    {
-        runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            new ProcessResult(128, "", "fatal: not a git repository"));
-    }
-
-    /// <summary>
-    /// Stubs common-dir resolution OK but is-bare-repository failing
-    /// (simulates safe.bareRepository=explicit on a misconfigured probe,
-    /// or a corrupted gitdir).
-    /// </summary>
-    private static void StubBareRepoIsBareFails(FakeProcessRunner runner, string commonDir = "/repo/.git")
-    {
-        runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            new ProcessResult(0, commonDir, ""));
-        runner.WhenExact("git", ["--git-dir", commonDir, "rev-parse", "--is-bare-repository"],
-            new ProcessResult(128, "", "fatal: cannot use bare repository '...' (safe.bareRepository is 'explicit')"));
-    }
-
     [Fact]
     public async Task PreflightLite_AllPass_EmitsReady()
     {
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner);
 
         var (exit, output) = await CaptureConsoleAsync(() => cmd.PreflightLite());
 
@@ -106,11 +68,14 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
         result.Ready.ShouldBeTrue($"Output was: {output}");
         result.FailedCount.ShouldBe(0);
-        result.Checks.Count.ShouldBe(4);
+        result.Checks.Count.ShouldBe(3);
         result.Checks.ShouldContain(c => c.Name == "git_repo" && c.Passed);
         result.Checks.ShouldContain(c => c.Name == "twig_cli" && c.Passed);
         result.Checks.ShouldContain(c => c.Name == "polyphony_cli" && c.Passed);
-        result.Checks.ShouldContain(c => c.Name == "bare_repo" && c.Passed);
+        // bare_repo check was dropped — both vanilla and bare layouts are
+        // first-class. The git_repo check above covers "is there a git repo".
+        result.Checks.Any(c => c.Name == "bare_repo").ShouldBeFalse(
+            "bare_repo preflight was removed when the bare requirement was dropped");
     }
 
     [Fact]
@@ -119,7 +84,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, null);
         StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner);
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.PreflightLite());
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
@@ -142,7 +106,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         StubTwigShow(runner, 100, "Hello World");
         StubGhAuth(runner, true);
         StubDotnetVersion(runner, "9.0.100");
-        StubBareRepo(runner, isBare: true);
 
         var (exit, output) = await CaptureConsoleAsync(() => cmd.Preflight(workItem: 100));
 
@@ -151,9 +114,10 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         result.Ready.ShouldBeTrue($"Output was: {output}");
         result.FailedCount.ShouldBe(0);
         result.WarningCount.ShouldBe(0);
-        result.RequiredChecks.Count.ShouldBe(5);
+        result.RequiredChecks.Count.ShouldBe(4);
         result.AdvisoryChecks.Count.ShouldBe(3);
-        result.RequiredChecks.ShouldContain(c => c.Name == "bare_repo" && c.Passed);
+        result.RequiredChecks.Any(c => c.Name == "bare_repo").ShouldBeFalse(
+            "bare_repo preflight was removed when the bare requirement was dropped");
         result.Details.WorkItemId.ShouldBe(100);
         result.Details.AdoOrg.ShouldBe("myorg");
         result.Details.AdoProject.ShouldBe("myproj");
@@ -170,7 +134,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         StubTwigShow(runner, 100, null);
         StubGhAuth(runner, true);
         StubDotnetVersion(runner, "9.0.100");
-        StubBareRepo(runner);
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.Preflight(workItem: 100));
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightResult)!;
@@ -191,7 +154,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         StubTwigShow(runner, 100, "Hello");
         StubGhAuth(runner, false);
         StubDotnetVersion(runner, "9.0.100");
-        StubBareRepo(runner);
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.Preflight(workItem: 100));
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightResult)!;
@@ -207,7 +169,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner);
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.PreflightLite());
 
@@ -229,7 +190,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         StubTwigShow(runner, 100, "Hello");
         StubGhAuth(runner, true);
         StubDotnetVersion(runner, "9.0.100");
-        StubBareRepo(runner);
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.Preflight(workItem: 100));
 
@@ -252,14 +212,13 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner);
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.PreflightLite());
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
 
         result.Checks.Any(c => c.Name == "polyphony_version").ShouldBeFalse(
             "version check is opt-in — without flags it must not appear");
-        result.Checks.Count.ShouldBe(4);
+        result.Checks.Count.ShouldBe(3);
     }
 
     [Fact]
@@ -268,7 +227,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner);
 
         // 0.0.1 will pass against any 1.x.y polyphony build (and the test
         // host always runs >= 1.0.0 thanks to MinVerMinimumMajorMinor).
@@ -288,7 +246,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner);
 
         // 99.0.0 cannot be satisfied by any realistic build.
         var (_, output) = await CaptureConsoleAsync(
@@ -308,7 +265,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner);
 
         var path = WriteTempWorkflowYaml("0.0.1");
         try
@@ -333,7 +289,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner);
 
         // YAML says 0.0.1 (would pass), explicit flag says 99.0.0 (fails).
         // The explicit flag must win — testing seam contract.
@@ -359,7 +314,6 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner);
 
         var path = Path.Combine(Path.GetTempPath(),
             $"polyphony-state-test-{Guid.NewGuid():N}.yaml");
@@ -391,22 +345,25 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         StubTwigShow(runner, 100, "Hello");
         StubGhAuth(runner, true);
         StubDotnetVersion(runner, "9.0.100");
-        StubBareRepo(runner);
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.Preflight(workItem: 100, workflowYaml: null, requiredVersion: "99.0.0"));
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightResult)!;
 
         result.Ready.ShouldBeFalse();
-        result.RequiredChecks.Count.ShouldBe(6, "version check appended to the required-checks list");
+        result.RequiredChecks.Count.ShouldBe(5, "version check appended to the required-checks list");
         result.RequiredChecks.First(c => c.Name == "polyphony_version").Passed.ShouldBeFalse();
     }
 
-    // ---- AB#3093 + AB#3085: bare_repo required check (flipped from advisory) ----
+    // ---- Vanilla-layout regression: both bare and non-bare git layouts pass ----
 
     [Fact]
-    public async Task Preflight_BareCommonDir_BareRepoRequiredPasses()
+    public async Task Preflight_VanillaCloneLayout_Passes()
     {
+        // A normal `git clone` produces a non-bare repo. The bare_repo
+        // preflight check was removed because polyphony now supports both
+        // bare and vanilla layouts; this regression test asserts the
+        // vanilla layout no longer trips a required check.
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
@@ -415,135 +372,26 @@ public sealed class StateCommandsPreflightTests : CommandTestBase
         StubTwigShow(runner, 100, "Hello");
         StubGhAuth(runner, true);
         StubDotnetVersion(runner, "9.0.100");
-        StubBareRepo(runner, isBare: true, commonDir: "/projects/polyphony.git");
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.Preflight(workItem: 100));
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightResult)!;
 
-        result.Ready.ShouldBeTrue($"Output was: {output}");
-        var bareCheck = result.RequiredChecks.First(c => c.Name == "bare_repo");
-        bareCheck.Passed.ShouldBeTrue();
-        bareCheck.Detail.ShouldContain("/projects/polyphony.git");
-        bareCheck.Detail.ShouldContain("AB#3085");
-        bareCheck.Remediation.ShouldBeNull("passing checks should not carry a remediation hint");
+        result.Ready.ShouldBeTrue($"Vanilla clone must pass preflight. Output was: {output}");
+        result.RequiredChecks.Any(c => c.Name == "bare_repo").ShouldBeFalse();
     }
 
     [Fact]
-    public async Task Preflight_NonBareCommonDir_BareRepoRequiredFailsWithDocLink()
+    public async Task PreflightLite_VanillaCloneLayout_Passes()
     {
         var (cmd, runner) = CreateCommand();
         StubGitTopLevel(runner, "/repo");
         StubTwigVersion(runner, "twig 0.42.0");
-        StubTwigConfig(runner, "organization", "myorg");
-        StubTwigConfig(runner, "project", "myproj");
-        StubTwigShow(runner, 100, "Hello");
-        StubGhAuth(runner, true);
-        StubDotnetVersion(runner, "9.0.100");
-        StubBareRepo(runner, isBare: false, commonDir: "/repo/.git");
-
-        var (_, output) = await CaptureConsoleAsync(() => cmd.Preflight(workItem: 100));
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightResult)!;
-
-        // bare_repo is now REQUIRED — a non-bare layout must gate the workflow.
-        result.Ready.ShouldBeFalse($"bare_repo failure must gate the workflow. Output was: {output}");
-        result.FailedCount.ShouldBeGreaterThanOrEqualTo(1);
-
-        var bareCheck = result.RequiredChecks.First(c => c.Name == "bare_repo");
-        bareCheck.Passed.ShouldBeFalse();
-        bareCheck.Detail.ShouldContain("/repo/.git");
-        bareCheck.Detail.ShouldContain("legacy layout");
-        bareCheck.Detail.ShouldContain("AB#3085");
-        bareCheck.Remediation.ShouldNotBeNull();
-        bareCheck.Remediation!.ShouldContain("docs/per-run-worktree-layout.md");
-        bareCheck.Remediation.ShouldContain("AB#3085");
-    }
-
-    [Fact]
-    public async Task Preflight_CommonDirProbeFails_BareRepoRequiredFailsWithRemediation()
-    {
-        var (cmd, runner) = CreateCommand();
-        StubGitTopLevel(runner, "/repo");
-        StubTwigVersion(runner, "twig 0.42.0");
-        StubTwigConfig(runner, "organization", "myorg");
-        StubTwigConfig(runner, "project", "myproj");
-        StubTwigShow(runner, 100, "Hello");
-        StubGhAuth(runner, true);
-        StubDotnetVersion(runner, "9.0.100");
-        StubBareRepoCommonDirFails(runner);
-
-        var (_, output) = await CaptureConsoleAsync(() => cmd.Preflight(workItem: 100));
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightResult)!;
-
-        // Common-dir probe failure surfaces as a required failure, not a hard
-        // crash — the verb still emits a complete preflight envelope.
-        var bareCheck = result.RequiredChecks.First(c => c.Name == "bare_repo");
-        bareCheck.Passed.ShouldBeFalse();
-        bareCheck.Detail.ShouldContain("Not inside a git repository");
-        bareCheck.Remediation.ShouldNotBeNull();
-        bareCheck.Remediation!.ShouldContain("docs/per-run-worktree-layout.md");
-    }
-
-    [Fact]
-    public async Task Preflight_IsBareProbeFails_BareRepoRequiredFailsWithRemediation()
-    {
-        var (cmd, runner) = CreateCommand();
-        StubGitTopLevel(runner, "/repo");
-        StubTwigVersion(runner, "twig 0.42.0");
-        StubTwigConfig(runner, "organization", "myorg");
-        StubTwigConfig(runner, "project", "myproj");
-        StubTwigShow(runner, 100, "Hello");
-        StubGhAuth(runner, true);
-        StubDotnetVersion(runner, "9.0.100");
-        StubBareRepoIsBareFails(runner, commonDir: "/repo/.git");
-
-        var (_, output) = await CaptureConsoleAsync(() => cmd.Preflight(workItem: 100));
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightResult)!;
-
-        var bareCheck = result.RequiredChecks.First(c => c.Name == "bare_repo");
-        bareCheck.Passed.ShouldBeFalse();
-        bareCheck.Detail.ShouldContain("/repo/.git");
-        bareCheck.Detail.ShouldContain("safe.bareRepository");
-        bareCheck.Remediation.ShouldNotBeNull();
-        bareCheck.Remediation!.ShouldContain("docs/per-run-worktree-layout.md");
-    }
-
-    [Fact]
-    public async Task PreflightLite_IncludesBareRepoCheck()
-    {
-        // bare_repo flipped from advisory→required as of AB#3085 (per-run
-        // worktree epic) and is wired into BOTH preflight and preflight-lite.
-        // Operators on legacy non-bare layouts are expected to run
-        // scripts/Migrate-ToBareRepo.ps1 before invoking the SDLC.
-        var (cmd, runner) = CreateCommand();
-        StubGitTopLevel(runner, "/repo");
-        StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner, isBare: true, commonDir: "/projects/polyphony.git");
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.PreflightLite());
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
 
-        result.Checks.Any(c => c.Name == "bare_repo").ShouldBeTrue(
-            "preflight-lite must include bare_repo as of AB#3085 (advisory→required flip)");
-        result.Checks.First(c => c.Name == "bare_repo").Passed.ShouldBeTrue();
-    }
-
-    [Fact]
-    public async Task PreflightLite_NonBareCommonDir_BareRepoFails()
-    {
-        var (cmd, runner) = CreateCommand();
-        StubGitTopLevel(runner, "/repo");
-        StubTwigVersion(runner, "twig 0.42.0");
-        StubBareRepo(runner, isBare: false, commonDir: "/repo/.git");
-
-        var (_, output) = await CaptureConsoleAsync(() => cmd.PreflightLite());
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StatePreflightLiteResult)!;
-
-        result.Ready.ShouldBeFalse("non-bare layout must gate preflight-lite as of AB#3085");
-        result.FailedCount.ShouldBeGreaterThanOrEqualTo(1);
-        var bareCheck = result.Checks.First(c => c.Name == "bare_repo");
-        bareCheck.Passed.ShouldBeFalse();
-        bareCheck.Remediation.ShouldNotBeNull();
-        bareCheck.Remediation!.ShouldContain("docs/per-run-worktree-layout.md");
+        result.Ready.ShouldBeTrue($"Vanilla clone must pass preflight-lite. Output was: {output}");
+        result.Checks.Any(c => c.Name == "bare_repo").ShouldBeFalse();
     }
 
     private static string WriteTempWorkflowYaml(string minPolyphonyVersion)

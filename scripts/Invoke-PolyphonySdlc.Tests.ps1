@@ -114,7 +114,7 @@ if defined TWIG_FAKE_STATE (
 }
 
 # ════════════════════════════════════════════════════════════════════════════
-# Phase 1-2: cwd + bare-repo preflight
+# Phase 1: cwd-is-a-git-repo preflight
 # ════════════════════════════════════════════════════════════════════════════
 
 Describe 'Invoke-PolyphonySdlc — repo-layout preflight' {
@@ -132,52 +132,26 @@ Describe 'Invoke-PolyphonySdlc — repo-layout preflight' {
         }
     }
 
-    It 'Throws with bare-repo migration guidance when cwd is a non-bare clone' {
-        # Set up a non-bare clone (legacy layout): no separate bare gitdir.
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "non-bare-$([System.Guid]::NewGuid().ToString('N').Substring(0, 8))"
-        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-        & git init --quiet $tmp 2>&1 | Out-Null
-        Push-Location $tmp
-        try {
-            { & $script:ScriptPath -ApexId 1234 -DryRun } |
-                Should -Throw -ExpectedMessage '*Repo-layout preflight FAILED*'
-        } finally {
-            Pop-Location
-            Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    It 'Error message links to migration script and layout doc' {
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "non-bare-msg-$([System.Guid]::NewGuid().ToString('N').Substring(0, 8))"
+    It 'Does not throw a layout error on a vanilla (non-bare) clone' {
+        # Vanilla clones are first-class as of the bare-requirement drop.
+        # `git init` produces the same shape as `git clone <url>`: cwd has
+        # a `.git/` directory, common-dir is non-bare. The launcher must
+        # NOT throw a layout-preflight error in that case (it'll fail
+        # later when init-apex tries to do real work in DryRun mode, but
+        # the layout gate itself is gone).
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "vanilla-$([System.Guid]::NewGuid().ToString('N').Substring(0, 8))"
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         & git init --quiet $tmp 2>&1 | Out-Null
         Push-Location $tmp
         try {
             $err = $null
             try { & $script:ScriptPath -ApexId 1234 -DryRun } catch { $err = $_.Exception.Message }
-            $err | Should -Match 'Migrate-ToBareRepo\.ps1'
-            $err | Should -Match 'per-run-worktree-layout\.md'
-        } finally {
-            Pop-Location
-            Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    It '-SkipLayoutCheck bypasses the bare-repo gate (advanced escape hatch)' {
-        # Non-bare clone with SkipLayoutCheck should NOT throw the layout
-        # error — it'll fail later (init-apex needs a sane common-dir), but
-        # the layout gate itself is bypassed.
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "skip-$([System.Guid]::NewGuid().ToString('N').Substring(0, 8))"
-        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-        & git init --quiet $tmp 2>&1 | Out-Null
-        Push-Location $tmp
-        try {
-            $err = $null
-            try { & $script:ScriptPath -ApexId 1234 -DryRun -SkipLayoutCheck } catch { $err = $_.Exception.Message }
-            # If layout check ran, we'd see "Repo-layout preflight FAILED".
-            # Bypassed → some downstream error from init-apex (we accept any
-            # other failure mode here).
+            # Pre-drop the launcher would have thrown "Repo-layout preflight
+            # FAILED" here. After the drop it must reach init-apex and fail
+            # there (or any other downstream failure), never with a
+            # layout-preflight error.
             $err | Should -Not -Match 'Repo-layout preflight FAILED'
+            $err | Should -Not -Match 'Migrate-ToBareRepo'
         } finally {
             Pop-Location
             Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue
