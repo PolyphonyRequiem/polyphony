@@ -4,7 +4,7 @@ namespace Polyphony.Sdlc;
 
 /// <summary>
 /// Round-trip helper for the <c>polyphony:facets=&lt;csv&gt;</c> tag that
-/// architects can stamp on an root work item via plan front-matter
+/// architects can stamp on a root work item via plan front-matter
 /// (<c>root_facets</c>) when they choose NOT to decompose. The tag is the
 /// per-item override consumed by <see cref="RequirementInputResolver"/> so
 /// the root deriver sees an explicit facet set instead of the type-config

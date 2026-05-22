@@ -63,7 +63,7 @@ public sealed class ResetCommandsWorktreesRetryTests : CommandTestBase, IDisposa
         return (new ResetCommands(twig, git, pullRequestReader, planObserver, walker), runner);
     }
 
-    private void StubSingleApexWorktree(FakeProcessRunner runner)
+    private void StubSingleRootWorktree(FakeProcessRunner runner)
     {
         runner.WhenExact("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             new ProcessResult(0, _commonDir + "\n", string.Empty));
@@ -78,7 +78,7 @@ public sealed class ResetCommandsWorktreesRetryTests : CommandTestBase, IDisposa
     public async Task ResetWorktrees_Execute_RetriesUntilThirdAttemptSucceeds()
     {
         var (cmd, runner) = CreateCommand();
-        StubSingleApexWorktree(runner);
+        StubSingleRootWorktree(runner);
         runner.WhenStartsWithSequence(
             "git",
             ["worktree", "remove", "--force", _worktreePath],
@@ -113,7 +113,7 @@ public sealed class ResetCommandsWorktreesRetryTests : CommandTestBase, IDisposa
     public async Task ResetWorktrees_Execute_TreatsMissingPathAfterFailedAttemptsAsRemoved()
     {
         var (cmd, runner) = CreateCommand();
-        StubSingleApexWorktree(runner);
+        StubSingleRootWorktree(runner);
         var attempts = 0;
         runner.WhenAsync(
             (e, a) => e == "git"
@@ -152,7 +152,7 @@ public sealed class ResetCommandsWorktreesRetryTests : CommandTestBase, IDisposa
     public async Task ResetWorktrees_Execute_ReportsFailureWhenPathStillExistsAfterRetries()
     {
         var (cmd, runner) = CreateCommand();
-        StubSingleApexWorktree(runner);
+        StubSingleRootWorktree(runner);
         runner.WhenStartsWithSequence(
             "git",
             ["worktree", "remove", "--force", _worktreePath],

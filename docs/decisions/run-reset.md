@@ -5,7 +5,7 @@
 
 ## Context
 
-`polyphony state next-ready` decides whether an root (and each item beneath
+`polyphony state next-ready` decides whether a root (and each item beneath
 it) is `satisfied` by **observing** the world: it queries ADO/GitHub for the
 latest PR on the canonical branch (`plan/{root}`, `impl/{root}-{item}`,
 `feature/{root}`) and reduces the per-kind observations into a disposition.
@@ -33,7 +33,7 @@ Introduce a **per-root run watermark** plus an **observer filter**.
 
 ### Watermark
 
-Single tag on the root root work item:
+Single tag on the root work item:
 
 ```
 polyphony:run-started-at=<ISO-8601-UTC>
@@ -72,7 +72,7 @@ diagnostic reason naming both timestamps.
 
 The watermark fetch (`PlanObserver.ReadRunStartedAtAsync`) throws
 `InvalidOperationException` when `twig show` returns null — the only
-way that happens is a twig-process failure, since the root root is
+way that happens is a twig-process failure, since the root is
 known to exist by the time we get here. The composers capture the
 exception into `NextReadyObservationScope.RunStartedAtFetchError` and
 **force all four plan-state composers to `Needed`** with a fetch-error

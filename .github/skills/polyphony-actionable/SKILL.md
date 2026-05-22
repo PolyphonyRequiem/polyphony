@@ -85,7 +85,7 @@ convention: always exit 0, route on `error`).
 
 ## Inputs the workflow expects
 
-`work_item_id`, `apex_id`, `executor`, `platform`, `organization`,
+`work_item_id`, `root_id`, `executor`, `platform`, `organization`,
 `project`, `repository`, `from_ref`. All eight are pinned by
 `lint-actionable.ps1`.
 
@@ -181,16 +181,16 @@ advisory context the agent reads from its prompt.
 
 ## Verbs the workflow shells out to
 
-- `polyphony branch ensure-evidence-branch <workItemId> [--apex-id N] [--from-ref ref] [--remote origin]`
-  — emits `{ branch, base_branch, action, apex_id, item_id, orphan, from_ref, error? }`.
+- `polyphony branch ensure-evidence-branch <workItemId> [--root-id N] [--from-ref ref] [--remote origin]`
+  — emits `{ branch, base_branch, action, root_id, item_id, orphan, from_ref, error? }`.
 - `polyphony agent compose-addendum <workItem> [--policy path]`
   — emits `{ work_item_id, facets, skills, mcps, guidance, guidance_present, error?, error_code? }`.
   Routing-style: always exits 0; errors surface via `error_code`. Composes
   the facet-profile-derived skills + MCPs the actionable_agent prompt
   injects, plus the per-item guidance extracted via the resolved policy.
-- `polyphony pr open-evidence-pr <workItem> [--apex-id N] [--head X] [--base-branch Y] [--title T] [--body B]`
-  — emits `{ pr_number, pr_url, title, head_branch, base_branch, work_item_id, apex_id, created, error? }`.
-  GH-only today; ADO sibling deferred per Phase 6 wave-0 pattern.
+- `polyphony pr open-evidence-pr <workItem> [--root-id N] [--head X] [--base-branch Y] [--title T] [--body B]`
+  — emits `{ pr_number, pr_url, title, head_branch, base_branch, work_item_id, root_id, created, error? }`.
+  GH-only today; ADO sibling deferred per Phase 6 batch-0 pattern.
 - `polyphony pr check-evidence-floor <prNumber> [--repo owner/repo] [--min-commits N]`
   — emits `{ success, pr_number, commit_count, body_length, passes_floor, violations[], error_code?, error_message? }`.
   Always exits 0 (routing-style envelope); GH-only.
@@ -257,7 +257,7 @@ and asserts the following end-to-end behaviors:
 
 **Polyphony agent prompt threading:**
 - The agent prompt template references `workflow.input.work_item_id`,
-  `workflow.input.apex_id`, `ensure_evidence_branch.output.branch`,
+  `workflow.input.root_id`, `ensure_evidence_branch.output.branch`,
   and `ensure_evidence_branch.output.base_branch`.
 - The agent prompt template consumes every `compose_addendum` output
   field (`facets`, `skills`, `mcps`, `guidance`, `guidance_present`)

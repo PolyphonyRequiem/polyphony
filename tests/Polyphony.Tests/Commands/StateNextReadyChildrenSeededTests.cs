@@ -22,8 +22,8 @@ namespace Polyphony.Tests.Commands;
 /// <remarks>
 /// <para>
 /// Pre-PR-#3 the verb derived <c>children_seeded</c> from "any non-Done
-/// child" semantics — which mis-labelled an root with seeded children
-/// (any of which were still in flight) as <c>Fulfilling</c>, and an root
+/// child" semantics — which mis-labelled a root with seeded children
+/// (any of which were still in flight) as <c>Fulfilling</c>, and a root
 /// where the seeder had legitimately produced zero children (the
 /// indivisible case from §3.4) as <c>Needed</c> for ever. The fix wires
 /// the canonical write-once <c>polyphony:planned</c> tag (set by
@@ -100,14 +100,14 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
             (e, a) => e == "twig" && a.Count >= 2 && a[0] == "show" && a[1] == itemId.ToString(),
             (_, _) => throw new InvalidOperationException("simulated twig client failure"));
 
-    private async Task SeedApexAsync(string state = "Doing")
+    private async Task SeedRootAsync(string state = "Doing")
     {
         var item = new WorkItemBuilder()
             .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState(state).Build();
         await SeedAsync(item);
     }
 
-    private async Task SeedApexWithChildrenAsync(int childCount, string childState = "To Do")
+    private async Task SeedRootWithChildrenAsync(int childCount, string childState = "To Do")
     {
         var root = new WorkItemBuilder()
             .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState("Doing").Build();
@@ -130,7 +130,7 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
         // must report Needed even though there are zero children. Pre-PR-#3
         // the verb hit the "(0, _, _) => Needed" arm of the legacy switch
         // and got the same answer for the wrong reason.
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithPlanBaseline();
         StubTwigShowWithTags(runner, RootId, tags: "");
 
@@ -155,7 +155,7 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
         // Defensive: even if children exist in the cache, without the
         // canonical tag the verb must NOT call children_seeded Satisfied.
         // The tag is the only authoritative signal that the seeder ran.
-        await SeedApexWithChildrenAsync(childCount: 3);
+        await SeedRootWithChildrenAsync(childCount: 3);
         var runner = NewRunnerWithPlanBaseline();
         StubTwigShowWithTags(runner, RootId, tags: "polyphony;some-other-tag");
 
@@ -175,7 +175,7 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
     [Fact]
     public async Task NextReady_PlannedTagPresent_WithChildren_ChildrenSeededSatisfied()
     {
-        await SeedApexWithChildrenAsync(childCount: 3);
+        await SeedRootWithChildrenAsync(childCount: 3);
         var runner = NewRunnerWithPlanBaseline();
         StubTwigShowWithTags(runner, RootId, tags: "polyphony;polyphony:planned");
 
@@ -202,7 +202,7 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
         // no children were warranted, stamped polyphony:planned. Pre-PR-#3
         // this returned Needed forever because the legacy switch's
         // (0, _, _) => Needed arm ignored the tag.
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithPlanBaseline();
         StubTwigShowWithTags(runner, RootId, tags: "polyphony:planned");
 
@@ -226,7 +226,7 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
         // twig show exits non-zero → IsParentSeededAsync swallows and
         // returns false → children_seeded reports Needed with the
         // "not present" reason. The verb must still exit 0.
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithPlanBaseline();
         StubTwigShowError(runner, RootId);
 
@@ -247,7 +247,7 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
         // tightening of the observer, cancellation, or a non-swallowed
         // path), FetchPlannedTagAsync must catch and surface the error
         // via PlannedTagFetchError → Needed with a non-empty reason.
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithPlanBaseline();
         StubTwigShowThrows(runner, RootId);
 

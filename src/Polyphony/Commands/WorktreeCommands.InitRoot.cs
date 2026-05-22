@@ -58,7 +58,7 @@ public sealed partial class WorktreeCommands
     /// <param name="dryRun">When true, resolve paths and run the create-or-attach matrix in classification-only mode (no <c>Directory.CreateDirectory</c>, no <c>git worktree add</c>); emit <c>outcome=dry_run</c> with all path fields populated. The launcher uses this to drive <c>-DryRun</c> without mutating filesystem state.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("init-root")]
-    [VerbResult(typeof(WorktreeInitApexResult))]
+    [VerbResult(typeof(WorktreeInitRootResult))]
     [JournaledAction(Action = "worktree_init_root")]
     [MutatesResource(ResourceKind.GitWorktree)]
     public Task<int> InitRoot(
@@ -70,13 +70,13 @@ public sealed partial class WorktreeCommands
             ("--root", root == RequiredInput.MissingInt)) is { } halt)
             return Task.FromResult(halt);
 
-        return JournalCommandSupport.RunWithCapturedResultAsync<WorktreeInitApexResult, WorktreeInitRootPayload>(
+        return JournalCommandSupport.RunWithCapturedResultAsync<WorktreeInitRootResult, WorktreeInitRootPayload>(
             _journalDecorator,
             _runContext,
             "worktree_init_root",
             $"root:{root}",
             innerCt => InitRootCoreAsync(root, dryRun, innerCt),
-            PolyphonyJsonContext.Default.WorktreeInitApexResult,
+            PolyphonyJsonContext.Default.WorktreeInitRootResult,
             (_, result) => new WorktreeInitRootPayload
             {
                 RootId = result?.RootId ?? root,
@@ -208,17 +208,17 @@ public sealed partial class WorktreeCommands
             EmitInitRoot(
                 root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "filesystem_failure",
-                error: $"Could not create root root '{rootRoot}': {ex.Message}",
+                error: $"Could not create root '{rootRoot}': {ex.Message}",
                 dryRun: dryRun);
             return ExitCodes.Success;
         }
 
         // ── Step 5: matrix ──
-        return await RunInitApexMatrixAsync(
+        return await RunInitRootMatrixAsync(
             root, runsRoot, mainPath, rootRoot, worktreePath, branch, ct).ConfigureAwait(false);
     }
 
-    private async Task<int> RunInitApexMatrixAsync(
+    private async Task<int> RunInitRootMatrixAsync(
         int root,
         string runsRoot,
         string mainPath,
@@ -356,7 +356,7 @@ public sealed partial class WorktreeCommands
     }
 
     /// <summary>
-    /// Read-only mirror of <see cref="RunInitApexMatrixAsync"/> that classifies
+    /// Read-only mirror of <see cref="RunInitRootMatrixAsync"/> that classifies
     /// the would-be outcome without performing any mutations. Used by
     /// <c>--dry-run</c>. Always emits <c>outcome=dry_run</c> on success;
     /// failure cases (git failure, malformed worktree, branch-in-use,
@@ -572,7 +572,7 @@ public sealed partial class WorktreeCommands
         bool dryRun)
     {
         Console.WriteLine(JsonSerializer.Serialize(
-            new WorktreeInitApexResult
+            new WorktreeInitRootResult
             {
                 RootId = root,
                 RunsRoot = runsRoot,
@@ -585,6 +585,6 @@ public sealed partial class WorktreeCommands
                 Error = error,
                 DryRun = dryRun,
             },
-            PolyphonyJsonContext.Default.WorktreeInitApexResult));
+            PolyphonyJsonContext.Default.WorktreeInitRootResult));
     }
 }

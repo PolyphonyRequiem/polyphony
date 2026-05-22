@@ -88,7 +88,7 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
     }
 
     [Fact]
-    public async Task OpenEvidenceAdo_NegativeApexId_RoutesInvalidArgument()
+    public async Task OpenEvidenceAdo_NegativeRootId_RoutesInvalidArgument()
     {
         var (cmd, _, _) = CreateCommand();
         var (_, output) = await CaptureConsoleAsync(
@@ -142,7 +142,7 @@ public sealed class PrCommandsOpenEvidenceAdoTests : CommandTestBase
     }
 
     [Fact]
-    public async Task OpenEvidenceAdo_SubItem_HeadIsEvidenceApexDashItemAndBaseIsFeatureBranch()
+    public async Task OpenEvidenceAdo_SubItem_HeadIsEvidenceRootDashItemAndBaseIsFeatureBranch()
     {
         var (cmd, runner, ado) = CreateCommand();
         StubBranchesExist(runner, "evidence/100-200", "feature/100");

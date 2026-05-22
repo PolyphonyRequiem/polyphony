@@ -54,8 +54,8 @@ A canonical, correct example: `scripts/scope-closer.ps1:53-72`.
 | What's ready to work on next? (per-requirement disposition)      | `polyphony state next-ready --work-item N`        | `Commands/StateCommands.NextReady.cs` |
 | Validate `.polyphony-config/process-config.yaml` itself                 | `polyphony validate-config --config .polyphony-config`   | `Commands/ValidateConfigCommand.cs` |
 | Build the cross-item edge graph; surface conflicts               | `polyphony edges check --work-item N`             | `Commands/EdgesCommands.Check.cs` |
-| Ensure an evidence branch exists (orphan or apex-scoped)         | `polyphony branch ensure-evidence-branch N`       | `Commands/BranchCommands.EnsureEvidenceBranch.cs` |
-| Open or reuse the evidence PR against `feature/<apex>`           | `polyphony pr open-evidence-pr N`                 | `Commands/PrCommands.OpenEvidencePr.cs` |
+| Ensure an evidence branch exists (orphan or root-scoped)         | `polyphony branch ensure-evidence-branch N`       | `Commands/BranchCommands.EnsureEvidenceBranch.cs` |
+| Open or reuse the evidence PR against `feature/<root>`           | `polyphony pr open-evidence-pr N`                 | `Commands/PrCommands.OpenEvidencePr.cs` |
 | Extract per-item guidance per the resolved policy                | `polyphony guidance extract N`                    | `Commands/GuidanceCommands.cs` |
 | Set the active work item context                                 | `twig set <id> --output json`                     | twig CLI                        |
 | Change state                                                     | `twig state <name> --output json`                 | twig CLI                        |
@@ -154,7 +154,7 @@ see the **polyphony-sdlc** skill's "Workflow Metadata" section.
 
 When you author a sub-workflow that operates on a `root_id` but is **also**
 invokable on its own (i.e. the user can call it directly without first
-running tree-walker), call `root-fallback-gate` as the very first node and
+running entry-point workflow), call `root-fallback-gate` as the very first node and
 route on its envelope. The gate composes `polyphony policy load` with a
 `human_gate` that fires only when the resolved `root_fallback.auto_decide`
 is `prompt`. The other two policy values — `use_active_item` and `abort`
@@ -178,22 +178,22 @@ by `polyphony policy validate`.
 
 ---
 
-## Apex driver (tree-walking dispatch)
+## Polyphony (tree-walking dispatch)
 
-The Phase 7 keystone is `apex-driver.yaml` — the tree-walking SDLC
+The Phase 7 keystone is `polyphony.yaml` — the tree-walking SDLC
 orchestrator that ships with three companion deterministic dispatch
 helpers. When authoring or modifying anything in this area, the rules
 of this skill all apply, plus a few specifics:
 
 **Three-file split.** Conductor's `for_each` invokes one thing per
-iteration, so wave-handling and item-handling each need their own
+iteration, so batch-handling and item-handling each need their own
 sub-workflow:
 
-- `apex-driver.yaml` — outer loop (`build_worklist` →
-  `wave_dispatch_loop` for_each → `apex_completion_gate`).
-- `apex-wave-dispatch.yaml` — per-wave fan-out (`dispatch_items`
-  for_each → `integrate_wave` script).
-- `apex-item-dispatch.yaml` — per-item pipeline (classify → spawn
+- `polyphony.yaml` — outer loop (`build_worklist` →
+  `batch_loop` for_each → `root_completion_gate`).
+- `root-batch-dispatch.yaml` — per-batch fan-out (`dispatch_items`
+  for_each → `integrate_batch` script).
+- `root-item-dispatch.yaml` — per-item pipeline (classify → spawn
   worktree → lifecycle dispatch → teardown worktree).
 
 **Deterministic dispatch helpers.** The three companion scripts under
@@ -211,10 +211,10 @@ failure via `error_code` / `error_message`):
   worktrees idempotently. Spawn returns success when the worktree
   already exists; teardown returns success when the path is already
   gone. This idempotence is what makes re-entry safe.
-- `wave-integrator.ps1` — merges per-item branches into the apex
+- `batch-integrator.ps1` — merges per-item branches into the root
   feature branch in topological order from `polyphony edges check`.
   `--no-ff` by default. Captures conflicts per branch and continues
-  the wave; conflicts roll up to a wave-level human gate.
+  the batch; conflicts roll up to a batch-level human gate.
 
 **Pattern to copy.** When you need to route across N divergent
 downstream paths from a single inflection point, write a `route-X.ps1`
@@ -234,9 +234,9 @@ pattern instead:
    each with a `when:` clause:
    ```yaml
    routes:
-     - to: plan_level_dispatch
+     - to: plan_level
        when: "{{ classify_lifecycle.output.route == 'plan-level' }}"
-     - to: actionable_dispatch
+     - to: actionable
        when: "{{ classify_lifecycle.output.route == 'actionable' }}"
      # ...
    ```
@@ -249,20 +249,20 @@ pattern instead:
    anything else.
 
 Canonical examples in this repo:
-- `apex-item-dispatch.yaml` — `classify_lifecycle` →
-  {`plan_level_dispatch`, `actionable_dispatch`,
-  `implement_merge_group_dispatch`, `feature_pr_dispatch`}.
+- `root-item-dispatch.yaml` — `classify_lifecycle` →
+  {`plan_level`, `actionable`,
+  `implement_merge_group`, `feature_pr`}.
 - `feature-pr.yaml` — `pr_platform_router` →
   {`pr_lifecycle_github`, `pr_lifecycle_ado`}.
 
 **Bubble-up signals through nested for_each.** When a sub-workflow
 deep inside a fan-out emits a flag (e.g.
 `renegotiation_pending: true`), aggregate it at each layer with a
-`script` step that scans the for_each `outputs` map. The apex
-driver does this twice: `apex-wave-dispatch.yaml`'s
-`aggregate_renegotiation` aggregates per-item flags into a wave
-flag; `apex-driver.yaml`'s `renegotiation_summary` rolls wave flags
-up into an apex flag and feeds a `human_gate`. Don't try to express
+`script` step that scans the for_each `outputs` map. The root
+driver does this twice: `root-batch-dispatch.yaml`'s
+`aggregate_renegotiation` aggregates per-item flags into a batch
+flag; `polyphony.yaml`'s `renegotiation_summary` rolls batch flags
+up into a root flag and feeds a `human_gate`. Don't try to express
 the aggregation as Jinja over `outputs.values()` — pass the JSON to
 a pwsh script and parse it there.
 
@@ -270,11 +270,11 @@ a pwsh script and parse it there.
 recomputed via `polyphony worklist build` every iteration — never
 persist a "last completed item" pointer. After a gate or a restart,
 re-build the worklist; the EdgeGraph re-classifies what's still
-pending and the next wave is whatever's ready *now*.
+pending and the next batch is whatever's ready *now*.
 
 The full design rationale lives in
-`docs/decisions/apex-driver.md`; the keyword set lives in the
-`docs/glossary.md` "Apex driver" section.
+`docs/decisions/polyphony-entry-workflow.md`; the keyword set lives in the
+`docs/glossary.md` "Polyphony" section.
 
 ---
 
@@ -317,8 +317,8 @@ config-load-time validator (V-20).
 
 ## Reviewing evidence PRs
 
-The actionable workflow's evidence PR (head = `evidence/<apex>-<item>`,
-base = `feature/<apex>`, opened via `polyphony pr open-evidence-pr`)
+The actionable workflow's evidence PR (head = `evidence/<root>-<item>`,
+base = `feature/<root>`, opened via `polyphony pr open-evidence-pr`)
 follows the **same lifecycle shape** as the plan PR and feature PR —
 the rubric is the only thing that differs:
 

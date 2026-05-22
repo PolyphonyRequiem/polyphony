@@ -9,9 +9,9 @@ namespace Polyphony.Commands;
 
 public sealed partial class ResetCommands
 {
-    [Command("apex")]
-    [VerbResult(typeof(ResetApexResult))]
-    [JournaledAction(Action = "reset_apex")]
+    [Command("root")]
+    [VerbResult(typeof(ResetRootResult))]
+    [JournaledAction(Action = "reset_root")]
     [MutatesResource(ResourceKind.GitHubPr)]
     [MutatesResource(ResourceKind.AdoPr)]
     [MutatesResource(ResourceKind.GitWorktree)]
@@ -23,8 +23,7 @@ public sealed partial class ResetCommands
     [MayObserveResource(ResourceKind.ManifestFile)]
     [MayObserveResource(ResourceKind.PlanFile)]
     [MayObserveResource(ResourceKind.LockFile)]
-    public Task<int> ResetApex(
-        int apex = RequiredInput.MissingInt,
+    public Task<int> ResetRoot(
         int root = RequiredInput.MissingInt,
         bool execute = false,
         string strategy = ProjectionResetStrategy.Projection,
@@ -34,31 +33,22 @@ public sealed partial class ResetCommands
         string comment = "",
         CancellationToken ct = default)
     {
-        if (apex != RequiredInput.MissingInt
-            && root != RequiredInput.MissingInt
-            && apex != root)
-        {
-            Console.Error.WriteLine("--apex and --root must match when both are provided.");
-            return Task.FromResult(ExitCodes.RoutingFailure);
-        }
-
-        var resolvedApex = apex != RequiredInput.MissingInt ? apex : root;
-        if (RequiredInput.HaltIfMissing("reset apex",
-            ("--apex", resolvedApex == RequiredInput.MissingInt)) is { } halt)
+        if (RequiredInput.HaltIfMissing("reset root",
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
         {
             return Task.FromResult(halt);
         }
 
-        return JournalCommandSupport.RunWithCapturedResultAsync<ResetApexResult, ResetRootPayload>(
+        return JournalCommandSupport.RunWithCapturedResultAsync<ResetRootResult, ResetRootPayload>(
             _journalDecorator,
             _runContext,
-            "reset_apex",
-            JournalCommandSupport.WorkItemTarget(resolvedApex),
-            innerCt => ResetApexCoreAsync(resolvedApex, execute, strategy, allowUnjournaled, forceMutated, skipState, comment, innerCt),
-            PolyphonyJsonContext.Default.ResetApexResult,
+            "reset_root",
+            JournalCommandSupport.WorkItemTarget(root),
+            innerCt => ResetRootCoreAsync(root, execute, strategy, allowUnjournaled, forceMutated, skipState, comment, innerCt),
+            PolyphonyJsonContext.Default.ResetRootResult,
             (_, result) => new ResetRootPayload
             {
-                Root = result?.Root ?? resolvedApex,
+                Root = result?.Root ?? root,
                 DryRun = result?.DryRun ?? !execute,
                 Succeeded = result?.Success ?? false,
                 WasMutated = result is not null && !result.DryRun && result.DeletedTargets.Count > 0,
@@ -72,28 +62,12 @@ public sealed partial class ResetCommands
             payload => payload.WasMutated,
             SelectResetRootEffects,
             ct,
-            rootId: resolvedApex,
-            workItemId: resolvedApex);
+            rootId: root,
+            workItemId: root);
     }
 
-    public Task<int> ResetRoot(
-        int root = RequiredInput.MissingInt,
-        bool execute = false,
-        bool skipState = false,
-        string comment = "",
-        CancellationToken ct = default)
-        => ResetApex(
-            apex: root,
-            execute: execute,
-            strategy: ProjectionResetStrategy.Pattern,
-            allowUnjournaled: false,
-            forceMutated: false,
-            skipState: skipState,
-            comment: comment,
-            ct: ct);
-
-    private async Task<int> ResetApexCoreAsync(
-        int apex,
+    private async Task<int> ResetRootCoreAsync(
+        int root,
         bool execute,
         string strategy,
         bool allowUnjournaled,
@@ -102,13 +76,13 @@ public sealed partial class ResetCommands
         string comment,
         CancellationToken ct)
     {
-        ResetApexResult result;
+        ResetRootResult result;
         if (string.Equals(strategy, ProjectionResetStrategy.Projection, StringComparison.OrdinalIgnoreCase))
         {
             var executor = _projectionResetExecutor
                 ?? throw new InvalidOperationException("Projection reset executor is not configured.");
             result = await executor.ExecuteAsync(
-                apex,
+                root,
                 new ProjectionResetExecutionOptions
                 {
                     Execute = execute,
@@ -121,13 +95,13 @@ public sealed partial class ResetCommands
         }
         else if (string.Equals(strategy, ProjectionResetStrategy.Pattern, StringComparison.OrdinalIgnoreCase))
         {
-            result = await ResetApexPatternCoreAsync(apex, execute, skipState, comment, ct).ConfigureAwait(false);
+            result = await ResetRootPatternCoreAsync(root, execute, skipState, comment, ct).ConfigureAwait(false);
         }
         else
         {
-            result = new ResetApexResult
+            result = new ResetRootResult
             {
-                Root = apex,
+                Root = root,
                 Success = false,
                 DryRun = !execute,
                 Strategy = strategy,
@@ -145,12 +119,12 @@ public sealed partial class ResetCommands
             };
         }
 
-        Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.ResetApexResult));
+        Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.ResetRootResult));
         return ExitCodes.Success;
     }
 
-    private async Task<ResetApexResult> ResetApexPatternCoreAsync(
-        int apex,
+    private async Task<ResetRootResult> ResetRootPatternCoreAsync(
+        int root,
         bool execute,
         bool skipState,
         string comment,
@@ -168,41 +142,41 @@ public sealed partial class ResetCommands
 
         try
         {
-            prs = await RunPrsAsync(apex, execute, comment, ct).ConfigureAwait(false);
+            prs = await RunPrsAsync(root, execute, comment, ct).ConfigureAwait(false);
             if (prs.Success) stepsCompleted.Add("prs");
             else { stepsFailed.Add("prs"); haltReason = $"prs: {prs.Error}"; }
 
             if (haltReason is null)
             {
-                worktrees = await RunWorktreesAsync(apex, execute, ct).ConfigureAwait(false);
+                worktrees = await RunWorktreesAsync(root, execute, ct).ConfigureAwait(false);
                 if (worktrees.Success) stepsCompleted.Add("worktrees");
                 else { stepsFailed.Add("worktrees"); haltReason = $"worktrees: {worktrees.Error}"; }
             }
 
             if (haltReason is null)
             {
-                branches = await RunBranchesAsync(apex, execute, ct).ConfigureAwait(false);
+                branches = await RunBranchesAsync(root, execute, ct).ConfigureAwait(false);
                 if (branches.Success) stepsCompleted.Add("branches");
                 else { stepsFailed.Add("branches"); haltReason = $"branches: {branches.Error}"; }
             }
 
             if (haltReason is null)
             {
-                facets = await RunFacetsAsync(apex, execute, ct).ConfigureAwait(false);
+                facets = await RunFacetsAsync(root, execute, ct).ConfigureAwait(false);
                 if (facets.Success) stepsCompleted.Add("facets");
                 else { stepsFailed.Add("facets"); haltReason = $"facets: {facets.Error}"; }
             }
 
             if (haltReason is null)
             {
-                manifest = await RunManifestAsync(apex, execute, ct).ConfigureAwait(false);
+                manifest = await RunManifestAsync(root, execute, ct).ConfigureAwait(false);
                 if (manifest.Success) stepsCompleted.Add("manifest");
                 else { stepsFailed.Add("manifest"); haltReason = $"manifest: {manifest.Error}"; }
             }
 
             if (haltReason is null && !skipState)
             {
-                state = await RunStateAsync(apex, execute, ct).ConfigureAwait(false);
+                state = await RunStateAsync(root, execute, ct).ConfigureAwait(false);
                 if (state.Success) stepsCompleted.Add("state");
                 else { stepsFailed.Add("state"); haltReason = $"state: {state.Error}"; }
             }
@@ -216,9 +190,9 @@ public sealed partial class ResetCommands
             haltReason = $"pattern reset threw: {ex.Message}";
         }
 
-        return new ResetApexResult
+        return new ResetRootResult
         {
-            Root = apex,
+            Root = root,
             Success = stepsFailed.Count == 0 && haltReason is null,
             DryRun = !execute,
             Strategy = ProjectionResetStrategy.Pattern,
@@ -242,44 +216,44 @@ public sealed partial class ResetCommands
         };
     }
 
-    private async Task<ResetPrsResult> RunPrsAsync(int apex, bool execute, string comment, CancellationToken ct)
+    private async Task<ResetPrsResult> RunPrsAsync(int root, bool execute, string comment, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetPrs(apex, execute, comment, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetPrs(root, execute, comment, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetPrsResult)
             ?? throw new InvalidOperationException("reset prs returned unparseable JSON");
     }
 
-    private async Task<ResetWorktreesResult> RunWorktreesAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetWorktreesResult> RunWorktreesAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetWorktrees(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetWorktrees(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetWorktreesResult)
             ?? throw new InvalidOperationException("reset worktrees returned unparseable JSON");
     }
 
-    private async Task<ResetBranchesResult> RunBranchesAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetBranchesResult> RunBranchesAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetBranches(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetBranches(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetBranchesResult)
             ?? throw new InvalidOperationException("reset branches returned unparseable JSON");
     }
 
-    private async Task<ResetFacetsResult> RunFacetsAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetFacetsResult> RunFacetsAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetFacets(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetFacets(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetFacetsResult)
             ?? throw new InvalidOperationException("reset facets returned unparseable JSON");
     }
 
-    private async Task<ResetManifestResult> RunManifestAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetManifestResult> RunManifestAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetManifest(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetManifest(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetManifestResult)
             ?? throw new InvalidOperationException("reset manifest returned unparseable JSON");
     }
 
-    private async Task<ResetStateResult> RunStateAsync(int apex, bool execute, CancellationToken ct)
+    private async Task<ResetStateResult> RunStateAsync(int root, bool execute, CancellationToken ct)
     {
-        var json = await CaptureAsync(() => ResetState(apex, execute, ct)).ConfigureAwait(false);
+        var json = await CaptureAsync(() => ResetState(root, execute, ct)).ConfigureAwait(false);
         return JsonSerializer.Deserialize(json, PolyphonyJsonContext.Default.ResetStateResult)
             ?? throw new InvalidOperationException("reset state returned unparseable JSON");
     }

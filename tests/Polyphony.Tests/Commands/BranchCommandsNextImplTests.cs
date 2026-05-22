@@ -405,11 +405,11 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
     public async Task NextImpl_RootRootTaggedImplMergedInMg_ReportsAllItemsDone()
     {
         // AB#3217 regression: when root_completer has stamped the
-        // impl-merged-in-mg=<mg-path> marker on the root root (because the
-        // root root's terminal transition is deferred to
+        // impl-merged-in-mg=<mg-path> marker on the root (because the
+        // root's terminal transition is deferred to
         // close_mark_satisfied per AB#3169), next-impl MUST filter that
         // item out and report all_items_done, not re-dispatch the same
-        // root root for another empty squash that fails the coverage
+        // root for another empty squash that fails the coverage
         // assertion. Root 62286666 dogfood: same item came back from
         // next-impl three times before the user killed the loop.
         var (cmd, runner) = CreateCommand();
@@ -432,9 +432,9 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
     [Fact]
     public async Task NextImpl_RootRootTaggedForDifferentMg_StillDispatches()
     {
-        // Multi-MG hygiene: the marker is per-MG. An root root that has
+        // Multi-MG hygiene: the marker is per-MG. An root that has
         // completed its impl in pg-1 can still be the next implementable
-        // for pg-2 (e.g. root root participates in two parallel MGs).
+        // for pg-2 (e.g. root participates in two parallel MGs).
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
         StubConfig(runner);

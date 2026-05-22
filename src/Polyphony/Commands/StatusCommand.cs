@@ -47,7 +47,7 @@ public sealed class StatusCommand(
     Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
     Sdlc.Observers.PullRequestReader pullRequestReader)
 {
-    /// <summary>Compose a periodic status snapshot for an root work item.</summary>
+    /// <summary>Compose a periodic status snapshot for a root work item.</summary>
     /// <param name="root">Root (focus) work item ID.</param>
     /// <param name="repoSlug">Owner/repo slug (GitHub) for the feature-PR lookup.
     /// When empty, derived from the <c>origin</c> remote (GitHub or ADO);

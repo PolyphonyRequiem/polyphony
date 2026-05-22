@@ -344,12 +344,12 @@ agents:
   # ── Lifecycle dispatch — feature-pr ──────────────────────────────────────
   #
   # Root-root implementation lifecycle: the classifier returns
-  # `feature-pr` when the work item is the root root and
+  # `feature-pr` when the work item is the root and
   # implementation_merged is the next ready requirement. Merges
   # the root feature branch into target (default `main`).
   - name: feature_pr
     type: workflow
-    description: Feature PR lifecycle (feature-pr.yaml) — root root only
+    description: Feature PR lifecycle (feature-pr.yaml) — root only
     workflow: ./feature-pr.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
@@ -456,7 +456,7 @@ agents:
   #
   # Performs the ADO state transition for an item whose only ready
   # requirement is `item_satisfied` — every facet-driven kind has
-  # already settled. Mirrors polyphony.yaml's `close_mark_satisfied`
+  # already settled. Mirrors polyphony's `close_mark_satisfied`
   # (validate-then-twig-state) so the same terminal-state mapping
   # rules apply (per `.polyphony-config/process-config.yaml > transitions`).
   #
@@ -499,7 +499,7 @@ agents:
             twig sync;
           }
         } catch {
-          # Capture, don't swallow: the root driver's outer loop (PR #9)
+          # Capture, don't swallow: polyphony's outer loop (PR #9)
           # re-evaluates next-ready on the next pass — transient ADO/twig
           # failures still surface there rather than failing the whole
           # batch here. But we now log the message to stderr (visible in

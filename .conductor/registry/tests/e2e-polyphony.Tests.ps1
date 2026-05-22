@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    End-to-end behavior tests for the polyphony tree-walker.
+    End-to-end behavior tests for polyphony, the entry-point workflow.
 
 .DESCRIPTION
     Phase 7 capstone — the structural lint
@@ -490,7 +490,7 @@ Describe 'polyphony e2e — outer loop reachability' {
         $optByValue['abort'].route | Should -Be 'root_abandoned'
     }
 
-    It 'promote_feature_pr invokes feature-pr.yaml with the root root inputs' {
+    It 'promote_feature_pr invokes feature-pr.yaml with the root inputs' {
         $node = $script:RootAgents['promote_feature_pr']
         $node | Should -Not -BeNullOrEmpty
         $node.type     | Should -Be 'workflow'
@@ -1392,7 +1392,7 @@ Describe 'polyphony e2e — lifecycle-router script and YAML contract drift' {
             "router script must emit every documented lifecycle_workflow value; missing: $($missing -join ', ')")
     }
 
-    It 'Every lifecycle_workflow value the router emits is handled by an root-item-dispatch.yaml when: clause OR by the success-route fork (no silent dropping)' {
+    It 'Every lifecycle_workflow value the router emits is handled by a root-item-dispatch.yaml when: clause OR by the success-route fork (no silent dropping)' {
         # The four "dispatchable" verdicts (plan-level / actionable /
         # implement-merge-group / feature-pr) are NOT branched on in
         # classify_lifecycle's routes; they are gated by the
@@ -1509,7 +1509,7 @@ Write-Error "unexpected stub invocation: $($args -join ' ')"; exit 9
             $envelope.success | Should -Be $true -Because 'an indivisible implementable root is a valid dispatchable item'
             $envelope.is_root | Should -Be $true
             $envelope.lifecycle_workflow | Should -Be 'implement-merge-group' -Because (
-                'root root with no children IS the PG — must route to implement-merge-group, not feature-pr (empty-MG bug AB#3064)')
+                'root with no children IS the PG — must route to implement-merge-group, not feature-pr (empty-MG bug AB#3064)')
             $envelope.error_code | Should -BeNullOrEmpty
         }
         finally { Remove-Item env:PSE_F6_FIXTURE -ErrorAction SilentlyContinue }
@@ -1525,7 +1525,7 @@ Write-Error "unexpected stub invocation: $($args -join ' ')"; exit 9
             $envelope.success | Should -Be $true
             $envelope.is_root | Should -Be $true
             $envelope.lifecycle_workflow | Should -Be 'feature-pr' -Because (
-                'a decomposed root root has children whose PGs were merged in earlier waves; feature-pr aggregates them')
+                'a decomposed root has children whose PGs were merged in earlier waves; feature-pr aggregates them')
         }
         finally { Remove-Item env:PSE_F6_FIXTURE -ErrorAction SilentlyContinue }
     }

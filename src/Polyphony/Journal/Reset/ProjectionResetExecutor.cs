@@ -18,7 +18,7 @@ public sealed class ProjectionResetExecutor(
     private readonly IReadOnlyDictionary<string, IResourceDeleter> _deleters = deleters
         .ToDictionary(deleter => deleter.Kind, StringComparer.Ordinal);
 
-    public async Task<ResetApexResult> ExecuteAsync(
+    public async Task<ResetRootResult> ExecuteAsync(
         int rootId,
         ProjectionResetExecutionOptions options,
         CancellationToken ct)
@@ -152,7 +152,7 @@ public sealed class ProjectionResetExecutor(
             error);
     }
 
-    private static ResetApexResult CreateResult(
+    private static ResetRootResult CreateResult(
         int rootId,
         ProjectionResetExecutionOptions options,
         string coverage,

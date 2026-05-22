@@ -11,7 +11,7 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// <c>polyphony worklist build</c> — compute the ordered, batch-grouped
-/// list of plan-tree work items that the root driver workflow will
+/// list of plan-tree work items that polyphony workflow will
 /// dispatch in parallel.
 ///
 /// <para>Pure inspection verb: walks children from
@@ -176,7 +176,7 @@ public sealed partial class WorklistCommands
         if (conflicts.Length > 0)
         {
             // Conflict gate: emit empty waves + populated conflicts. Exit 0
-            // routing-style — the root driver decides whether to halt.
+            // routing-style — polyphony decides whether to halt.
             EmitWorklist(new WorklistResult
             {
                 RootId = rootId,

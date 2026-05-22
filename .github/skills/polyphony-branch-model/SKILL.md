@@ -295,11 +295,11 @@ When multiple child plan branches each carry parent edits:
    - schedules an auditable rebase OR raises a `human_gate` per
      `(scope, child_plan_rebase)` policy.
 
-### Ancestor-cascade staleness
+### Ancestor-restack staleness
 
 Tracking only the **immediate** parent's generation lets a child plan PR
 silently drift against an **ancestor** further up the chain. The driver
-enforces ancestor cascade:
+enforces ancestor restack:
 
 1. When any ancestor's `plan_generation` is bumped (root, grandparent,
    etc.), the driver walks the descendant tree of in-flight plan branches.
@@ -425,7 +425,7 @@ merge_groups:
     isolation: per-merge-group
     nesting_override: null
 
-# Recorded rebase events (cross-MG code-dep, child-plan, ancestor-cascade)
+# Recorded rebase events (cross-MG code-dep, child-plan, ancestor-restack)
 rebases:
   - branch: mg/1234_data-layer
     onto: feature/1234
@@ -481,7 +481,7 @@ regenerated plan content.
 
 ### Run lifecycle
 
-1. The apex driver for `<root>` acquires a lock on `(repo, project, root_id)`.
+1. The polyphony.yaml for `<root>` acquires a lock on `(repo, project, root_id)`.
 2. If `feature/{root}` exists with a manifest:
    - **Same topology hash** → resume the existing run.
    - **Different hash, no branches materialized for the diff** → accept,
@@ -607,7 +607,7 @@ polyphony policy resolve --scope root --domain cross_mg_code_dep
 | Add a new branch prefix without an ADR | Amend the ADR | Five prefixes is the contract |
 | Auto-rebase a stale child plan branch silently | Block + comment + audit-record the rebase | Renegotiation must be auditable |
 | Treat absence of run manifest as "no run" | Treat as corruption — refuse and surface | Manifest is canonical truth |
-| Run two apex driver runs against the same root | One holds the lock; second resumes or refuses | Branch tree can't host two simultaneous runs |
+| Run two polyphony.yaml runs against the same root | One holds the lock; second resumes or refuses | Branch tree can't host two simultaneous runs |
 | Use `mg_promoted` requirement | Use `implementation_merged` (canonical kind) | `mg_promoted` doesn't exist in code |
 
 ---

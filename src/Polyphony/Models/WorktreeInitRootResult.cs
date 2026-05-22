@@ -2,7 +2,7 @@ namespace Polyphony;
 
 /// <summary>
 /// Output of <c>polyphony worktree init-root --root N</c>. Reports the
-/// resolved root root (the per-root container under the runs-root) and
+/// resolved root (the per-root container under the runs-root) and
 /// the <c>feature/{N}</c> worktree that was created/attached/idempotently
 /// confirmed.
 ///
@@ -36,7 +36,7 @@ namespace Polyphony;
 /// <see cref="RootRoot"/>, <see cref="WorktreePath"/>, and
 /// <see cref="Branch"/> may be null.</para>
 /// </summary>
-public sealed record WorktreeInitApexResult
+public sealed record WorktreeInitRootResult
 {
     /// <summary>The root id that was passed to <c>--root</c> (echoed back for confirmation).</summary>
     public required int RootId { get; init; }

@@ -12,7 +12,7 @@ namespace Polyphony.Commands;
 /// abandons every OPEN PR targeting any branch in the root's polyphony
 /// scope: <c>plan/{N}</c>, nested <c>plan/{N}-*</c>, <c>mg/{N}-*</c>,
 /// <c>impl/{N}-*</c>, <c>evidence/{N}-*</c>, <c>feature/{N}</c>, and
-/// literal <c>sdlc/apex/{id}</c> branches for the root + descendants.
+/// literal <c>sdlc/root/{id}</c> branches for the root + descendants.
 ///
 /// <para>Branch enumeration runs against origin (<c>git ls-remote --heads
 /// origin refs/heads/{pattern}</c>) — we don't trust local branch state
@@ -128,7 +128,7 @@ public sealed partial class ResetCommands
             var slug = Sdlc.Observers.PullRequestReader.BuildRepoSlug(identity);
 
             // Enumerate concrete branches for each root pattern.
-            var branches = await EnumerateApexBranchesAsync(root, ct).ConfigureAwait(false);
+            var branches = await EnumerateRootBranchesAsync(root, ct).ConfigureAwait(false);
 
             var abandoned = new List<ResetAbandonedPr>();
             var failed = new List<ResetFailedPr>();
@@ -242,7 +242,7 @@ public sealed partial class ResetCommands
     /// root's polyphony patterns. Returns a de-duped list in stable order
     /// (pattern order, then alphabetical within a pattern).
     /// </summary>
-    internal async Task<IReadOnlyList<string>> EnumerateApexBranchesAsync(int root, CancellationToken ct)
+    internal async Task<IReadOnlyList<string>> EnumerateRootBranchesAsync(int root, CancellationToken ct)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<string>();
@@ -251,7 +251,7 @@ public sealed partial class ResetCommands
             await AccumulateConcreteRemoteBranchesAsync(pattern, seen, result, ct).ConfigureAwait(false);
         }
 
-        foreach (var branch in await EnumerateApexSdlcBranchesAsync(root, ct).ConfigureAwait(false))
+        foreach (var branch in await EnumerateRootSdlcBranchesAsync(root, ct).ConfigureAwait(false))
         {
             await AccumulateConcreteRemoteBranchesAsync(branch, seen, result, ct).ConfigureAwait(false);
         }

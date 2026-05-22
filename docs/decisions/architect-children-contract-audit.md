@@ -12,7 +12,7 @@ The closed-loop plan §3.4(a) introduced a hard contract: an architect's
 declarations in the plan body (under headings like `## Child Issues` or in
 narrative paragraphs) MUST NOT create child items, and MUST NOT silently
 satisfy the parent's planning facet. PR #214 added the `root_facets`
-front-matter marker so an architect can explicitly declare an root
+front-matter marker so an architect can explicitly declare a root
 indivisible. PR #225 (F3) made `polyphony plan seed-children` *refuse* to
 stamp the `polyphony:planned` tag when `children:[]` arrives without
 front-matter — closing the false-satisfied loophole that bit the AB#3064

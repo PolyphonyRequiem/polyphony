@@ -75,7 +75,7 @@ Pick any returned ID. Call it `$WI` from here on.
 Follow `docs/onboarding-guide.md` sections 3–9 to:
 
 - Verify (or create) a repository layout — either a **vanilla `git clone`** (the recommended default for new operators) **or** the bare-repo + per-run worktree layout (optional, for operators who prefer it). Both are first-class as of the bare-requirement drop.
-  - **Vanilla clone** (recommended): plain `git clone <url>` is enough. The launcher writes per-apex worktrees under `<runs_root>/apex-{N}/` regardless of whether the source repo is bare or vanilla.
+  - **Vanilla clone** (recommended): plain `git clone <url>` is enough. The launcher writes per-root worktrees under `<runs_root>/root-{N}/` regardless of whether the source repo is bare or vanilla.
   - **Fresh bare-repo clone** (alternative): run
     `~/.polyphony/bin/Bootstrap-BareRepo.ps1 -RemoteUrl <url> [-ParentDir <dir>] [-Commit]`
     to produce the canonical `<parent>/<repo>.git/ + <parent>/<repo>/ + <parent>/<repo>-runs/` layout. The script is deprecated but still functional.
@@ -328,7 +328,7 @@ leaves a freshly-checked-out worktree dirty before any work begins.
 [ ] 3.4  validate --work-item $WI --event <evt> returns is_valid + target_state
 [ ] 3.5  twig process --type $type lists $target_state in its state set
 [ ] 4    Walk every (type, event) pair in transitions: through 3.5 (catches 5a)
-[ ] 6    docs/onboarding-guide.md § 10: conductor run apex-driver@polyphony works
+[ ] 6    docs/onboarding-guide.md § 10: conductor run polyphony@polyphony works
 ```
 
 If every line passes, the repo is bootstrapped.
@@ -337,14 +337,14 @@ If every line passes, the repo is bootstrapped.
 
 ## 7 · Repository hygiene (post-bootstrap)
 
-Per-apex worktrees accumulate under `<runs_root>/apex-{N}/` over time (each apex run leaves an `apex-{N}/` subtree), regardless of whether your source repo is vanilla or bare. Two verbs keep things tidy:
+Per-root worktrees accumulate under `<runs_root>/root-{N}/` over time (each root run leaves an `root-{N}/` subtree), regardless of whether your source repo is vanilla or bare. Two verbs keep things tidy:
 
 ```powershell
 # List candidates without touching anything (safe default):
 polyphony worktree gc
 
-# Scope to a single apex subtree:
-polyphony worktree gc --apex <ID>
+# Scope to a single root subtree:
+polyphony worktree gc --root <ID>
 
 # Actually remove (after dry-run looks right):
 polyphony worktree gc --commit

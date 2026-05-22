@@ -166,7 +166,7 @@ Make sure `~/.polyphony/bin` (or `$env:USERPROFILE\.polyphony\bin` on Windows) i
 
 ## Register polyphony with conductor (one-time per machine)
 
-The launcher invokes `apex-driver@polyphony` — conductor only resolves
+The launcher invokes `polyphony@polyphony` — conductor only resolves
 that workflow ID if polyphony is registered as a workflow source:
 
 ```bash
@@ -174,7 +174,7 @@ conductor registry add polyphony PolyphonyRequiem/polyphony
 conductor registry list polyphony   # verify
 ```
 
-Without this, `conductor run apex-driver@polyphony` fails with `workflow
+Without this, `conductor run polyphony@polyphony` fails with `workflow
 not found`. Register once per machine, reuse across every onboarded repo.
 To pull updated workflows: `conductor registry update polyphony`.
 
@@ -193,7 +193,7 @@ polyphony health
 # The launcher derives repo context from cwd — run from the main worktree.
 cd <this-repo-main-worktree>
 & "$env:USERPROFILE\.polyphony\bin\Invoke-PolyphonySdlc.ps1" `
-    -ApexId <work-item-id> `
+    -RootId <work-item-id> `
     -Intent new
     # -Platform ado          # optional; auto-detected from origin remote
 ```
@@ -201,7 +201,7 @@ cd <this-repo-main-worktree>
 ```bash
 # Linux / macOS — pwsh required
 cd <this-repo-main-worktree>
-pwsh ~/.polyphony/bin/Invoke-PolyphonySdlc.ps1 -ApexId <work-item-id> -Intent new
+pwsh ~/.polyphony/bin/Invoke-PolyphonySdlc.ps1 -RootId <work-item-id> -Intent new
 ```
 
 For verbs, pre-flight checks, common pitfalls, and the worktree lifecycle,

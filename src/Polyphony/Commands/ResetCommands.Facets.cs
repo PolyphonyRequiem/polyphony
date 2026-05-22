@@ -11,7 +11,7 @@ namespace Polyphony.Commands;
 /// <c>polyphony reset facets --root N [--execute]</c> — strips the two
 /// persisted "planning is already done" tags
 /// (<c>polyphony:facets=&lt;csv&gt;</c> and <c>polyphony:planned</c>)
-/// from the root root and every descendant in scope.
+/// from the root and every descendant in scope.
 ///
 /// <para><b>Why this exists.</b> The watermark mechanism
 /// (<see cref="ResetState"/>) can only filter merged-PR observations by
@@ -25,7 +25,7 @@ namespace Polyphony.Commands;
 ///
 /// <para><b>Scope.</b> Walks the root subtree via <see cref="Routing.HierarchyWalker"/>
 /// (the planner can stamp facets/planned tags on any plannable parent,
-/// not just the root root). Items with no targeted tags are silently
+/// not just the root). Items with no targeted tags are silently
 /// skipped — only items that actually had a tag to remove appear in
 /// <see cref="ResetFacetsResult.Items"/>.</para>
 ///
@@ -189,7 +189,7 @@ public sealed partial class ResetCommands
                     // targeted tags are gone — a silent regression here
                     // would re-introduce the exact bug this verb
                     // exists to fix.
-                    var verifyTags = await ReadApexTagsAsync(item.WorkItemId, ct).ConfigureAwait(false);
+                    var verifyTags = await ReadRootTagsAsync(item.WorkItemId, ct).ConfigureAwait(false);
                     var stillHasFacets = verifyTags.Any(t =>
                         t.StartsWith(facetsPrefixEq, StringComparison.OrdinalIgnoreCase));
                     var stillHasPlanned = verifyTags.Contains(PolyphonyTags.Planned);
@@ -269,7 +269,7 @@ public sealed partial class ResetCommands
 
     /// <summary>
     /// Depth-first flatten of a <see cref="HierarchyResult"/> tree into a
-    /// list. Order is parent-then-children so the root root is always
+    /// list. Order is parent-then-children so the root is always
     /// at index 0 — useful for operators reading the dry-run output.
     /// </summary>
     private static void FlattenHierarchy(HierarchyResult node, List<HierarchyResult> sink)

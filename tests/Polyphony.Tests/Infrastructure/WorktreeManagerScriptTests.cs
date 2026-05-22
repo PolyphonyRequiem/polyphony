@@ -257,7 +257,7 @@ public sealed class WorktreeManagerScriptTests
     }
 
     [Fact]
-    public async Task BranchName_IsApexConventional()
+    public async Task BranchName_IsRootConventional()
     {
         if (!PwshAvailable) return;
 

@@ -51,7 +51,7 @@ The model has to satisfy:
    can attribute changes to a specific work item.
 4. **Cross-platform** — the same branch model on GitHub and ADO. Different PR
    APIs, identical branch tree.
-5. **Resume safety** — re-running the root driver against the same root must
+5. **Resume safety** — re-running polyphony against the same root must
    re-derive identical branch names so existing PRs are continued, not
    duplicated.
 6. **Phase 7 cross-item edges** — the branch model must not block the
@@ -370,7 +370,7 @@ Rules:
 - **Depth 5 (`mg-a-b-c-d-e`)**: hard stop. Driver refuses with a clear
   error pointing to this ADR.
 - Override beyond depth 5 requires an explicit `--allow-deep-nesting` flag
-  to the root driver and a recorded human approval in the run manifest.
+  to polyphony and a recorded human approval in the run manifest.
 
 If a planner regularly hits depth 3+, the work hierarchy is the smell —
 restructure with sibling MGs at a shallower level instead.

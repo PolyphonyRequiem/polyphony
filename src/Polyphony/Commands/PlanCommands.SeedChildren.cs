@@ -230,7 +230,7 @@ public sealed partial class PlanCommands
     {
         // --children-json is intentionally NOT in the required-input check:
         // when omitted, the verb falls back to the sidecar (or — for
-        // indivisible apexes — the plan front-matter's root_facets). This
+        // indivisible Rootes — the plan front-matter's root_facets). This
         // is the recovery seam for re-entering workflow executions where
         // architect.output.children is no longer in workflow context
         // (AB#3106 dogfood, 2026-05-12).
@@ -419,7 +419,7 @@ public sealed partial class PlanCommands
         var resolvedPlanFile = string.IsNullOrEmpty(planFile)
             ? Path.Combine("plans", $"plan-{workItem}.md")
             : planFile;
-        var rootFacets = ReadApexFacets(resolvedPlanFile, out var rootFacetsError);
+        var rootFacets = ReadRootFacets(resolvedPlanFile, out var rootFacetsError);
         if (rootFacetsError is not null)
         {
             EmitError(rootFacetsError);
@@ -433,7 +433,7 @@ public sealed partial class PlanCommands
         if (rootFacets is { Count: > 0 } && children.Count > 0)
         {
             EmitError(
-                $"plan front-matter declares root_facets ({string.Join(",", rootFacets)}) but children-json contains {children.Count} child entr{(children.Count == 1 ? "y" : "ies")}; the two are mutually exclusive (root_facets is for indivisible apexes — see closed-loop plan §3.4(a)).");
+                $"plan front-matter declares root_facets ({string.Join(",", rootFacets)}) but children-json contains {children.Count} child entr{(children.Count == 1 ? "y" : "ies")}; the two are mutually exclusive (root_facets is for indivisible Rootes — see closed-loop plan §3.4(a)).");
             return ExitCodes.ConfigError;
         }
 
@@ -705,7 +705,7 @@ public sealed partial class PlanCommands
     /// error (opt-in feature). Malformed front-matter populates
     /// <paramref name="error"/> so the caller can route to the error envelope.
     /// </summary>
-    private static IReadOnlyList<string>? ReadApexFacets(string planFilePath, out string? error)
+    private static IReadOnlyList<string>? ReadRootFacets(string planFilePath, out string? error)
     {
         error = null;
         if (!File.Exists(planFilePath))

@@ -10,7 +10,7 @@ description: >-
 
   Trigger phrases include:
   - 'run polyphony', 'invoke polyphony', 'install polyphony'
-  - 'kick off an SDLC run', 'dispatch the apex', 'run the SDLC pipeline'
+  - 'kick off an SDLC run', 'dispatch the root', 'run the SDLC pipeline'
   - 'polyphony policy load', 'polyphony state next-ready', other verb names
   - any cwd contains `.polyphony-config/` and the user asks to do polyphony work
 
@@ -264,7 +264,7 @@ the publish + install + staleness verification.
 
 ## Register the workflow suite with conductor
 
-The launcher invokes `apex-driver@polyphony` — a workflow ID conductor only
+The launcher invokes `polyphony@polyphony` — a workflow ID conductor only
 resolves if polyphony is registered as a workflow source. **One-time
 per-machine setup** after installing conductor:
 
@@ -274,11 +274,11 @@ conductor registry add polyphony PolyphonyRequiem/polyphony
 
 # Verify registration
 conductor registry list polyphony
-# Expected: a list of workflows including apex-driver, plan-level,
+# Expected: a list of workflows including polyphony.yaml, plan-level,
 # implement-merge-group, feature-pr, ado-pr, github-pr, ...
 ```
 
-Without registration, `conductor run apex-driver@polyphony` fails fast with
+Without registration, `conductor run polyphony@polyphony` fails fast with
 `workflow not found` and the launcher's preflight surfaces the same error
 before any worktree is created. Registration is **per-machine, not
 per-repo** — register once, reuse across every onboarded repo on this box.
@@ -295,7 +295,7 @@ conductor registry update polyphony
 
 ### The launcher (most common entry point)
 
-`Invoke-PolyphonySdlc.ps1` dispatches a full SDLC run for one apex work
+`Invoke-PolyphonySdlc.ps1` dispatches a full SDLC run for one root work
 item. **The launcher derives repo context from the current working
 directory** — there is no `-RepoRoot` flag.
 
@@ -307,7 +307,7 @@ On Linux/macOS it requires `pwsh` on PATH.
 # Run from the target repo's main worktree
 cd <target-repo-main-worktree>     # e.g. C:\Users\dangreen\projects\cloudvault-service-api\main
 & "$env:USERPROFILE\.polyphony\bin\Invoke-PolyphonySdlc.ps1" `
-    -ApexId <work-item-id> `
+    -RootId <work-item-id> `
     -Intent new                    # or resume / replan
     # -Platform ado                # optional; auto-detected from `git remote get-url origin`
 ```
@@ -315,15 +315,15 @@ cd <target-repo-main-worktree>     # e.g. C:\Users\dangreen\projects\cloudvault-
 ```bash
 # Linux / macOS — pwsh required
 cd <target-repo-main-worktree>
-pwsh ~/.polyphony/bin/Invoke-PolyphonySdlc.ps1 -ApexId <work-item-id> -Intent new
+pwsh ~/.polyphony/bin/Invoke-PolyphonySdlc.ps1 -RootId <work-item-id> -Intent new
 ```
 
 Key parameters (run `Get-Help ~/.polyphony/bin/Invoke-PolyphonySdlc.ps1 -Full` for the rest):
 
-- `-ApexId` (mandatory) — work item id (the root of the run).
+- `-RootId` (mandatory) — work item id (the root of the run).
 - `-Intent` — `new` (default) | `resume` | `replan`.
 - `-Platform` — `ado` or `github`. **PR platform**, not tracker. Default: auto-detected from `git remote get-url origin`.
-- `-WorktreeRoot` — override the auto-derived per-apex worktree path. Default: `~/projects/<repo-name>-runs/apex-<ApexId>/feature-<ApexId>/`.
+- `-WorktreeRoot` — override the auto-derived per-root worktree path. Default: `~/projects/<repo-name>-runs/root-<RootId>/feature-<RootId>/`.
 - `-NoDetach` — keep conductor in the foreground (debug). Default: detached + dashboard at `127.0.0.1:<port>`.
 - `-DryRun` — print the resolved command + JSON envelope; create nothing.
 - `-PolicyPath` — alternate policy YAML (e.g. `.polyphony-config/policy-fasttrack.yaml`).
@@ -352,7 +352,7 @@ polyphony pr post-comment-ado --organization <org> --project <proj> --repository
 polyphony pr vote-ado         --organization <org> --project <proj> --repository-id <repo> --pr-number <id> --vote approve
 
 # Worktree lifecycle (per AB#3085 model)
-polyphony worktree init-apex --apex-id <id>     # create per-apex feature worktree
+polyphony worktree init-root --root-id <id>     # create per-root feature worktree
 polyphony worktree list
 polyphony worktree assert-clean
 polyphony worktree gc
@@ -372,7 +372,7 @@ Before invoking the launcher, verify:
 > canonical bare-repo + worktree layout (`<repo>.git/` bare repo +
 > `<repo>/` main worktree + `<repo>-runs/`), all polyphony commands
 > below — and the launcher itself — must run from inside `<repo>/`
-> (or a sibling per-apex worktree). `.polyphony-config/` lives in the
+> (or a sibling per-root worktree). `.polyphony-config/` lives in the
 > main worktree, not at the bare-repo root, so commands run from the
 > bare root won't find it.
 
@@ -390,7 +390,7 @@ Before invoking the launcher, verify:
 3. **Bare-repo + worktree layout:**
    ```powershell
    git --git-dir <bare-root>/.git rev-parse --is-bare-repository    # → true
-   git worktree list                                                # → main + per-apex worktrees
+   git worktree list                                                # → main + per-root worktrees
    ```
    On Daniel's box, `safe.bareRepository=explicit` is set — see the `polyphony-branch-model` skill for layout invariants and the `--git-dir` requirement.
 4. **Twig configured for the workspace** (the launcher uses twig for ADO calls):

@@ -138,7 +138,7 @@ workflow:
   limits:
     # The dispatch loop is a for_each over waves; each batch is itself a
     # for_each over items; each item invocation is a sub-workflow. The
-    # default 10 is wildly insufficient. 500 covers an root tree with up
+    # default 10 is wildly insufficient. 500 covers a root tree with up
     # to ~30 waves of ~16 items each comfortably; raise further if
     # workspaces routinely exceed.
     max_iterations: 500

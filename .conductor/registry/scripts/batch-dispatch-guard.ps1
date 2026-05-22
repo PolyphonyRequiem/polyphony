@@ -50,8 +50,8 @@
     One of `clear`, `check`, `record`.
 
 .PARAMETER RootId
-    The root root work item id. Sentinel directory is namespaced by this
-    id so concurrent runs against different apexes do not interfere.
+    The root work item id. Sentinel directory is namespaced by this
+    id so concurrent runs against different roots do not interfere.
     (The same-root run-lock prevents concurrent runs against the SAME
     root; see polyphony-branch-model skill.)
 

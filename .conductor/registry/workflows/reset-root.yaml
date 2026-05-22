@@ -3,14 +3,14 @@
 # Closes the redispatch dead-end documented in
 # docs/decisions/run-reset.md. Drives the `polyphony reset root` verb
 # (PR 2/3) through a preview → confirm → execute pipeline so an operator
-# can wipe an root's prior-run state and start fresh without the
+# can wipe a root's prior-run state and start fresh without the
 # 400-line dogfood-recovery ceremony.
 #
 # Concrete instance the design closed:
 #   root 62286666 ("Document polyphony usage for cloudvault-service-api")
 #   ran v2.4.6, hit the root-completion-gate vestige then a 4000-char ADO
 #   description error, and we wanted to redo it on v2.4.8. The merged
-#   plan + impl PRs satisfy the observers permanently; without an root-
+#   plan + impl PRs satisfy the observers permanently; without a root-
 #   scoped reset the workflow refuses to redispatch.
 #
 # Flow:

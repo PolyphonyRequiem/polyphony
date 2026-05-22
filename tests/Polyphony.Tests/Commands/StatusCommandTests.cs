@@ -64,7 +64,7 @@ public sealed class StatusCommandTests : CommandTestBase
     [Fact]
     public async Task Status_PlannedTagWithZeroChildren_EmitsFalseSatisfiedWarning()
     {
-        // The AB#3064 false-satisfied bug: planned tag stamped on an root
+        // The AB#3064 false-satisfied bug: planned tag stamped on a root
         // that has no children. Headline takes the warning's wording.
         var root = new WorkItemBuilder()
             .WithId(3064)

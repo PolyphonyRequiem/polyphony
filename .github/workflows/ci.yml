@@ -392,7 +392,7 @@ jobs:
       - name: E2E (polyphony)
         # Phase 7 capstone — graph-walk + branch-on-router +
         # router-script-to-YAML contract tests for the polyphony
-        # tree-walker (polyphony.yaml + root-batch-dispatch.yaml +
+        # entry-point workflow (polyphony.yaml + root-batch-dispatch.yaml +
         # root-item-dispatch.yaml). Catches drift between
         # lifecycle-router.ps1's emitted route values and the YAML's
         # `when:` clauses, and pins the bubble-up table across all

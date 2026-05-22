@@ -85,8 +85,8 @@ public sealed class PolyphonyTagsTests
     [Fact]
     public void HasImplMergedInMg_TagPresentForDifferentKey_ReturnsFalse()
     {
-        // Multi-MG: an root could plausibly carry markers for several MGs
-        // simultaneously (e.g. root root participates in pg-1 and pg-2).
+        // Multi-MG: a root could plausibly carry markers for several MGs
+        // simultaneously (e.g. root participates in pg-1 and pg-2).
         // Each key must look up independently — pg-1's presence does not
         // imply pg-2.
         var tags = TagSet.Parse(

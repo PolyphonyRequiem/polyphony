@@ -405,7 +405,7 @@ agents:
       `polyphony pr create-feature-ado` and `pr merge-feature-ado` require
       all three of `--organization`, `--project`, and `--repository`.
       Re-invoke the workflow chain with those inputs supplied (typically
-      threaded from the root driver's inputs).
+      threaded from polyphony's inputs).
 
       Feature branch:
       `{{ workflow.input.feature_branch }}`
@@ -1028,12 +1028,12 @@ agents:
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
       # Remediation runs at the root layer — the root IS the root for the
-      # remediation MG. Mirrors the root_id synthesis the root driver uses
+      # remediation MG. Mirrors the root_id synthesis polyphony uses
       # when dispatching MGs to implement-merge-group.yaml.
       root_id: "{{ workflow.input.work_item_id }}"
       pg_number: "{{ remediation_seeder.output.pg_number }}"
       # Synthesize Rev 4-valid mg_path from the legacy pg_number using the
-      # same `pg-{number}` convention the root driver applies when
+      # same `pg-{number}` convention polyphony applies when
       # dispatching MGs. Items in the remediation PG still carry the
       # legacy `PG-{number}` tag for `branch next-impl` /
       # `branch close-scope` to find them.

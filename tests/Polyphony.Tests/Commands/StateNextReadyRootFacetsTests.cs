@@ -18,7 +18,7 @@ namespace Polyphony.Tests.Commands;
 /// <c>polyphony:facets=&lt;csv&gt;</c> tag (PR #7) through
 /// <see cref="StateCommands.NextReady"/> via
 /// <see cref="RequirementInputResolver"/>. Architects stamp this tag on
-/// an root when they choose NOT to decompose; the resolver then derives
+/// a root when they choose NOT to decompose; the resolver then derives
 /// the per-item requirement set against the declared facet subset
 /// instead of the type-config default.
 /// </summary>
@@ -43,7 +43,7 @@ namespace Polyphony.Tests.Commands;
 /// only signal that varies between the override and no-override cases.
 /// </para>
 /// </remarks>
-public sealed class StateNextReadyApexFacetsTests : CommandTestBase
+public sealed class StateNextReadyRootFacetsTests : CommandTestBase
 {
     private const int RootId = 4001;
     private const string OriginUrl = "https://github.com/acme/repo.git";

@@ -13,16 +13,10 @@
     tagged `text`, `console`, `output`, or `diff`; those fences represent
     literal historical output rather than authored vocabulary.
 
-    The deferred legacy specs at docs/proposals/polyphony-journal.md and
-    docs/proposals/conductor-failure-model.md emit a single warning per file by
-    default. Pass -Strict to fail on those deferred-spec warnings too.
-
     Exit codes:
-      0 = clean (or deferred warnings only without -Strict)
+      0 = clean
       1 = forbidden-term violations found
       2 = configuration error (missing/invalid glossary, invalid root, etc.)
-
-    # TODO: wire into ci.yml after the mechanical rename pass lands
 
 .PARAMETER Root
     Repository root to scan. Defaults to discovery via `git rev-parse
@@ -32,7 +26,10 @@
     Output format: `human` (default) or `json`.
 
 .PARAMETER Strict
-    Fail on deferred-spec warnings from the two grandfathered proposal docs.
+    Reserved for future re-introduction of a deferred-spec warning channel.
+    Currently a no-op: under AB#3259 all legacy specs are either deleted or
+    cleaned, so the lint has no deferred bucket. Pass `-Strict` if downstream
+    tooling still passes it; the flag will not change behavior.
 
 .OUTPUTS
     Human-readable findings or a JSON object describing violations, warnings,
@@ -51,9 +48,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $regexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-$deferredSpecFiles = @(
-    'docs/proposals/polyphony-journal.md'
-)
 $skippedFenceLanguages = @('text', 'console', 'output', 'diff')
 
 function Write-ConfigurationError {
@@ -331,10 +325,14 @@ function Get-PathDisposition {
     if ($path -eq '.conductor/registry/tests/lint-vocabulary.Tests.ps1') { return 'skip' }
     if ($path -like 'tests/fixtures/lint-vocabulary/*') { return 'skip' }
     if ($path -like 'tests/harness/*') { return 'skip' }
+    # Archived discussion materials (e.g. workflow-compiler evaluation) are
+    # parked artifacts retained for future re-engagement. They predate the
+    # AB#3259 rename and would require rewriting historical analysis to scrub;
+    # exempting preserves the archive without polluting the lint signal.
+    if ($path -like 'docs/discussions/*') { return 'skip' }
     if ($path -match '(^|/)(\.git|bin|obj|node_modules)(/|$)') { return 'skip' }
     if ($path -match '(^|/)\.polyphony-config(/|$)') { return 'skip' }
     if ($path -match '/runs/' -or $path -match '-runs/') { return 'skip' }
-    if ($path -in $deferredSpecFiles) { return 'deferred' }
 
     return 'scan'
 }
@@ -363,6 +361,24 @@ function Get-ScanFiles {
     $docsDir = Join-Path $RepoRoot 'docs'
     if (Test-Path -LiteralPath $docsDir) {
         $allFiles += Get-ChildItem -LiteralPath $docsDir -Recurse -File -Filter '*.md' -ErrorAction SilentlyContinue
+    }
+
+    # Skill docs are authoritative operator documentation — they MUST speak
+    # the canonical vocab. Pre-AB#3259 they were missed by the lint scope,
+    # which let apex/wave drift accumulate (76 hits in polyphony-sdlc/SKILL.md
+    # alone). Broadening scope here closes that gap.
+    $skillsDir = Join-Path $RepoRoot '.github\skills'
+    if (Test-Path -LiteralPath $skillsDir) {
+        $allFiles += Get-ChildItem -LiteralPath $skillsDir -Recurse -File -Filter '*.md' -ErrorAction SilentlyContinue
+    }
+
+    # Top-level READMEs (repo root + workflows index) are public-facing and
+    # equally authoritative.
+    foreach ($readmePath in @('README.md', 'workflows\README.md')) {
+        $readmeFull = Join-Path $RepoRoot $readmePath
+        if (Test-Path -LiteralPath $readmeFull -PathType Leaf) {
+            $allFiles += Get-Item -LiteralPath $readmeFull
+        }
     }
 
     $testsDir = Join-Path $RepoRoot 'tests'
@@ -480,16 +496,6 @@ foreach ($file in $scanFiles) {
     $lines = Get-Content -LiteralPath $file.FullPath
     $lineFindings = Get-LineMatches -RelativePath $file.RelativePath -Lines $lines -TermSpecs $termSpecs
     if ($lineFindings.Count -eq 0) { continue }
-
-    if ($file.Disposition -eq 'deferred') {
-        $warnings += [PSCustomObject]@{
-            File         = $file.RelativePath
-            Message      = 'pending vocab pass per AB#3259'
-            MatchCount   = $lineFindings.Count
-            MatchedTerms = @($lineFindings | ForEach-Object Term | Sort-Object -Unique)
-        }
-        continue
-    }
 
     foreach ($finding in $lineFindings) {
         $violations += $finding

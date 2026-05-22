@@ -2,8 +2,8 @@
 
 > **Closes:** issue [#222](https://github.com/PolyphonyRequiem/polyphony/issues/222)
 >
-> **Cited:** [`apex-driver.yaml`](https://github.com/PolyphonyRequiem/polyphony/blob/main/.conductor/registry/workflows/apex-driver.yaml)
-> outer-loop pattern; see also `docs/decisions/apex-driver.md`.
+> **Cited:** [`polyphony.yaml`](https://github.com/PolyphonyRequiem/polyphony/blob/main/.conductor/registry/workflows/polyphony.yaml)
+> outer-loop pattern; see also `docs/decisions/polyphony-entry-workflow.md`.
 
 ## The problem
 
@@ -20,7 +20,7 @@ Without a pattern, authors reach for one of two anti-patterns:
    iteration. Loses checkpoints, accumulates orphaned manifest entries,
    makes resume impossible.
 
-## The pattern (verified in `apex-driver.yaml`)
+## The pattern (verified in `polyphony.yaml`)
 
 A graph-cycle-with-conditional-route plus a temp-file iteration counter
 side-channel plus priority-ordered `when:` clauses plus a defensive
@@ -37,7 +37,7 @@ outer_loop_init:
     - -NoProfile
     - -Command
     - |
-      $iterPath = Join-Path ([System.IO.Path]::GetTempPath()) "apex-driver-iter-{{ inputs.apex_id }}"
+      $iterPath = Join-Path ([System.IO.Path]::GetTempPath()) "polyphony.yaml-iter-{{ inputs.root_id }}"
       Set-Content -Path $iterPath -Value "0" -Encoding ascii
   next:
     - to: build_worklist
@@ -56,12 +56,12 @@ outer_loop_evaluator:
     - -NoProfile
     - -Command
     - |
-      $iterPath = Join-Path ([System.IO.Path]::GetTempPath()) "apex-driver-iter-{{ inputs.apex_id }}"
+      $iterPath = Join-Path ([System.IO.Path]::GetTempPath()) "polyphony.yaml-iter-{{ inputs.root_id }}"
       $iter = [int](Get-Content $iterPath) + 1
       Set-Content -Path $iterPath -Value $iter -Encoding ascii
 
       # ... evaluate state, decide one of: complete | cap | blocked | continue ...
-      $decision = if ($apexSatisfied) { 'complete' }
+      $decision = if ($rootSatisfied) { 'complete' }
                   elseif ($iter -ge 50) { 'cap' }
                   elseif ($noProgress) { 'blocked' }
                   else { 'continue' }
@@ -69,16 +69,16 @@ outer_loop_evaluator:
       ConvertTo-Json @{ decision = $decision; iteration = $iter } -Compress
   next:
     # PRIORITY-ORDERED: complete > cap > blocked > continue, then catch-all.
-    - to: terminal_apex_satisfied
+    - to: root_satisfied
       when: '{{ outer_loop_evaluator.output.decision == "complete" }}'
-    - to: terminal_apex_capped
+    - to: root_capped
       when: '{{ outer_loop_evaluator.output.decision == "cap" }}'
-    - to: terminal_apex_blocked
+    - to: root_blocked
       when: '{{ outer_loop_evaluator.output.decision == "blocked" }}'
     - to: build_worklist
       when: '{{ outer_loop_evaluator.output.decision == "continue" }}'
     # CATCH-ALL must NOT loop back to build_worklist.
-    - to: terminal_apex_blocked
+    - to: root_blocked
 ```
 
 ### The four critical pieces
@@ -89,8 +89,8 @@ outer_loop_evaluator:
    as `max_iterations` is high enough.
 
 2. **The iteration counter is per-instance.** Use
-   `Path.GetTempPath() / apex-driver-iter-{instance_id}`. The `{instance_id}`
-   must be the apex / root id, not a hardcoded string — concurrent runs
+   `Path.GetTempPath() / polyphony.yaml-iter-{instance_id}`. The `{instance_id}`
+   must be the root / root id, not a hardcoded string — concurrent runs
    would otherwise share a counter and deadlock each other.
 
 3. **`when:` clauses are priority-ordered, with the cycle route LAST.**
@@ -108,7 +108,7 @@ outer_loop_evaluator:
 ## Companion concerns
 
 - **Don't share a counter across runs.** The temp-file path **must**
-  include a per-instance discriminator. Polyphony uses the apex id;
+  include a per-instance discriminator. Polyphony uses the root id;
   generic patterns can use the conductor instance id (available as
   `{{ run.instance_id }}` if exposed).
 
@@ -124,7 +124,7 @@ outer_loop_evaluator:
 - **Resume re-initializes.** On re-entry (`intent=resume`), the
   `outer_loop_init` step runs again and resets the counter. This is by
   design: the iteration count is "iterations of THIS run", not
-  "iterations across the apex's lifetime."
+  "iterations across the root's lifetime."
 
 ## Anti-patterns to recognize
 
@@ -139,9 +139,9 @@ outer_loop_evaluator:
 
 ## Cross-references
 
-- **Source of truth:** `.conductor/registry/workflows/apex-driver.yaml`,
+- **Source of truth:** `.conductor/registry/workflows/polyphony.yaml`,
   `outer_loop_init` and `outer_loop_evaluator` steps (PR #221, SHA `428d818`).
-- **ADR:** `docs/decisions/apex-driver.md`.
+- **ADR:** `docs/decisions/polyphony-entry-workflow.md`.
 - **Memory (verified 2026-05):** "conductor-loops" — Conductor has no built-in
   until-stable loop; this is the pattern.
 - **Companion:** [M9 — Limits, Retries & Checkpoints](m09-limits-retries-checkpoints.md)

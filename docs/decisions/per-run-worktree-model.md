@@ -23,7 +23,7 @@ are mutated in parallel:
   `impl/{r}-{i}`, `evidence/{r}-{i}`).
 
 Until AB#3085, both layers were "protected" by a single mechanism: a
-**same-root run lock** keyed off the root root id. Two driver invocations on
+**same-root run lock** keyed off the root id. Two driver invocations on
 the same root would resume / refuse; different roots could run concurrently.
 
 The same-root lock is necessary AND sufficient for the **logical** layer (one
@@ -34,7 +34,7 @@ worktree" model:
 - Per-item worktrees were spawned as siblings of the operator's main
   checkout (`<repo>-item-<id>`), but the **launcher itself** defaulted
   `WorktreeRoot = (Get-Location).Path`. Operators launching from
-  `~/projects/polyphony` (the main worktree) had the root driver yank
+  `~/projects/polyphony` (the main worktree) had polyphony yank
   `main` off and onto an `impl/` branch mid-conversation. This is the
   **launcher hijack bug**.
 - A human editing the main worktree concurrently with a driver run on
@@ -94,7 +94,7 @@ The per-run worktree model **does not replace** the same-root run lock — it
 | Logical     | Two drivers mutating same `feature/{r}` / manifest   | **Same-root run lock** (pre-existing)                |
 | Logical     | Same root's parent-plan generations racing           | **Same-root run lock** + per-item driver gating      |
 
-**Same-root run lock retained.** Two drivers on the same root root would
+**Same-root run lock retained.** Two drivers on the same root would
 still race the branch graph, manifest, parent-plan generation counters, and
 remote refs (`feature/{r}` push contention) even with isolated worktrees.
 The lock continues to enforce "same root → single controller; second attempt
@@ -111,15 +111,15 @@ logical races; together they enable safe concurrency."
 
 Two filesystem hazards remain even with the per-run worktree tree:
 
-1. **Operator side-edits in an root worktree between driver dispatches.**
-   Resume-after-pause picks up an root worktree the operator has been
+1. **Operator side-edits in a root worktree between driver dispatches.**
+   Resume-after-pause picks up a root worktree the operator has been
    poking at; uncommitted changes break `git checkout` /
    `git rebase` mid-flight.
 2. **Wrong-branch on resume.** A previous resume left the root worktree
    on a sibling branch; the next dispatch's `git rebase` runs against the
    wrong base.
 
-Mitigation: the root driver calls `polyphony worktree assert-clean
+Mitigation: polyphony calls `polyphony worktree assert-clean
 --path {root_worktree} --expected-branch {feature/<root>}` **before each
 dispatch**. The verb's routing-style envelope reports `dirty`,
 `wrong_branch`, `git_operation_in_progress`, `path_missing`, or
@@ -128,7 +128,7 @@ remediation.
 
 ## Deferred: per-root-worktree run lock
 
-The current same-root run lock prevents two drivers on the same root root.
+The current same-root run lock prevents two drivers on the same root.
 With per-item sibling worktrees, an in-theory-novel race exists: two
 **threads inside the same driver process** could try to spawn the same
 sibling worktree concurrently. Today this cannot happen because conductor's

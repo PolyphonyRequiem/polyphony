@@ -79,7 +79,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     private static string PorcelainEntry(string path, string branch) =>
         $"worktree {path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/{branch}\n\n";
 
-    /// <summary>Porcelain block for an root whose feature worktree IS initialized.</summary>
+    /// <summary>Porcelain block for a root whose feature worktree IS initialized.</summary>
     private string Bootstrapped(string featurePath, int root, params (string path, string branch)[] extra)
     {
         var sb = new System.Text.StringBuilder();
@@ -156,7 +156,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     }
 
     [Fact]
-    public async Task Create_BranchApexMismatch_EmitsBranchApexMismatch()
+    public async Task Create_BranchRootMismatch_EmitsBranchRootMismatch()
     {
         var (cmd, runner, _, _, _) = Setup(stubCommonDir: false);
 
@@ -215,7 +215,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     // ─── root_not_initialized ────────────────────────────────────────────
 
     [Fact]
-    public async Task Create_RootFeatureMissing_EmitsApexNotInitialized()
+    public async Task Create_RootFeatureMissing_EmitsRootNotInitialized()
     {
         var (cmd, runner, _, _, _) = Setup();
         // List shows main only — root feature worktree not registered.
@@ -239,7 +239,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     }
 
     [Fact]
-    public async Task Create_RootFeatureRegisteredOnWrongBranch_EmitsApexNotInitialized()
+    public async Task Create_RootFeatureRegisteredOnWrongBranch_EmitsRootNotInitialized()
     {
         var (cmd, runner, _, featurePath, _) = Setup();
         // feature path exists in worktree list but on the wrong branch — partial init.

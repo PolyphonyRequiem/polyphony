@@ -1,4 +1,4 @@
-# ADR: Run epoch + first-class reset for apex re-dispatch
+# ADR: Run epoch + first-class reset for root re-dispatch
 
 > **Status:** Proposed — author signoff sought (Daniel) before PR 1 lands.
 > **Companions:** `branch-model.md` Rev 4 (canonical branch names),
@@ -9,11 +9,11 @@
 
 ## TL;DR
 
-Add a **per-apex run epoch** (tag `polyphony:run-epoch=N` on the apex
+Add a **per-root run epoch** (tag `polyphony:run-epoch=N` on the root
 root, default/absent = 1) that **threads through every branch-name
 derivation in the codebase**, plus a **`polyphony reset` verb family**
-+ a **`reset-apex.yaml` workflow** + a **`-Intent reset` launcher mode**,
-so an apex can be cleanly re-dispatched after a botched or scrapped run
++ a **`reset-root.yaml` workflow** + a **`-Intent reset` launcher mode**,
+so a root can be cleanly re-dispatched after a botched or scrapped run
 without the operator hand-running the 409-line recovery skill.
 
 The epoch is the only mechanism that flips polyphony's PR-record-based
@@ -44,10 +44,10 @@ merges.
 
 This is **correct semantics** for monotonic forward progress. It is
 **broken semantics** when the operator wants to scrap a botched run and
-re-do the apex from scratch — there is no mechanism to declare "the
+re-do the root from scratch — there is no mechanism to declare "the
 prior PRs no longer count for this work item".
 
-Concrete repro: apex **62286666** ("Document polyphony usage for
+Concrete repro: root **62286666** ("Document polyphony usage for
 cloudvault-service-api") ran through v2.4.6. Plan PR #15605689 merged
 into `feature/62286666`. Impl PR #15606101 merged into the MG branch.
 The feature PR creator then failed with a 4000-char ADO description
@@ -66,14 +66,14 @@ $ polyphony state next-ready --work-item 62286666
 }
 ```
 
-So the apex driver refuses to dispatch — there is nothing left to do.
+So polyphony refuses to dispatch — there is nothing left to do.
 Stripping `polyphony:planned` and `polyphony:impl-merged-in-mg=…` tags
 (the only existing teardown-shaped verb) does **not** flip the verdict.
 
 ### Why the prior design doc undercounted
 
 The session design doc `abort-as-first-class-design.md` proposed five
-`polyphony reset` verbs (apex/prs/branches/state/worktrees) with a 1–2
+`polyphony reset` verbs (root/prs/branches/state/worktrees) with a 1–2
 dev-day cost estimate. It implicitly assumed `reset state` would do
 the satisfaction-flip work via `twig state` rollback. Rubber-duck
 review (`reset-design-critique` agent, 2026-05-17) flagged two
@@ -98,7 +98,7 @@ the manual ceremony for the wedged-redo case: halt conductor, abandon
 PRs, delete branches (with bot-user switch), reset twig state, remove
 worktrees, smoke-test. It works but is fragile, environmental, and
 explicitly out of reach of any automation. Collapsing it into a
-`polyphony reset apex` composite + a one-line launcher invocation is
+`polyphony reset root` composite + a one-line launcher invocation is
 the user-visible deliverable here. (Sections § 1, § 6, § 8, § 9 of the
 skill are durable wisdom that survives — operator judgment, env
 gotchas, re-launch deferral, incident history — but § 2–§ 5, § 7 all
@@ -108,7 +108,7 @@ collapse into verb behavior.)
 
 ### Run epoch
 
-Stamp a tag on the apex root:
+Stamp a tag on the root:
 
 ```
 polyphony:run-epoch=N
@@ -129,11 +129,11 @@ behavior**: branch names follow the existing Rev 4 grammar from
 | Evidence | `evidence/{root}-{item}` | `evidence/{root}-{item}-r{N}` |
 | Evidence orphan | `evidence/{item}` | `evidence/{item}-r{N}` |
 
-The epoch is **per-apex, not per-item**. All items in the same apex
-share the apex root's epoch. (Per-item epoch was considered and
+The epoch is **per-root, not per-item**. All items in the same root
+share the root's epoch. (Per-item epoch was considered and
 rejected — see § Alternatives.)
 
-The epoch tag is **authoritative on the apex root work item** in ADO,
+The epoch tag is **authoritative on the root work item** in ADO,
 so it survives:
 - Cache wipes
 - Re-clones
@@ -176,14 +176,14 @@ before this ADR landed, and the parser must classify them correctly.
 
 Every call site that today calls `BranchNameBuilder.Foo(root, …)`
 becomes `BranchNameBuilder.Foo(ctx, …)`. The `ctx` is resolved from
-the apex root tag via a new helper:
+the root tag via a new helper:
 
 ```csharp
 public static async Task<BranchNamingContext> ResolveAsync(
     ITwig twig, RootId root, CancellationToken ct)
 ```
 
-The helper reads the apex root's tags, parses the epoch (defaulting
+The helper reads the root's tags, parses the epoch (defaulting
 to `Legacy`), and caches per-invocation (epoch does not change
 mid-invocation; consumers can call freely).
 
@@ -201,29 +201,29 @@ Call-site inventory (verified by grep, 2026-05-17):
 Six new CLI verbs under `polyphony reset`:
 
 ```
-polyphony reset apex      --apex-id N --to-stage planning|implementation [--execute]
-polyphony reset prs       --apex-id N [--execute]
-polyphony reset branches  --apex-id N [--keep feature] [--execute]
-polyphony reset worktrees --apex-id N [--execute]
-polyphony reset manifest  --apex-id N [--archive|--delete] [--execute]
-polyphony reset state     --apex-id N --to-stage planning|implementation [--execute]
+polyphony reset root      --root-id N --to-stage planning|implementation [--execute]
+polyphony reset prs       --root-id N [--execute]
+polyphony reset branches  --root-id N [--keep feature] [--execute]
+polyphony reset worktrees --root-id N [--execute]
+polyphony reset manifest  --root-id N [--archive|--delete] [--execute]
+polyphony reset state     --root-id N --to-stage planning|implementation [--execute]
 ```
 
 **Safety contract.** All verbs default to **dry-run**. `--execute`
 required to actually mutate state. Mirrors `terraform plan` /
 `terraform apply` — the destructive verb name alone is not enough.
 
-**`reset apex` composite** invokes the other five in the
+**`reset root` composite** invokes the other five in the
 rubber-duck-corrected order (the original design doc had branches
 before worktrees, which fails because git refuses to delete branches
 checked out in any worktree):
 
-1. `reset prs` — abandon active PRs for this apex (completed PRs left
+1. `reset prs` — abandon active PRs for this root (completed PRs left
    alone; reported as "epoch-irrelevant" in output).
 2. `reset worktrees` — remove all worktrees under
-   `<repo>-runs/apex-{N}/`. Per-run-worktree-model ADR
+   `<repo>-runs/root-{N}/`. Per-run-worktree-model ADR
    already gives us idempotent `worktree gc`; this verb wraps it
-   with the apex filter.
+   with the root filter.
 3. `reset branches` — delete local + remote refs matching
    `(plan|impl|mg|evidence|feature)/{root}(-{anything})?` (i.e. all
    epochs ≤ current). `--keep feature` preserves the feature trunk
@@ -243,7 +243,7 @@ checked out in any worktree):
 
 The epoch bump is the **last** step. Once bumped, observations flip
 within one `twig sync` cycle, and the next launcher invocation will
-treat the apex as fresh.
+treat the root as fresh.
 
 **Shared framework.** A new `ResetPlan` type carries the inventory of
 intended mutations per verb. Each verb's result envelope (per
@@ -254,7 +254,7 @@ arrays:
 ```csharp
 public sealed record ResetPrsResult
 {
-    public required int ApexId { get; init; }
+    public required int RootId { get; init; }
     public required RunEpoch Epoch { get; init; }
     public required bool DryRun { get; init; }
     public required IReadOnlyList<PrAbandonOutcome> ActiveAbandoned { get; init; }
@@ -272,15 +272,15 @@ then network-errors on the 5th, the result envelope shows 4 success +
 composite halts; operator re-runs (idempotent — already-abandoned PRs
 are no-ops).
 
-### Workflow `reset-apex.yaml`
+### Workflow `reset-root.yaml`
 
-A new sub-workflow under `.conductor/registry/workflows/reset-apex.yaml`
+A new sub-workflow under `.conductor/registry/workflows/reset-root.yaml`
 that:
 
-1. Runs `polyphony reset apex --dry-run` to inventory.
+1. Runs `polyphony reset root --dry-run` to inventory.
 2. Presents a `human_gate` showing the inventory; options: `confirm`,
    `abort`.
-3. On confirm, runs `polyphony reset apex --execute`.
+3. On confirm, runs `polyphony reset root --execute`.
 4. On any verb failure, surfaces a `human_gate` (`retry`, `abort`,
    `proceed_anyway` — last is reserved for partial-failure cases where
    the operator has manually cleaned up the failed piece).
@@ -297,13 +297,13 @@ Reset is a deliberate, out-of-band operator action via the launcher.
 
 ### Launcher mode
 
-`Invoke-PolyphonySdlc.ps1 -ApexId N -Intent reset -ToStage planning|implementation`
-shells out to `conductor run reset-apex@polyphony --input apex_id=N --input to_stage=…`.
+`Invoke-PolyphonySdlc.ps1 -RootId N -Intent reset -ToStage planning|implementation`
+shells out to `conductor run reset-root@polyphony --input root_id=N --input to_stage=…`.
 
 Refuses to run if:
 - The same-root run lock is held by another conductor (operator must
   abort the prior run first via `/api/stop`).
-- The apex root tag doesn't exist (`polyphony:root` absent — wrong
+- The root tag doesn't exist (`polyphony:root` absent — wrong
   work item).
 
 ## Open questions (require sign-off)
@@ -311,24 +311,24 @@ Refuses to run if:
 These are the **5 design questions** flagged in plan.md, with a
 recommended answer for each. Edit/comment before PR 1 lands.
 
-### Q1: Apex-only epoch, or per-item?
+### Q1: Root-only epoch, or per-item?
 
-**Recommended:** Apex-only.
+**Recommended:** Root-only.
 
 **Why:** Per-item epoch (e.g. bump epoch on one descendant work item
 without touching siblings) would allow surgical re-do of one subtree.
 But:
 - Operators don't currently ask for this — wedged-redo is always
-  full-apex.
+  full-root.
 - Per-item epoch fragments branch identity: a parent at epoch 1, a
   child at epoch 2 would create `plan/{root}-{child}-r2` rebased on
   `plan/{root}` (legacy) — fine, but if the child has its own
   children, do they inherit the parent's epoch or their own? The
   combinatorics explode.
-- Apex-only matches the "one apex = one logical run" model in
+- Root-only matches the "one root = one logical run" model in
   `branch-model.md` and `per-run-worktree-model.md`.
 
-If per-item ever becomes needed, the apex-only design is forward-
+If per-item ever becomes needed, the root-only design is forward-
 compatible — add a per-item override tag later.
 
 ### Q2: Feature PR creation reuses completed PRs by head/base. How does epoch fit?
@@ -380,7 +380,7 @@ output. This matches `terraform apply` / `kubectl apply --dry-run` —
 the destructive action requires explicit opt-in even when invoked by a
 "destructive-sounding" verb name. Reduces operator-finger risk.
 
-`reset apex --execute` propagates `--execute` to all five subordinate
+`reset root --execute` propagates `--execute` to all five subordinate
 verbs; the composite is the safety boundary.
 
 ## Alternatives considered
@@ -400,7 +400,7 @@ satisfaction — the next plan PR for the same item also gets masked.
 Would need to be a "mask PR IDs ≤ X" floor — which collapses into the
 epoch design (epoch IS a floor).
 
-### C. Per-item epoch instead of per-apex
+### C. Per-item epoch instead of per-root
 
 **Rejected.** See Q1 above.
 
@@ -448,23 +448,23 @@ Scope:
 - Tests against canned ADO/GitHub responses (existing test patterns
   under `tests/Polyphony.Tests/Commands/`).
 
-**Definition of done:** `polyphony reset apex --apex-id 62286666
+**Definition of done:** `polyphony reset root --root-id 62286666
 --to-stage planning --dry-run` prints a complete and correct inventory
 of intended mutations; `--execute` carries them out idempotently.
 
 ### PR 3 — Workflow + launcher mode + skill collapse
 
 Scope:
-- `.conductor/registry/workflows/reset-apex.yaml`.
+- `.conductor/registry/workflows/reset-root.yaml`.
 - `min_polyphony_version` bump (bundled-SemVer; all 14 workflows go
   together).
 - `Invoke-PolyphonySdlc.ps1 -Intent reset -ToStage …`.
 - Post-reset validation node in the workflow.
 - Recovery skill collapse: rewrite to ~3 sections (env gotchas, state
   table for `--to-stage` enum docs, smoke-test pointing at
-  `reset apex --dry-run`).
+  `reset root --dry-run`).
 
-**Definition of done:** `Invoke-PolyphonySdlc.ps1 -ApexId 62286666
+**Definition of done:** `Invoke-PolyphonySdlc.ps1 -RootId 62286666
 -Intent reset -ToStage planning` runs to completion; followup
 `-Intent new` dispatches a fresh epoch-2 run; plan feedback collected
 in the new PR.
@@ -479,13 +479,13 @@ in the new PR.
    per the MarkImplMerged pattern; if the cache doesn't reflect the
    bump within N retries, surface a clear error.
 3. **Manifest archive accumulation.** Mitigation: `polyphony reset
-   manifest --archive` is opt-in via the apex composite; archives
+   manifest --archive` is opt-in via the root composite; archives
    live under `<git-common-dir>/polyphony/{root}/` and don't pollute
    the working tree.
 4. **Backwards compatibility.** Mitigation: `RunEpoch.Legacy` = 1 =
    absent tag = current behavior. No migration required for existing
-   in-flight apexes; they continue to use legacy branch names
-   indefinitely. Epoch only engages on explicit `reset apex` invocation.
+   in-flight roots; they continue to use legacy branch names
+   indefinitely. Epoch only engages on explicit `reset root` invocation.
 
 ## What this ADR does NOT do
 

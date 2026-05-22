@@ -3,7 +3,7 @@ namespace Polyphony;
 /// <summary>
 /// Output envelope for <c>polyphony reset state --root N</c> — stamps the
 /// per-root run-watermark tag (<c>polyphony:run-started-at=&lt;ISO-8601&gt;</c>)
-/// on the root root work item.
+/// on the root work item.
 ///
 /// <para>This is the ONLY writer of the watermark. Read-side filtering lives
 /// in <see cref="Sdlc.Observers.PlanObserver"/> +

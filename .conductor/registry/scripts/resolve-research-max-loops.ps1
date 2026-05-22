@@ -9,7 +9,7 @@
     envelope the counter can consume.
 
     This is intentionally SEPARATE from `resolve-research-policy.ps1`:
-    the latter resolves `escalation_cap` + `mode` for the research_dispatch
+    the latter resolves `escalation_cap` + `mode` for the research
     leg and runs AFTER the counter; this script resolves the plan-level
     loop cap and runs BEFORE the counter. Splitting them keeps a malformed
     `max_research_loops` from poisoning escalation behavior and vice

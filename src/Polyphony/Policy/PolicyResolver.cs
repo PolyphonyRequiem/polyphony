@@ -204,7 +204,7 @@ public sealed record ResolvedRule
     public int? EscalationCap { get; init; }
 
     /// <summary>
-    /// Research domain only: plan-level cap on architect ↔ research_dispatch
+    /// Research domain only: plan-level cap on architect ↔ research
     /// round-trips. See <see cref="ScopeRule.MaxResearchLoops"/>. Consumed by
     /// the <c>research_loop_counter</c> step in <c>plan-level.yaml</c> via
     /// the <c>resolve-research-max-loops.ps1</c> helper.

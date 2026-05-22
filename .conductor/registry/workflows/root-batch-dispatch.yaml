@@ -68,7 +68,7 @@ workflow:
       type: number
       required: true
       description: >-
-        ADO work item id of the root (run-root). Threaded into every
+        ADO work item id of the root. Threaded into every
         per-item dispatch and into the batch integrator.
     batch_index:
       type: number

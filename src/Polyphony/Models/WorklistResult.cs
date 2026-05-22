@@ -3,7 +3,7 @@ namespace Polyphony;
 /// <summary>
 /// Output of <c>polyphony worklist build</c> — the ordered list of plan-tree
 /// work items, grouped into "waves" that can be dispatched in parallel by
-/// the (future) root driver workflow. A batch is ready when all items in
+/// the (future) polyphony workflow. A batch is ready when all items in
 /// earlier waves have reached a terminal state (e.g. plan PR merged, or
 /// skipped).
 ///

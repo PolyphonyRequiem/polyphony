@@ -127,7 +127,7 @@ Describe 'polyphony.yaml :: init_manifest agent exists and runs before build_wor
 
 Describe 'polyphony.yaml :: declare_root agent stamps polyphony:root before build_worklist' {
     # Per docs/polyphony-tags.md §"Workflow integration":
-    #   "Entry: tree-walker receives root_id as input. Calls
+    #   "Entry: polyphony receives root_id as input. Calls
     #    `polyphony root declare {root_id}` (idempotent) to stamp the root tag."
     #
     # If this agent is missing, every descendant's `polyphony root resolve`

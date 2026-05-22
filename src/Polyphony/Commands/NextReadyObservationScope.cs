@@ -131,7 +131,7 @@ internal sealed class NextReadyObservationScope
     public required int ItemId { get; init; }
 
     /// <summary>The resolved root work-item id (= <see cref="ItemId"/> for
-    /// an root item; ancestor's id walked via parent chain otherwise).
+    /// a root item; ancestor's id walked via parent chain otherwise).
     /// Drives <see cref="PlanBranch"/>.</summary>
     public required int RootId { get; init; }
 
@@ -143,7 +143,7 @@ internal sealed class NextReadyObservationScope
     // ── Run-watermark signal (shared across all PR-based composers) ─────
 
     /// <summary>Value of the <c>polyphony:run-started-at</c> tag on the
-    /// root root, parsed as a UTC <see cref="DateTimeOffset"/>. Used by
+    /// root, parsed as a UTC <see cref="DateTimeOffset"/>. Used by
     /// every PR-state composer to filter merged PRs that pre-date the
     /// current run — they're artifacts of a prior run and don't count
     /// towards current-run satisfaction (see

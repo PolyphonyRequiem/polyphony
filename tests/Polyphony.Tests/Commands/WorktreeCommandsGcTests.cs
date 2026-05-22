@@ -236,15 +236,15 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
     // ─── --root scope ─────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Gc_RootScope_FiltersOutOtherApexes()
+    public async Task Gc_RootScope_FiltersOutOtherRootes()
     {
         var (cmd, runner) = CreateCommand();
-        var apex1Path = Path.Combine(_runsRoot, "root-1", "impl-1-99"); // missing → prunable
-        var apex2Path = Path.Combine(_runsRoot, "root-2", "impl-2-99"); // missing → would be prunable, but out of scope
+        var Root1Path = Path.Combine(_runsRoot, "root-1", "impl-1-99"); // missing → prunable
+        var Root2Path = Path.Combine(_runsRoot, "root-2", "impl-2-99"); // missing → would be prunable, but out of scope
 
         var porcelain =
-            PorcelainEntry(apex1Path, "111", "impl/1-99") +
-            PorcelainEntry(apex2Path, "222", "impl/2-99");
+            PorcelainEntry(Root1Path, "111", "impl/1-99") +
+            PorcelainEntry(Root2Path, "222", "impl/2-99");
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, porcelain, ""));
 
@@ -254,7 +254,7 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
         var result = Parse(output);
         result.Root.ShouldBe(1);
         result.Candidates.Count.ShouldBe(1);
-        result.Candidates[0].Path.ShouldBe(apex1Path);
+        result.Candidates[0].Path.ShouldBe(Root1Path);
     }
 
     // ─── --commit (real removal) ──────────────────────────────────────────
