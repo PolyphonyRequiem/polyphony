@@ -152,9 +152,9 @@ explains why the child's parent-change request was not integrated.
 
 ---
 
-{% elif last == "research_dispatch"
-        and research_dispatch is defined
-        and research_dispatch.output is defined %}
+{% elif last == "research"
+        and research is defined
+        and research.output is defined %}
 ## 🔬 You Are Being Re-Invoked With Research Findings
 
 You previously requested research before finalizing the plan. The research
@@ -178,18 +178,18 @@ scratch.
 
 ### Research findings
 
-{{ research_dispatch.output.findings }}
+{{ research.output.findings }}
 
-{% if research_dispatch.output.summary is defined and research_dispatch.output.summary %}
+{% if research.output.summary is defined and research.output.summary %}
 ### Findings summary
 
-{{ research_dispatch.output.summary }}
+{{ research.output.summary }}
 {% endif %}
 
-{% if research_dispatch.output.sources is defined and research_dispatch.output.sources %}
+{% if research.output.sources is defined and research.output.sources %}
 ### Sources cited
 
-{% for src in research_dispatch.output.sources %}
+{% for src in research.output.sources %}
 - `{{ src.path }}`{% if src.lines %} (lines {{ src.lines }}){% endif %}{% if src.relevance %} — {{ src.relevance }}{% endif %}
 {% endfor %}
 {% endif %}

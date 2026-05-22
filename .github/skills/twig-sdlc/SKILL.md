@@ -372,7 +372,7 @@ closure; `task_manager` (inner) owns task execution within a PR group. Issues ar
 closed after their PR is merged — structurally preventing "code complete ≠ code merged".
 
 ```
-pr_group_manager ──→ task_manager ──→ coder → reducer_code → primary_reviewer
+pr_group_manager ──→ task_manager ──→ coder → reducer_code → root_reviewer
       ▲                   ▲                                       │
       │                   │         ┌── REQUEST_CHANGES ──────────┘
       │                   │         ↓
@@ -407,7 +407,7 @@ pr_group_manager ──→ task_manager ──→ coder → reducer_code → pri
 - **task_manager** (Sonnet) — inner orchestrator: manages task lifecycle within a PR group, routes to coder/reviewers, returns `pr_group_ready` when done (CANNOT close Issues)
 - **coder** (Opus 1M) — implements one task at a time with incremental commits and twig notes; has pre-review checklist to avoid round-trips
 - **reducer_code** (Sonnet) — simplifies each task's implementation
-- **primary_reviewer** (Sonnet) — per-child quality gate
+- **root_reviewer** (Sonnet) — per-child quality gate
 - **reducer_issue** (Sonnet) — post-issue code sweep across all tasks in completed issue
 - **scope_reviewer** (Opus 1M) — per-scope acceptance criteria, cross-cutting concerns, integration
 - **user_acceptance** — human gate, conditional per-issue when user-facing changes are flagged
@@ -442,7 +442,7 @@ pr_group_manager ──→ task_manager ──→ coder → reducer_code → pri
 | task_manager | Sonnet | Inner orchestrator: task lifecycle + routing |
 | coder | Opus 1M | Task implementation |
 | reducer_code | Sonnet | Per-task code simplification |
-| primary_reviewer | Sonnet | Per-child quality gate |
+| root_reviewer | Sonnet | Per-child quality gate |
 | reducer_issue | Sonnet | Post-issue cross-task code sweep |
 | scope_reviewer | Opus 1M | Per-scope acceptance criteria check |
 | user_acceptance | Human Gate | Conditional per-issue acceptance |

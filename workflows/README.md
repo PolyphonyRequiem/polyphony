@@ -14,24 +14,24 @@ and the dogfood `.conductor/` ship and version together.
 
 ## Canonical SDLC entry point
 
-The keystone orchestrator is **`apex-driver@polyphony`** — a tree-walking
-dispatcher that builds a worklist for an apex (run-root) work item, drives
-each EdgeGraph wave through its lifecycle in parallel with per-item worktree
-isolation, integrates wave outputs into the apex feature branch, and loops
-until the apex root reports `satisfied`. It supersedes the deleted
+The keystone orchestrator is **`polyphony@polyphony`** — a tree-walking
+dispatcher that builds a worklist for a root work item, drives
+each EdgeGraph batch through its lifecycle in parallel with per-item worktree
+isolation, integrates batch outputs into the root feature branch, and loops
+until the root reports `satisfied`. It supersedes the deleted
 `polyphony-full.yaml` single-shot pipeline.
 
 Minimum invocation:
 
 ```powershell
-conductor run apex-driver@polyphony --input apex_id=<ID> --web
+conductor run polyphony@polyphony --input root_id=<ID> --web
 ```
 
 Full invocation (all inputs explicit):
 
 ```powershell
-conductor run apex-driver@polyphony `
-  --input apex_id=<ID> `
+conductor run polyphony@polyphony `
+  --input root_id=<ID> `
   --input intent=new `
   --input platform=ado `
   --input organization=<org> `
@@ -50,20 +50,20 @@ Inputs:
 
 | Input | Required | Default | Notes |
 |---|---|---|---|
-| `apex_id` | yes | — | ADO work item id of the apex (run-root) feature. |
+| `root_id` | yes | — | ADO work item id of the root feature. |
 | `intent` | no | `new` | One of `new` / `resume` / `replan`. Drives preflight; the dispatch loop is observable-state-driven and identical across all three. |
 | `platform` | no | `ado` | Work-item source platform. Threaded through to lifecycle sub-workflows. |
 | `organization` | no | `""` | ADO organization. Required by feature-pr / plan-level on the ADO leg. |
 | `project` | no | `""` | ADO project name. |
 | `repository` | no | `""` | ADO repository identifier (GUID or name). |
 
-ADR: [`docs/decisions/apex-driver.md`](../docs/decisions/apex-driver.md).
+ADR: [`docs/decisions/polyphony-entry-workflow.md`](../docs/decisions/polyphony-entry-workflow.md).
 Skill: [`.github/skills/polyphony-sdlc/SKILL.md`](../.github/skills/polyphony-sdlc/SKILL.md).
 
 ## Advanced / single-leg invocations
 
-The sub-workflows below are the composable building blocks the apex-driver
-dispatches into. Most users should not invoke these directly — `apex-driver`
+The sub-workflows below are the composable building blocks the polyphony.yaml
+dispatches into. Most users should not invoke these directly — `polyphony.yaml`
 re-derives the right leg per item from observable state. Invoke a sub-workflow
 directly only when you want to *replay* or *override* a single leg of a run.
 

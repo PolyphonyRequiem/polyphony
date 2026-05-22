@@ -22,8 +22,8 @@ namespace Polyphony.Tests.Commands;
 /// <remarks>
 /// <para>
 /// Pre-PR-#3 the verb derived <c>children_seeded</c> from "any non-Done
-/// child" semantics — which mis-labelled an root with seeded children
-/// (any of which were still in flight) as <c>Fulfilling</c>, and an root
+/// child" semantics — which mis-labelled a root with seeded children
+/// (any of which were still in flight) as <c>Fulfilling</c>, and a root
 /// where the seeder had legitimately produced zero children (the
 /// indivisible case from §3.4) as <c>Needed</c> for ever. The fix wires
 /// the canonical write-once <c>polyphony:planned</c> tag (set by

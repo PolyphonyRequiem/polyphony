@@ -160,7 +160,7 @@ introduce new dependencies.
 
 ### `polyphony plan derive-ancestor-chain --root-id R --item-id I`
 - **Purpose**: derive the parent-chain (ancestors from root → leaf) for
-  an item under a given root root. Workflows feed the result into
+  an item under a given root. Workflows feed the result into
   recursive planning to know who the parent plan branch is.
 - **Pre**: ADO reachable; `R > 0`, `I > 0`.
 - **Post**: emits `{root_id, item_id, is_root_plan, parent_item_id,

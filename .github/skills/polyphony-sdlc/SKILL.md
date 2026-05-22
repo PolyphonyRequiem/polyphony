@@ -19,25 +19,25 @@ powered by the polyphony engine and the `conductor` orchestrator. Accepts
 requirement state drive every routing decision; no work item type names
 appear in any YAML routing condition.
 
-> **Apex driver status (Phase 7, shipped).** `apex-driver.yaml` is the
+> **Polyphony status (Phase 7, shipped).** `polyphony.yaml` is the
 > canonical SDLC entry point: a tree-walking orchestrator that builds a
-> worklist for an apex tree, dispatches each wave's items in parallel
-> through `apex-wave-dispatch.yaml` → `apex-item-dispatch.yaml`,
-> integrates each wave by merging per-item branches into the apex
-> feature branch, and re-evaluates the worklist until the apex root
+> worklist for a root tree, dispatches each batch's items in parallel
+> through `root-batch-dispatch.yaml` → `root-item-dispatch.yaml`,
+> integrates each batch by merging per-item branches into the root
+> feature branch, and re-evaluates the worklist until the root
 > reports `satisfied`. Per-item lifecycle dispatch (plan-level /
 > actionable / implement-merge-group / feature-pr) is now wired end-to-end as of
 > the Phase 7 follow-up. See "Invocation" below for the canonical
-> command line and the "Apex driver invocation" section further down
+> command line and the "Polyphony invocation" section further down
 > for the full input contract and re-entry semantics.
 
 ## Invocation
 
-The canonical SDLC entry point is **`apex-driver@polyphony`**. The only
-required input is `apex_id` — the apex (run-root) work-item id:
+The canonical SDLC entry point is **`polyphony@polyphony`**. The only
+required input is `root_id` — the root work-item id:
 
 ```powershell
-conductor run apex-driver@polyphony --input apex_id=<ID> --web
+conductor run polyphony@polyphony --input root_id=<ID> --web
 ```
 
 Full invocation with all inputs explicit and the standard `-m` metadata
@@ -45,8 +45,8 @@ block (see *Workflow Metadata* below):
 
 ```powershell
 Start-Process -WindowStyle Hidden -FilePath conductor -ArgumentList @(
-  "run", "apex-driver@polyphony",
-  "--input", "apex_id=<ID>",
+  "run", "polyphony@polyphony",
+  "--input", "root_id=<ID>",
   "--input", "intent=new",            # new | resume | replan
   "--input", "platform=ado",
   "--input", "organization=<org>",
@@ -64,11 +64,11 @@ Start-Process -WindowStyle Hidden -FilePath conductor -ArgumentList @(
 
 Sub-workflows (`plan-level`, `actionable`, `implement-merge-group`, `feature-pr`,
 …) can be invoked directly to replay or override a single leg, but the
-apex-driver re-derives the right leg per item from observable state, so
-direct sub-workflow invocations should be rare. See the "Apex driver
+polyphony.yaml re-derives the right leg per item from observable state, so
+direct sub-workflow invocations should be rare. See the "Polyphony
 invocation" section further down for re-entry semantics, the renegotiation
 flow, and the dispatched script set, and the ADR
-[`docs/decisions/apex-driver.md`](../../../docs/decisions/apex-driver.md)
+[`docs/decisions/polyphony-entry-workflow.md`](../../../docs/decisions/polyphony-entry-workflow.md)
 for full rationale and per-outcome examples.
 
 ## Workflow Metadata
@@ -138,7 +138,7 @@ human gate fires so the user can approve going deeper or abort.
 ## Sub-Workflow Library
 
 The sub-workflows below are the composable building blocks the
-(future) apex driver will dispatch into; several can also be invoked
+(future) polyphony.yaml will dispatch into; several can also be invoked
 directly with their own `--input` shape.
 
 ### `plan-level.yaml` — Recursive Planning Core
@@ -180,11 +180,11 @@ a PG-level PR, and closes completed work items in ADO after merge.
 |-------|------|-------------|
 | `pg_router` | script | Determine current PG action via `pg-router.ps1` |
 | `branch_manager` | script | Create/checkout PG branch |
-| `primary_router` | script | Route to next implementable child via `polyphony branch next-impl` |
+| `root_router` | script | Route to next implementable child via `polyphony branch next-impl` |
 | `coder` | agent (Opus 1M) | Implement a single task with incremental commits |
-| `primary_reviewer` | agent (Opus) | Per-task quality gate with re-review awareness |
-| `primary_reviewer` | agent (Sonnet) | Per-child quality gate |
-| `primary_completer` | script | Mark child as done, loop to `primary_router` |
+| `root_reviewer` | agent (Opus) | Per-task quality gate with re-review awareness |
+| `root_reviewer` | agent (Sonnet) | Per-child quality gate |
+| `root_completer` | script | Mark child as done, loop to `root_router` |
 | `dependency_check` | script | Check ADO predecessor links via `dependency-check.ps1` |
 | `dependency_gate` | human_gate | Surface blocked dependencies to user |
 | `scope_reviewer` | agent (Opus) | Per-issue acceptance criteria and integration check |
@@ -307,8 +307,8 @@ PGs are the unit of parallel work in the implementation phase. Each PG:
 
 1. **Branch creation** — `branch_manager` creates a PG branch (e.g., `feature/1234-pg-1`)
    targeting the feature branch
-2. **Implementation loop** — `primary_router` discovers the next implementable child; `coder` implements
-   it; `primary_reviewer` gates quality; loop until all children in the PG are complete
+2. **Implementation loop** — `root_router` discovers the next implementable child; `coder` implements
+   it; `root_reviewer` gates quality; loop until all children in the PG are complete
 3. **Scope review** — `scope_reviewer` checks
    acceptance criteria
 4. **PR creation** — `pr_submit` validates build/tests and creates a PR
@@ -448,18 +448,18 @@ For full rationale and the three-layer truth model see
 4. The target repo has `.polyphony-config/process-config.yaml` with type
    definitions, templates, and `polyphony validate-config` passes.
 
-### Apex driver invocation
+### Polyphony invocation
 
-The canonical SDLC entry point is `apex-driver.yaml`. Invoke as
-`conductor run apex-driver@polyphony --input apex_id=<ID> --web` (see
+The canonical SDLC entry point is `polyphony.yaml`. Invoke as
+`conductor run polyphony@polyphony --input root_id=<ID> --web` (see
 the top-of-file *Invocation* section for the command line and `-m`
 metadata block). Inputs:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `apex_id` | yes | — | ADO work-item id of the apex (run-root) feature. Treated as the tree root for `polyphony worklist build`. |
+| `root_id` | yes | — | ADO work-item id of the root feature. Treated as the tree root for `polyphony worklist build`. |
 | `intent` | no | `new` | One of `new` / `resume` / `replan`. Drives preflight behavior; the dispatch loop is observable-state-driven and identical across all three. |
-| `platform` | no | `ado` | Work-item source platform. Threaded through to lifecycle sub-workflows verbatim; the apex-driver itself is platform-agnostic. |
+| `platform` | no | `ado` | Work-item source platform. Threaded through to lifecycle sub-workflows verbatim; polyphony itself is platform-agnostic. |
 | `organization` | no | `""` | ADO organization name. Required by feature-pr / plan-level on the ADO leg (`platform=ado`); ignored on `github`. |
 | `project` | no | `""` | ADO project name (see `organization`). |
 | `repository` | no | `""` | ADO repository identifier (GUID or name) (see `organization`). |
@@ -472,148 +472,148 @@ Companion deterministic scripts (in `.conductor/registry/scripts/`):
   error`. Same envelope shape as `route-actionable-executor.ps1`.
 - `worktree-manager.ps1` — spawns/tears down per-item git worktrees
   at `<repo-parent>/<repo-name>-item-<work_item_id>` on branch
-  `sdlc/apex/<work_item_id>` (forked from the apex feature branch).
+  `sdlc/root/<work_item_id>` (forked from the root feature branch).
   Idempotent.
-- `wave-integrator.ps1` — merges per-item branches into the apex
+- `batch-integrator.ps1` — merges per-item branches into the root
   feature branch in topological order from `polyphony edges check`.
   `--no-ff` by default. Conflicts are captured per-branch and
-  surfaced to a wave-level human gate; the wave continues.
+  surfaced to a batch-level human gate; the batch continues.
 
 Re-entry semantics: the dispatch loop variable is the worklist
 itself, recomputed every iteration via `polyphony worklist build`,
 so resuming after a human gate or interrupted run requires no
 persisted step pointer — the EdgeGraph re-classifies what's still
-pending and the next wave is whatever's ready *now*.
+pending and the next batch is whatever's ready *now*.
 
 Renegotiation: bubble-up signals (`renegotiation_pending: true` from
 inner sub-workflows) consult `policy.renegotiation.auto_decide`
 (`prompt` / `auto_restart` / `ignore`) — see `.polyphony-config/policy.yaml`
-and ADR `docs/decisions/apex-driver.md` for full rationale.
+and ADR `docs/decisions/polyphony-entry-workflow.md` for full rationale.
 
 ### Tested behaviors (Phase 7 e2e)
 
-`.conductor/registry/tests/e2e-apex-driver.Tests.ps1` is the
-end-to-end suite for the apex-driver tree-walker. It complements
-(does not duplicate) `lint-apex-driver.ps1` (structural presence)
+`.conductor/registry/tests/e2e-polyphony.yaml.Tests.ps1` is the
+end-to-end suite for the polyphony entry-point workflow. It complements
+(does not duplicate) `lint-polyphony.yaml.ps1` (structural presence)
 and pins the GRAPH the three workflows declare plus the
 script-to-YAML contract on `lifecycle_workflow`. The suite parses
 all three YAMLs into in-memory graphs (via `powershell-yaml`'s
 `ConvertFrom-Yaml`) and asserts the following end-to-end behaviors,
 organized per YAML:
 
-**apex-driver.yaml — outer loop:**
-- `preflight_apex_state` short-circuits `satisfied` / `empty` to
-  `terminal_apex_satisfied`, routes `error` to
+**polyphony.yaml — outer loop:**
+- `preflight_root_state` short-circuits `satisfied` / `empty` to
+  `root_satisfied`, routes `error` to
   `preflight_failure_gate`, and has an M4 catch-all to the same
   failure gate.
-- `preflight_failure_gate` exposes `retry` (→ `preflight_apex_state`)
-  and `abort` (→ `terminal_preflight_failed`).
+- `preflight_failure_gate` exposes `retry` (→ `preflight_root_state`)
+  and `abort` (→ `preflight_failed`).
 - `build_worklist` routes success to `check_conflicts` and failure
   (with M4 catch-all) to `worklist_failure_gate`.
 - `check_conflicts` routes `has_conflicts == true` to
   `conflict_resolution_gate` and `false` (with M4 catch-all) to
-  `wave_dispatch_loop`.
+  `batch_loop`.
 - `conflict_resolution_gate` exposes `retry` (→ `build_worklist`)
-  and `abort` (→ `terminal_apex_abandoned`).
-- `wave_dispatch_loop` is a `for_each` over `build_worklist.output.waves`
-  (M8: bare dotted source) that invokes `./apex-wave-dispatch.yaml`
+  and `abort` (→ `root_abandoned`).
+- `batch_loop` is a `for_each` over `build_worklist.output.waves`
+  (M8: bare dotted source) that invokes `./root-batch-dispatch.yaml`
   with `max_concurrent: 1` (waves are sequential by definition) and
-  routes to `wave_loop_summary`.
-- `wave_loop_summary` routes `all_succeeded == true` to
+  routes to `batch_loop_summary`.
+- `batch_loop_summary` routes `all_succeeded == true` to
   `renegotiation_summary` and (with M4 catch-all) failure to
-  `wave_failed_gate`.
-- `wave_failed_gate` exposes `retry` (→ `build_worklist`), `abort`
-  (→ `terminal_apex_abandoned`), and `renegotiate` (also →
-  `terminal_apex_abandoned` per MVP stub).
+  `batch_failed_gate`.
+- `batch_failed_gate` exposes `retry` (→ `build_worklist`), `abort`
+  (→ `root_abandoned`), and `renegotiate` (also →
+  `root_abandoned` per MVP stub).
 - `renegotiation_summary` routes `any_pending == true` to
   `renegotiation_gate` and (with M4 catch-all) the no-renegotiation
-  path to `apex_completion_gate`.
+  path to `root_completion_gate`.
 - `renegotiation_gate` exposes `renegotiate` (→ `build_worklist`),
-  `override` (→ `apex_completion_gate`), and `abort` (→
-  `terminal_apex_abandoned`).
-- `apex_completion_gate` exposes `confirm` (→ `close_mark_satisfied`)
-  and `abandon` (→ `terminal_apex_abandoned`).
-- All three terminals (`terminal_apex_satisfied`,
-  `terminal_apex_abandoned`, `terminal_preflight_failed`) route to
+  `override` (→ `root_completion_gate`), and `abort` (→
+  `root_abandoned`).
+- `root_completion_gate` exposes `confirm` (→ `close_mark_satisfied`)
+  and `abandon` (→ `root_abandoned`).
+- All three terminals (`root_satisfied`,
+  `root_abandoned`, `preflight_failed`) route to
   `$end`.
 - The full happy-path waypoint chain — `preflight_sync` →
-  `preflight_apex_state` → `preflight_ensure_branch` →
-  `build_worklist` → `check_conflicts` → `wave_dispatch_loop` →
-  `wave_loop_summary` → `renegotiation_summary` →
-  `apex_completion_gate` → `close_mark_satisfied` →
-  `terminal_apex_satisfied` — is reachable from the entry point.
+  `preflight_root_state` → `preflight_ensure_branch` →
+  `build_worklist` → `check_conflicts` → `batch_loop` →
+  `batch_loop_summary` → `renegotiation_summary` →
+  `root_completion_gate` → `close_mark_satisfied` →
+  `root_satisfied` — is reachable from the entry point.
 
-**apex-wave-dispatch.yaml — wave fan-out:**
-- `dispatch_items` is a `for_each` over `workflow.input.wave_items`
+**root-batch-dispatch.yaml — batch fan-out:**
+- `dispatch_items` is a `for_each` over `workflow.input.batch_items`
   (M8: bare dotted source) with `max_concurrent: 3` and
   `failure_mode: continue_on_error`, that invokes
-  `./apex-item-dispatch.yaml` per item.
-- `dispatch_items.input_mapping` threads `apex_id`, per-item
+  `./root-item-dispatch.yaml` per item.
+- `dispatch_items.input_mapping` threads `root_id`, per-item
   `work_item_id` (from `item.item_id`), `platform`, `organization`,
   `project`, and `repository`.
 - `dispatch_items` routes to `aggregate_renegotiation`.
 - `aggregate_renegotiation` reads `dispatch_items.outputs` (per M8)
-  to scan for `renegotiation_pending` and routes to `integrate_wave`.
-- `integrate_wave` invokes `wave-integrator.ps1` with `-ApexId` and
-  `-WaveIndex` and routes to `$end`.
+  to scan for `renegotiation_pending` and routes to `integrate_batch`.
+- `integrate_batch` invokes `batch-integrator.ps1` with `-RootId` and
+  `-BatchIndex` and routes to `$end`.
 
-**apex-item-dispatch.yaml — branch-on-router (heart of PR #149):**
+**root-item-dispatch.yaml — branch-on-router (heart of PR #149):**
 - `classify_lifecycle` invokes `lifecycle-router.ps1` with
-  `-WorkItemId` and `-ApexId`.
+  `-WorkItemId` and `-RootId`.
 - `classify_lifecycle` short-circuits `fast-path` / `monitoring` /
   `blocked` / `error` verdicts to their dedicated terminal nodes
   BEFORE spawning a worktree. The success route targets
   `spawn_worktree`; the M4 catch-all is the last entry and falls
-  through to `terminal_classify_error`.
+  through to `classify_error`.
 - `spawn_worktree` invokes `worktree-manager.ps1` with
-  `-Operation spawn` and base branch `feature/{apex_id}` (canonical
-  branch-model name; pre-PR-176 the apex pipeline used a `feature/apex-`
+  `-Operation spawn` and base branch `feature/{root_id}` (canonical
+  branch-model name; pre-PR-176 the root pipeline used a `feature/root-`
   sub-prefix that bypassed `BranchNameBuilder`).
 - `spawn_worktree` branch-on-routers each of the four dispatchable
-  verdicts (`plan-level` → `plan_level_dispatch`, `actionable` →
-  `actionable_dispatch`, `implement-merge-group` → `implement_merge_group_dispatch`,
-  `feature-pr` → `feature_pr_dispatch`) with the spawn-success guard
+  verdicts (`plan-level` → `plan_level`, `actionable` →
+  `actionable`, `implement-merge-group` → `implement_merge_group`,
+  `feature-pr` → `feature_pr`) with the spawn-success guard
   in the `when:` clause. The M4 catch-all is the last entry and falls
-  through to `terminal_spawn_error`.
+  through to `spawn_error`.
 - All four lifecycle dispatch nodes are `type: workflow` and invoke
   the parent-relative path `./<lifecycle>.yaml`.
 - All four lifecycle dispatch nodes converge on `teardown_worktree`
   (which invokes `worktree-manager.ps1` with `-Operation teardown`
-  and routes to `terminal_dispatched`).
-- All seven terminals (`terminal_dispatched`, `terminal_fast_path`,
-  `terminal_monitoring`, `terminal_blocked`, `terminal_classify_error`,
-  `terminal_spawn_error`, plus the apex-driver terminals via the
+  and routes to `dispatched`).
+- All seven terminals (`dispatched`, `fast_path`,
+  `monitoring`, `blocked`, `classify_error`,
+  `spawn_error`, plus polyphony terminals via the
   outer chain) route to `$end`.
 - All four lifecycle dispatch nodes are reachable from
   `classify_lifecycle` in the assembled graph (no orphans).
 
 **Renegotiation bubble-up across all three layers:**
-- `apex-item-dispatch.output` declares `renegotiation_pending`,
+- `root-item-dispatch.output` declares `renegotiation_pending`,
   `renegotiation_request`, `validate_scope_verdict`, and
   `scope_violation_files`, all guarded by
-  `plan_level_dispatch is defined` (M3).
-- `apex-wave-dispatch.output` aggregates per-item bubble-ups into
+  `plan_level is defined` (M3).
+- `root-batch-dispatch.output` aggregates per-item bubble-ups into
   `renegotiation_pending` (bool) + `renegotiation_items` (array),
   guarded by `aggregate_renegotiation is defined`.
-- `apex-driver.output` surfaces `renegotiation_pending` to the
+- `polyphony.output` surfaces `renegotiation_pending` to the
   caller, guarded by `renegotiation_summary is defined`.
 - All three output maps pipe booleans through `| string | lower`
   (M7) so a real bool — not capital `True`/`False` — bubbles up.
 
 **Input/output contracts across the 3-YAML chain:**
-- `apex-driver` declares `apex_id` (required, number), `intent`,
+- `polyphony.yaml` declares `root_id` (required, number), `intent`,
   `platform` (default `ado`), `organization`, `project`, `repository`.
-- `apex-driver` → `apex-wave-dispatch` input_mapping threads
-  `apex_id`, per-wave `wave_index` + `wave_items` (`tojson`'d), and
+- `polyphony.yaml` → `root-batch-dispatch` input_mapping threads
+  `root_id`, per-batch `batch_index` + `batch_items` (`tojson`'d), and
   the ADO context block.
-- `apex-wave-dispatch` declares the inputs apex-driver passes;
-  `apex-item-dispatch` declares the inputs apex-wave-dispatch passes.
-- `apex-item-dispatch` → `plan-level` threads `work_item_id` +
+- `root-batch-dispatch` declares the inputs polyphony.yaml passes;
+  `root-item-dispatch` declares the inputs root-batch-dispatch passes.
+- `root-item-dispatch` → `plan-level` threads `work_item_id` +
   `intent: resume` + ADO context. → `actionable` threads
-  `work_item_id` + `apex_id` + `executor: polyphony`. →
+  `work_item_id` + `root_id` + `executor: polyphony`. →
   `implement-merge-group` derives `pg_number` / `branch_name` /
-  `feature_branch` from the apex+item ids. → `feature-pr` targets
-  `main` on the apex feature branch.
+  `feature_branch` from the root+item ids. → `feature-pr` targets
+  `main` on the root feature branch.
 
 **lifecycle-router script ↔ YAML contract drift:**
 - The router script emits exactly the canonical set of
@@ -621,7 +621,7 @@ organized per YAML:
   `implement-merge-group`, `feature-pr`, `fast-path`, `monitoring`, `blocked`,
   `error`. No undocumented values, none missing.
 - Every value the router emits is handled by an
-  `apex-item-dispatch.yaml` `when:` clause — short-circuit verdicts
+  `root-item-dispatch.yaml` `when:` clause — short-circuit verdicts
   are branched in `classify_lifecycle`, dispatchable verdicts are
   branched in `spawn_worktree`. No silent dropping into a catch-all,
   no dead branches in the YAML.
@@ -630,16 +630,16 @@ organized per YAML:
   executable: returns `success=false` + `error_code=polyphony_unavailable`
   + `lifecycle_workflow=error` + the work_item_id echo.
 
-**Script envelope contracts (worktree-manager + wave-integrator):**
+**Script envelope contracts (worktree-manager + batch-integrator):**
 - `worktree-manager.ps1` teardown of a non-existent worktree is
   idempotent (`success=true`); envelope carries `success`,
   `operation`, `work_item_id`, `worktree_path`, `branch`,
   `error_code`. Always exits 0.
-- `wave-integrator.ps1` returns a routing-style envelope
+- `batch-integrator.ps1` returns a routing-style envelope
   (`success=false` + `error_code=polyphony_unavailable`) when
   `polyphony` is unavailable. Envelope carries `success`,
-  `wave_index`, `apex_id`, `feature_branch` (defaults to
-  `feature/{apex_id}`), `merge_strategy` (defaults to `no-ff`),
+  `batch_index`, `root_id`, `feature_branch` (defaults to
+  `feature/{root_id}`), `merge_strategy` (defaults to `no-ff`),
   `branches_integrated`, `skipped`, `conflicts`. Always exits 0.
 
 ### Direct Sub-Workflow Invocation
@@ -681,7 +681,7 @@ most-specific-wins scoping: `root` → `type:<Name>` → `defaults`.
 |--------|-------------|------|-------------|
 | `approvals` | `plan-level.yaml` (review_router / plan_approval) | `mode`, `max_revision_cycles`, `quality_threshold` | Controls whether the plan approval gate fires and under what conditions |
 | `pr` | `github-pr.yaml` / `ado-pr.yaml` | `mode`, `max_fix_loops`, `max_remediation_cycles` | Controls PR merge gating and fix loop caps |
-| `concurrency` | the apex driver's merge-group dispatch and the recursive `plan-level.yaml` for_each blocks | `max_concurrent_children` | Limits parallel sub-workflow and merge-group execution |
+| `concurrency` | polyphony's merge-group dispatch and the recursive `plan-level.yaml` for_each blocks | `max_concurrent_children` | Limits parallel sub-workflow and merge-group execution |
 | `open_questions` | `plan-level.yaml` (open_questions_policy → routing) | `mode`, `min_severity`, `max_question_loops` | Controls whether architect open questions gate for user input |
 
 ### `open_questions` Domain
@@ -792,7 +792,7 @@ Per-type knob in `process-config.yaml`:
 
 ```yaml
 types:
-  Apex:
+  Feature:
     facets: [plannable, implementable]
     execution_mode: plan_then_implement   # default: parallel
 ```
@@ -916,17 +916,17 @@ Both verbs are routing-style and idempotent on resume.
 **`polyphony branch ensure-evidence-branch <work-item>`** ensures the
 evidence branch exists locally and on remote:
 
-- Default name: `evidence/<apex>-<item>` (Rev 4 grammar, via
+- Default name: `evidence/<root>-<item>` (Rev 4 grammar, via
   `BranchNameBuilder.Evidence`).
-- Collapses to orphan form `evidence/<item>` when `--apex-id` equals
+- Collapses to orphan form `evidence/<item>` when `--root-id` equals
   `workItemId` (or is omitted — defaults to the work item itself).
-- Default base: `feature/<apex>`; override with `--from-ref`.
+- Default base: `feature/<root>`; override with `--from-ref`.
 
 **`polyphony pr open-evidence-pr <work-item>`** opens (or reuses) the
 GitHub PR promoting the evidence branch into its parent feature
 trunk:
 
-- Normal case: head = `evidence/<apex>-<item>`, base = `feature/<apex>`.
+- Normal case: head = `evidence/<root>-<item>`, base = `feature/<root>`.
 - Orphan case: head = `evidence/<item>`, base = `main`.
 - Reuses an existing open PR for the same head/base pair instead of
   creating a duplicate (mirrors `pr create-feature-pr`).
@@ -940,6 +940,6 @@ envelope fields, never on the exit code (cf. **polyphony-workflow-author**).
 | Verb | Purpose | Source |
 |------|---------|--------|
 | `polyphony edges check <id>` | Build the EdgeGraph for a subtree; surface conflicts as routable JSON | `Commands/EdgesCommands.Check.cs` |
-| `polyphony branch ensure-evidence-branch <id>` | Idempotently create the evidence branch (orphan or apex-scoped) | `Commands/BranchCommands.EnsureEvidenceBranch.cs` |
-| `polyphony pr open-evidence-pr <id>` | Open or reuse the evidence PR against `feature/<apex>` (or `main` for orphan) | `Commands/PrCommands.OpenEvidencePr.cs` |
+| `polyphony branch ensure-evidence-branch <id>` | Idempotently create the evidence branch (orphan or root-scoped) | `Commands/BranchCommands.EnsureEvidenceBranch.cs` |
+| `polyphony pr open-evidence-pr <id>` | Open or reuse the evidence PR against `feature/<root>` (or `main` for orphan) | `Commands/PrCommands.OpenEvidencePr.cs` |
 | `polyphony guidance extract <id>` | Read the per-item guidance per the resolved `guidance:` policy | `Commands/GuidanceCommands.cs` |

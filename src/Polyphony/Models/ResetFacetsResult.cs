@@ -2,7 +2,7 @@ namespace Polyphony;
 
 /// <summary>
 /// Output envelope for <c>polyphony reset facets --root N</c> — strips
-/// the two persisted "planning is already done" tags from the root root
+/// the two persisted "planning is already done" tags from the root
 /// and every descendant in scope:
 ///
 /// <list type="bullet">

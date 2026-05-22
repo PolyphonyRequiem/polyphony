@@ -2,7 +2,7 @@ namespace Polyphony;
 
 /// <summary>
 /// Output of <c>polyphony worktree init-root --root N</c>. Reports the
-/// resolved root root (the per-root container under the runs-root) and
+/// resolved root (the per-root container under the runs-root) and
 /// the <c>feature/{N}</c> worktree that was created/attached/idempotently
 /// confirmed.
 ///

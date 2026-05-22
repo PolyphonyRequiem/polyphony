@@ -25,14 +25,14 @@
 
       implement-merge-group   — Item has an implementable facet, the next
                        ready requirement is implementation_merged,
-                       AND either (a) the item is NOT the root root,
-                       or (b) the item IS the root root but has zero
+                       AND either (a) the item is NOT the root,
+                       or (b) the item IS the root but has zero
                        ADO children (an indivisible root — the root
                        itself is the unit of implementation work; the
                        PG branch is `impl/{root}-{root}`).
 
       feature-pr     — Item has implementation_merged ready, IS the
-                       root root, AND has at least one ADO child. The
+                       root, AND has at least one ADO child. The
                        children's PG branches have already been merged
                        in earlier waves; feature-pr aggregates them
                        into a single feature PR.
@@ -254,7 +254,7 @@ try {
             # Fall through to classification, treating the fulfilling kinds
             # as the dispatch source. This is the "drive an in-flight PR
             # through merge" path — without it, an open plan PR stalls the
-            # root driver indefinitely (decision=blocked, iterations=1).
+            # polyphony indefinitely (decision=blocked, iterations=1).
         }
         'blocked' {
             $envelope.success = $true

@@ -208,7 +208,7 @@ public sealed partial class WorktreeCommands
             EmitInitRoot(
                 root, runsRoot, mainPath, rootRoot, worktreePath, branch,
                 outcome: "failed", reason: "filesystem_failure",
-                error: $"Could not create root root '{rootRoot}': {ex.Message}",
+                error: $"Could not create root '{rootRoot}': {ex.Message}",
                 dryRun: dryRun);
             return ExitCodes.Success;
         }

@@ -58,7 +58,7 @@
       unexpected_error      — uncaught exception in the script body.
 
 .PARAMETER RootId
-    The root root work item id. Used to derive the feature branch name
+    The root work item id. Used to derive the feature branch name
     when -FeatureBranch is omitted, and surfaced in the envelope for
     correlation with polyphony events.
 

@@ -35,7 +35,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     {
         var runner = new FakeProcessRunner();
         runner.WhenExact("git", ["remote", "get-url", "origin"], new ProcessResult(0, OriginUrl + "\n", ""));
-        // Default: root root has no run-started-at tag → null watermark
+        // Default: root has no run-started-at tag → null watermark
         // → "no filter" (legacy behavior). Tests that need a populated
         // watermark should re-stub after NewRunnerWithRemote returns.
         StubRootWatermarkAbsent(runner, RootId);

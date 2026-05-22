@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
 Initialize the per-run manifest under
-`<git-common-dir>/polyphony/<root_id>/run.yaml` for an root run, or
+`<git-common-dir>/polyphony/<root_id>/run.yaml` for a root run, or
 validate an existing manifest matches the requested root.
 
 .DESCRIPTION
@@ -53,7 +53,7 @@ intentionally NOT validated here. That is a deferred follow-up - see
 the polyphony pipeline-audit-fix PR body.
 
 .PARAMETER RootId
-ADO work-item id of the root (run-root) being executed.
+ADO work-item id of the root being executed.
 
 .PARAMETER Organization
 ADO organization name. Required when initialising a fresh manifest.

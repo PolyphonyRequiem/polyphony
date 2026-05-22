@@ -40,7 +40,7 @@ public sealed partial class WorktreeCommands
     /// <summary>
     /// Garbage-collect stale per-run worktrees under <c>polyphony-runs/</c>.
     /// </summary>
-    /// <param name="root">Optional root root id to scope the scan to a single <c>root-{N}/</c> subtree. When 0 (the default), the whole runs root is scanned.</param>
+    /// <param name="root">Optional root id to scope the scan to a single <c>root-{N}/</c> subtree. When 0 (the default), the whole runs root is scanned.</param>
     /// <param name="commit">When true, actually remove the candidates via <c>git worktree remove --force</c>. When false (the default), only list candidates without mutation.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("gc")]

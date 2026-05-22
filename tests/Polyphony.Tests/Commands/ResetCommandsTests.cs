@@ -236,7 +236,7 @@ public sealed class ResetCommandsTests : CommandTestBase
     {
         var (cmd, runner) = CreateCommand();
 
-        // Stub ls-remote to mimic an root (root_id=100) with the canonical
+        // Stub ls-remote to mimic a root (root_id=100) with the canonical
         // branch shapes: plan/, feature/, mg/{root}_{mg_path}, impl/{root}-{item}.
         runner.WhenAsync(
             (e, a) => e == "git" && a.Count >= 4 && a[0] == "ls-remote" && a[1] == "--heads",

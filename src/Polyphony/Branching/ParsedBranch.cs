@@ -60,7 +60,7 @@ internal abstract record ParsedBranch
     /// <summary>
     /// <c>evidence/{item_id}</c> — the orphan evidence branch form (Phase 6)
     /// used when the work item is its own root. Carries only the item id;
-    /// callers that need an root should use it as the root.
+    /// callers that need a root should use it as the root.
     /// </summary>
     public sealed record EvidenceOrphan(BranchName Branch, WorkItemId ItemId) : ParsedBranch;
 

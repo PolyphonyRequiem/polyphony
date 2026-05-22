@@ -193,7 +193,7 @@ public sealed partial class PlanCommands
         // whose MergedAt <= watermark are artifacts of a prior run and
         // must NOT count as "complete" — otherwise the redo dispatch
         // sees the stale merged plan PR, declares the plan complete,
-        // and the root driver flips next-ready back to Needed → infinite
+        // and polyphony flips next-ready back to Needed → infinite
         // loop. Fail-closed posture: fetch errors force "not_started"
         // with the error reason so the dispatch retries rather than
         // silently falling back to the legacy lying-merged state.

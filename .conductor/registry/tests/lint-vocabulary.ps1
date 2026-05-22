@@ -13,16 +13,10 @@
     tagged `text`, `console`, `output`, or `diff`; those fences represent
     literal historical output rather than authored vocabulary.
 
-    The deferred legacy specs at docs/proposals/polyphony-journal.md and
-    docs/proposals/conductor-failure-model.md emit a single warning per file by
-    default. Pass -Strict to fail on those deferred-spec warnings too.
-
     Exit codes:
-      0 = clean (or deferred warnings only without -Strict)
+      0 = clean
       1 = forbidden-term violations found
       2 = configuration error (missing/invalid glossary, invalid root, etc.)
-
-    # TODO: wire into ci.yml after the mechanical rename pass lands
 
 .PARAMETER Root
     Repository root to scan. Defaults to discovery via `git rev-parse
@@ -32,7 +26,10 @@
     Output format: `human` (default) or `json`.
 
 .PARAMETER Strict
-    Fail on deferred-spec warnings from the two grandfathered proposal docs.
+    Reserved for future re-introduction of a deferred-spec warning channel.
+    Currently a no-op: under AB#3259 all legacy specs are either deleted or
+    cleaned, so the lint has no deferred bucket. Pass `-Strict` if downstream
+    tooling still passes it; the flag will not change behavior.
 
 .OUTPUTS
     Human-readable findings or a JSON object describing violations, warnings,
@@ -51,7 +48,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $regexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-$deferredSpecFiles = @()
 $skippedFenceLanguages = @('text', 'console', 'output', 'diff')
 
 function Write-ConfigurationError {
@@ -337,7 +333,6 @@ function Get-PathDisposition {
     if ($path -match '(^|/)(\.git|bin|obj|node_modules)(/|$)') { return 'skip' }
     if ($path -match '(^|/)\.polyphony-config(/|$)') { return 'skip' }
     if ($path -match '/runs/' -or $path -match '-runs/') { return 'skip' }
-    if ($path -in $deferredSpecFiles) { return 'deferred' }
 
     return 'scan'
 }
@@ -501,16 +496,6 @@ foreach ($file in $scanFiles) {
     $lines = Get-Content -LiteralPath $file.FullPath
     $lineFindings = Get-LineMatches -RelativePath $file.RelativePath -Lines $lines -TermSpecs $termSpecs
     if ($lineFindings.Count -eq 0) { continue }
-
-    if ($file.Disposition -eq 'deferred') {
-        $warnings += [PSCustomObject]@{
-            File         = $file.RelativePath
-            Message      = 'pending vocab pass per AB#3259'
-            MatchCount   = $lineFindings.Count
-            MatchedTerms = @($lineFindings | ForEach-Object Term | Sort-Object -Unique)
-        }
-        continue
-    }
 
     foreach ($finding in $lineFindings) {
         $violations += $finding

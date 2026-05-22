@@ -205,7 +205,7 @@ take** for a given work item. The current model is:
 - **Requirement-set routing** (`polyphony state next-ready`): Given a work
   item ID, derive its requirement set from the type's facets, reduce against
   observable state (plan / seeds / implementation), and return the
-  dispatchable requirements. The root driver routes on these.
+  dispatchable requirements. The polyphony routes on these.
 
 - **PR-group routing** (`polyphony branch route`): Given a hierarchy of work
   items already partitioned into PR groups (PGs) via `PG-N` tags, which PG
@@ -446,7 +446,7 @@ The `state` group covers two related concerns:
 2. **Next-ready dispatch** — *which requirements are dispatchable right now?*
    `state next-ready` derives the requirement set from the item's facets,
    reduces against observable plan/seed/implementation signals, and returns
-   the per-disposition arrays the root driver routes on.
+   the per-disposition arrays polyphony routes on.
 
 Both follow the **routing-style exit convention**: always exit 0; route on the
 JSON payload's `ready` (preflight) or per-requirement disposition (next-ready)
@@ -742,7 +742,7 @@ Idempotent: if the branch exists locally, checks it out; if it exists on
 remote but not locally, fetches and checks out; if it exists nowhere, creates
 from `--base-branch` (default `main`) and pushes. Default remote is `origin`.
 
-The root driver calls `branch ensure-feature` once after state detection.
+The polyphony calls `branch ensure-feature` once after state detection.
 Sub-workflows trust the branch name as an input rather than re-running the check.
 
 ### `polyphony branch next-impl`

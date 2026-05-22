@@ -1,12 +1,12 @@
 # Root Driver — Tree-Walking Dispatch with Per-Item Worktree Isolation
 
 > **Status:** Accepted. Phase 7 — polyphony MVP.
-> **Driver:** Phase 7 needs an SDLC orchestrator that walks an root
+> **Driver:** Phase 7 needs an SDLC orchestrator that walks a root
 > tree level by level, dispatches lifecycle work per item with
 > isolation, and re-enters cleanly after human gates or interruptions.
 > The deleted `polyphony-full.yaml` was a single-shot pipeline; the
 > polyphony is a *driver* — it loops over EdgeGraph waves until the
-> root root reports `satisfied` (or the loop is abandoned at a gate).
+> root reports `satisfied` (or the loop is abandoned at a gate).
 > **Supersedes:** the deleted `polyphony-full.yaml`.
 
 ## Context
@@ -36,7 +36,7 @@ The dispatch contract is:
      branch in topological order).
 3. Re-evaluate the worklist (waves can change as items satisfy or
    renegotiation fires) and loop.
-4. When the root root reports `satisfied` and the EdgeGraph reports
+4. When the root reports `satisfied` and the EdgeGraph reports
    no remaining work, mark the root satisfied and exit.
 
 Several open design questions had to be settled to ship this:
@@ -79,7 +79,7 @@ The classification rule set ("if the item's next-ready signal is
 `plan_authored`, route to plan-level; if it's `action_satisfied`,
 route to actionable; …") has to consult `polyphony state next-ready`
 output — a JSON envelope with a `status`, `kind`, `signal`, and a
-flag for whether the item is the root root. That logic is too much
+flag for whether the item is the root. That logic is too much
 for a Jinja expression, would explode the YAML route block, and
 would be untestable.
 
@@ -157,7 +157,7 @@ itself drive a pass; this workflow does. Prerequisites (verify before invoking):
 
 ### Minimum invocation
 
-The only required input is the root (run-root) work-item id; `platform`
+The only required input is the root work-item id; `platform`
 defaults to `ado` and `intent` defaults to `new`:
 
 ```powershell
@@ -193,7 +193,7 @@ The driver terminates in one of three observable states; the workflow's
 `output:` map carries `root_id`, `satisfied`, `abandoned`, `preflight_failed`,
 and `renegotiation_pending`.
 
-**Satisfied** — root root reports `satisfied` and the EdgeGraph reports no
+**Satisfied** — root reports `satisfied` and the EdgeGraph reports no
 remaining work. Re-running with `--input intent=resume` is a no-op (the
 worklist is empty); the run is closed-out via `close-out.yaml`.
 

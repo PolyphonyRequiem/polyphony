@@ -52,10 +52,10 @@ public static class PolyphonyTags
     /// that re-dispatches the same MG for revision
     /// (scope_revise_counter, scope_revise_reset, user_acceptance
     /// Request Changes). Read by <see cref="Commands.BranchCommands.NextImpl"/>
-    /// to skip the root root and report <c>all_items_done</c>, breaking
+    /// to skip the root and report <c>all_items_done</c>, breaking
     /// the redispatch loop documented in AB#3217.
     ///
-    /// Without this tag: when the root root is the sole implementable item
+    /// Without this tag: when the root is the sole implementable item
     /// in its merge group, <c>root_completer</c> deliberately does NOT
     /// transition state (terminal transition is deferred to
     /// <c>close_mark_satisfied</c> per AB#3169 so feature → main has
@@ -125,7 +125,7 @@ public static class PolyphonyTags
 
     /// <summary>
     /// Tag-name prefix for the "this root's current run started at this
-    /// ISO-8601 UTC instant" marker, stamped on the root root by
+    /// ISO-8601 UTC instant" marker, stamped on the root by
     /// <c>polyphony reset state</c> (and re-stamped on every subsequent
     /// reset). Observers consume it as a watermark — any merged PR whose
     /// <c>MergedAt</c> is at or before this instant is treated as an

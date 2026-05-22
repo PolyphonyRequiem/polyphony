@@ -375,7 +375,7 @@ public sealed partial class StateCommands
         await FetchPlannedTagAsync(scope, ct).ConfigureAwait(false);
 
         // Run-reset watermark: the polyphony:run-started-at tag on the
-        // root root (resolved above as RootId) bounds which merged PRs
+        // root (resolved above as RootId) bounds which merged PRs
         // count for current-run satisfaction. Fetched alongside the
         // planned-tag so it's available regardless of which early-return
         // path we take below. Absent tag → null → no filter (legacy
@@ -493,7 +493,7 @@ public sealed partial class StateCommands
 
     /// <summary>
     /// Fetch the run-watermark signal: the <c>polyphony:run-started-at</c>
-    /// tag value from the root root (<see cref="NextReadyObservationScope.RootId"/>).
+    /// tag value from the root (<see cref="NextReadyObservationScope.RootId"/>).
     /// </summary>
     /// <remarks>
     /// <para>

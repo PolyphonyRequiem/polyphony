@@ -49,7 +49,7 @@
       missing_root_id         — required root id was not provided.
 
 .PARAMETER RootId
-    The root root work item id. Used for `polyphony edges check` and
+    The root work item id. Used for `polyphony edges check` and
     to derive the feature branch name when -FeatureBranch is omitted.
 
 .PARAMETER BatchIndex

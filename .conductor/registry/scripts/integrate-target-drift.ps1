@@ -96,7 +96,7 @@
     integrated regardless of which platform leg (github / ado) we
     take next.
 
-    Scope: covers both polyphony.yaml's root→main promotion and
+    Scope: covers both polyphony's root→main promotion and
     root-item-dispatch.yaml's child→feature/<root> promotion (both
     flow through feature-pr.yaml).
 

@@ -1,22 +1,22 @@
 ---
 name: polyphony-dogfood-recovery
 description: >-
-  Activate when a polyphony dogfood apex run is stuck or completed and the
+  Activate when a polyphony dogfood root run is stuck or completed and the
   operator wants to wipe the prior-run state (branches, PRs, worktrees,
-  manifest, watermark) so the apex can be re-launched cleanly. Since the
+  manifest, watermark) so the root can be re-launched cleanly. Since the
   reset workflow shipped, this is a thin runbook around
   `Invoke-PolyphonySdlc.ps1 -Intent reset` and the residual gotchas the
   automation cannot handle.
 
   Trigger phrases include:
-  - 'clean up the apex run'
-  - 'abort and reset apex'
+  - 'clean up the root run'
+  - 'abort and reset root'
   - 'restart from clean state'
   - 'reset work item state for re-run'
   - 'polyphony dogfood is stuck'
   - 'untangle partial workflow state'
-  - 'the apex run died mid-way and I want to retry'
-  - 'redo the apex'
+  - 'the root run died mid-way and I want to retry'
+  - 'redo the root'
 
   Do NOT activate for:
   - Pushing a work item forward toward completion. This skill is RESET only.
@@ -29,9 +29,9 @@ user-invokable: false
 
 # Polyphony Dogfood Recovery
 
-Runbook for wiping a wedged / completed polyphony apex's prior-run state so
-the apex can be re-launched. The bulk of what used to be a 5-axis manual
-ceremony now lives in the `reset-apex@polyphony` workflow (PR run-reset
+Runbook for wiping a wedged / completed polyphony root's prior-run state so
+the root can be re-launched. The bulk of what used to be a 5-axis manual
+ceremony now lives in the `reset-root@polyphony` workflow (PR run-reset
 3/3); this skill covers (1) the one-liner, (2) the residual gotchas the
 automation cannot handle, and (3) the post-reset smoke test.
 
@@ -58,27 +58,27 @@ fine):
 
 ```powershell
 # Dry-run preview (no mutations). Shows what would be torn down.
-./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <N> -Intent reset
+./scripts/Invoke-PolyphonySdlc.ps1 -RootId <N> -Intent reset
 
 # Same, then a confirmation gate, then execute.
-./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <N> -Intent reset -Execute
+./scripts/Invoke-PolyphonySdlc.ps1 -RootId <N> -Intent reset -Execute
 
 # Unattended (skips the confirmation gate). Use only when operator
 # consent has been obtained out-of-band.
-./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <N> -Intent reset -Execute -AutoConfirm
+./scripts/Invoke-PolyphonySdlc.ps1 -RootId <N> -Intent reset -Execute -AutoConfirm
 ```
 
-The launcher dispatches `reset-apex@polyphony`, which calls
-`polyphony reset apex --apex <N>` in dry-run, surfaces a confirmation
+The launcher dispatches `reset-root@polyphony`, which calls
+`polyphony reset root --root <N>` in dry-run, surfaces a confirmation
 gate showing the per-leg counts (PRs to abandon, worktrees to remove,
 branches to delete, manifest action, watermark target), then re-invokes
-`polyphony reset apex --apex <N> --execute` on confirmation. The chain
-halts on first failed leg; `polyphony reset apex` is idempotent on retry.
+`polyphony reset root --root <N> --execute` on confirmation. The chain
+halts on first failed leg; `polyphony reset root` is idempotent on retry.
 
 Additional flags:
 
-- `-SkipState` — forwarded as `polyphony reset apex --skip-state`. Runs
-  the cleanup chain but does NOT advance the per-apex run-started-at
+- `-SkipState` — forwarded as `polyphony reset root --skip-state`. Runs
+  the cleanup chain but does NOT advance the per-root run-started-at
   watermark. Use for hygiene sweeps that should not flip the
   satisfaction floor.
 - `-Comment "<text>"` — override the closing comment posted on each
@@ -88,9 +88,9 @@ Additional flags:
 
 ## 2 · Halt the run first (if mid-flight)
 
-`-Intent reset` operates on the apex's branches/PRs/worktrees/manifest
+`-Intent reset` operates on the root's branches/PRs/worktrees/manifest
 regardless of whether a conductor process is currently running against
-them. But running it against an in-flight apex will collide with the
+them. But running it against an in-flight root will collide with the
 conductor's open file handles + in-progress git operations. Stop the
 conductor first.
 
@@ -113,7 +113,7 @@ Then proceed with the one-liner in §1.
 The reset workflow handles the canonical 5-axis state surface. These
 edge cases still need manual attention:
 
-### 3.1 · Uncommitted operator edits in apex worktrees
+### 3.1 · Uncommitted operator edits in root worktrees
 
 `polyphony reset worktrees` refuses to remove a worktree with uncommitted
 changes (defense-in-depth — you'd lose work). If the preview reports
@@ -121,9 +121,9 @@ changes (defense-in-depth — you'd lose work). If the preview reports
 first, then re-run.
 
 ```powershell
-git -C "<runs_root>/apex-<N>/feature-<N>" status
-git -C "<runs_root>/apex-<N>/feature-<N>" stash -u   # or commit + push to a backup branch
-./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <N> -Intent reset -Execute
+git -C "<runs_root>/root-<N>/feature-<N>" status
+git -C "<runs_root>/root-<N>/feature-<N>" stash -u   # or commit + push to a backup branch
+./scripts/Invoke-PolyphonySdlc.ps1 -RootId <N> -Intent reset -Execute
 ```
 
 ### 3.2 · `twig` rewrote `.twig/config` mid-run
@@ -131,7 +131,7 @@ git -C "<runs_root>/apex-<N>/feature-<N>" stash -u   # or commit + push to a bac
 A known twig friction (filed separately): `twig` rewrites `.twig/config`
 on every conductor invocation. The assert-clean preflight refuses to
 dispatch with a dirty `.twig/config`. Reset doesn't run assert-clean
-(no apex-worktree dependency), but the eventual re-launch with
+(no root-worktree dependency), but the eventual re-launch with
 `-Intent new` will. Restore before re-launching:
 
 ```powershell
@@ -140,15 +140,15 @@ git -C <main_worktree> checkout -- .twig/config
 
 ### 3.3 · Manually-curated work-item state
 
-If you've hand-edited tags, fields, or state on the apex via twig
+If you've hand-edited tags, fields, or state on the root via twig
 between the original run and the reset, `polyphony reset state` advances
-the watermark but does NOT roll back those manual edits. Verify the apex
+the watermark but does NOT roll back those manual edits. Verify the root
 + descendant state matches the desired pre-run baseline before
 re-launch:
 
 ```powershell
-twig show <ApexId> --output json | ConvertFrom-Json | Select state, tags
-twig children <ApexId> --output json | ConvertFrom-Json | ForEach-Object { ... }
+twig show <RootId> --output json | ConvertFrom-Json | Select state, tags
+twig children <RootId> --output json | ConvertFrom-Json | ForEach-Object { ... }
 ```
 
 ### 3.4 · Completed PRs are not closeable
@@ -163,22 +163,22 @@ via the UI before reset; reset will not retry.
 
 ## 4 · Post-reset smoke test
 
-Before re-launching the apex, verify the reset took:
+Before re-launching the root, verify the reset took:
 
 ```powershell
-# 1. Validate config + apex state.
+# 1. Validate config + root state.
 polyphony validate-config
-polyphony validate --work-item <ApexId>
+polyphony validate --work-item <RootId>
 
-# 2. Confirm the apex is in a re-dispatchable state.
-polyphony state next-ready --work-item <ApexId>
+# 2. Confirm the root is in a re-dispatchable state.
+polyphony state next-ready --work-item <RootId>
 
 # 3. Confirm the prior-run branches are gone.
 git --git-dir <common_dir> branch -a --list "plan/<root>*" "impl/<root>-*" "mg/<root>-*"
 git --git-dir <common_dir> worktree list
 
 # 4. Re-launch.
-./scripts/Invoke-PolyphonySdlc.ps1 -ApexId <ApexId> -Intent new
+./scripts/Invoke-PolyphonySdlc.ps1 -RootId <RootId> -Intent new
 ```
 
 If any of the above surfaces residual prior-run state (branches,

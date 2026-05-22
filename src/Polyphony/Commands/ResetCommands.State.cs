@@ -11,7 +11,7 @@ namespace Polyphony.Commands;
 /// <summary>
 /// <c>polyphony reset state --root N [--execute]</c> — stamps the
 /// per-root run-watermark tag (<c>polyphony:run-started-at=&lt;ISO-8601&gt;</c>)
-/// on the root root work item.
+/// on the root work item.
 ///
 /// <para>This is the ONE writer of the watermark. The read side
 /// (<see cref="Sdlc.Observers.PlanObserver"/>,
@@ -22,7 +22,7 @@ namespace Polyphony.Commands;
 /// <para><b>Semantics</b>:
 /// <list type="bullet">
 ///   <item>Removes <b>every</b> existing <c>polyphony:run-started-at=*</c>
-///         tag from the root root before adding a fresh one (defense
+///         tag from the root before adding a fresh one (defense
 ///         against duplicate tags from a prior reset bug or operator
 ///         hand-edit). Duplicate count is reported via
 ///         <c>RemovedDuplicateTags</c>.</item>
@@ -48,7 +48,7 @@ namespace Polyphony.Commands;
 public sealed partial class ResetCommands
 {
     /// <summary>
-    /// Stamp the run-watermark tag on the root root.
+    /// Stamp the run-watermark tag on the root.
     /// </summary>
     /// <param name="root">Root root work-item ID — the work item that carries the watermark.</param>
     /// <param name="execute">Pass to perform the write. Without this flag, the verb runs in dry-run mode and emits the would-be outcome without mutating ADO.</param>
@@ -221,7 +221,7 @@ public sealed partial class ResetCommands
     }
 
     /// <summary>
-    /// Read the root root's tag set via <c>twig show</c>. Mirrors
+    /// Read the root's tag set via <c>twig show</c>. Mirrors
     /// <c>BranchCommands.ReadTagsAsync</c> (re-implemented here to keep
     /// this partial self-contained).
     /// </summary>

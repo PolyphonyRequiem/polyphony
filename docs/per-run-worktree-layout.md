@@ -1,18 +1,18 @@
 # Per-run worktree layout
 
-> **Status:** the per-apex worktree contract (operator's main worktree is never a dispatch target; every apex run gets its own `<runs_root>/apex-{N}/` subtree) is shipped and stable. The original AB#3085 stack additionally required the *source repo* to be bare; that requirement has since been **dropped** — vanilla `git clone` and bare-repo layouts are both first-class. The per-apex worktree model below applies to both. The bare-repo migration / bootstrap scripts remain functional but are no longer required.
+> **Status:** the per-root worktree contract (operator's main worktree is never a dispatch target; every root run gets its own `<runs_root>/root-{N}/` subtree) is shipped and stable. The original AB#3085 stack additionally required the *source repo* to be bare; that requirement has since been **dropped** — vanilla `git clone` and bare-repo layouts are both first-class. The per-root worktree model below applies to both. The bare-repo migration / bootstrap scripts remain functional but are no longer required.
 
 ## Why
 
-The legacy SDLC orchestration ran every apex inside the operator's main clone (a normal non-bare `.git` directory). That model produced two recurring production bugs that no amount of defensive code could eliminate:
+The legacy SDLC orchestration ran every root inside the operator's main clone (a normal non-bare `.git` directory). That model produced two recurring production bugs that no amount of defensive code could eliminate:
 
-1. **Launcher hijack.** `Invoke-PolyphonySdlc.ps1` defaulted `WorktreeRoot = (Get-Location).Path`. When the operator launched from `~/projects/polyphony`, the apex driver yanked the operator's main worktree off `main` onto an `impl/{apex}-{item}` branch mid-conversation. Recurred at least twice (checkpoints 157 and 165 of the prior session state).
+1. **Launcher hijack.** `Invoke-PolyphonySdlc.ps1` defaulted `WorktreeRoot = (Get-Location).Path`. When the operator launched from `~/projects/polyphony`, polyphony yanked the operator's main worktree off `main` onto an `impl/{root}-{item}` branch mid-conversation. Recurred at least twice (checkpoints 157 and 165 of the prior session state).
 
-2. **`worktree_dirty` cross-contamination.** Sibling apex runs and ad-hoc operator state on the shared main worktree raced each other. A wave-dispatched item would arrive at `git status --porcelain` and find unrelated changes left behind by a peer.
+2. **`worktree_dirty` cross-contamination.** Sibling root runs and ad-hoc operator state on the shared main worktree raced each other. A batch-dispatched item would arrive at `git status --porcelain` and find unrelated changes left behind by a peer.
 
 Both classes are **structural**: the only worktree available to dispatch into was the one the operator was using. Refusing to dispatch there would leave the SDLC with no worktree at all.
 
-The bare-repo + per-run worktree model eliminates both classes by construction. Each apex run gets its own worktree tree under `~/projects/polyphony-runs/apex-{N}/`. The operator's main worktree (`~/projects/polyphony`) is **never** a dispatch target.
+The bare-repo + per-run worktree model eliminates both classes by construction. Each root run gets its own worktree tree under `~/projects/polyphony-runs/root-{N}/`. The operator's main worktree (`~/projects/polyphony`) is **never** a dispatch target.
 
 ## Target on-disk layout
 
@@ -20,8 +20,8 @@ The bare-repo + per-run worktree model eliminates both classes by construction. 
 ~/projects/polyphony.git/                    bare repo (objects + refs only)
 ~/projects/polyphony/                        operator's main worktree, ALWAYS on main
 ~/projects/polyphony-runs/
-  apex-3085/                                 one root per apex run
-    feature-3085/                              apex feature trunk worktree
+  root-3085/                                 one root per root run
+    feature-3085/                              root feature trunk worktree
     plan-3085-XXXX/                            nested per plan branch
     impl-3085-XXXX/                            nested per impl branch
     mg-3085_pg-XXXX/                           nested per merge-group branch
@@ -31,12 +31,12 @@ The bare-repo + per-run worktree model eliminates both classes by construction. 
 Properties:
 
 - All worktrees share `~/projects/polyphony.git/objects` and `refs` — cheap on disk.
-- Per-apex root holds a manifest of its child worktrees so `polyphony worktree gc` can recurse.
+- Per-root holds a manifest of its child worktrees so `polyphony worktree gc` can recurse.
 - Branch invariants from the **polyphony-branch-model** skill are unchanged. The model changes *where* worktrees live, not how branches relate.
 
 ## Detection (historical — no longer enforced)
 
-`polyphony state preflight` previously ran an advisory `bare_repo` check at the start of every SDLC apex run. That check has been **removed** as part of the bare-requirement drop — the launcher and preflight no longer gate on whether the source repo is bare. The probe semantics below are retained as reference for operators who still run on the bare-repo layout.
+`polyphony state preflight` previously ran an advisory `bare_repo` check at the start of every SDLC root run. That check has been **removed** as part of the bare-requirement drop — the launcher and preflight no longer gate on whether the source repo is bare. The probe semantics below are retained as reference for operators who still run on the bare-repo layout.
 
 ## Probe semantics
 
@@ -67,7 +67,7 @@ git --git-dir=$HOME/projects/polyphony.git rev-parse --is-bare-repository   # �
 mv ~/projects/polyphony ~/projects/polyphony.legacy
 mv ~/projects/polyphony.new ~/projects/polyphony
 
-# 5. Create the runs root (empty until the launcher dispatches an apex):
+# 5. Create the runs root (empty until the launcher dispatches a root):
 mkdir ~/projects/polyphony-runs
 ```
 
@@ -75,7 +75,7 @@ After this:
 
 - `~/projects/polyphony.git/` is the source of truth (bare).
 - `~/projects/polyphony/` is your day-to-day operator worktree, always on `main`. The SDLC orchestrator will refuse to dispatch into this path.
-- `~/projects/polyphony-runs/` is empty; `polyphony worktree init-apex --apex N` (PR 1b) will populate it on the next apex dispatch.
+- `~/projects/polyphony-runs/` is empty; `polyphony worktree init-root --root N` (PR 1b) will populate it on the next root dispatch.
 - `~/projects/polyphony.legacy/` is the old layout; once you've confirmed nothing important lived there, delete it.
 
 **Once `Migrate-ToBareRepo.ps1` ships,** that script will encapsulate the procedure with `--dry-run` and `--commit` phases.

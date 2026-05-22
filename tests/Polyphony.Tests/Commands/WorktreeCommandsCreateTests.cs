@@ -79,7 +79,7 @@ public sealed class WorktreeCommandsCreateTests : CommandTestBase
     private static string PorcelainEntry(string path, string branch) =>
         $"worktree {path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/{branch}\n\n";
 
-    /// <summary>Porcelain block for an root whose feature worktree IS initialized.</summary>
+    /// <summary>Porcelain block for a root whose feature worktree IS initialized.</summary>
     private string Bootstrapped(string featurePath, int root, params (string path, string branch)[] extra)
     {
         var sb = new System.Text.StringBuilder();

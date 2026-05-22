@@ -56,6 +56,6 @@ workflows:
     path: workflows/research.yaml
     versions: ["2.4.0", "2.4.1", "2.4.2", "2.4.3", "2.4.8"]
   reset-root:
-    description: "Reset an root run — wipes prior state/PRs/branches/worktrees/manifest with operator confirmation gate, enabling -Intent new redispatch"
+    description: "Reset a root run — wipes prior state/PRs/branches/worktrees/manifest with operator confirmation gate, enabling -Intent new redispatch"
     path: workflows/reset-root.yaml
     versions: ["2.4.8"]

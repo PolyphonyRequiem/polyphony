@@ -18,7 +18,7 @@ namespace Polyphony.Tests.Commands;
 /// <c>polyphony:facets=&lt;csv&gt;</c> tag (PR #7) through
 /// <see cref="StateCommands.NextReady"/> via
 /// <see cref="RequirementInputResolver"/>. Architects stamp this tag on
-/// an root when they choose NOT to decompose; the resolver then derives
+/// a root when they choose NOT to decompose; the resolver then derives
 /// the per-item requirement set against the declared facet subset
 /// instead of the type-config default.
 /// </summary>

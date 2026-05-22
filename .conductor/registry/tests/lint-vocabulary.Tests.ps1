@@ -400,30 +400,6 @@ $e = "dispatched_items"
         @($payload.term_counts).Count | Should -BeGreaterThan 0
     }
 
-    It 'warns once per deferred spec by default without failing' {
-        $repo = New-TestRepo -Files @{
-            'docs/proposals/polyphony-journal.md'         = 'apex wave cascade'
-        }
-
-        $result = Invoke-Lint -Root $repo
-
-        $result.ExitCode | Should -Be 0
-        $result.Output | Should -Match 'docs/proposals/polyphony-journal\.md: warning: pending vocab pass per AB#3259'
-        ([regex]::Matches($result.Output, 'pending vocab pass per AB#3259')).Count | Should -Be 1
-    }
-
-    It 'fails on deferred spec warnings under -Strict' {
-        $repo = New-TestRepo -Files @{
-            'docs/proposals/polyphony-journal.md' = 'apex wave cascade'
-        }
-
-        $result = Invoke-Lint -Root $repo -Arguments @('-Strict')
-
-        $result.ExitCode | Should -Be 1
-        $result.Output | Should -Match 'docs/proposals/polyphony-journal\.md: error: pending vocab pass per AB#3259'
-        $result.Output | Should -Match '\[FAIL\]'
-    }
-
     It 'scans fixture files across workflows, scripts, C#, and docs' {
         $repo = New-TestRepo -Fixtures @(
             'dirty-apex.yaml',

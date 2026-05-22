@@ -229,7 +229,7 @@ agents:
       # impl-merged-in-mg marker stamped by root_completer's root-root
       # branch. Without this, next-impl falls back to the pg-name form
       # (PG-N) which doesn't agree with root_completer's mg-path
-      # (pg-N) under casing rules and lets the same root root re-dispatch
+      # (pg-N) under casing rules and lets the same root re-dispatch
       # forever.
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
@@ -1161,18 +1161,18 @@ agents:
   # above) — only the feature-branch promotion is missing. Recovery:
   # re-run this workflow; the MG PR open + merge are idempotent.
   #
-  # AB#3169 carve-out (indivisible root root): when `root_id == root_id`
-  # the "task" being completed IS the root root work item itself (an
+  # AB#3169 carve-out (indivisible root): when `root_id == root_id`
+  # the "task" being completed IS the root work item itself (an
   # indivisible root with zero ADO children — the lifecycle classifier
-  # dispatches the root root through implement-merge-group as its own
+  # dispatches the root through implement-merge-group as its own
   # implementable). In that case, firing `implementation_complete` here
-  # transitions the root root to its template's done state at MG → feature
+  # transitions the root to its template's done state at MG → feature
   # merge time — which is BEFORE feature → main has been promoted (see
   # AB#3168 for the matching promotion-routing fix). The root would then
   # be reported done in ADO while `main` lacks any of its commits — a
   # high-blast-radius lie that cascades to ancestor work items.
   # Mitigation: skip the validate + state transition when this is the
-  # root root. The root's terminal state is fired by `close_mark_satisfied`
+  # root. The root's terminal state is fired by `close_mark_satisfied`
   # in polyphony.yaml AFTER `promote_feature_to_main` succeeds (and
   # therefore AFTER feature → main is merged).
   #
@@ -1180,9 +1180,9 @@ agents:
   #   Pre:  Impl PR is merged into MG branch.
   #   Post: For child tasks, item is transitioned to its template's done
   #         state in ADO and a note added.
-  #         For an indivisible root root, only a note is added; terminal
+  #         For an indivisible root, only a note is added; terminal
   #         state is deferred to polyphony close-out (AB#3169). When
-  #         this is the root root, the impl-merged-in-mg marker is
+  #         this is the root, the impl-merged-in-mg marker is
   #         stamped on the root via `polyphony branch mark-impl-merged`
   #         so the next `root_router` poll reports `all_items_done`
   #         instead of re-dispatching the same item (AB#3217 fix to the
@@ -1191,7 +1191,7 @@ agents:
   #         `clear_root_impl_marker_*` nodes below). # type is runtime-injected; do not hardcode type names
   - name: root_completer
     type: script
-    description: "Transition completed child task to its template's done state (root root: defer to close_mark_satisfied per AB#3169) and route to next"
+    description: "Transition completed child task to its template's done state (root: defer to close_mark_satisfied per AB#3169) and route to next"
     command: pwsh
     args:
       - "-NoProfile"
@@ -1208,7 +1208,7 @@ agents:
           twig note --text 'Root root implementation merged into MG branch via impl PR; deferring terminal state transition to close_mark_satisfied after feature-to-main promotion (AB#3169).';
           twig sync;
           $marker = polyphony branch mark-impl-merged --work-item $taskId --mg-path $mgPath | ConvertFrom-Json;
-          if (-not $marker.success) { throw "Failed to mark root root #$taskId impl-merged-in-mg=$($mgPath) (AB#3217 break-loop guard): $($marker.error)" };
+          if (-not $marker.success) { throw "Failed to mark root #$taskId impl-merged-in-mg=$($mgPath) (AB#3217 break-loop guard): $($marker.error)" };
           @{ child_id = $taskId; completed = $true; target_state = $null; deferred_root_root = $true; marker_tag = $marker.tag; marker_already_present = $marker.already_in_desired_state } | ConvertTo-Json
         } else {
           twig note --text 'Item implementation merged into MG branch via impl PR';
@@ -1891,7 +1891,7 @@ agents:
         when: "{{ scope_revise_counter.output.cap_reached == true }}"
       # AB#3217: route revision passes through clear_root_impl_marker so
       # the impl-merged-in-mg marker (stamped by root_completer when
-      # the root root completed last round) doesn't suppress this round's
+      # the root completed last round) doesn't suppress this round's
       # re-dispatch.
       - to: clear_root_impl_marker
         when: "{{ scope_revise_counter.output.cap_reached == false }}"
@@ -2031,7 +2031,7 @@ agents:
         @{ iteration = 0; reset = $true } | ConvertTo-Json
     routes:
       # AB#3217: clear the root-root impl-merged-in-mg marker so the
-      # restarted loop can actually re-dispatch the root root for revision.
+      # restarted loop can actually re-dispatch the root for revision.
       - to: clear_root_impl_marker
 
   # ── Clear root impl marker (AB#3217) ─────────────────────────────────
@@ -2042,7 +2042,7 @@ agents:
   # `root_completer`'s root-root branch (see AB#3217 / AB#3169 for
   # why the marker exists).
   #
-  # Without this funnel, when the root root IS the sole implementable
+  # Without this funnel, when the root IS the sole implementable
   # item in the MG, the marker stays on the work item across revision
   # passes and `root_router` reports `all_items_done` immediately —
   # the scope_reviewer's feedback is silently lost and the workflow
@@ -2051,7 +2051,7 @@ agents:
   #
   # Idempotent: `polyphony branch clear-impl-merged` returns
   # `success=true, already_in_desired_state=true` when the tag is
-  # already absent (e.g. the root root never completed for this MG, or
+  # already absent (e.g. the root never completed for this MG, or
   # this is a non-root-root MG where root_completer never stamped),
   # so this node is safe on every revision route regardless of whether
   # the marker was actually present.
@@ -2060,12 +2060,12 @@ agents:
   #   Pre:  A revision route has fired (scope_revise_counter cap_reached
   #         == false, scope_revise_reset, or user_acceptance Request
   #         Changes).
-  #   Post: The impl-merged-in-mg marker is absent from the root root;
-  #         root_router is free to re-dispatch the root root if it is
+  #   Post: The impl-merged-in-mg marker is absent from the root;
+  #         root_router is free to re-dispatch the root if it is
   #         non-terminal.
   - name: clear_root_impl_marker
     type: script
-    description: Clear the impl-merged-in-mg marker on the root root before re-dispatching for revision (AB#3217)
+    description: Clear the impl-merged-in-mg marker on the root before re-dispatching for revision (AB#3217)
     command: polyphony
     args:
       - "branch"
@@ -2287,7 +2287,7 @@ agents:
       `polyphony pr open-mg-ado` and `pr merge-mg-ado` require all three
       of `--organization`, `--project`, and `--repository`. Re-invoke the
       workflow chain with those inputs supplied (typically threaded from
-      the root driver's inputs).
+      polyphony's inputs).
 
       MG branch:
       `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`

@@ -15,7 +15,7 @@ Describe 'lint-implement-merge-group.ps1' {
     }
 
     # AB#3169 — root_completer must skip implementation_complete event
-    # when root_id == root_id (indivisible root root case). Otherwise the
+    # when root_id == root_id (indivisible root case). Otherwise the
     # root Issue is marked Done at MG → feature merge time, before
     # feature → main has been promoted.
     Context 'root_completer root-root carve-out (AB#3169)' {
@@ -50,8 +50,8 @@ Describe 'lint-implement-merge-group.ps1' {
             $ifSplit = $ifSide -split 'if\s*\(\$isApexRoot\)\s*\{', 2
             $ifSplit.Count | Should -Be 2
             $ifBody = $ifSplit[1]
-            $ifBody   | Should -Not -Match 'polyphony validate.*--event implementation_complete' -Because 'AB#3169 — root root MUST skip implementation_complete; close_mark_satisfied fires the terminal item_satisfied event AFTER feature → main promotion'
-            $ifBody   | Should -Not -Match 'twig state'                                          -Because 'AB#3169 — root root MUST NOT change ADO state here'
+            $ifBody   | Should -Not -Match 'polyphony validate.*--event implementation_complete' -Because 'AB#3169 — root MUST skip implementation_complete; close_mark_satisfied fires the terminal item_satisfied event AFTER feature → main promotion'
+            $ifBody   | Should -Not -Match 'twig state'                                          -Because 'AB#3169 — root MUST NOT change ADO state here'
             $elseSide | Should -Match 'polyphony validate.*--event implementation_complete'      -Because 'Child tasks still get their normal implementation_complete transition'
             $elseSide | Should -Match 'twig state \$validate\.target_state'                      -Because 'Child tasks still transition via twig state'
         }

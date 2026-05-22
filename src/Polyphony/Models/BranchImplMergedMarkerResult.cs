@@ -17,7 +17,7 @@ public sealed record BranchImplMergedMarkerResult
     public required string Operation { get; init; }
 
     /// <summary>
-    /// Work item the marker was applied to (typically the root root).
+    /// Work item the marker was applied to (typically the root).
     /// </summary>
     public required int WorkItemId { get; init; }
 
