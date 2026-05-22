@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Journal;
 using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Manifest;
 using Polyphony.Locking;
@@ -13,6 +14,12 @@ namespace Polyphony;
 [JsonSerializable(typeof(ValidateResult))]
 [JsonSerializable(typeof(HierarchyResult))]
 [JsonSerializable(typeof(HierarchyResult[]))]
+[JsonSerializable(typeof(JournalShowResult))]
+[JsonSerializable(typeof(JournalShowFilters))]
+[JsonSerializable(typeof(JournalEntry))]
+[JsonSerializable(typeof(JournalEntry[]))]
+[JsonSerializable(typeof(JournalOutcome))]
+[JsonSerializable(typeof(JournalExportResult))]
 [JsonSerializable(typeof(HealthResult))]
 [JsonSerializable(typeof(HealthCheckResult))]
 [JsonSerializable(typeof(ConfigValidationResult))]

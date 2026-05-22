@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Journal;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Infrastructure.Research;
 using Polyphony.Postconditions;
@@ -44,6 +45,8 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<PhaseDetector>();
         services.AddSingleton<HierarchyWalker>();
         services.AddSingleton<TransitionValidator>();
+        services.AddSingleton<IJournalLocator, JournalLocator>();
+        services.AddSingleton<IJournalStore, JournalStore>();
 
         // Sdlc observers — singleton services that wrap IGitClient/IGhClient/IAdoClient/ITwigClient
         // to produce per-RequirementKind observations. Shared by routing-style verbs
