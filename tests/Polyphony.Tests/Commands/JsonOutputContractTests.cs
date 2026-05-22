@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
 using Polyphony.Routing;
 using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.Stubs;
@@ -350,6 +351,200 @@ public sealed class JsonOutputContractTests : CommandTestBase
         result.State.ShouldBe(InProgressState);
         result.Facets.ShouldContain("plannable");
         result.Children.ShouldNotBeNull();
+    }
+
+    // =========================================================================
+    // Journal commands — JSON contract
+    // =========================================================================
+
+    [Fact]
+    public async Task JournalShow_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        var (cmd, store, dispose) = CreateJournalCommands();
+        try
+        {
+            await SeedJournalEntryAsync(store, runId: "run-show", rootId: 3260, workItemId: 3260, action: "branch_ensure_feature", target: "feature/3260", startedAt: 1_700_000_000_000);
+
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Show());
+
+            exitCode.ShouldBe(ExitCodes.Success);
+            output.ShouldContain("\"entries\"");
+            output.ShouldContain("\"count\"");
+            output.ShouldContain("\"filters\"");
+            output.ShouldContain("\"run_id\"");
+            output.ShouldContain("\"work_item_id\"");
+            output.ShouldContain("\"started_at\"");
+
+            AssertNoPascalCase(output, "Entries");
+            AssertNoPascalCase(output, "Count");
+            AssertNoPascalCase(output, "Filters");
+            AssertNoPascalCase(output, "RunId");
+            AssertNoPascalCase(output, "WorkItemId");
+            AssertNoPascalCase(output, "StartedAt");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalShow_NullFieldsOmitted_WhenWritingNull()
+    {
+        var (cmd, store, dispose) = CreateJournalCommands();
+        try
+        {
+            await store.RecordStartAsync(
+                new JournalEntryStart
+                {
+                    RunId = "run-null",
+                    RootId = 3260,
+                    WorkItemId = 3260,
+                    Action = "branch_ensure_feature",
+                    Target = "feature/3260",
+                    StartedAt = 1_700_000_000_000,
+                },
+                CancellationToken.None);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Show());
+
+            output.ShouldNotContain("\"finished_at\"");
+            output.ShouldNotContain("\"outcome\"");
+            output.ShouldNotContain("\"error_code\"");
+            output.ShouldNotContain("\"error_message\"");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalShow_DeserializationRoundTrip_FieldsMapped()
+    {
+        var (cmd, store, dispose) = CreateJournalCommands();
+        try
+        {
+            await SeedJournalEntryAsync(store, runId: "run-roundtrip", rootId: 3260, workItemId: 3260, action: "branch_ensure_feature", target: "feature/3260", startedAt: 1_700_000_000_000);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Show(workItem: 3260));
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.JournalShowResult);
+
+            result.ShouldNotBeNull();
+            result.Count.ShouldBe(1);
+            result.Filters.WorkItem.ShouldBe(3260);
+            result.Entries[0].RunId.ShouldBe("run-roundtrip");
+            result.Entries[0].Outcome.ShouldBe(JournalOutcome.Success);
+            result.Entries[0].Target.ShouldBe("feature/3260");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalShow_StoreError_ReturnsErrorJson_WithCacheErrorExitCode()
+    {
+        var cmd = new JournalCommands(new ThrowingJournalStore(queryError: "query failed"));
+
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Show());
+
+        exitCode.ShouldBe(ExitCodes.CacheError);
+        var doc = JsonDocument.Parse(output);
+        var error = doc.RootElement.GetProperty("error").GetString();
+        error.ShouldNotBeNull();
+        error.ShouldContain("query failed");
+    }
+
+    [Fact]
+    public async Task JournalExport_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        var (cmd, store, dispose) = CreateJournalCommands();
+        try
+        {
+            await SeedJournalEntryAsync(store, runId: "run-export", rootId: 3260, workItemId: 3260, action: "branch_ensure_feature", target: "feature/3260", startedAt: 1_700_000_000_000);
+            var destination = Path.Combine(Path.GetTempPath(), $"polyphony-journal-contract-{Guid.NewGuid():N}.db");
+            try
+            {
+                var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Export(destination));
+
+                exitCode.ShouldBe(ExitCodes.Success);
+                output.ShouldContain("\"source_path\"");
+                output.ShouldContain("\"destination_path\"");
+                output.ShouldContain("\"bytes_copied\"");
+
+                AssertNoPascalCase(output, "SourcePath");
+                AssertNoPascalCase(output, "DestinationPath");
+                AssertNoPascalCase(output, "BytesCopied");
+            }
+            finally
+            {
+                try { if (File.Exists(destination)) File.Delete(destination); } catch { }
+            }
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public void JournalExport_NullFieldsOmitted_WhenWritingNull()
+    {
+        var result = new JournalExportResult
+        {
+            SourcePath = "source.db",
+            DestinationPath = "dest.db",
+            BytesCopied = 123,
+        };
+
+        var json = JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.JournalExportResult);
+
+        json.ShouldNotContain("null");
+    }
+
+    [Fact]
+    public async Task JournalExport_DeserializationRoundTrip_FieldsMapped()
+    {
+        var (cmd, store, dispose) = CreateJournalCommands();
+        try
+        {
+            await SeedJournalEntryAsync(store, runId: "run-export-roundtrip", rootId: 3260, workItemId: 3260, action: "branch_ensure_feature", target: "feature/3260", startedAt: 1_700_000_000_000);
+            var destination = Path.Combine(Path.GetTempPath(), $"polyphony-journal-contract-roundtrip-{Guid.NewGuid():N}.db");
+            try
+            {
+                var (_, output) = await CaptureConsoleAsync(() => cmd.Export(destination));
+                var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.JournalExportResult);
+
+                result.ShouldNotBeNull();
+                result.SourcePath.ShouldBe(store.DatabasePath);
+                result.DestinationPath.ShouldBe(Path.GetFullPath(destination));
+                result.BytesCopied.ShouldBe(new FileInfo(destination).Length);
+            }
+            finally
+            {
+                try { if (File.Exists(destination)) File.Delete(destination); } catch { }
+            }
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalExport_StoreError_ReturnsErrorJson_WithCacheErrorExitCode()
+    {
+        var cmd = new JournalCommands(new ThrowingJournalStore(exportError: "export failed"));
+
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Export("out.db"));
+
+        exitCode.ShouldBe(ExitCodes.CacheError);
+        var doc = JsonDocument.Parse(output);
+        var error = doc.RootElement.GetProperty("error").GetString();
+        error.ShouldNotBeNull();
+        error.ShouldContain("export failed");
     }
 
     // =========================================================================
@@ -1358,6 +1553,48 @@ public sealed class JsonOutputContractTests : CommandTestBase
             new AgentCommands(Repository, config),
             policyPath,
             () => { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } });
+    }
+
+    private static (JournalCommands Cmd, JournalStore Store, Action Dispose) CreateJournalCommands()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"polyphony-journal-contract-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var store = new JournalStore(Path.Combine(dir, ".polyphony-state", "journal.db"));
+        return (
+            new JournalCommands(store),
+            store,
+            () => { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } });
+    }
+
+    private static async Task<long> SeedJournalEntryAsync(JournalStore store, string runId, int? rootId, int? workItemId, string action, string target, long startedAt)
+    {
+        var actionId = await store.RecordStartAsync(
+            new JournalEntryStart
+            {
+                RunId = runId,
+                RootId = rootId,
+                WorkItemId = workItemId,
+                Action = action,
+                Target = target,
+                StartedAt = startedAt,
+            },
+            CancellationToken.None);
+
+        await store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, CancellationToken.None);
+        return actionId;
+    }
+
+    private sealed class ThrowingJournalStore(string? queryError = null, string? exportError = null) : IJournalStore
+    {
+        public string DatabasePath => "journal.db";
+
+        public Task<long> RecordStartAsync(JournalEntryStart entry, CancellationToken ct) => throw new NotSupportedException();
+
+        public Task RecordEndAsync(long actionId, JournalOutcome outcome, string? errorCode, string? errorMessage, string? payloadJson, CancellationToken ct) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<JournalEntry>> QueryAsync(JournalQuery query, CancellationToken ct) => throw new InvalidOperationException(queryError ?? "query failed");
+
+        public Task ExportAsync(string destinationPath, CancellationToken ct) => throw new InvalidOperationException(exportError ?? "export failed");
     }
 
     private WorklistCommands CreateWorklistCommands()
