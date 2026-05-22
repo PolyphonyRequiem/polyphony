@@ -2,6 +2,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Routing;
 using Polyphony.Tagging;
 using Twig.Domain.Interfaces;
@@ -23,11 +25,15 @@ namespace Polyphony.Commands;
 /// failures) emit JSON with <c>error</c> set and exit non-zero.
 /// </summary>
 [VerbGroup("scope")]
-public sealed class ScopeCommands(
+public sealed partial class ScopeCommands(
     ITwigClient twig,
     IWorkItemRepository repository,
-    HierarchyWalker walker)
+    HierarchyWalker walker,
+    RunContext? runContext = null,
+    JournaledActionDecorator? journalDecorator = null)
 {
+    private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
+    private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
     /// <summary>
     /// Reads the scope disposition for one work item. Returns
     /// <c>{ work_item_id, in_scope, is_root, tags[] }</c>.
@@ -150,12 +156,30 @@ public sealed class ScopeCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("tag")]
     [VerbResult(typeof(ScopeMutationResult))]
+    [JournaledAction(Action = "scope_tag")]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
+    [MayObserveResource(ResourceKind.AdoWorkItem)]
     public Task<int> Tag(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("scope tag",
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
             return Task.FromResult(halt);
-        return TagMutationAsync(workItem, PolyphonyTags.InScope, add: true, ct);
+
+        return JournalCommandSupport.RunWithCapturedResultAsync<ScopeMutationResult, TagMutationPayload>(
+            _journalDecorator,
+            _runContext,
+            "scope_tag",
+            JournalCommandSupport.WorkItemTarget(workItem),
+            innerCt => TagMutationCoreAsync(workItem, PolyphonyTags.InScope, add: true, innerCt),
+            PolyphonyJsonContext.Default.ScopeMutationResult,
+            (exitCode, result) => CreateTagMutationPayload(workItem, PolyphonyTags.InScope, add: true, exitCode, result),
+            PolyphonyJsonContext.Default.TagMutationPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectTagMutationEffects,
+            ct,
+            rootId: workItem,
+            workItemId: workItem);
     }
 
     /// <summary>
@@ -169,15 +193,33 @@ public sealed class ScopeCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("untag")]
     [VerbResult(typeof(ScopeMutationResult))]
+    [JournaledAction(Action = "scope_untag")]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
+    [MayObserveResource(ResourceKind.AdoWorkItem)]
     public Task<int> Untag(int workItem = RequiredInput.MissingInt, CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("scope untag",
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
             return Task.FromResult(halt);
-        return TagMutationAsync(workItem, PolyphonyTags.InScope, add: false, ct);
+
+        return JournalCommandSupport.RunWithCapturedResultAsync<ScopeMutationResult, TagMutationPayload>(
+            _journalDecorator,
+            _runContext,
+            "scope_untag",
+            JournalCommandSupport.WorkItemTarget(workItem),
+            innerCt => TagMutationCoreAsync(workItem, PolyphonyTags.InScope, add: false, innerCt),
+            PolyphonyJsonContext.Default.ScopeMutationResult,
+            (exitCode, result) => CreateTagMutationPayload(workItem, PolyphonyTags.InScope, add: false, exitCode, result),
+            PolyphonyJsonContext.Default.TagMutationPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectTagMutationEffects,
+            ct,
+            rootId: workItem,
+            workItemId: workItem);
     }
 
-    internal async Task<int> TagMutationAsync(int workItem, string tag, bool add, CancellationToken ct)
+    internal async Task<int> TagMutationCoreAsync(int workItem, string tag, bool add, CancellationToken ct)
     {
         await twig.SyncAsync(ct).ConfigureAwait(false);
 
@@ -263,4 +305,18 @@ public sealed class ScopeCommands(
 
     private static void EmitMutation(ScopeMutationResult r) =>
         Console.WriteLine(JsonSerializer.Serialize(r, PolyphonyJsonContext.Default.ScopeMutationResult));
+
+    private static TagMutationPayload CreateTagMutationPayload(int workItem, string tag, bool add, int exitCode, ScopeMutationResult? result)
+        => new()
+        {
+            WorkItemId = workItem,
+            Tag = tag,
+            EnsurePresent = add,
+            TagsBefore = result?.TagsBefore ?? [],
+            TagsAfter = result?.TagsAfter ?? [],
+            Succeeded = exitCode == ExitCodes.Success && string.IsNullOrEmpty(result?.Error),
+            WasMutated = result?.Changed ?? false,
+            AlreadyInDesiredState = !(result?.Changed ?? false),
+            Error = result?.Error,
+        };
 }

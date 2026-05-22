@@ -15,4 +15,5 @@ public static class ResourceKind
     public const string AdoWorkItemState = "ado_work_item_state";
     public const string ManifestFile = "manifest_file";
     public const string PlanFile = "plan_file";
+    public const string LockFile = "lock_file";
 }

@@ -10,10 +10,21 @@ namespace Polyphony.Tests.Journal;
 public sealed class JournalEffectContractTests
 {
     [Fact]
-    public void JournaledBranchAndPrActions_DeclareStaticResourceCapabilities()
+    public void JournaledActions_DeclareStaticResourceCapabilities()
     {
-        var missingCapabilities = GetJournaledMethods(typeof(BranchCommands))
-            .Concat(GetJournaledMethods(typeof(PrCommands)))
+        var missingCapabilities = new[]
+            {
+                typeof(BranchCommands),
+                typeof(PrCommands),
+                typeof(ScopeCommands),
+                typeof(RootCommands),
+                typeof(LockCommands),
+                typeof(ManifestCommands),
+                typeof(WorktreeCommands),
+                typeof(ResetCommands),
+                typeof(PlanCommands),
+            }
+            .SelectMany(GetJournaledMethods)
             .Where(method => !method.GetCustomAttributes<MutatesResourceAttribute>().Any()
                 && !method.GetCustomAttributes<MayObserveResourceAttribute>().Any())
             .Select(method => $"{method.DeclaringType!.Name}.{method.Name}")
@@ -92,6 +103,120 @@ public sealed class JournalEffectContractTests
                 WasMutated = false,
                 Stale = false,
             }),
+            InvokeSelector(typeof(WorktreeCommands), "SelectWorktreeAddEffects", new WorktreeAddPayload
+            {
+                Branch = "feature/100",
+                Path = "C:/wt/100",
+                GitRef = "origin/main",
+                Succeeded = true,
+                WasMutated = true,
+            }),
+            InvokeSelector(typeof(WorktreeCommands), "SelectWorktreeCreateEffects", new WorktreeCreatePayload
+            {
+                RootId = 100,
+                Branch = "plan/100-200",
+                WorktreePath = "C:/wt/plan-100-200",
+                Slug = "plan-100-200",
+                Outcome = "idempotent",
+                Succeeded = true,
+                WasMutated = false,
+                RootRoot = "C:/polyphony-runs/root-100",
+            }),
+            InvokeSelector(typeof(LockCommands), "SelectLockAcquireEffects", new LockMutationPayload
+            {
+                RootId = 100,
+                Path = "C:/polyphony-runs/root-100/.lock",
+                ResultAction = "acquired",
+                Succeeded = true,
+                WasMutated = true,
+            }),
+            InvokeSelector(typeof(ManifestCommands), "SelectManifestMutationEffects", new ManifestMutationPayload
+            {
+                RootId = 100,
+                Path = "C:/repo/.polyphony-config/run-manifest.json",
+                PathSource = "explicit",
+                ResultAction = "init_created",
+                Succeeded = true,
+                WasMutated = true,
+            }),
+            InvokeSelector(typeof(PlanCommands), "SelectPlanSeedChildrenEffects", new PlanSeedChildrenPayload
+            {
+                WorkItemId = 100,
+                ChildCount = 1,
+                SeededItems = [new SeedReconciliation { WorkItemId = 200, ChildId = "task-1", MatchedBy = "created" }],
+                ReusedItems = [],
+                Errors = [],
+                Warnings = [],
+                PlannedTagMutated = true,
+                PlannedTagAlreadyPresent = false,
+                RootFacets = ["implementable"],
+                FacetsTagMutated = true,
+                Succeeded = true,
+                WasMutated = true,
+            }),
+            InvokeSelector(typeof(PlanCommands), "SelectPlanRebaseStaleDescendantEffects", new PlanRebaseStaleDescendantPayload
+            {
+                RootId = 100,
+                ItemId = 200,
+                ParentItemId = 100,
+                PrNumber = 77,
+                PrUrl = "https://github.com/owner/repo/pull/77",
+                HeadBranch = "plan/100-200",
+                ParentPlanBranch = "plan/100",
+                Outcome = "rebased",
+                OldHeadSha = "abc",
+                NewHeadSha = "def",
+                BodyUpdated = true,
+                ManifestRecorded = true,
+                ManifestPushed = true,
+                CommentPosted = false,
+                ConflictFiles = [],
+                Warnings = [],
+                Succeeded = true,
+                WasMutated = true,
+            }),
+            InvokeSelector(typeof(PlanCommands), "SelectPlanRecreateStaleDescendantEffects", new PlanRecreateStaleDescendantPayload
+            {
+                RootId = 100,
+                ItemId = 200,
+                ParentItemId = 100,
+                OldPrNumber = 77,
+                OldPrUrl = "https://github.com/owner/repo/pull/77",
+                OldHeadBranch = "plan/100-200",
+                ParentPlanBranch = "plan/100",
+                Outcome = "recreated",
+                NewPrNumber = 78,
+                NewPrUrl = "https://github.com/owner/repo/pull/78",
+                NewHeadBranch = "plan/100-200-r2",
+                OldPrClosed = true,
+                OldBranchDeleted = true,
+                NewBranchCreated = true,
+                NewPrOpened = true,
+                ManifestRecorded = true,
+                ManifestPushed = true,
+                Warnings = [],
+                Succeeded = true,
+                WasMutated = true,
+            }),
+            InvokeSelector(typeof(ResetCommands), "SelectResetBranchesEffects", new ResetBranchesPayload
+            {
+                Root = 100,
+                DryRun = false,
+                Succeeded = true,
+                WasMutated = true,
+                DeletedBranches = [new ResetDeletedBranch { Branch = "plan/100", DeletedLocal = true, DeletedRemote = true }],
+                FailedBranches = [],
+            }),
+            InvokeSelector(typeof(ResetCommands), "SelectResetStateEffects", new ResetStatePayload
+            {
+                Root = 100,
+                DryRun = false,
+                Succeeded = true,
+                WasMutated = true,
+                PreviousWatermark = "2024-01-01T00:00:00.000Z",
+                NewWatermark = "2024-02-01T00:00:00.000Z",
+                RemovedDuplicateTags = 1,
+            }),
         }.SelectMany(effectSet => effectSet).ToArray();
 
         effects.ShouldNotBeEmpty();
@@ -104,6 +229,11 @@ public sealed class JournalEffectContractTests
         foreach (var effect in effects.Where(effect => effect.Mutation == ResourceMutation.NoChangedExternalAlreadyPresent))
         {
             effect.PolyphonyOwned.ShouldBeFalse();
+        }
+
+        foreach (var effect in effects.Where(effect => effect.Mutation == ResourceMutation.DeletedNow))
+        {
+            effect.PolyphonyOwned.ShouldBeTrue();
         }
     }
 

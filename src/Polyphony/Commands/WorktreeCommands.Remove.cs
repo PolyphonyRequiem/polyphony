@@ -1,6 +1,8 @@
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -18,15 +20,44 @@ public sealed partial class WorktreeCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("remove")]
     [VerbResult(typeof(WorktreeRemoveResult))]
-    public async Task<int> Remove(
+    [JournaledAction(Action = "worktree_remove")]
+    [MutatesResource(ResourceKind.GitWorktree)]
+    public Task<int> Remove(
         string path = "",
         bool force = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("worktree remove",
             ("--path", string.IsNullOrEmpty(path))) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<WorktreeRemoveResult, WorktreeRemovePayload>(
+            _journalDecorator,
+            _runContext,
+            "worktree_remove",
+            path,
+            innerCt => RemoveCoreAsync(path, force, innerCt),
+            PolyphonyJsonContext.Default.WorktreeRemoveResult,
+            (_, result) => new WorktreeRemovePayload
+            {
+                Path = result?.Path ?? path,
+                Force = result?.Force ?? force,
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && string.IsNullOrEmpty(result.Error),
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.WorktreeRemovePayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectWorktreeRemoveEffects,
+            ct);
+    }
+
+    private async Task<int> RemoveCoreAsync(
+        string path,
+        bool force,
+        CancellationToken ct)
+    {
         try
         {
             if (string.IsNullOrWhiteSpace(path))

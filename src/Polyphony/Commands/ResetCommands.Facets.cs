@@ -1,6 +1,8 @@
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Tagging;
 
 namespace Polyphony.Commands;
@@ -58,15 +60,50 @@ public sealed partial class ResetCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("facets")]
     [VerbResult(typeof(ResetFacetsResult))]
-    public async Task<int> ResetFacets(
+    [JournaledAction(Action = "reset_facets")]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
+    public Task<int> ResetFacets(
         int root = RequiredInput.MissingInt,
         bool execute = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("reset facets",
             ("--root", root == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ResetFacetsResult, ResetFacetsPayload>(
+            _journalDecorator,
+            _runContext,
+            "reset_facets",
+            $"root:{root}",
+            innerCt => ResetFacetsCoreAsync(root, execute, innerCt),
+            PolyphonyJsonContext.Default.ResetFacetsResult,
+            (_, result) => new ResetFacetsPayload
+            {
+                Root = result?.Root ?? root,
+                DryRun = result?.DryRun ?? !execute,
+                Succeeded = result?.Success ?? false,
+                WasMutated = result is not null && !result.DryRun && result.Items.Any(item => item.Verified == true),
+                ItemsScanned = result?.ItemsScanned ?? 0,
+                ItemsModified = result?.ItemsModified ?? 0,
+                TotalFacetTagsRemoved = result?.TotalFacetTagsRemoved ?? 0,
+                TotalPlannedTagsRemoved = result?.TotalPlannedTagsRemoved ?? 0,
+                Items = result?.Items ?? [],
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ResetFacetsPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectResetFacetsEffects,
+            ct,
+            rootId: root);
+    }
+
+    private async Task<int> ResetFacetsCoreAsync(
+        int root,
+        bool execute,
+        CancellationToken ct)
+    {
         ResetFacetsResult result;
         try
         {

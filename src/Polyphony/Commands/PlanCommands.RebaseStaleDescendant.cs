@@ -4,6 +4,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Locking;
 using Polyphony.Manifest;
@@ -58,7 +60,12 @@ public sealed partial class PlanCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("rebase-stale-descendant")]
     [VerbResult(typeof(PlanRebaseStaleDescendantResult))]
-    public async Task<int> RebaseStaleDescendant(
+    [JournaledAction(Action = "plan_rebase_stale_descendant")]
+    [MutatesResource(ResourceKind.GitBranch)]
+    [MutatesResource(ResourceKind.GitHubPr)]
+    [MutatesResource(ResourceKind.AdoPr)]
+    [MutatesResource(ResourceKind.ManifestFile)]
+    public Task<int> RebaseStaleDescendant(
         int rootId = RequiredInput.MissingInt,
         int itemId = RequiredInput.MissingInt,
         int parentItemId = RequiredInput.MissingInt,
@@ -78,8 +85,62 @@ public sealed partial class PlanCommands
             ("--item-id", itemId == RequiredInput.MissingInt),
             ("--parent-item-id", parentItemId == RequiredInput.MissingInt),
             ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<PlanRebaseStaleDescendantResult, PlanRebaseStaleDescendantPayload>(
+            _journalDecorator,
+            _runContext,
+            "plan_rebase_stale_descendant",
+            $"plan-pr:{prNumber}",
+            innerCt => RebaseStaleDescendantCoreAsync(rootId, itemId, parentItemId, prNumber, ancestorIds, manifestPath, by, lockTtlHours, platform, organization, project, repositoryOverride, innerCt),
+            PolyphonyJsonContext.Default.PlanRebaseStaleDescendantResult,
+            (_, result) => new PlanRebaseStaleDescendantPayload
+            {
+                RootId = result?.RootId ?? rootId,
+                ItemId = result?.ItemId ?? itemId,
+                ParentItemId = result?.ParentItemId ?? parentItemId,
+                PrNumber = result?.PrNumber ?? prNumber,
+                PrUrl = result?.PrUrl ?? string.Empty,
+                HeadBranch = result?.HeadBranch ?? string.Empty,
+                ParentPlanBranch = result?.ParentPlanBranch ?? string.Empty,
+                Outcome = result?.Outcome ?? string.Empty,
+                OldHeadSha = result?.OldHeadSha,
+                NewHeadSha = result?.NewHeadSha,
+                BodyUpdated = result?.BodyUpdated ?? false,
+                ManifestRecorded = result?.ManifestRecorded ?? false,
+                ManifestPushed = result?.ManifestPushed ?? false,
+                CommentPosted = result?.CommentPosted ?? false,
+                ConflictFiles = result?.ConflictFiles ?? [],
+                Warnings = result?.Warnings ?? [],
+                Succeeded = result is not null && string.IsNullOrEmpty(result.ErrorCode) && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && (result.Outcome == "rebased" || result.BodyUpdated || result.ManifestRecorded || !string.IsNullOrEmpty(result.NewHeadSha)),
+                ErrorCode = result?.ErrorCode,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.PlanRebaseStaleDescendantPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectPlanRebaseStaleDescendantEffects,
+            ct,
+            rootId: rootId,
+            workItemId: itemId);
+    }
+
+    private async Task<int> RebaseStaleDescendantCoreAsync(
+        int rootId,
+        int itemId,
+        int parentItemId,
+        int prNumber,
+        string ancestorIds,
+        string manifestPath,
+        string by,
+        int lockTtlHours,
+        string platform,
+        string organization,
+        string project,
+        string repositoryOverride,
+        CancellationToken ct)
+    {
         // ── 1. Validate inputs + derive head/parent branches. ──────────────
         if (!Polyphony.Branching.RootId.TryParse(rootId, out var root))
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "invalid_argument",

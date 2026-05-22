@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Models;
 
 namespace Polyphony.Commands;
@@ -42,7 +44,9 @@ public sealed partial class PlanCommands
     /// <returns>Always <see cref="ExitCodes.Success"/>; routing is via JSON payload.</returns>
     [Command("write-plan")]
     [VerbResult(typeof(PlanWritePlanResult))]
-    public async Task<int> WritePlan(
+    [JournaledAction(Action = "plan_write_plan")]
+    [MutatesResource(ResourceKind.PlanFile)]
+    public Task<int> WritePlan(
         int itemId = RequiredInput.MissingInt,
         string contentJson = "",
         string plansDir = "plans",
@@ -52,8 +56,52 @@ public sealed partial class PlanCommands
         if (RequiredInput.HaltIfMissing("plan write-plan",
             ("--item-id", itemId == RequiredInput.MissingInt),
             ("--content-json", string.IsNullOrEmpty(contentJson))) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        var planPath = Path.GetFullPath(Path.Combine(plansDir, $"plan-{itemId}.md"));
+        var childrenPath = Path.GetFullPath(Path.Combine(plansDir, $"plan-{itemId}.children.json"));
+        var pathExistedBefore = File.Exists(planPath);
+        var childrenPathExistedBefore = !string.IsNullOrEmpty(childrenJson) && File.Exists(childrenPath);
+
+        return JournalCommandSupport.RunWithCapturedResultAsync<PlanWritePlanResult, PlanWritePlanPayload>(
+            _journalDecorator,
+            _runContext,
+            "plan_write_plan",
+            planPath,
+            innerCt => WritePlanCoreAsync(itemId, contentJson, plansDir, childrenJson, innerCt),
+            PolyphonyJsonContext.Default.PlanWritePlanResult,
+            (_, result) => new PlanWritePlanPayload
+            {
+                ItemId = result?.ItemId ?? itemId,
+                Path = result?.Path ?? planPath,
+                PathExistedBefore = pathExistedBefore,
+                ContentChanged = result is not null && !result.Unchanged,
+                ContentSha256 = result?.ContentSha256,
+                ChildrenPath = string.IsNullOrEmpty(result?.ChildrenPath) ? null : result.ChildrenPath,
+                ChildrenPathExistedBefore = childrenPathExistedBefore,
+                ChildrenChanged = result is not null && !result.ChildrenSkipped && !result.ChildrenUnchanged,
+                ChildrenSkipped = result?.ChildrenSkipped ?? true,
+                ChildrenSha256 = string.IsNullOrEmpty(result?.ChildrenSha256) ? null : result.ChildrenSha256,
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && (!result.Unchanged || (!result.ChildrenSkipped && !result.ChildrenUnchanged)),
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.PlanWritePlanPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectPlanWritePlanEffects,
+            ct,
+            rootId: itemId,
+            workItemId: itemId);
+    }
+
+    private async Task<int> WritePlanCoreAsync(
+        int itemId,
+        string contentJson,
+        string plansDir,
+        string childrenJson,
+        CancellationToken ct)
+    {
         if (itemId <= 0)
         {
             EmitWriteError(itemId, plansDir, $"--item-id must be positive (got {itemId})");

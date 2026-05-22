@@ -3,6 +3,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Worktrees;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -43,10 +45,42 @@ public sealed partial class WorktreeCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("gc")]
     [VerbResult(typeof(WorktreeGcResult))]
-    public async Task<int> Gc(
+    [JournaledAction(Action = "worktree_gc")]
+    [MutatesResource(ResourceKind.GitWorktree)]
+    public Task<int> Gc(
         int root = 0,
         bool commit = false,
         CancellationToken ct = default)
+        => JournalCommandSupport.RunWithCapturedResultAsync<WorktreeGcResult, WorktreeGcPayload>(
+            _journalDecorator,
+            _runContext,
+            "worktree_gc",
+            root > 0 ? $"root:{root}" : "runs-root",
+            innerCt => GcCoreAsync(root, commit, innerCt),
+            PolyphonyJsonContext.Default.WorktreeGcResult,
+            (_, result) => new WorktreeGcPayload
+            {
+                DryRun = result?.DryRun ?? !commit,
+                RunsRoot = result?.RunsRoot ?? string.Empty,
+                Root = result?.Root ?? root,
+                Candidates = result?.Candidates ?? [],
+                RemovedCount = result?.RemovedCount ?? 0,
+                FailedCount = result?.FailedCount ?? 0,
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && !result.DryRun && result.RemovedCount > 0,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.WorktreeGcPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectWorktreeGcEffects,
+            ct,
+            rootId: root > 0 ? root : null);
+
+    private async Task<int> GcCoreAsync(
+        int root,
+        bool commit,
+        CancellationToken ct)
     {
         try
         {

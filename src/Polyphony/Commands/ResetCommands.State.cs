@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Tagging;
 
 namespace Polyphony.Commands;
@@ -53,15 +55,49 @@ public sealed partial class ResetCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("state")]
     [VerbResult(typeof(ResetStateResult))]
-    public async Task<int> ResetState(
+    [JournaledAction(Action = "reset_state")]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
+    public Task<int> ResetState(
         int root = RequiredInput.MissingInt,
         bool execute = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("reset state",
             ("--root", root == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ResetStateResult, ResetStatePayload>(
+            _journalDecorator,
+            _runContext,
+            "reset_state",
+            JournalCommandSupport.WorkItemTarget(root),
+            innerCt => ResetStateCoreAsync(root, execute, innerCt),
+            PolyphonyJsonContext.Default.ResetStateResult,
+            (_, result) => new ResetStatePayload
+            {
+                Root = result?.Root ?? root,
+                DryRun = result?.DryRun ?? !execute,
+                Succeeded = result?.Success ?? false,
+                WasMutated = result is not null && !result.DryRun && result.Success,
+                PreviousWatermark = result?.PreviousWatermark,
+                NewWatermark = result?.NewWatermark,
+                RemovedDuplicateTags = result?.RemovedDuplicateTags ?? 0,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ResetStatePayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectResetStateEffects,
+            ct,
+            rootId: root,
+            workItemId: root);
+    }
+
+    private async Task<int> ResetStateCoreAsync(
+        int root,
+        bool execute,
+        CancellationToken ct)
+    {
         ResetStateResult result;
         try
         {

@@ -5,6 +5,8 @@ using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Paths;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Postconditions;
 using Polyphony.Routing;
 using Polyphony.Sdlc.Observers;
@@ -43,8 +45,12 @@ public sealed partial class PlanCommands(
     IPostconditionVerifier postconditions,
     PolyphonyStatePaths statePaths,
     RepoIdentityResolver repoIdentityResolver,
-    PullRequestReader pullRequestReader)
+    PullRequestReader pullRequestReader,
+    RunContext? runContext = null,
+    JournaledActionDecorator? journalDecorator = null)
 {
+    private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
+    private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
     /// <summary>
     /// Validates current recursion depth against a configured maximum. Always exits 0.
     /// </summary>

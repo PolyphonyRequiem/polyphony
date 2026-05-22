@@ -1,6 +1,8 @@
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -48,7 +50,14 @@ public sealed partial class ResetCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("root")]
     [VerbResult(typeof(ResetApexResult))]
-    public async Task<int> ResetRoot(
+    [JournaledAction(Action = "reset_root")]
+    [MutatesResource(ResourceKind.GitHubPr)]
+    [MutatesResource(ResourceKind.AdoPr)]
+    [MutatesResource(ResourceKind.GitWorktree)]
+    [MutatesResource(ResourceKind.GitBranch)]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
+    [MayObserveResource(ResourceKind.ManifestFile)]
+    public Task<int> ResetRoot(
         int root = RequiredInput.MissingInt,
         bool execute = false,
         bool skipState = false,
@@ -57,8 +66,42 @@ public sealed partial class ResetCommands
     {
         if (RequiredInput.HaltIfMissing("reset root",
             ("--root", root == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ResetApexResult, ResetRootPayload>(
+            _journalDecorator,
+            _runContext,
+            "reset_root",
+            JournalCommandSupport.WorkItemTarget(root),
+            innerCt => ResetRootCoreAsync(root, execute, skipState, comment, innerCt),
+            PolyphonyJsonContext.Default.ResetApexResult,
+            (_, result) => new ResetRootPayload
+            {
+                Root = result?.Root ?? root,
+                DryRun = result?.DryRun ?? !execute,
+                Succeeded = result?.Success ?? false,
+                WasMutated = result is not null && !result.DryRun && result.StepsCompleted.Any(static step => step is "prs" or "worktrees" or "branches" or "facets" or "state"),
+                StepsCompleted = result?.StepsCompleted ?? [],
+                StepsFailed = result?.StepsFailed ?? [],
+                StateSkipped = result?.StateSkipped ?? skipState,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ResetRootPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectResetRootEffects,
+            ct,
+            rootId: root,
+            workItemId: root);
+    }
+
+    private async Task<int> ResetRootCoreAsync(
+        int root,
+        bool execute,
+        bool skipState,
+        string comment,
+        CancellationToken ct)
+    {
         var stepsCompleted = new List<string>();
         var stepsFailed = new List<string>();
         ResetPrsResult? prs = null;

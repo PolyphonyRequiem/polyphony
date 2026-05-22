@@ -1,6 +1,8 @@
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
@@ -46,13 +48,17 @@ public sealed partial class ResetCommands(
     IGitClient git,
     PullRequestReader pullRequestReader,
     PlanObserver planObserver,
-    Polyphony.Routing.HierarchyWalker walker)
+    Polyphony.Routing.HierarchyWalker walker,
+    RunContext? runContext = null,
+    JournaledActionDecorator? journalDecorator = null)
 {
     private readonly ITwigClient _twig = twig;
     private readonly IGitClient _git = git;
     private readonly PullRequestReader _pullRequestReader = pullRequestReader;
     private readonly PlanObserver _planObserver = planObserver;
     private readonly Polyphony.Routing.HierarchyWalker _walker = walker;
+    private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
+    private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
 
     /// <summary>
     /// Canonical root-scoped branch prefix set. Used by <c>reset prs</c>

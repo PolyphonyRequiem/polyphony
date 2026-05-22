@@ -192,6 +192,33 @@ public sealed partial class BranchCommands
         ];
     }
 
+    private static IReadOnlyList<JournalResourceEffect> SelectCloseScopeEffects(BranchCloseScopePayload? payload)
+    {
+        if (payload is null || !payload.Succeeded)
+        {
+            return [];
+        }
+
+        return payload.ClosedItems
+            .Select(item => new JournalResourceEffect
+            {
+                Kind = ResourceKind.AdoWorkItemState,
+                Id = WorkItemJournalTarget(item.Id),
+                Intent = ResourceIntent.SetState,
+                Mutation = ResourceMutation.Changed,
+                PolyphonyOwned = true,
+                Platform = "ado",
+                ParentId = WorkItemJournalTarget(payload.RootWorkItemId),
+                Attributes = CreateAttributes(
+                    ("merge_group_name", payload.MergeGroupName),
+                    ("pr_number", payload.PrNumber),
+                    ("target_state", item.TargetState),
+                    ("title", item.Title),
+                    ("ado_workspace", payload.AdoWorkspace)),
+            })
+            .ToArray();
+    }
+
     private static JournalResourceEffect CreateBranchEnsureEffect(
         string branchName,
         string baseBranch,

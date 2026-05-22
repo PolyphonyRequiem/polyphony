@@ -2,6 +2,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Worktrees;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -63,7 +65,9 @@ public sealed partial class WorktreeCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("create")]
     [VerbResult(typeof(WorktreeCreateResult))]
-    public async Task<int> Create(
+    [JournaledAction(Action = "worktree_create")]
+    [MutatesResource(ResourceKind.GitWorktree)]
+    public Task<int> Create(
         int root = RequiredInput.MissingInt,
         string branch = "",
         string @ref = "",
@@ -72,8 +76,43 @@ public sealed partial class WorktreeCommands
         if (RequiredInput.HaltIfMissing("worktree create",
             ("--root", root == RequiredInput.MissingInt),
             ("--branch", string.IsNullOrEmpty(branch))) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<WorktreeCreateResult, WorktreeCreatePayload>(
+            _journalDecorator,
+            _runContext,
+            "worktree_create",
+            branch,
+            innerCt => CreateCoreAsync(root, branch, @ref, innerCt),
+            PolyphonyJsonContext.Default.WorktreeCreateResult,
+            (_, result) => new WorktreeCreatePayload
+            {
+                RootId = result?.RootId ?? root,
+                Branch = result?.Branch ?? branch,
+                Slug = result?.Slug,
+                Ref = result?.Ref ?? (string.IsNullOrEmpty(@ref) ? null : @ref),
+                RootRoot = result?.RootRoot,
+                WorktreePath = result?.WorktreePath,
+                Outcome = result?.Outcome ?? "failed",
+                Reason = result?.Reason,
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && (result.Outcome == "created" || result.Outcome == "attached"),
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.WorktreeCreatePayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectWorktreeCreateEffects,
+            ct,
+            rootId: root);
+    }
+
+    private async Task<int> CreateCoreAsync(
+        int root,
+        string branch,
+        string @ref,
+        CancellationToken ct)
+    {
         var refOrNull = string.IsNullOrEmpty(@ref) ? null : @ref;
 
         if (root <= 0)

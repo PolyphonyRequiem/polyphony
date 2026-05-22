@@ -2,6 +2,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -53,7 +55,10 @@ public sealed partial class ResetCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("prs")]
     [VerbResult(typeof(ResetPrsResult))]
-    public async Task<int> ResetPrs(
+    [JournaledAction(Action = "reset_prs")]
+    [MutatesResource(ResourceKind.GitHubPr)]
+    [MutatesResource(ResourceKind.AdoPr)]
+    public Task<int> ResetPrs(
         int root = RequiredInput.MissingInt,
         bool execute = false,
         string comment = "",
@@ -61,8 +66,40 @@ public sealed partial class ResetCommands
     {
         if (RequiredInput.HaltIfMissing("reset prs",
             ("--root", root == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ResetPrsResult, ResetPrsPayload>(
+            _journalDecorator,
+            _runContext,
+            "reset_prs",
+            $"root:{root}",
+            innerCt => ResetPrsCoreAsync(root, execute, comment, innerCt),
+            PolyphonyJsonContext.Default.ResetPrsResult,
+            (_, result) => new ResetPrsPayload
+            {
+                Root = result?.Root ?? root,
+                DryRun = result?.DryRun ?? !execute,
+                Succeeded = result?.Success ?? false,
+                WasMutated = result is not null && !result.DryRun && result.AbandonedPrs.Count > 0,
+                RepoSlug = result?.RepoSlug ?? string.Empty,
+                AbandonedPrs = result?.AbandonedPrs ?? [],
+                FailedPrs = result?.FailedPrs ?? [],
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ResetPrsPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectResetPrsEffects,
+            ct,
+            rootId: root);
+    }
+
+    private async Task<int> ResetPrsCoreAsync(
+        int root,
+        bool execute,
+        string comment,
+        CancellationToken ct)
+    {
         var commentToPost = string.IsNullOrWhiteSpace(comment) ? DefaultResetComment : comment;
 
         ResetPrsResult result;

@@ -2,6 +2,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Worktrees;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -45,15 +47,49 @@ public sealed partial class ResetCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("worktrees")]
     [VerbResult(typeof(ResetWorktreesResult))]
-    public async Task<int> ResetWorktrees(
+    [JournaledAction(Action = "reset_worktrees")]
+    [MutatesResource(ResourceKind.GitWorktree)]
+    public Task<int> ResetWorktrees(
         int root = RequiredInput.MissingInt,
         bool execute = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("reset worktrees",
             ("--root", root == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ResetWorktreesResult, ResetWorktreesPayload>(
+            _journalDecorator,
+            _runContext,
+            "reset_worktrees",
+            $"root:{root}",
+            innerCt => ResetWorktreesCoreAsync(root, execute, innerCt),
+            PolyphonyJsonContext.Default.ResetWorktreesResult,
+            (_, result) => new ResetWorktreesPayload
+            {
+                Root = result?.Root ?? root,
+                DryRun = result?.DryRun ?? !execute,
+                Succeeded = result?.Success ?? false,
+                WasMutated = result is not null && !result.DryRun && (result.RemovedWorktrees.Count > 0 || result.RootDirDeleted),
+                RootRunsRoot = result?.RootRunsRoot ?? string.Empty,
+                RemovedWorktrees = result?.RemovedWorktrees ?? [],
+                FailedWorktrees = result?.FailedWorktrees ?? [],
+                RootDirDeleted = result?.RootDirDeleted ?? false,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ResetWorktreesPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectResetWorktreesEffects,
+            ct,
+            rootId: root);
+    }
+
+    private async Task<int> ResetWorktreesCoreAsync(
+        int root,
+        bool execute,
+        CancellationToken ct)
+    {
         ResetWorktreesResult result;
         try
         {
