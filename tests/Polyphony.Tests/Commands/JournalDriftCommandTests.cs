@@ -82,6 +82,9 @@ public sealed class JournalDriftCommandTests : CommandTestBase
         result.Findings.ShouldHaveSingleItem();
         result.Findings[0].Classification.ShouldBe(DriftClassifications.ExternalMutation);
         result.Summary.ExternalMutation.ShouldBe(1);
+        result.ResetTargets.ShouldHaveSingleItem();
+        result.ResetTargets[0].Kind.ShouldBe(ResourceKind.GitBranch);
+        result.ResetTargets[0].Id.ShouldBe("feature/3268");
     }
 
     [Fact]

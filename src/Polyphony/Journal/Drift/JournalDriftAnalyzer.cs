@@ -1,5 +1,6 @@
 using Polyphony.Journal.Observers;
 using Polyphony.Journal.Projections;
+using Polyphony.Journal.Reset;
 
 namespace Polyphony.Journal.Drift;
 
@@ -48,6 +49,7 @@ public sealed class JournalDriftAnalyzer(IEnumerable<IResourceObserver> observer
         {
             CurrentExpectedState = currentExpectedState,
             OwnedResources = ownedResources,
+            ObservedResources = observedResources,
             ResetTargets = resetTargets,
             Result = new DriftResult
             {
@@ -61,6 +63,11 @@ public sealed class JournalDriftAnalyzer(IEnumerable<IResourceObserver> observer
                     ExternalMutation = orderedFindings.Count(finding => string.Equals(finding.Classification, DriftClassifications.ExternalMutation, StringComparison.Ordinal)),
                     ExternalCreate = orderedFindings.Count(finding => string.Equals(finding.Classification, DriftClassifications.ExternalCreatePolyphonyNamed, StringComparison.Ordinal)),
                 },
+                ResetTargets = resetTargets.Resources
+                    .Select(ProjectionResetCatalog.ToDescriptor)
+                    .OrderBy(target => target.Kind, StringComparer.Ordinal)
+                    .ThenBy(target => target.Id, StringComparer.Ordinal)
+                    .ToArray(),
             },
         };
     }
@@ -183,6 +190,7 @@ public sealed record JournalDriftAnalysis
 {
     public required CurrentExpectedStateResult CurrentExpectedState { get; init; }
     public required OwnedResourcesResult OwnedResources { get; init; }
+    public required IReadOnlyList<ObservedResourceState> ObservedResources { get; init; }
     public required ResetTargetsResult ResetTargets { get; init; }
     public required DriftResult Result { get; init; }
 }

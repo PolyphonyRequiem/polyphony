@@ -3,6 +3,7 @@ using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Journal;
 using Polyphony.Journal.Payloads;
+using Polyphony.Journal.Reset;
 using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
@@ -36,7 +37,7 @@ namespace Polyphony.Commands;
 ///         the watermark; the others are purely best-effort sweeps.</item>
 /// </list>
 ///
-/// <para><b>Composite ordering</b> (see <see cref="ResetRoot"/>):
+/// <para><b>Composite ordering</b> (see <see cref="ResetApex"/>):
 /// PRs → worktrees → branches → manifest → state. The state stamp lands
 /// LAST so that a crash anywhere in the cleanup chain leaves the system
 /// "still mid-reset" rather than "watermark advanced but PRs/branches
@@ -50,13 +51,15 @@ public sealed partial class ResetCommands(
     PlanObserver planObserver,
     Polyphony.Routing.HierarchyWalker walker,
     RunContext? runContext = null,
-    JournaledActionDecorator? journalDecorator = null)
+    JournaledActionDecorator? journalDecorator = null,
+    ProjectionResetExecutor? projectionResetExecutor = null)
 {
     private readonly ITwigClient _twig = twig;
     private readonly IGitClient _git = git;
     private readonly PullRequestReader _pullRequestReader = pullRequestReader;
     private readonly PlanObserver _planObserver = planObserver;
     private readonly Polyphony.Routing.HierarchyWalker _walker = walker;
+    private readonly ProjectionResetExecutor? _projectionResetExecutor = projectionResetExecutor;
     private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
     private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
 

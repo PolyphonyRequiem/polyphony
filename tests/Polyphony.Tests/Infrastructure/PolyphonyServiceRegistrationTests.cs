@@ -5,6 +5,7 @@ using Polyphony.Configuration;
 using Polyphony.Infrastructure;
 using Polyphony.Journal;
 using Polyphony.Journal.Observers;
+using Polyphony.Journal.Reset;
 using Polyphony.Tests.Configuration;
 using Shouldly;
 using Twig.Domain.Interfaces;
@@ -141,6 +142,32 @@ public sealed class PolyphonyServiceRegistrationTests
         {
             observer.DeferredReason.ShouldNotBeNullOrWhiteSpace();
         }
+    }
+
+    [Fact]
+    public void AddPolyphonyServices_RegistersProjectionResetDeletersForEveryResettableKind()
+    {
+        var services = new ServiceCollection();
+        services.AddPolyphonyServices("nonexistent-config.yaml", twigDir: null);
+        services.AddSingleton(Substitute.For<IWorkItemRepository>());
+        using var provider = services.BuildServiceProvider();
+
+        var deleterKinds = provider.GetServices<IResourceDeleter>()
+            .Select(deleter => deleter.Kind)
+            .OrderBy(kind => kind, StringComparer.Ordinal)
+            .ToArray();
+
+        deleterKinds.ShouldBe(
+        [
+            ResourceKind.AdoPr,
+            ResourceKind.AdoWorkItemTag,
+            ResourceKind.GitBranch,
+            ResourceKind.GitWorktree,
+            ResourceKind.GitHubPr,
+            ResourceKind.LockFile,
+            ResourceKind.ManifestFile,
+            ResourceKind.PlanFile,
+        ]);
     }
 
     /// <summary>
