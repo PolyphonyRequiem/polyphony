@@ -15,7 +15,7 @@ namespace Polyphony.Tests.Commands;
 /// Round-trip tests for the <c>polyphony reset</c> verb family —
 /// <c>reset state</c>, <c>reset prs</c>, <c>reset branches</c>,
 /// <c>reset worktrees</c>, <c>reset manifest</c>, and the
-/// <c>reset root</c> composite.
+/// legacy-pattern composite path used by <c>reset apex --strategy pattern</c>.
 ///
 /// <para>Mirrors the stubbing pattern from
 /// <see cref="BranchCommandsMarkImplMergedTests"/>: real

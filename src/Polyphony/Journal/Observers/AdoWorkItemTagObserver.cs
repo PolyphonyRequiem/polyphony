@@ -35,11 +35,11 @@ public sealed class AdoWorkItemTagObserver(IWorkItemRepository repository) : IRe
 
             var item = await _repository.GetByIdAsync(workItemId, ct).ConfigureAwait(false);
             var tagSet = item is null ? null : ReadTags(item);
-            var exists = tagSet?.Contains(tag) == true;
+            var exists = TryFindObservedTag(tagSet, tag, out var actualTag);
             var matches = resource.Intent switch
             {
                 ResourceIntent.EnsureAbsent => !exists,
-                _ => exists,
+                _ => exists && string.Equals(actualTag, tag, StringComparison.Ordinal),
             };
 
             observations.Add(new ObservedResourceState
@@ -48,7 +48,7 @@ public sealed class AdoWorkItemTagObserver(IWorkItemRepository repository) : IRe
                 Id = resource.Id,
                 Exists = exists,
                 MatchesExpectedState = matches,
-                ActualState = exists ? tag : "missing",
+                ActualState = exists ? actualTag : "missing",
                 ActualAttributes = tagSet is null
                     ? null
                     : ResourceObserverSupport.CreateActualAttributes(("tags", string.Join(';', tagSet))),
@@ -57,13 +57,20 @@ public sealed class AdoWorkItemTagObserver(IWorkItemRepository repository) : IRe
 
         var discovered = new List<DiscoveredResourceState>();
         var expectedIds = expected.Select(resource => resource.Id).ToHashSet(StringComparer.Ordinal);
+        var expectedFamilies = expected
+            .Select(resource => ResourceObserverSupport.TryParseWorkItemTagId(resource.Id, out var workItemId, out var tag)
+                ? (WorkItemId: workItemId, Family: GetTagFamilyKey(tag))
+                : (WorkItemId: 0, Family: string.Empty))
+            .Where(entry => entry.WorkItemId > 0 && entry.Family.Length > 0)
+            .ToHashSet();
         var subtree = await LoadSubtreeAsync(request.RootId, ct).ConfigureAwait(false);
         foreach (var item in subtree)
         {
             foreach (var tag in ReadTags(item).Where(IsPolyphonyTag))
             {
                 var id = $"{item.Id}:{tag}";
-                if (expectedIds.Contains(id))
+                if (expectedIds.Contains(id)
+                    || expectedFamilies.Contains((item.Id, GetTagFamilyKey(tag))))
                 {
                     continue;
                 }
@@ -108,6 +115,40 @@ public sealed class AdoWorkItemTagObserver(IWorkItemRepository repository) : IRe
         {
             await AddRecursiveAsync(child, results, ct).ConfigureAwait(false);
         }
+    }
+
+    private static bool TryFindObservedTag(TagSet? tagSet, string expectedTag, out string actualTag)
+    {
+        actualTag = string.Empty;
+        if (tagSet is null)
+        {
+            return false;
+        }
+
+        if (tagSet.Contains(expectedTag))
+        {
+            actualTag = expectedTag;
+            return true;
+        }
+
+        var family = GetTagFamilyKey(expectedTag);
+        actualTag = tagSet.FirstOrDefault(tag => string.Equals(GetTagFamilyKey(tag), family, StringComparison.Ordinal)) ?? string.Empty;
+        return actualTag.Length > 0;
+    }
+
+    private static string GetTagFamilyKey(string tag)
+    {
+        if (tag.StartsWith(PolyphonyTags.FacetsPrefix + "=", StringComparison.Ordinal))
+        {
+            return PolyphonyTags.FacetsPrefix + "=*";
+        }
+
+        if (tag.StartsWith(PolyphonyTags.RunStartedAtPrefix + "=", StringComparison.Ordinal))
+        {
+            return PolyphonyTags.RunStartedAtPrefix + "=*";
+        }
+
+        return tag;
     }
 
     private static TagSet ReadTags(WorkItem item)

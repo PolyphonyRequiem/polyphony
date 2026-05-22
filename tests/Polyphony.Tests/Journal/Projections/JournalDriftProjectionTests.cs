@@ -176,6 +176,9 @@ public sealed class JournalDriftProjectionTests
         analysis.Result.Summary.ExternalCreate.ShouldBe(1);
         analysis.ResetTargets.Resources.ShouldHaveSingleItem();
         analysis.ResetTargets.Resources[0].Id.ShouldBe("feature/3268");
+        analysis.Result.ResetTargets.ShouldHaveSingleItem();
+        analysis.Result.ResetTargets[0].Kind.ShouldBe(ResourceKind.GitBranch);
+        analysis.Result.ResetTargets[0].Id.ShouldBe("feature/3268");
     }
 
     private static JournalEntry Entry(long id, long startedAt, JournalOutcome outcome, string action, string target, params JournalResourceEffect[] effects)

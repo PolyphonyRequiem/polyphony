@@ -6,6 +6,7 @@ public sealed record DriftResult
     public required int RootId { get; init; }
     public required DriftFinding[] Findings { get; init; }
     public required DriftSummary Summary { get; init; }
+    public required ResetTargetDescriptor[] ResetTargets { get; init; }
 }
 
 public sealed record DriftFinding

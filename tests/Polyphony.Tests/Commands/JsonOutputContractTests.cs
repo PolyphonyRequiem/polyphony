@@ -728,6 +728,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
             result.Findings[0].Kind.ShouldBe(ResourceKind.AdoWorkItem);
             result.Findings[0].Classification.ShouldBe(DriftClassifications.ExternalDelete);
             result.Summary.ExternalDelete.ShouldBe(1);
+            result.ResetTargets.ShouldBeEmpty();
         }
         finally
         {
