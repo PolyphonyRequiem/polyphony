@@ -1,6 +1,6 @@
 # Polyphony Action Journal — Spec & Options
 
-**Status:** Proposal — D1, D2, D6, D7, D12, naming, Phase 1A/1B order decided. Ready to implement.
+**Status:** Proposal — D1, D2, D6, D7, D12, D13, naming, Phase 1A/1B order decided. Phase 1A/1B/2 shipped. Ready to implement Phase 2.5+.
 **Owner:** polyphony-internal architecture
 **Work item:** AB#3254 (parent epic: AB#3253)
 **Companion:** none (does not depend on the conductor `on_error` brief; tracks
@@ -15,6 +15,7 @@ in parallel)
 | D6 — Backfill | Greenfield only. No backfill verb. In-flight runs at cutover are breakable. | 2026-05-21 | See revised D6 below |
 | D7 — Retention | No retention management. Journal lives + dies with the root worktree. | 2026-05-21 | No `journal vacuum` verb |
 | D12 — Artifacts / trust boundary | Journal is a pointer log (git/platform are content stores). Agent-direct mutations are NOT journaled; drift detector surfaces them honestly. | 2026-05-21 | See D12 below |
+| D13 — Effect model + ownership | Each journaled action emits **0..N typed resource effects**, each with `{Kind, Id, Intent, Mutation, PolyphonyOwned, Attributes}`. Verbs declare static capability via `[MutatesResource(...)]`; runtime emits concrete effects. Drift/reset fold effects, not actions. | 2026-05-21 | See D13 below — locks the contract before Phase 3 |
 | Phase 1A / 1B order | **Phase 1A first** (infra-only slice: schema + store + decorator + show/export); 1B (branch-ops journaled) follows in a separate landing | 2026-05-21 | Smaller blast radius; foundation lands clean before any verb gains the attribute |
 | Naming | `journal` | 2026-05-21 | "ledger", "actions log", "audit" all rejected |
 
@@ -447,18 +448,92 @@ without the coupling.
 
 ---
 
+### D13 — Effect model + ownership
+
+**The problem.** Phase 1B and Phase 2 journaled actions with a free-form
+`payload_json`. That works for `polyphony journal show`, but it is not
+enough for drift and reset:
+
+- A verb can mutate **multiple resources atomically** (a PR merge changes
+  PR state, advances the base branch, sometimes deletes the head branch).
+- The critical distinction for reset safety is **ownership**: did
+  polyphony *create* this branch, or did it *ensure-existed-on* a branch
+  someone else made? An enum of `Created / Deleted / StateChanged` cannot
+  express that. Without ownership, reset is a footgun.
+- Some mutations are **result-dependent** — `next-impl` only knows which
+  WI it picked at runtime.
+- Drift built on payload-type inspection couples drift to every payload
+  type, which defeats the topology-agnosticism the journal exists to
+  provide.
+
+**The decision.** Every journaled action emits **0..N typed resource
+effects** captured in a new `effects` list on the journal entry:
+
+```csharp
+public sealed record JournalResourceEffect
+{
+    public required string Kind { get; init; }            // "git_branch" | "github_pr" | "ado_pr" | "ado_wi_state" | "ado_wi_tag" | "manifest_file" | "worktree" | ...
+    public required string Id { get; init; }              // "evidence/100-200" | "github.com/owner/repo/pull/502" | "wi-3262" | ...
+    public required ResourceIntent Intent { get; init; }  // EnsurePresent | EnsureAbsent | SetState | UpdateMetadata | AdvancePointer | Attach | Detach | Observe
+    public required ResourceMutation Mutation { get; init; } // CreatedNow | DeletedNow | Changed | NoChangedAlreadySatisfied | NoChangedExternalAlreadyPresent
+    public bool PolyphonyOwned { get; init; } = true;
+    public string? Platform { get; init; }                // "github" | "ado" | null
+    public string? ParentId { get; init; }                // e.g. PR id for a comment, root id for a branch
+    public JsonObject? Attributes { get; init; }          // sha, head_ref, base_ref, target_state, body_sha, etc.
+}
+```
+
+**Verbs declare static capability.** Each `[JournaledAction]` verb also
+carries `[MutatesResource(Kind)]` / `[MayObserveResource(Kind)]`
+attributes describing what *kinds* it might touch — independent of
+runtime ids. This split (static capability vs runtime concrete effects)
+is the no-regrets hook for a future workflow compiler: a compiler can
+inspect verbs without running them and validate "does the workflow chain
+ever produce the resource your reset expects to delete?".
+
+**Drift is a generic fold over effects, never over action names.**
+Phase 4 will define explicit projections:
+
+- `CurrentExpectedState` — terminal `(Kind, Id) → expected state` from
+  the journal
+- `OwnedResources` — subset where `PolyphonyOwned = true` (the reset
+  authority list)
+- `ResetTargets` — `OwnedResources` ∩ "still present in the world"
+- `ExpectedStateAt(t)` — temporal projection with `until` bound
+
+**Reset (Phase 5) consumes `OwnedResources` and `ResetTargets`.** Never
+"delete all branches whose names match a pattern."
+
+**The ownership rule.** `PolyphonyOwned = true` iff the *Mutation* was
+`CreatedNow` (this run, this verb, on a resource that did not exist
+before the call). `NoChangedExternalAlreadyPresent` and observe-only
+effects set `PolyphonyOwned = false`. This is the single safety contract
+that makes reset transactional and prevents it from clobbering external
+state.
+
+**Reset is the sharper test than drift.** Drift can be informational
+with false positives. Reset is destructive. The effect model is shaped
+by reset's correctness requirements; drift inherits the rigor for free.
+
+**Migration.** Phase 1B + Phase 2 payloads are retrofitted to emit
+`Effects[]` in **Phase 2.5** (the effect-model uplift PR), before Phase
+3 launches. All subsequent phases adopt the contract by default.
+
+---
+
 ## Phasing
 
-| Phase | Scope | AC | Risk |
-|---|---|---|---|
-| **0** | ADR (this doc) | D1, D2, D6, D7, naming **decided**; Phase 1 shape open | None |
-| **1A** | Schema + `JournalStore` + `[JournaledAction]` decorator + `polyphony journal show` (text + json render) + `polyphony journal export` | New verb suite green; existing verbs unaffected; journal is empty | Low — additive |
-| **1B** | (1A) + `[JournaledAction]` on every branch verb | Per-root `journal show` shows real branch lifecycle on day one | Low+ — slightly bigger landing |
-| **2** | PR ops journal (open, comment, merge, close — both GitHub and ADO legs) | Per-root `journal show` covers PR lifecycle | Medium |
-| **3** | ADO transitions + tag mutations + watermark stamps + manifest writes journal | Drift check sees a full picture | Medium |
-| **4** | `polyphony journal drift` | Drift verb returns sane diffs on a real root | Medium |
-| **5** | `polyphony reset root` rewritten against journal; AB#3245 / AB#3246 close as side-effects | Reset tests pass; residue empirically gone on a clean run | Higher — operational |
-| **6** | (optional) workflow-layer query verbs (D11) | Counter-like scripts begin retiring | Higher — workflow churn |
+| Phase | Scope | AC | Risk | Status |
+|---|---|---|---|---|
+| **0** | ADR (this doc) | D1, D2, D6, D7, naming **decided**; Phase 1 shape open | None | ✅ shipped |
+| **1A** | Schema + `JournalStore` + `[JournaledAction]` decorator + `polyphony journal show` (text + json render) + `polyphony journal export` | New verb suite green; existing verbs unaffected; journal is empty | Low — additive | ✅ shipped (PR #501) |
+| **1B** | (1A) + `[JournaledAction]` on every branch verb | Per-root `journal show` shows real branch lifecycle on day one | Low+ — slightly bigger landing | ✅ shipped (PR #502) |
+| **2** | PR ops journal (open, comment, merge, close — both GitHub and ADO legs) | Per-root `journal show` covers PR lifecycle | Medium | ✅ shipped (PR #503) |
+| **2.5** | Effect-model uplift (D13): add `JournalResourceEffect[]` to journal entries; add `[MutatesResource]` / `[MayObserveResource]` to every existing journaled verb; retrofit Phase 1B + Phase 2 payloads to emit concrete effects | Every existing journaled verb emits effects on success and no-op paths; tests assert ownership flag is correct; no behavioral change to existing verbs | Low — additive contract | 🏃 in flight |
+| **3** | ADO transitions + tag mutations + watermark stamps + manifest writes journal — **with effect model from day one** | Drift check sees a full picture | Medium | 📋 next |
+| **4** | `polyphony journal drift` (folds effects, never actions; emits `CurrentExpectedState`, `OwnedResources`, `ResetTargets`, `ExpectedStateAt(t)` projections) | Drift verb returns sane diffs on a real root | Medium | |
+| **5** | `polyphony reset root` rewritten against `OwnedResources` projection; AB#3245 / AB#3246 close as side-effects | Reset tests pass; residue empirically gone on a clean run | Higher — operational | |
+| **6** | (optional) workflow-layer query verbs (D11) | Counter-like scripts begin retiring | Higher — workflow churn | |
 
 Phases 1-4 are non-disruptive: nothing changes for existing workflows.
 Phase 5 is the payoff phase; phase 6 is bonus.
