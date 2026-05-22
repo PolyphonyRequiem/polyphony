@@ -5,6 +5,7 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
 using Polyphony.Manifest;
 using Polyphony.Sdlc.Observers;
 
@@ -102,6 +103,56 @@ public sealed partial class PlanCommands
             return ExitCodes.Success;
         }
         var localManifestPath = resolvedPath.Path;
+
+        // ── 1b. Journal-grounding short-circuit (W3, AB#3277). ────────────
+        // When the launcher (W1) has stamped a real POLYPHONY_RUN_ID and
+        // the journal carries ZERO plan-action rows for (rootId, itemId)
+        // under that lineage, the prior PR/branch/tag artifacts are by
+        // definition from a previous run and must not be allowed to drive
+        // the current state. Emit `not_started` with `lineage_anchor`
+        // = `journal` so the workflow re-enters at the architect.
+        //
+        // Skipped silently when the journal is a NullJournalStore or
+        // RunContext fell back to a manual_* lineage — neither case can
+        // be sure the "no rows" signal isn't just "we never wrote any".
+        if (!_runContext.HasManualLineage && _journalStore is not NullJournalStore)
+        {
+            IReadOnlyList<JournalEntry> currentLineagePlanActions;
+            try
+            {
+                currentLineagePlanActions = await _journalStore.QueryAsync(
+                    new JournalQuery
+                    {
+                        RunId = _runContext.RunId,
+                        RootId = rootId,
+                        WorkItemId = itemId,
+                    }, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Fail open: a journal read error must not block the
+                // legacy PR-archaeology path. Note the reason for
+                // observability, but continue.
+                Console.Error.WriteLine($"[plan detect-state] journal grounding skipped: {ex.Message}");
+                currentLineagePlanActions = [];
+                goto SkipJournalShortCircuit;
+            }
+
+            if (currentLineagePlanActions.Count == 0)
+            {
+                EmitDetectState(new PlanDetectStateResult
+                {
+                    RootId = rootId,
+                    ItemId = itemId,
+                    PlanBranch = planBranch,
+                    State = "not_started",
+                    BranchExistsOnOrigin = false,
+                    LineageAnchor = "journal",
+                });
+                return ExitCodes.Success;
+            }
+        }
+        SkipJournalShortCircuit:
 
         // ── 2. Repo identity. ─────────────────────────────────────────────
         var identity = await observer
@@ -553,8 +604,17 @@ public sealed partial class PlanCommands
     }
 
     private static void EmitDetectState(PlanDetectStateResult result)
-        => Console.WriteLine(JsonSerializer.Serialize(
-            result, PolyphonyJsonContext.Default.PlanDetectStateResult));
+    {
+        // Default the W3 lineage_anchor: callers that omit it (every
+        // PR/branch/tag-observation path) get `archaeology`; the
+        // journal-grounding short-circuit sets `journal` explicitly; the
+        // error helper below sets `none`.
+        var annotated = result.LineageAnchor is null
+            ? result with { LineageAnchor = "archaeology" }
+            : result;
+        Console.WriteLine(JsonSerializer.Serialize(
+            annotated, PolyphonyJsonContext.Default.PlanDetectStateResult));
+    }
 
     private static void EmitDetectStateError(int rootId, int itemId, string planBranch, string error)
         => EmitDetectState(new PlanDetectStateResult
@@ -565,6 +625,7 @@ public sealed partial class PlanCommands
             State = "error",
             BranchExistsOnOrigin = false,
             Error = error,
+            LineageAnchor = "none",
         });
 
     /// <summary>

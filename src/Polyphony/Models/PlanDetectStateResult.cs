@@ -76,6 +76,21 @@ public sealed record PlanDetectStateResult
 
     /// <summary>Error message on failure; null on success.</summary>
     public string? Error { get; init; }
+
+    /// <summary>
+    /// Provenance of the <see cref="State"/> determination, surfaced for the
+    /// W3 / W4 journal-first rollout. One of:
+    /// <list type="bullet">
+    ///   <item><c>journal</c> — state derived from journal grounding for the
+    ///         current run lineage (no journal rows for this item under the
+    ///         active <c>POLYPHONY_RUN_ID</c> = <c>not_started</c>).</item>
+    ///   <item><c>archaeology</c> — state derived from PR / branch / tag
+    ///         observation (the pre-W3 behavior).</item>
+    ///   <item><c>none</c> — state derived without consulting either source
+    ///         (input validation errors).</item>
+    /// </list>
+    /// </summary>
+    public string? LineageAnchor { get; init; }
 }
 
 /// <summary>
