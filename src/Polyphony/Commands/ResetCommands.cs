@@ -37,7 +37,7 @@ namespace Polyphony.Commands;
 ///         the watermark; the others are purely best-effort sweeps.</item>
 /// </list>
 ///
-/// <para><b>Composite ordering</b> (see <see cref="ResetApex"/>):
+/// <para><b>Composite ordering</b> (see <see cref="ResetRoot"/>):
 /// PRs → worktrees → branches → manifest → state. The state stamp lands
 /// LAST so that a crash anywhere in the cleanup chain leaves the system
 /// "still mid-reset" rather than "watermark advanced but PRs/branches
@@ -67,7 +67,7 @@ public sealed partial class ResetCommands(
     /// Canonical root-scoped branch prefix set for ref classes whose
     /// root scope can be expressed as a simple pattern. Used by
     /// <c>reset prs</c> and <c>reset branches</c> alongside the separate
-    /// descendant-aware <c>sdlc/apex/{id}</c> literal enumeration.
+    /// descendant-aware <c>sdlc/root/{id}</c> literal enumeration.
     ///
     /// <para>Patterns are passed to <c>git ls-remote --heads origin {pattern}</c>
     /// where <c>refs/heads/</c> is prepended; for purely-local enumeration

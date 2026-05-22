@@ -80,7 +80,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
     }
 
     [Fact]
-    public async Task OpenEvidencePr_NegativeApexId_ReturnsConfigError()
+    public async Task OpenEvidencePr_NegativeRootId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenEvidencePr(workItem: 123, rootId: -1));

@@ -133,14 +133,14 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         return false;
     }
 
-    private async Task SeedApexAsync(string state = "Doing")
+    private async Task SeedRootAsync(string state = "Doing")
     {
         var item = new WorkItemBuilder()
             .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState(state).Build();
         await SeedAsync(item);
     }
 
-    private async Task SeedApexWithChildrenAsync(int childCount, string childState = "To Do")
+    private async Task SeedRootWithChildrenAsync(int childCount, string childState = "To Do")
     {
         var root = new WorkItemBuilder()
             .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState("Doing").Build();
@@ -164,7 +164,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         // Needed via the (item.State="Doing", childCount=0) fall-through
         // arm of the legacy switch — same answer for the wrong reason
         // (no PR introspection at all).
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithBaseline();
 
         var cmd = CreateCommand(runner);
@@ -189,7 +189,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
     [Fact]
     public async Task NextReady_OpenImplPr_ImplementationMergedFulfilling()
     {
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = new FakeProcessRunner();
         StubImplPrList(runner, prNumber: 412);
         StubImplPrPoll(runner, prNumber: 412, state: "OPEN");
@@ -216,7 +216,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
     [Fact]
     public async Task NextReady_MergedImplPr_ImplementationMergedSatisfied()
     {
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = new FakeProcessRunner();
         StubImplPrList(runner, prNumber: 412);
         StubImplPrPoll(runner, prNumber: 412, state: "MERGED");
@@ -246,7 +246,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         // 0 with implementation_merged Needed and a non-empty reason.
         // The throw-path (real ExternalToolException) is exercised by
         // the GhPrListThrows test below.
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = new FakeProcessRunner();
         StubImplPrListFails(runner);
         BindBaselineAfterImpl(runner);
@@ -270,7 +270,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         // must catch and surface the error via ImplPrFetchError → Needed
         // with a non-empty reason. The verb's "always exit 0" contract
         // holds.
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = new FakeProcessRunner();
         runner.WhenAsync(
             (e, a) => e == "gh"
@@ -307,7 +307,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         // Needed (closed-loop §3.1 row 5). The reason string surfaces
         // the offending child's id so callers can drill down without
         // re-deriving the rollup themselves.
-        await SeedApexWithChildrenAsync(childCount: 3);
+        await SeedRootWithChildrenAsync(childCount: 3);
         var runner = new FakeProcessRunner();
         StubImplPrList(runner, prNumber: 412);
         StubImplPrPoll(runner, prNumber: 412, state: "MERGED");
@@ -340,7 +340,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         // implementation_merged. Pair to the existing
         // ChildrenUnmerged_DemotedByChildren test (which validates the
         // demotion direction) with N=2.
-        await SeedApexWithChildrenAsync(childCount: 2);
+        await SeedRootWithChildrenAsync(childCount: 2);
         var runner = new FakeProcessRunner();
         StubImplPrList(runner, prNumber: 412);
         StubImplPrPoll(runner, prNumber: 412, state: "MERGED");
@@ -374,7 +374,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         // MapImplementationMerged). The exact downgraded disposition
         // is implementation detail — what callers depend on is "not
         // Satisfied" + a structured pointer to the offending child.
-        await SeedApexWithChildrenAsync(childCount: 2);
+        await SeedRootWithChildrenAsync(childCount: 2);
         var (mergedChildId, openChildId) = (RootId + 100, RootId + 101);
         var runner = new FakeProcessRunner();
         StubImplPrList(runner, prNumber: 412);

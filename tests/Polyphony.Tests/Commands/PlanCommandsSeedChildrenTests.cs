@@ -148,7 +148,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_EmptyChildrenWithApexFacets_StampsTags()
+    public async Task SeedChildren_EmptyChildrenWithRootFacets_StampsTags()
     {
         // The legitimate "decomposable but indivisible" case: planner emits
         // no children but declares root_facets in plan front-matter.
@@ -711,7 +711,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_SidecarEmpty_NoApexFacets_RoutesError_WithSidecarDiagnostic()
+    public async Task SeedChildren_SidecarEmpty_NoRootFacets_RoutesError_WithSidecarDiagnostic()
     {
         // Sidecar exists but is empty array AND no root_facets → refusal,
         // but the message must name the sidecar so the operator knows
@@ -735,7 +735,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_NoCliNoSidecar_NoApexFacets_RoutesError_WithNoSourceDiagnostic()
+    public async Task SeedChildren_NoCliNoSidecar_NoRootFacets_RoutesError_WithNoSourceDiagnostic()
     {
         // No CLI, no sidecar (childrenFile points nowhere), no
         // root_facets → refusal with the "no source" diagnostic. Differs
@@ -753,7 +753,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_SidecarChildren_PlusApexFacets_MutuallyExclusive()
+    public async Task SeedChildren_SidecarChildren_PlusRootFacets_MutuallyExclusive()
     {
         // Same mutual-exclusion rule as CLI children + root_facets — the
         // sidecar shouldn't be a back door around it.
@@ -889,7 +889,7 @@ public sealed class PlanCommandsSeedChildrenTests : CommandTestBase
     }
 
     [Fact]
-    public async Task SeedChildren_FromRef_FileNotAtRef_FallsThroughToApexFacets()
+    public async Task SeedChildren_FromRef_FileNotAtRef_FallsThroughToRootFacets()
     {
         // GitClient.ShowFileAtRefAsync returns null when the file does not
         // exist at the ref (the canonical "no sidecar yet" case). The verb

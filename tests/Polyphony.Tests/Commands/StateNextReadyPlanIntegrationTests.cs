@@ -38,7 +38,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         // Default: root root has no run-started-at tag → null watermark
         // → "no filter" (legacy behavior). Tests that need a populated
         // watermark should re-stub after NewRunnerWithRemote returns.
-        StubApexWatermarkAbsent(runner, RootId);
+        StubRootWatermarkAbsent(runner, RootId);
         return runner;
     }
 
@@ -50,7 +50,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     /// <c>docs/decisions/run-reset.md</c>) and every plan-kind
     /// composer forces a Needed disposition with a fetch-error reason.
     /// </summary>
-    private static void StubApexWatermarkAbsent(FakeProcessRunner runner, int rootId)
+    private static void StubRootWatermarkAbsent(FakeProcessRunner runner, int rootId)
         => runner.WhenExact("twig", ["show", rootId.ToString(), "--output", "json"],
             new ProcessResult(0, $$"""{"id":{{rootId}},"title":"Root","tags":"polyphony"}""", ""));
 
@@ -102,7 +102,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         runner.WhenStartsWith("gh", ["pr", "view", prNumber.ToString()], new ProcessResult(0, json, ""));
     }
 
-    private async Task SeedApexAsync()
+    private async Task SeedRootAsync()
     {
         var item = new WorkItemBuilder()
             .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState("Doing").Build();
@@ -114,7 +114,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     [Fact]
     public async Task NextReady_NoPlanBranch_PlanAuthored_Needed_WithReason()
     {
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithRemote();
         StubLsRemote(runner, PlanBranch, exists: false);
         StubPrListEmpty(runner);
@@ -144,7 +144,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     [Fact]
     public async Task NextReady_OpenPlanPr_AllPlanKinds_Fulfilling()
     {
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithRemote();
         StubLsRemote(runner, PlanBranch, exists: true);
         StubPrListSingle(runner, 204, PlanBranch);
@@ -178,7 +178,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         // files/closed-loop-state-plan.md §2: plan PR merged → all three
         // plan-kind requirements should be Satisfied. Pre-PR-#2 the verb
         // returned all three as Needed because *.plan.md no longer exists.
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithRemote();
         StubLsRemote(runner, PlanBranch, exists: true);
         StubPrListSingle(runner, 204, PlanBranch);
@@ -208,7 +208,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     [Fact]
     public async Task NextReady_OpenApprovedPlanPr_ReviewedSatisfied_PromotedFulfilling()
     {
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithRemote();
         StubLsRemote(runner, PlanBranch, exists: true);
         StubPrListSingle(runner, 204, PlanBranch);
@@ -233,7 +233,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     [Fact]
     public async Task NextReady_GhPrListFailure_DegradesToNeeded_NoException()
     {
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithRemote();
         StubLsRemote(runner, PlanBranch, exists: true);
         // gh pr list fails — verb must NOT throw, must return all plan
@@ -261,7 +261,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     [Fact]
     public async Task NextReady_NoOriginRemote_PlanKindsNeeded_WithSlugReason()
     {
-        await SeedApexAsync();
+        await SeedRootAsync();
         // Simulate no origin remote; PlanObserver.TryResolveRepoIdentityAsync
         // returns null and our scope captures the identity gap in
         // PlanPrFetchError so composers say "could not resolve repo identity"
@@ -270,7 +270,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
         runner.WhenExact("git", ["remote", "get-url", "origin"],
             new ProcessResult(128, "", "fatal: No such remote 'origin'"));
         StubLsRemote(runner, PlanBranch, exists: false);
-        StubApexWatermarkAbsent(runner, RootId);
+        StubRootWatermarkAbsent(runner, RootId);
 
         var cmd = CreateCommand(runner);
         var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
@@ -293,7 +293,7 @@ public sealed class StateNextReadyPlanIntegrationTests : CommandTestBase
     [Fact]
     public async Task NextReady_ClosedUnmergedPlanPr_AllPlanKinds_Needed()
     {
-        await SeedApexAsync();
+        await SeedRootAsync();
         var runner = NewRunnerWithRemote();
         StubLsRemote(runner, PlanBranch, exists: true);
         StubPrListSingle(runner, 204, PlanBranch);

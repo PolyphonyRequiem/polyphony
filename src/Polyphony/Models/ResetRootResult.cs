@@ -1,6 +1,6 @@
 namespace Polyphony;
 
-public sealed record ResetApexResult
+public sealed record ResetRootResult
 {
     public required int Root { get; init; }
     public required bool Success { get; init; }

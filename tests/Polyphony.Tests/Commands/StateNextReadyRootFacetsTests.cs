@@ -43,7 +43,7 @@ namespace Polyphony.Tests.Commands;
 /// only signal that varies between the override and no-override cases.
 /// </para>
 /// </remarks>
-public sealed class StateNextReadyApexFacetsTests : CommandTestBase
+public sealed class StateNextReadyRootFacetsTests : CommandTestBase
 {
     private const int RootId = 4001;
     private const string OriginUrl = "https://github.com/acme/repo.git";

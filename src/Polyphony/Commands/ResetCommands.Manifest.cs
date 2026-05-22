@@ -14,7 +14,7 @@ namespace Polyphony.Commands;
 /// <c>feature/{N}</c>, which clears the manifest as a side-effect.
 /// There's no second copy of the manifest that needs separate cleanup.
 /// This verb exists in PR 2 as an explicit inspection step so the
-/// composite (<see cref="ResetApex"/>) can surface the manifest state
+/// composite (<see cref="ResetRoot"/>) can surface the manifest state
 /// to the operator and so the workflow can route on it; <c>--execute</c>
 /// is accepted (and ignored) for symmetry with the other reset verbs.</para>
 ///

@@ -48,7 +48,7 @@ public sealed class HealthCommandTests
     }
 
     [Fact]
-    public void HealthCommand_StderrBreadcrumb_NamesApexDriverAsCanonicalEntry()
+    public void HealthCommand_StderrBreadcrumb_NamesRootDriverAsCanonicalEntry()
     {
         // First-time users running `polyphony health` should see a one-line
         // pointer at the canonical SDLC entry point on STDERR. The breadcrumb

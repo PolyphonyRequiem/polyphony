@@ -59,15 +59,15 @@ public sealed partial class BranchCommands
             return ExitCodes.ConfigError;
         }
 
-        var resolvedApexId = rootId == 0 ? workItemId : rootId;
-        if (!RootId.TryParse(resolvedApexId, out var root))
+        var resolvedRootId = rootId == 0 ? workItemId : rootId;
+        if (!RootId.TryParse(resolvedRootId, out var root))
         {
-            EmitEvidenceError(workItemId, rootId, fromRef, $"rootId must be positive (got {resolvedApexId})");
+            EmitEvidenceError(workItemId, rootId, fromRef, $"rootId must be positive (got {resolvedRootId})");
             return ExitCodes.ConfigError;
         }
 
         // ── 2. Resolve branch name (orphan vs combined) and base ref. ────
-        var orphan = resolvedApexId == workItemId;
+        var orphan = resolvedRootId == workItemId;
         var branch = orphan
             ? BranchNameBuilder.EvidenceOrphan(item).Value
             : BranchNameBuilder.Evidence(root, item).Value;
@@ -79,7 +79,7 @@ public sealed partial class BranchCommands
         BranchEnsureEvidenceBranchPayload? payload = null;
 
         return await _journalDecorator.RunWithAsync(
-            CreateJournalInvocation("branch_ensure_evidence_branch", branch, resolvedApexId, workItemId),
+            CreateJournalInvocation("branch_ensure_evidence_branch", branch, resolvedRootId, workItemId),
             async innerCt =>
             {
                 try
@@ -136,7 +136,7 @@ public sealed partial class BranchCommands
                         {
                             payload = new BranchEnsureEvidenceBranchPayload
                             {
-                                RootId = resolvedApexId,
+                                RootId = resolvedRootId,
                                 WorkItemId = workItemId,
                                 BranchName = branch,
                                 BaseBranch = baseBranch,
@@ -150,7 +150,7 @@ public sealed partial class BranchCommands
                                 FromRef = fromRef,
                                 Error = $"base branch '{baseBranch}' does not exist on remote '{remote}'. " +
                                     (string.IsNullOrEmpty(fromRef)
-                                        ? $"Run 'polyphony branch ensure-feature' for root {resolvedApexId} first, or pass --from-ref to base evidence on a different branch."
+                                        ? $"Run 'polyphony branch ensure-feature' for root {resolvedRootId} first, or pass --from-ref to base evidence on a different branch."
                                         : "Verify the --from-ref value points at a branch that exists on the remote."),
                             };
                             EmitEvidenceError(
@@ -192,14 +192,14 @@ public sealed partial class BranchCommands
                         BaseRemoteExisted = baseRemoteExisted,
                         BaseFetched = baseFetched,
                         CreatedFrom = createdFrom,
-                        RootId = resolvedApexId,
+                        RootId = resolvedRootId,
                         ItemId = workItemId,
                         Orphan = orphan,
                         FromRef = fromRef,
                     };
                     payload = new BranchEnsureEvidenceBranchPayload
                     {
-                        RootId = resolvedApexId,
+                        RootId = resolvedRootId,
                         WorkItemId = workItemId,
                         BranchName = branch,
                         BaseBranch = baseBranch,
@@ -224,7 +224,7 @@ public sealed partial class BranchCommands
                 {
                     payload = new BranchEnsureEvidenceBranchPayload
                     {
-                        RootId = resolvedApexId,
+                        RootId = resolvedRootId,
                         WorkItemId = workItemId,
                         BranchName = branch,
                         BaseBranch = baseBranch,
@@ -271,7 +271,7 @@ public sealed partial class BranchCommands
         string baseBranch = "",
         bool orphan = false)
     {
-        var resolvedApexId = rootId == 0 ? workItemId : rootId;
+        var resolvedRootId = rootId == 0 ? workItemId : rootId;
         var result = new BranchEnsureEvidenceResult
         {
             Branch = branch,
@@ -281,7 +281,7 @@ public sealed partial class BranchCommands
             Pushed = false,
             BaseRemoteExisted = false,
             BaseFetched = false,
-            RootId = resolvedApexId,
+            RootId = resolvedRootId,
             ItemId = workItemId,
             Orphan = orphan,
             FromRef = fromRef,

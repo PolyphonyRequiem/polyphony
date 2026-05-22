@@ -17,14 +17,14 @@ namespace Polyphony.Tests.Commands;
 /// so each git invocation is asserted at the wire level. Filesystem
 /// state (root_root, worktree_path) lives in a per-test temp directory.
 /// </summary>
-public sealed class WorktreeCommandsInitApexTests : CommandTestBase
+public sealed class WorktreeCommandsInitRootTests : CommandTestBase
 {
     private readonly string _tempDir;
     private readonly string _commonDir;
     private readonly string _runsRoot;
     private readonly string _mainPath;
 
-    public WorktreeCommandsInitApexTests()
+    public WorktreeCommandsInitRootTests()
     {
         _tempDir = Path.Combine(
             Path.GetTempPath(),
@@ -70,8 +70,8 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
         return (new WorktreeCommands(new GitClient(runner)), runner, rootRoot, worktreePath);
     }
 
-    private static WorktreeInitApexResult Parse(string output) =>
-        JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.WorktreeInitApexResult)!;
+    private static WorktreeInitRootResult Parse(string output) =>
+        JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.WorktreeInitRootResult)!;
 
     private static string PorcelainEntry(string path, string branch) =>
         $"worktree {path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/{branch}\n\n";
@@ -96,7 +96,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitRoot_ZeroRoot_EmitsInvalidApexFailure()
+    public async Task InitRoot_ZeroRoot_EmitsInvalidRootFailure()
     {
         var (cmd, runner, _, _) = Setup(stubCommonDir: false);
 
@@ -112,7 +112,7 @@ public sealed class WorktreeCommandsInitApexTests : CommandTestBase
     }
 
     [Fact]
-    public async Task InitRoot_NegativeRoot_EmitsInvalidApexFailure()
+    public async Task InitRoot_NegativeRoot_EmitsInvalidRootFailure()
     {
         var (cmd, runner, _, _) = Setup(stubCommonDir: false);
 

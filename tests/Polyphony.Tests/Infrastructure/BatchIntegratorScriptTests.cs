@@ -100,7 +100,7 @@ public sealed class BatchIntegratorScriptTests
     }
 
     [Fact]
-    public async Task FeatureBranch_DefaultsToApexConvention()
+    public async Task FeatureBranch_DefaultsToRootConvention()
     {
         if (!PwshAvailable) return;
 

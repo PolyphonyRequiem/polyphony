@@ -73,7 +73,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
     }
 
     [Fact]
-    public async Task EnsureEvidence_NegativeApexId_ReturnsConfigError()
+    public async Task EnsureEvidence_NegativeRootId_ReturnsConfigError()
     {
         // Negative root is rejected so callers don't get a silent collapse
         // to orphan when they fat-finger a sign.
@@ -348,7 +348,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
     }
 
     [Fact]
-    public async Task EnsureEvidence_ErrorEnvelope_PreservesFieldsAndApexResolution()
+    public async Task EnsureEvidence_ErrorEnvelope_PreservesFieldsAndRootResolution()
     {
         // Error path still produces a well-formed envelope; importantly,
         // omitted root resolves to workItemId in the error output too,

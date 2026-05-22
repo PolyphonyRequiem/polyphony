@@ -189,7 +189,7 @@ public sealed partial class ResetCommands
                     // targeted tags are gone — a silent regression here
                     // would re-introduce the exact bug this verb
                     // exists to fix.
-                    var verifyTags = await ReadApexTagsAsync(item.WorkItemId, ct).ConfigureAwait(false);
+                    var verifyTags = await ReadRootTagsAsync(item.WorkItemId, ct).ConfigureAwait(false);
                     var stillHasFacets = verifyTags.Any(t =>
                         t.StartsWith(facetsPrefixEq, StringComparison.OrdinalIgnoreCase));
                     var stillHasPlanned = verifyTags.Contains(PolyphonyTags.Planned);

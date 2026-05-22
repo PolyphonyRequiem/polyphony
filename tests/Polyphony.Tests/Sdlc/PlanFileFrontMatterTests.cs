@@ -47,7 +47,7 @@ public sealed class PlanFileFrontMatterTests
     // ── Present ──────────────────────────────────────────────────────────
 
     [Fact]
-    public void Parse_PresentWithoutApexFacets_HasEmptyList()
+    public void Parse_PresentWithoutRootFacets_HasEmptyList()
     {
         const string body = "---\nother_key: value\n---\n# body\n";
         var result = PlanFileFrontMatter.Parse(body);

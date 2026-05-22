@@ -33,11 +33,11 @@ public sealed class ResetCommandsBranchesEnumerationTests : CommandTestBase
         {
             ["refs/heads/plan/100"] = ["plan/100"],
             ["refs/heads/plan/100-*"] = ["plan/100-101", "plan/100-102"],
-            ["refs/heads/sdlc/apex/100"] = ["sdlc/apex/100"],
-            ["refs/heads/sdlc/apex/101"] = ["sdlc/apex/101"],
-            ["refs/heads/sdlc/apex/102"] = ["sdlc/apex/102"],
-            ["refs/heads/sdlc/apex/103"] = ["sdlc/apex/103"],
-            ["refs/heads/sdlc/apex/999"] = ["sdlc/apex/999"],
+            ["refs/heads/sdlc/root/100"] = ["sdlc/root/100"],
+            ["refs/heads/sdlc/root/101"] = ["sdlc/root/101"],
+            ["refs/heads/sdlc/root/102"] = ["sdlc/root/102"],
+            ["refs/heads/sdlc/root/103"] = ["sdlc/root/103"],
+            ["refs/heads/sdlc/root/999"] = ["sdlc/root/999"],
         };
 
         runner.WhenAsync(
@@ -58,10 +58,10 @@ public sealed class ResetCommandsBranchesEnumerationTests : CommandTestBase
 
     private async Task SeedHierarchyAsync()
     {
-        var apex = new WorkItemBuilder()
+        var Root = new WorkItemBuilder()
             .WithId(100)
             .WithType("Epic")
-            .WithTitle("Apex")
+            .WithTitle("Root")
             .WithState("Doing")
             .Build();
         var child101 = new WorkItemBuilder()
@@ -86,7 +86,7 @@ public sealed class ResetCommandsBranchesEnumerationTests : CommandTestBase
             .WithParentId(101)
             .Build();
 
-        await SeedAsync(apex, child101, child102, descendant103);
+        await SeedAsync(Root, child101, child102, descendant103);
     }
 
     [Fact]
@@ -108,50 +108,50 @@ public sealed class ResetCommandsBranchesEnumerationTests : CommandTestBase
         branches.ShouldContain("plan/100");
         branches.ShouldContain("plan/100-101");
         branches.ShouldContain("plan/100-102");
-        branches.ShouldContain("sdlc/apex/100");
-        branches.ShouldContain("sdlc/apex/101");
-        branches.ShouldContain("sdlc/apex/102");
-        branches.ShouldContain("sdlc/apex/103");
-        branches.ShouldNotContain("sdlc/apex/999");
+        branches.ShouldContain("sdlc/root/100");
+        branches.ShouldContain("sdlc/root/101");
+        branches.ShouldContain("sdlc/root/102");
+        branches.ShouldContain("sdlc/root/103");
+        branches.ShouldNotContain("sdlc/root/999");
 
         runner.Invocations.ShouldContain(i =>
             i.Executable == "git"
             && i.Arguments.Count >= 4
             && i.Arguments[0] == "ls-remote"
-            && i.Arguments[3] == "refs/heads/sdlc/apex/103");
+            && i.Arguments[3] == "refs/heads/sdlc/root/103");
         runner.Invocations.ShouldNotContain(i =>
             i.Executable == "git"
             && i.Arguments.Count >= 4
             && i.Arguments[0] == "ls-remote"
-            && i.Arguments[3] == "refs/heads/sdlc/apex/999");
+            && i.Arguments[3] == "refs/heads/sdlc/root/999");
     }
 
     [Fact]
-    public async Task EnumerateApexBranchesAsync_IncludesOnlyApexAndDescendantSdlcBranches()
+    public async Task EnumerateRootBranchesAsync_IncludesOnlyRootAndDescendantSdlcBranches()
     {
         await SeedHierarchyAsync();
         var (cmd, runner) = CreateCommand();
         StubBranchEnumeration(runner);
 
-        var branches = await cmd.EnumerateApexBranchesAsync(100, CancellationToken.None);
+        var branches = await cmd.EnumerateRootBranchesAsync(100, CancellationToken.None);
 
         branches.ShouldContain("plan/100-101");
         branches.ShouldContain("plan/100-102");
-        branches.ShouldContain("sdlc/apex/100");
-        branches.ShouldContain("sdlc/apex/101");
-        branches.ShouldContain("sdlc/apex/102");
-        branches.ShouldContain("sdlc/apex/103");
-        branches.ShouldNotContain("sdlc/apex/999");
+        branches.ShouldContain("sdlc/root/100");
+        branches.ShouldContain("sdlc/root/101");
+        branches.ShouldContain("sdlc/root/102");
+        branches.ShouldContain("sdlc/root/103");
+        branches.ShouldNotContain("sdlc/root/999");
 
         runner.Invocations.ShouldContain(i =>
             i.Executable == "git"
             && i.Arguments.Count >= 4
             && i.Arguments[0] == "ls-remote"
-            && i.Arguments[3] == "refs/heads/sdlc/apex/103");
+            && i.Arguments[3] == "refs/heads/sdlc/root/103");
         runner.Invocations.ShouldNotContain(i =>
             i.Executable == "git"
             && i.Arguments.Count >= 4
             && i.Arguments[0] == "ls-remote"
-            && i.Arguments[3] == "refs/heads/sdlc/apex/999");
+            && i.Arguments[3] == "refs/heads/sdlc/root/999");
     }
 }

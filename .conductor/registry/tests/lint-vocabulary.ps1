@@ -51,9 +51,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $regexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-$deferredSpecFiles = @(
-    'docs/proposals/polyphony-journal.md'
-)
+$deferredSpecFiles = @()
 $skippedFenceLanguages = @('text', 'console', 'output', 'diff')
 
 function Write-ConfigurationError {
@@ -331,6 +329,11 @@ function Get-PathDisposition {
     if ($path -eq '.conductor/registry/tests/lint-vocabulary.Tests.ps1') { return 'skip' }
     if ($path -like 'tests/fixtures/lint-vocabulary/*') { return 'skip' }
     if ($path -like 'tests/harness/*') { return 'skip' }
+    # Archived discussion materials (e.g. workflow-compiler evaluation) are
+    # parked artifacts retained for future re-engagement. They predate the
+    # AB#3259 rename and would require rewriting historical analysis to scrub;
+    # exempting preserves the archive without polluting the lint signal.
+    if ($path -like 'docs/discussions/*') { return 'skip' }
     if ($path -match '(^|/)(\.git|bin|obj|node_modules)(/|$)') { return 'skip' }
     if ($path -match '(^|/)\.polyphony-config(/|$)') { return 'skip' }
     if ($path -match '/runs/' -or $path -match '-runs/') { return 'skip' }
@@ -363,6 +366,24 @@ function Get-ScanFiles {
     $docsDir = Join-Path $RepoRoot 'docs'
     if (Test-Path -LiteralPath $docsDir) {
         $allFiles += Get-ChildItem -LiteralPath $docsDir -Recurse -File -Filter '*.md' -ErrorAction SilentlyContinue
+    }
+
+    # Skill docs are authoritative operator documentation — they MUST speak
+    # the canonical vocab. Pre-AB#3259 they were missed by the lint scope,
+    # which let apex/wave drift accumulate (76 hits in polyphony-sdlc/SKILL.md
+    # alone). Broadening scope here closes that gap.
+    $skillsDir = Join-Path $RepoRoot '.github\skills'
+    if (Test-Path -LiteralPath $skillsDir) {
+        $allFiles += Get-ChildItem -LiteralPath $skillsDir -Recurse -File -Filter '*.md' -ErrorAction SilentlyContinue
+    }
+
+    # Top-level READMEs (repo root + workflows index) are public-facing and
+    # equally authoritative.
+    foreach ($readmePath in @('README.md', 'workflows\README.md')) {
+        $readmeFull = Join-Path $RepoRoot $readmePath
+        if (Test-Path -LiteralPath $readmeFull -PathType Leaf) {
+            $allFiles += Get-Item -LiteralPath $readmeFull
+        }
     }
 
     $testsDir = Join-Path $RepoRoot 'tests'

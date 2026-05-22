@@ -103,7 +103,7 @@ public sealed partial class ResetCommands
         {
             await _twig.SyncAsync(ct).ConfigureAwait(false);
 
-            var currentTags = await ReadApexTagsAsync(root, ct).ConfigureAwait(false);
+            var currentTags = await ReadRootTagsAsync(root, ct).ConfigureAwait(false);
             var previousWatermark = PolyphonyTags.ReadRunStartedAt(currentTags);
             var previousWatermarkText = previousWatermark is { } pw
                 ? FormatWatermark(pw)
@@ -147,7 +147,7 @@ public sealed partial class ResetCommands
 
             // Read-after-write: assert the watermark made it into the
             // cache. AB#3189/3191 pattern from mark-impl-merged.
-            var verifyTags = await ReadApexTagsAsync(root, ct).ConfigureAwait(false);
+            var verifyTags = await ReadRootTagsAsync(root, ct).ConfigureAwait(false);
             var verifyWatermark = PolyphonyTags.ReadRunStartedAt(verifyTags);
 
             if (verifyWatermark is null)
@@ -225,7 +225,7 @@ public sealed partial class ResetCommands
     /// <c>BranchCommands.ReadTagsAsync</c> (re-implemented here to keep
     /// this partial self-contained).
     /// </summary>
-    private async Task<TagSet> ReadApexTagsAsync(int root, CancellationToken ct)
+    private async Task<TagSet> ReadRootTagsAsync(int root, CancellationToken ct)
     {
         var item = await _twig.ShowAsync(root, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException(

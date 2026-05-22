@@ -16,10 +16,10 @@ using Xunit;
 
 namespace Polyphony.Tests.Commands;
 
-public sealed class ResetApexProjectionCommandTests : CommandTestBase
+public sealed class ResetRootProjectionCommandTests : CommandTestBase
 {
     [Fact]
-    public async Task ResetApex_DefaultStrategy_UsesProjectionEnvelope()
+    public async Task ResetRoot_DefaultStrategy_UsesProjectionEnvelope()
     {
         var world = new MutableBranchWorld(exists: true, matchesExpected: true, actualState: "abc123");
         var observer = new MutableBranchObserver(world);
@@ -57,8 +57,8 @@ public sealed class ResetApexProjectionCommandTests : CommandTestBase
             [deleter]);
         var command = CreateCommand(executor);
 
-        var (exit, output) = await CaptureConsoleAsync(() => command.ResetApex(apex: 100, execute: false));
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetApexResult);
+        var (exit, output) = await CaptureConsoleAsync(() => command.ResetRoot(root: 100, execute: false));
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetRootResult);
 
         exit.ShouldBe(ExitCodes.Success);
         result.ShouldNotBeNull();

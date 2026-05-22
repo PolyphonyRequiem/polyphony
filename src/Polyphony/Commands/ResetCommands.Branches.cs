@@ -12,7 +12,7 @@ namespace Polyphony.Commands;
 /// every polyphony-scoped branch for the root on both origin and the
 /// local repo: <c>plan/{N}</c>, nested <c>plan/{N}-*</c>, <c>mg/{N}-*</c>,
 /// <c>impl/{N}-*</c>, <c>evidence/{N}-*</c>, <c>feature/{N}</c>, and
-/// literal <c>sdlc/apex/{id}</c> branches for the root + descendants.
+/// literal <c>sdlc/root/{id}</c> branches for the root + descendants.
 ///
 /// <para><b>Ordering</b>: runs AFTER <c>reset worktrees</c> so no local
 /// branch is pinned by a checked-out worktree, and AFTER
@@ -90,7 +90,7 @@ public sealed partial class ResetCommands
         ResetBranchesResult result;
         try
         {
-            var perBranch = await EnumerateApexBranchesBySideAsync(root, ct).ConfigureAwait(false);
+            var perBranch = await EnumerateRootBranchesBySideAsync(root, ct).ConfigureAwait(false);
 
             var deleted = new List<ResetDeletedBranch>();
             var failed = new List<ResetFailedBranch>();
@@ -197,7 +197,7 @@ public sealed partial class ResetCommands
     /// De-dupes across patterns.
     /// </summary>
     private async Task<IReadOnlyList<(string Branch, BranchSide Side)>>
-        EnumerateApexBranchesBySideAsync(int root, CancellationToken ct)
+        EnumerateRootBranchesBySideAsync(int root, CancellationToken ct)
     {
         var sides = new Dictionary<string, BranchSide>(StringComparer.Ordinal);
         var order = new List<string>();
@@ -207,7 +207,7 @@ public sealed partial class ResetCommands
             await AccumulateBranchesBySideAsync(pattern, sides, order, ct).ConfigureAwait(false);
         }
 
-        foreach (var branch in await EnumerateApexSdlcBranchesAsync(root, ct).ConfigureAwait(false))
+        foreach (var branch in await EnumerateRootSdlcBranchesAsync(root, ct).ConfigureAwait(false))
         {
             await AccumulateBranchesBySideAsync(branch, sides, order, ct).ConfigureAwait(false);
         }
@@ -270,14 +270,14 @@ public sealed partial class ResetCommands
         }
     }
 
-    private async Task<IReadOnlyList<string>> EnumerateApexSdlcBranchesAsync(int apex, CancellationToken ct)
+    private async Task<IReadOnlyList<string>> EnumerateRootSdlcBranchesAsync(int root, CancellationToken ct)
     {
         try
         {
-            var hierarchy = await _walker.WalkAsync(apex, maxDepth: 8, ct).ConfigureAwait(false);
+            var hierarchy = await _walker.WalkAsync(root, maxDepth: 8, ct).ConfigureAwait(false);
             if (hierarchy is null)
             {
-                return [$"sdlc/apex/{apex.ToString(System.Globalization.CultureInfo.InvariantCulture)}"];
+                return [$"sdlc/root/{root.ToString(System.Globalization.CultureInfo.InvariantCulture)}"];
             }
 
             var result = new List<string>();
@@ -290,7 +290,7 @@ public sealed partial class ResetCommands
                     return;
                 }
 
-                result.Add($"sdlc/apex/{node.WorkItemId.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                result.Add($"sdlc/root/{node.WorkItemId.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
 
                 if (node.Children is null)
                 {

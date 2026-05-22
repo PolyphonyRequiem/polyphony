@@ -2,6 +2,7 @@ using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Routing;
+using Polyphony.Journal.Reset;
 using Polyphony.Sdlc.Observers;
 using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.Stubs;
@@ -15,7 +16,7 @@ namespace Polyphony.Tests.Commands;
 /// Round-trip tests for the <c>polyphony reset</c> verb family —
 /// <c>reset state</c>, <c>reset prs</c>, <c>reset branches</c>,
 /// <c>reset worktrees</c>, <c>reset manifest</c>, and the
-/// legacy-pattern composite path used by <c>reset apex --strategy pattern</c>.
+/// legacy-pattern composite path used by <c>reset root --strategy pattern</c>.
 ///
 /// <para>Mirrors the stubbing pattern from
 /// <see cref="BranchCommandsMarkImplMergedTests"/>: real
@@ -366,10 +367,10 @@ public sealed class ResetCommandsTests : CommandTestBase
             new ProcessResult(0, "", ""));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetRoot(root: 100, execute: false, skipState: true));
+            () => cmd.ResetRoot(root: 100, execute: false, strategy: ProjectionResetStrategy.Pattern, skipState: true));
 
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetApexResult);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetRootResult);
         result.ShouldNotBeNull();
         result.Success.ShouldBeTrue();
         result.StateSkipped.ShouldBeTrue();
@@ -410,14 +411,14 @@ public sealed class ResetCommandsTests : CommandTestBase
             new ProcessResult(0, "", ""));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.ResetRoot(root: 100, execute: false));
+            () => cmd.ResetRoot(root: 100, execute: false, strategy: ProjectionResetStrategy.Pattern));
 
         exit.ShouldBe(ExitCodes.Success);
-        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetApexResult);
+        var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetRootResult);
         result.ShouldNotBeNull();
         // facets must appear after branches and before manifest in the
         // completed-steps order — guarantees the chain documented in
-        // ResetApexResult is what the composite actually runs.
+        // ResetRootResult is what the composite actually runs.
         var idxBranches = result.StepsCompleted.ToList().IndexOf("branches");
         var idxFacets = result.StepsCompleted.ToList().IndexOf("facets");
         var idxManifest = result.StepsCompleted.ToList().IndexOf("manifest");
