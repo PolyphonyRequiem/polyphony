@@ -32,6 +32,8 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-evidence-pr")]
     [JournaledAction(Action = "pr_merge_evidence_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(PrMergeEvidenceResult))]
     public async Task<int> MergeEvidencePr(
         int prNumber = RequiredInput.MissingInt,
@@ -166,6 +168,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergeEvidencePrPayload),
+            effectsSelector: _ => SelectMergeEvidencePrEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

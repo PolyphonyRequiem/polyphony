@@ -44,6 +44,7 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("mark-impl-merged")]
     [JournaledAction(Action = "branch_mark_impl_merged")]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
     [VerbResult(typeof(BranchImplMergedMarkerResult))]
     public Task<int> MarkImplMerged(
         int workItem = RequiredInput.MissingInt,
@@ -65,6 +66,7 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("clear-impl-merged")]
     [JournaledAction(Action = "branch_clear_impl_merged")]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
     [VerbResult(typeof(BranchImplMergedMarkerResult))]
     public Task<int> ClearImplMerged(
         int workItem = RequiredInput.MissingInt,
@@ -246,6 +248,13 @@ public sealed partial class BranchCommands
             },
             outcomeSelector: exitCode => SelectJournalOutcome(exitCode, payloadSucceeded, payloadWasMutated),
             payloadSelector: _ => payloadJson,
+            effectsSelector: _ => addTag
+                ? SelectMarkImplMergedEffects(payloadJson is null
+                    ? null
+                    : JsonSerializer.Deserialize(payloadJson, PolyphonyJsonContext.Default.BranchMarkImplMergedPayload))
+                : SelectClearImplMergedEffects(payloadJson is null
+                    ? null
+                    : JsonSerializer.Deserialize(payloadJson, PolyphonyJsonContext.Default.BranchClearImplMergedPayload)),
             ct: ct).ConfigureAwait(false);
     }
 

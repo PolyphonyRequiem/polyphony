@@ -33,6 +33,7 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-feature")]
     [JournaledAction(Action = "branch_ensure_feature")]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(BranchEnsureFeatureResult))]
     public async Task<int> EnsureFeature(
         string branch = "",
@@ -186,6 +187,7 @@ public sealed partial class BranchCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.BranchEnsureFeaturePayload),
+            effectsSelector: _ => SelectEnsureFeatureEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 }

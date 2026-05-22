@@ -64,6 +64,7 @@ public sealed partial class PrCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("create-feature-pr")]
     [JournaledAction(Action = "pr_create_feature_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
     [VerbResult(typeof(PrCreateFeatureResult))]
     public async Task<int> CreateFeaturePr(
         int workItem = RequiredInput.MissingInt,
@@ -257,6 +258,7 @@ public sealed partial class PrCommands(
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrCreateFeaturePrPayload),
+            effectsSelector: _ => SelectCreateFeaturePrEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

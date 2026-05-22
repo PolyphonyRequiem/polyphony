@@ -39,12 +39,16 @@ public sealed class JournalStoreTests : IDisposable
         }
 
         objectNames.ShouldContain("actions");
+        objectNames.ShouldContain("journal_effects");
         objectNames.ShouldContain("schema_version");
         objectNames.ShouldContain("idx_actions_work_item");
         objectNames.ShouldContain("idx_actions_root");
         objectNames.ShouldContain("idx_actions_run");
         objectNames.ShouldContain("idx_actions_action");
         objectNames.ShouldContain("idx_actions_started");
+        objectNames.ShouldContain("idx_journal_effects_entry");
+        objectNames.ShouldContain("idx_journal_effects_kind_id");
+        objectNames.ShouldContain("idx_journal_effects_owned_kind");
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "SELECT version FROM schema_version WHERE id = 1;";
@@ -68,12 +72,35 @@ public sealed class JournalStoreTests : IDisposable
             },
             CancellationToken.None);
 
+        var effects = new[]
+        {
+            new JournalResourceEffect
+            {
+                Kind = ResourceKind.GitBranch,
+                Id = "feature/42",
+                Intent = ResourceIntent.EnsurePresent,
+                Mutation = ResourceMutation.NoChangedExternalAlreadyPresent,
+                PolyphonyOwned = false,
+            },
+            new JournalResourceEffect
+            {
+                Kind = ResourceKind.AdoWorkItemState,
+                Id = "workitem:3260",
+                Intent = ResourceIntent.SetState,
+                Mutation = ResourceMutation.Changed,
+                PolyphonyOwned = true,
+                Platform = "ado",
+                ParentId = "workitem:3260",
+            },
+        };
+
         await _store.RecordEndAsync(
             actionId,
             JournalOutcome.NoOp,
             errorCode: null,
             errorMessage: null,
             payloadJson: "{\"phase\":\"finish\"}",
+            effects: effects,
             CancellationToken.None);
 
         var entries = await _store.QueryAsync(new JournalQuery { RootId = 42 }, CancellationToken.None);
@@ -92,6 +119,18 @@ public sealed class JournalStoreTests : IDisposable
         entry.ErrorCode.ShouldBeNull();
         entry.ErrorMessage.ShouldBeNull();
         entry.PayloadJson.ShouldBe("{\"phase\":\"finish\"}");
+        entry.Effects.Count.ShouldBe(2);
+        entry.Effects[0].Kind.ShouldBe(ResourceKind.GitBranch);
+        entry.Effects[0].Id.ShouldBe("feature/42");
+        entry.Effects[0].Mutation.ShouldBe(ResourceMutation.NoChangedExternalAlreadyPresent);
+        entry.Effects[0].PolyphonyOwned.ShouldBeFalse();
+        entry.Effects[1].Kind.ShouldBe(ResourceKind.AdoWorkItemState);
+        entry.Effects[1].Id.ShouldBe("workitem:3260");
+        entry.Effects[1].Intent.ShouldBe(ResourceIntent.SetState);
+        entry.Effects[1].Mutation.ShouldBe(ResourceMutation.Changed);
+        entry.Effects[1].PolyphonyOwned.ShouldBeTrue();
+        entry.Effects[1].Platform.ShouldBe("ado");
+        entry.Effects[1].ParentId.ShouldBe("workitem:3260");
     }
 
     [Fact]
@@ -146,7 +185,7 @@ public sealed class JournalStoreTests : IDisposable
             },
             CancellationToken.None);
 
-        await _store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, CancellationToken.None);
+        await _store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, null, CancellationToken.None);
         return actionId;
     }
 

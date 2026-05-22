@@ -25,6 +25,7 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-impl")]
     [JournaledAction(Action = "branch_ensure_impl")]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(BranchEnsureImplResult))]
     public async Task<int> EnsureImpl(
         int rootId = RequiredInput.MissingInt,
@@ -228,6 +229,7 @@ public sealed partial class BranchCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.BranchEnsureImplPayload),
+            effectsSelector: _ => SelectEnsureImplEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

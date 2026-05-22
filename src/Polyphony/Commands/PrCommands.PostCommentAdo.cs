@@ -35,6 +35,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("post-comment-ado")]
     [JournaledAction(Action = "pr_post_comment_ado")]
+    [MutatesResource(ResourceKind.AdoPrComment)]
     [VerbResult(typeof(PrPostCommentAdoResult))]
     public async Task<int> PostCommentAdo(
         string organization = "",
@@ -256,6 +257,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrPostCommentAdoPayload),
+            effectsSelector: _ => SelectPostCommentAdoEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

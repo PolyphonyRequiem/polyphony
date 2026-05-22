@@ -36,6 +36,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("open-evidence-ado")]
     [JournaledAction(Action = "pr_open_evidence_ado")]
+    [MutatesResource(ResourceKind.AdoPr)]
     [VerbResult(typeof(PrOpenEvidenceAdoResult))]
     public async Task<int> OpenEvidenceAdo(
         string organization = "",
@@ -139,6 +140,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenEvidenceAdoPayload),
+            effectsSelector: _ => SelectOpenEvidenceAdoEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

@@ -29,6 +29,8 @@ public sealed partial class BranchCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("next-impl")]
     [JournaledAction(Action = "branch_next_impl")]
+    [MutatesResource(ResourceKind.AdoWorkItemState)]
+    [MayObserveResource(ResourceKind.AdoWorkItem)]
     [VerbResult(typeof(BranchNextImplResult))]
     public async Task<int> NextImpl(
         int workItem = RequiredInput.MissingInt,
@@ -330,6 +332,7 @@ public sealed partial class BranchCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.BranchNextImplPayload),
+            effectsSelector: _ => SelectNextImplEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

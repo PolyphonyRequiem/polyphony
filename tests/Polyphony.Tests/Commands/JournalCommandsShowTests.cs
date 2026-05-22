@@ -47,6 +47,7 @@ public sealed class JournalCommandsShowTests : CommandTestBase
         result.Entries[0].Action.ShouldBe("branch_ensure_feature");
         result.Entries[0].Target.ShouldBe("feature/3260");
         result.Entries[0].Outcome.ShouldBe(JournalOutcome.Success);
+        result.Entries[0].Effects.ShouldBeEmpty();
     }
 
     [Fact]
@@ -90,18 +91,47 @@ public sealed class JournalCommandsShowTests : CommandTestBase
     }
 
     [Fact]
-    public async Task Show_TextRender_WritesTabularTimeline()
+    public async Task Show_TextAndJsonRender_IncludeEffects()
     {
-        await SeedEntryAsync(runId: "run-4", rootId: 3260, workItemId: 3260, action: "branch_ensure_feature", target: "feature/3260", startedAt: 1_700_000_000_000);
+        await SeedEntryAsync(
+            runId: "run-4",
+            rootId: 3260,
+            workItemId: 3260,
+            action: "branch_ensure_feature",
+            target: "feature/3260",
+            startedAt: 1_700_000_000_000,
+            effects:
+            [
+                new JournalResourceEffect
+                {
+                    Kind = ResourceKind.GitBranch,
+                    Id = "feature/3260",
+                    Intent = ResourceIntent.EnsurePresent,
+                    Mutation = ResourceMutation.CreatedNow,
+                    PolyphonyOwned = true,
+                },
+            ]);
 
-        var (exitCode, output) = await CaptureConsoleAsync(() => _command.Show(render: "text"));
+        var (jsonExitCode, jsonOutput) = await CaptureConsoleAsync(() => _command.Show());
+        var jsonResult = JsonSerializer.Deserialize(jsonOutput, PolyphonyJsonContext.Default.JournalShowResult);
+        var (textExitCode, textOutput) = await CaptureConsoleAsync(() => _command.Show(render: "text"));
 
-        exitCode.ShouldBe(ExitCodes.Success);
-        output.ShouldContain("timestamp\taction\ttarget\toutcome\twork_item\troot");
-        output.ShouldContain("branch_ensure_feature");
-        output.ShouldContain("feature/3260");
-        output.ShouldContain("success");
-        output.ShouldContain("3260");
+        jsonExitCode.ShouldBe(ExitCodes.Success);
+        jsonResult.ShouldNotBeNull();
+        jsonResult.Entries.ShouldHaveSingleItem();
+        jsonResult.Entries[0].Effects.ShouldHaveSingleItem();
+        jsonResult.Entries[0].Effects[0].Kind.ShouldBe(ResourceKind.GitBranch);
+        jsonResult.Entries[0].Effects[0].Id.ShouldBe("feature/3260");
+        jsonResult.Entries[0].Effects[0].Mutation.ShouldBe(ResourceMutation.CreatedNow);
+        jsonResult.Entries[0].Effects[0].PolyphonyOwned.ShouldBeTrue();
+
+        textExitCode.ShouldBe(ExitCodes.Success);
+        textOutput.ShouldContain("timestamp\taction\ttarget\toutcome\twork_item\troot\teffects");
+        textOutput.ShouldContain("branch_ensure_feature");
+        textOutput.ShouldContain("feature/3260");
+        textOutput.ShouldContain("success");
+        textOutput.ShouldContain("3260");
+        textOutput.ShouldContain("git_branch:feature/3260:ensure_present:created_now:owned");
     }
 
     public override void Dispose()
@@ -117,7 +147,14 @@ public sealed class JournalCommandsShowTests : CommandTestBase
         }
     }
 
-    private async Task SeedEntryAsync(string runId, int? rootId, int? workItemId, string action, string target, long startedAt)
+    private async Task SeedEntryAsync(
+        string runId,
+        int? rootId,
+        int? workItemId,
+        string action,
+        string target,
+        long startedAt,
+        IReadOnlyList<JournalResourceEffect>? effects = null)
     {
         var actionId = await _store.RecordStartAsync(
             new JournalEntryStart
@@ -130,6 +167,6 @@ public sealed class JournalCommandsShowTests : CommandTestBase
                 StartedAt = startedAt,
             },
             CancellationToken.None);
-        await _store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, CancellationToken.None);
+        await _store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, effects, CancellationToken.None);
     }
 }

@@ -76,7 +76,7 @@ public sealed partial class JournalCommands
 
     private static void EmitText(IReadOnlyList<JournalEntry> entries)
     {
-        Console.WriteLine("timestamp\taction\ttarget\toutcome\twork_item\troot");
+        Console.WriteLine("timestamp\taction\ttarget\toutcome\twork_item\troot\teffects");
         foreach (var entry in entries)
         {
             Console.WriteLine(string.Join("\t",
@@ -85,7 +85,8 @@ public sealed partial class JournalCommands
                 entry.Target,
                 FormatOutcome(entry.Outcome),
                 entry.WorkItemId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                entry.RootId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty));
+                entry.RootId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                FormatEffects(entry.Effects)));
         }
     }
 
@@ -100,6 +101,17 @@ public sealed partial class JournalCommands
         null => string.Empty,
         _ => throw new InvalidOperationException($"Unknown journal outcome '{outcome}'."),
     };
+
+    private static string FormatEffects(IReadOnlyList<JournalResourceEffect> effects)
+        => effects.Count == 0
+            ? string.Empty
+            : string.Join(" | ", effects.Select(FormatEffect));
+
+    private static string FormatEffect(JournalResourceEffect effect)
+    {
+        var ownership = effect.PolyphonyOwned ? "owned" : "external";
+        return $"{effect.Kind}:{effect.Id}:{ResourceIntentCodec.ToStorage(effect.Intent)}:{ResourceMutationCodec.ToStorage(effect.Mutation)}:{ownership}";
+    }
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 }

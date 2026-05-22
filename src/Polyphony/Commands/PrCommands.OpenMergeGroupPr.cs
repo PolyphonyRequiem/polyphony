@@ -24,6 +24,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("open-mg-pr")]
     [JournaledAction(Action = "pr_open_mg_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
     [VerbResult(typeof(PrOpenMergeGroupResult))]
     public async Task<int> OpenMergeGroupPr(
         int rootId = RequiredInput.MissingInt,
@@ -237,6 +238,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenMergeGroupPrPayload),
+            effectsSelector: _ => SelectOpenMergeGroupPrEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

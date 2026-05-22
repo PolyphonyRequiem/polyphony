@@ -28,6 +28,7 @@ public sealed partial class PrCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("open-impl-pr")]
     [JournaledAction(Action = "pr_open_impl_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
     [VerbResult(typeof(PrOpenImplResult))]
     public async Task<int> OpenImplPr(
         int rootId = RequiredInput.MissingInt,
@@ -314,6 +315,7 @@ public sealed partial class PrCommands
                 payload?.Succeeded ?? (exitCode == ExitCodes.Success),
                 payload?.WasMutated ?? false),
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenImplPrPayload),
+            effectsSelector: _ => SelectOpenImplPrEffects(payload),
             ct: ct).ConfigureAwait(false);
     }
 

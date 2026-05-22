@@ -15,6 +15,7 @@ public sealed class JournaledActionDecorator(IJournalStore store)
         Func<CancellationToken, Task<int>> action,
         Func<int, JournalOutcome>? outcomeSelector = null,
         Func<int, string?>? payloadSelector = null,
+        Func<int, IReadOnlyList<JournalResourceEffect>>? effectsSelector = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(invocation);
@@ -38,17 +39,24 @@ public sealed class JournaledActionDecorator(IJournalStore store)
             var exitCode = await action(ct).ConfigureAwait(false);
             var outcome = (outcomeSelector ?? DefaultOutcomeSelector)(exitCode);
             var errorCode = exitCode == ExitCodes.Success ? null : $"exit_code_{exitCode}";
-            await _store.RecordEndAsync(actionId, outcome, errorCode, null, payloadSelector?.Invoke(exitCode), CancellationToken.None).ConfigureAwait(false);
+            await _store.RecordEndAsync(
+                actionId,
+                outcome,
+                errorCode,
+                null,
+                payloadSelector?.Invoke(exitCode),
+                effectsSelector?.Invoke(exitCode),
+                CancellationToken.None).ConfigureAwait(false);
             return exitCode;
         }
         catch (OperationCanceledException ex)
         {
-            await _store.RecordEndAsync(actionId, JournalOutcome.Failure, "operation_canceled", ex.Message, null, CancellationToken.None).ConfigureAwait(false);
+            await _store.RecordEndAsync(actionId, JournalOutcome.Failure, "operation_canceled", ex.Message, null, null, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         catch (Exception ex)
         {
-            await _store.RecordEndAsync(actionId, JournalOutcome.Failure, ex.GetType().Name, ex.Message, null, CancellationToken.None).ConfigureAwait(false);
+            await _store.RecordEndAsync(actionId, JournalOutcome.Failure, ex.GetType().Name, ex.Message, null, null, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
     }
