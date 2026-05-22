@@ -1,9 +1,23 @@
 # Polyphony PR/Branch Lifecycle — Ubiquitous Language
 
-> Living document. We add/refine terms as the design solidifies.
+> **Status: authoritative** (AB#3259). This glossary defines the canonical vocabulary for polyphony across workflows, code, scripts, and docs. New terms and renames update this file **first** — code changes follow. Use of terms not present here, or use of explicitly forbidden terms, is a lint failure (`lint-vocabulary.ps1`).
+>
+> Living document — we refine entries as the design evolves, but the glossary is the source of truth, not a description of drift.
+>
 > Goal: every term has exactly ONE meaning, and every concept has exactly ONE term.
 
 > **Type-agnosticism rule:** hardcoded process-template type names (Epic / Issue / Task / User Story / Bug / etc.) MUST NOT appear in design docs, plan docs, code, workflow YAML, or polyphony CLI verb names. They are loaded ONLY at runtime from `process-config.yaml`. All polyphony-internal vocabulary uses the relational, structural, facet, scope, and disposition terms below.
+
+> **Forbidden terms** (AB#3259 — fail lint on contact):
+> - `apex` — use `root`
+> - `apex-driver` / `apex_driver` — the top-level workflow is `polyphony.yaml`; there is no separate "driver" noun
+> - `tree-walker` — collapsed into `polyphony.yaml`; the role description stays but the name is gone
+> - `primary_*` (as in `primary_completer`, `primary_router`) — use `root_*`
+> - `Primary*` (as in `PrimaryId`, `PrimaryRouter` — PascalCase compounds) — use `Root*`
+> - `wave` — use `batch`
+> - `cascade` (as a domain noun for the dependent-PR-tree remedy operation) — use `restack`
+> - `*_dispatch` suffix on sub-workflow-invocation nodes — drop the suffix; `type: workflow` already says so
+> - `terminal_*` prefix on workflow exit-state nodes — drop the prefix
 
 ## Work item — relational terms
 
@@ -11,8 +25,7 @@ These describe an item's position in the work hierarchy of one run. They are REL
 
 | Term | Definition |
 |---|---|
-| **Root** | The work item the user passed to the entry-point workflow. Defines the scope of *this run*. The term **`apex`** is forbidden — use `root` everywhere. |
-| **Tree-walker** | The orchestrator that walks the in-scope tree of the root, builds the worklist, and dispatches items as their requirements become `ready`. Replaces the previous single-item phase router. (Phase 7 deliverable.) |
+| **Root** | The work item the user passed to polyphony's entry-point workflow (`polyphony.yaml`). Defines the scope of *this run*. The term **`apex`** is forbidden — use `root` everywhere (AB#3259). |
 | **Parent** | The immediate ancestor of the current work item in the work hierarchy. |
 | **Current** | The work item the active workflow step is operating on. |
 | **Child** | An immediate descendant of the current item. |
@@ -176,37 +189,37 @@ Edges enter the dependency graph through three distinct sources. Each source has
 | **Plan status enum** | The five values `plan_status` may take in the plan status verb's per-item rows: `needed` (item has the plannable facet but no plan PR exists yet), `open` (plan PR exists and is OPEN on the platform), `merged` (plan PR has been merged), `abandoned` (plan PR was closed without merging), `n/a` (item has no plannable facet — hidden from the items array unless `--include-na` is passed; always counted in `summary.plan_n_a` so the operator can see full tree scope). |
 | **Pending revisions** | A boolean signal on a `plan_status="open"` row: `true` when the open plan PR carries an unresolved `CHANGES_REQUESTED` review decision (the reviewer asked for changes that the next plan-PR push has not yet addressed). Surfaced both per-item (`pending_revisions`) and as a summary counter so an operator can answer "how many open plan PRs need attention right now?" in a single read. Only meaningful when `plan_status == "open"` — null otherwise so consumers can distinguish "no signal" from "open, no pending revisions" from "open, changes requested". |
 
-## Apex driver
+## Polyphony top-level workflow
+
+Polyphony's entry-point workflow is `.conductor/registry/workflows/polyphony.yaml` (formerly `apex-driver.yaml` — renamed under AB#3259). It is the *thing that walks the tree*: there is no separate "driver" or "tree-walker" noun.
 
 | Term | Definition |
 |---|---|
-| **Apex driver** | The Phase 7 keystone SDLC orchestrator (`apex-driver.yaml`). A *driver*, not a pipeline: it builds a worklist for the apex tree, dispatches each wave's items in parallel through `apex-wave-dispatch.yaml` → `apex-item-dispatch.yaml`, integrates the wave, and re-evaluates the worklist until the apex root reports satisfied. Replaces the deleted `polyphony-full.yaml`. Inputs: `apex_id`, `intent`, `platform`. |
-| **Dispatch loop** | The outer loop of the apex driver: `build_worklist` → `wave_dispatch_loop` (for_each over waves) → `apex_completion_gate`. The loop variable is the *worklist itself* — recomputed from observable state every iteration — not a step counter or pointer into a static plan. |
-| **Lifecycle router** | The `lifecycle-router.ps1` deterministic classifier that wraps `polyphony state next-ready` and emits a routing envelope (`route: plan-level | actionable | implement-merge-group | feature-pr | fast-path | monitoring | blocked | error`). Consumed by `apex-item-dispatch.yaml`'s `classify_lifecycle` step. Same pattern as `route-actionable-executor.ps1`. |
-| **Wave integrator** | The `wave-integrator.ps1` script that merges per-item branches into the apex feature branch in topological order from `polyphony edges check`. Default merge strategy is `--no-ff` for auditability. Conflicts abort the single merge (not the wave) and roll up to a wave-level human gate. |
-| **Per-item worktree** | An isolated git worktree at `<repo-parent>/<repo-name>-item-<work_item_id>` on branch `sdlc/apex/<work_item_id>`, branched from the apex feature branch. Spawned by `worktree-manager.ps1` for each item dispatched within a wave; torn down after lifecycle dispatch completes. Idempotent — safe to re-spawn or re-tear-down on re-entry. |
+| **`polyphony.yaml`** | The top-level SDLC orchestrator workflow. A *driver*, not a pipeline: it builds a worklist for the root's in-scope tree, dispatches each batch's items in parallel through `batch.yaml` (formerly `apex-wave-dispatch.yaml`) → `item.yaml` (formerly `apex-item-dispatch.yaml`), integrates the batch, and re-evaluates the worklist until the root reports satisfied. Inputs: `root_id`, `intent`, `platform`. |
+| **Batch** | The set of items dispatched in parallel at one tick of the worklist. Formerly called `wave` — renamed under AB#3259 because "batch" is the established term for a parallel-dispatched set and "wave" was domain-jargon nobody could define. A batch boundary corresponds to one round of worklist re-evaluation. |
+| **Batch loop** | The outer loop of `polyphony.yaml`: `build_worklist` → `batch_loop` (for_each over batches) → `root_completion_gate`. The loop variable is the *worklist itself* — recomputed from observable state every iteration — not a step counter or pointer into a static plan. (Formerly `wave_dispatch_loop`.) |
+| **Lifecycle router** | The `lifecycle-router.ps1` deterministic classifier that wraps `polyphony state next-ready` and emits a routing envelope (`route: plan-level | actionable | implement-merge-group | feature-pr | fast-path | monitoring | blocked | error`). Consumed by `item.yaml`'s `classify_lifecycle` step. Same pattern as `route-actionable-executor.ps1`. |
+| **Batch integrator** | The `batch-integrator.ps1` script (formerly `wave-integrator.ps1`) that merges per-item branches into the root feature branch in topological order from `polyphony edges check`. Default merge strategy is `--no-ff` for auditability. Conflicts abort the single merge (not the batch) and roll up to a batch-level human gate. |
+| **Per-item worktree** | An isolated git worktree at `<repo-parent>/<repo-name>-item-<work_item_id>` on branch `sdlc/root/<work_item_id>`, branched from the root feature branch. Spawned by `worktree-manager.ps1` for each item dispatched within a batch; torn down after lifecycle dispatch completes. Idempotent — safe to re-spawn or re-tear-down on re-entry. |
 | **Per-MG worktree** | Analogous to per-item worktree but scoped to a merge group (MG). Future extension; not in MVP. |
-| **Observable-state re-entry** | The property that lets the apex driver resume after a human gate, restart, or interruption without persisting per-step pointers: every iteration re-builds the worklist from `polyphony state next-ready` and the EdgeGraph, so the next wave is whatever's ready *now*. |
-| **Bubble-up signal** | A `renegotiation_pending: true` (or analogous) output that an inner sub-workflow surfaces to the apex driver. Triggers consultation of `policy.renegotiation.auto_decide` (`prompt` / `auto_restart` / `ignore`) and either gates, restarts the loop, or continues. As of Phase 7 follow-up, this signal is wired end-to-end: `plan-level` → `apex-item-dispatch` → `apex-wave-dispatch` (aggregated) → `apex-driver` (rolled up) → `renegotiation_gate`. |
-| **Lifecycle dispatch** | The branch-on-router step inside `apex-item-dispatch.yaml` that selects exactly one lifecycle sub-workflow (`plan-level`, `actionable`, `implement-merge-group`, or `feature-pr`) per invocation, based on the `lifecycle-router.ps1` verdict. Implements the canonical "branch-on-router-into-sub-workflow" pattern (see `feature-pr.yaml`'s platform router for the same shape). Conductor does not support templated `workflow:` paths, so each route value is a separately-named workflow node with explicit `input_mapping`. |
-| **Multi-facet sequence** | The implicit ordering of an item's facets across waves: planning before action before implementation. Enforced by `polyphony state next-ready` requirement edges, NOT by any sequence inside one `apex-item-dispatch` invocation — a single dispatch handles one facet, and the next facet (if any) is picked up on the next worklist rebuild. |
-| **Fast-path completion** | The `apex-item-dispatch.yaml` terminal taken when the lifecycle router emits `route: fast-path` — typically because `polyphony state next-ready` reports the item as already satisfied or empty. The item exits without invoking any lifecycle sub-workflow; no state advance is needed because the item is already in a terminal disposition. |
+| **Observable-state re-entry** | The property that lets `polyphony.yaml` resume after a human gate, restart, or interruption without persisting per-step pointers: every iteration re-builds the worklist from `polyphony state next-ready` and the EdgeGraph, so the next batch is whatever's ready *now*. |
+| **Bubble-up signal** | A `renegotiation_pending: true` (or analogous) output that an inner sub-workflow surfaces upward. Triggers consultation of `policy.renegotiation.auto_decide` (`prompt` / `auto_restart` / `ignore`) and either gates, restarts the loop, or continues. Wired end-to-end: `plan-level` → `item` → `batch` (aggregated) → `polyphony` (rolled up) → `renegotiation_gate`. |
+| **Lifecycle dispatch** | The branch-on-router step inside `item.yaml` that selects exactly one lifecycle sub-workflow (`plan-level`, `actionable`, `implement-merge-group`, or `feature-pr`) per invocation, based on the `lifecycle-router.ps1` verdict. Implements the canonical "branch-on-router-into-sub-workflow" pattern (see `feature-pr.yaml`'s platform router for the same shape). Conductor does not support templated `workflow:` paths, so each route value is a separately-named workflow node with explicit `input_mapping`. |
+| **Multi-facet sequence** | The implicit ordering of an item's facets across batches: planning before action before implementation. Enforced by `polyphony state next-ready` requirement edges, NOT by any sequence inside one `item.yaml` invocation — a single dispatch handles one facet, and the next facet (if any) is picked up on the next worklist rebuild. |
+| **Fast-path completion** | The `item.yaml` terminal taken when the lifecycle router emits `route: fast-path` — typically because `polyphony state next-ready` reports the item as already satisfied or empty. The item exits without invoking any lifecycle sub-workflow; no state advance is needed because the item is already in a terminal disposition. |
+| **Plan restack** | The `plan-restack.yaml` sub-workflow (formerly `cascade-remedy.yaml`) that fixes the tree of stale descendant plan PRs when a parent plan regenerates. Polyphony's plan PRs form a literal stack (each child PR's branch is built on its parent's branch); when the parent's branch moves, the descendant PRs must be re-based onto the new parent. "Restack" is the established term for this operation in modern stacked-PR tooling (Sapling, Graphite, gt, ghstack). Per-descendant work is in `remedy-stale-descendant.yaml`. |
 
 ## Workflow node naming
 
-> **Status: descriptive, not prescriptive.** This section documents the
-> suffix/prefix patterns currently in use across `.conductor/registry/workflows/*.yaml`.
-> Multiple inconsistencies are under active discussion (see ABs linked
-> in each row). Cleanup epic deferred until each individual discussion
-> resolves and bug-squashing completes.
+> **Status: authoritative** (AB#3259). The suffix/prefix conventions below are the canonical naming rules. Workflows that violate them are wrong and must be fixed. Open ABs in each row are *implementation work*, not "discussion to settle" — the rule is already settled.
 
 ### Role suffixes (the verb the node performs)
 
-| Suffix | Convention | Notes / open ABs |
+| Suffix | Convention | Notes / implementation ABs |
 |---|---|---|
 | `_gate` | A `human_gate` node that prompts the operator. Always paired with a `_policy` consultant node when the gate has an auto-decide override. | Stable. |
-| `_router` | A decision step (script or `branch_on`) that picks one of N continuations. Typically classifies inputs into a closed set of route values. | Stable; relationship to `_dispatch` under discussion (AB#3204). |
-| `_dispatch` | A `type: workflow` node that invokes a sub-workflow. | Under discussion (AB#3204). |
+| `_router` | A decision step (script or `branch_on`) that picks one of N continuations *within the current workflow*. Typically classifies inputs into a closed set of route values. | Stable. The companion `_dispatch` suffix is *dropped* — sub-workflow invocations use the verb noun alone (see below). |
+| ~~`_dispatch`~~ | **DROPPED** (AB#3259). Sub-workflow invocations use the verb noun alone (`plan_level`, `actionable`, `implement_merge_group`, `feature_pr`). The `type: workflow` declaration already says it invokes a sub-workflow — the suffix was redundant. Closes AB#3204. | Implementation: AB#3259. |
 | `_policy` | A `script:` node that resolves a policy domain via `polyphony policy resolve` and emits an envelope consumed by the next `_gate`. | Stable. |
 | `_counter` | A `script:` node that increments a loop iteration counter. | 8 nodes; existence under discussion (AB#3208). |
 | `_counter_reset` / `_reset` | Resets a loop counter. Suffix inconsistent — see AB#3199. | Two suffixes (AB#3199); existence under discussion (AB#3208). |
@@ -215,35 +228,33 @@ Edges enter the dependency graph through three distinct sources. Each source has
 | `_creator` / `_updater` / `_merger` / `_completer` / `_resolver` / `_seeder` / `_fixer` / `_validator` / `_writer` / `_implementer` / `_planner` | Specialized thing-doer roles. Many are singletons. | Rationalization under discussion (AB#3207). |
 | `_emitter` | Used on exactly two nodes; meaning unclear. | AB#3205. |
 | `_poster_<platform>` | Stacked compound suffix; only place suffixes stack. | AB#3200. |
-| `_error_gate` (canonical) / `_failed_gate` / `_failure_gate` | A `human_gate` that fires on operation failure with retry/abort options. | Three suffixes for one role; aligning to `_error_gate` per AB#3194. |
-| `_policy_limit_gate` (canonical) / `_cap_gate` / `_loop_gate` / `_exhausted_gate` / `_exceeded_gate` | A `human_gate` that fires when a configured cap is reached. | Five suffixes for one role; aligning to `_policy_limit_gate` per AB#3195. |
+| `_error_gate` (canonical) / ~~`_failed_gate`~~ / ~~`_failure_gate`~~ | A `human_gate` that fires on operation failure with retry/abort options. | Implementation: AB#3194. |
+| `_policy_limit_gate` (canonical) / ~~`_cap_gate`~~ / ~~`_loop_gate`~~ / ~~`_exhausted_gate`~~ / ~~`_exceeded_gate`~~ | A `human_gate` that fires when a configured cap is reached. | Implementation: AB#3195. |
 
 ### Position-bearing prefixes
 
-| Prefix | Convention | Notes / open ABs |
+| Prefix | Convention | Notes / implementation ABs |
 |---|---|---|
-| `terminal_` | Workflow end-state nodes with no outgoing routes. 18 occurrences — the largest prefix family. | Loaded word; rename under discussion (AB#3202). Two outliers don't fit the adjective convention (AB#3197). |
+| ~~`terminal_`~~ | **DROPPED** (AB#3259). Workflow end-state nodes use the verb/noun alone (`abort_run`, `dispatched`, `cap_auto_fail`). The fact that they have no outgoing routes is structural, not a naming concern. Closes AB#3202 and AB#3197. | Implementation: AB#3259. |
 | `ado_` / `github_` / `_ado` / `_github` | Platform-specific node, opposite the platform-agnostic version. Position varies (prefix vs middle vs suffix). | Position inconsistent (AB#3192). |
 | `pr_` | Operates on a PR (e.g. `pr_lifecycle_<platform>`, `pr_platform_router`). | Stable. |
-| `scope_` | Operates on PR file-scope review (`scope_reviewer`, `scope_revise`, `scope_violation_gate`, etc.). | Loaded word — collides with run-scope, scope-renegotiation, and external scope meanings (AB#3203). |
+| `scope_` | Operates on PR file-scope review (`scope_reviewer`, `scope_revise`, `scope_violation_gate`, etc.). "Scope" here means *PR file scope* — the set of files the PR is expected to touch, defined by the planning artifacts. Distinct from *run scope* (the in-scope subtree from root) — context disambiguates. **Kept** (not renamed). | Closes AB#3203 via clarification rather than rename. |
 | `open_` | Verb prefix on PR-creation nodes (`open_plan_pr`, `open_feature_pr`). | Verb+noun word order inconsistent across the workflows (AB#3196). |
 | `feature_` | Operates on the feature-PR flow (`feature_pr_creator`, `feature_pr_updater`, etc.). | Stable. |
 | `remediation_` | Operates within the remediation flow. | Stable. |
-| `apex_` | Operates on the apex driver (root) flow. 29 occurrences. | The glossary forbids `apex` ("use `root` everywhere") but workflows use it pervasively. Reconciliation under discussion (AB#3209). |
-| `ensure_` (prefix) vs `_ensure_` (middle) | Idempotent setup operation. Position inconsistent. | Aligning to prefix per AB#3193. |
+| ~~`apex_`~~ | **DROPPED** (AB#3259). Use `root_` everywhere. All 29 occurrences across the workflows must be renamed. Closes AB#3209. | Implementation: AB#3259. |
+| ~~`primary_`~~ | **DROPPED** (AB#3259). `primary_completer`, `primary_router` etc. become `root_completer`, `root_router`. Closes AB#3209. | Implementation: AB#3259. |
+| `ensure_` (prefix) vs ~~`_ensure_`~~ (middle) | Idempotent setup operation. **Prefix is canonical.** | Implementation: AB#3193. |
 
-### Run-flow vocabulary (under discussion — AB#3209)
+### Run-flow vocabulary (resolved — AB#3259)
 
-These terms appear in node names but are not yet defined here. AB#3209
-will produce concise definitions; this row is a placeholder so readers
-know they're TBD and not omissions.
-
-| Term | First seen | Open question |
+| Term | Canonical name | Meaning |
 |---|---|---|
-| **wave** | `apex-driver.yaml`, `apex-wave-dispatch.yaml` | What constitutes a wave boundary? Topological layer vs batch vs ??? |
-| **cascade** | `cascade-remedy.yaml`, `cascade_summary_gate` | Aquatic-themed sibling of "wave"? What does it cascade? |
-| **primary** | `primary_router`, `primary_completer`, `primary_reviewer` (in `implement-merge-group.yaml`) | Likely "the work item the MG is for", but not stated. Differs from apex/root how? |
-| **apex** vs **root** | `apex-driver.yaml` (apex); this glossary §"Work item — relational terms" (root) | Glossary says `apex` is forbidden; workflows use it everywhere. Pick one. |
+| ~~wave~~ | **batch** | The set of items dispatched in parallel at one tick of the worklist. One batch boundary = one round of worklist re-evaluation. |
+| ~~cascade~~ | **restack** | The operation of rebasing a stack of dependent plan PRs when their parent moves. Named after the established term in stacked-PR tooling (Sapling, Graphite, gt, ghstack). Implemented by `plan-restack.yaml`. |
+| ~~primary~~ | **root** | The work item this run is for. Identical to `root` everywhere — there is no distinction between "primary" and "root". |
+| ~~apex~~ | **root** | Same as above. The term `apex` is forbidden everywhere. |
+| ~~tree-walker~~ | (collapsed) | Polyphony's top-level workflow (`polyphony.yaml`) IS the tree-walker. The role description (walks the tree, builds the worklist, dispatches batches) is documented under the *Polyphony top-level workflow* section above; there is no separate noun. |
 
 ### Combined templates / patterns
 
@@ -253,8 +264,8 @@ the cluster every time.
 
 | Pattern | Cluster | Where to find it |
 |---|---|---|
-| **Gate + policy consultant** | `<X>_policy` (script) → `<X>_gate` (human_gate). Policy resolves the auto-decide; gate fires only when policy returns `prompt`. | All policy-driven gates (e.g. `acceptance_policy` → `apex_completion_gate`). |
-| **Router + lifecycle dispatch** | `<X>_router` (script that emits `route:` envelope) → `branch_on:` over the route values, each landing on a `_dispatch` node that invokes a `type: workflow` sub-workflow. | `apex-item-dispatch.yaml` (lifecycle router → 4 lifecycle dispatches); `feature-pr.yaml`, `implement-merge-group.yaml` (platform router → per-platform PR lifecycle). |
+| **Gate + policy consultant** | `<X>_policy` (script) → `<X>_gate` (human_gate). Policy resolves the auto-decide; gate fires only when policy returns `prompt`. | All policy-driven gates (e.g. `acceptance_policy` → `root_completion_gate`). |
+| **Router + lifecycle dispatch** | `<X>_router` (script that emits `route:` envelope) → `branch_on:` over the route values, each landing on a sub-workflow invocation node (verb noun alone, no `_dispatch` suffix). | `item.yaml` (lifecycle router → 4 lifecycle invocations: `plan_level`, `actionable`, `implement_merge_group`, `feature_pr`); `feature-pr.yaml`, `implement-merge-group.yaml` (platform router → per-platform PR lifecycle). |
 | **Loop counter + cap gate** | `<X>_counter` (increment script) → `<X>_policy` (resolves cap) → `<X>_policy_limit_gate` or equivalent (human_gate when cap hit). Often paired with `<X>_counter_reset` on the human-chooses-continue arm. | `revise_counter` / `remediation_counter` / `review_counter` etc. in plan-level.yaml + ado-pr.yaml. |
 | **Pending-poll loop with stuck-review escape** | `_counter` increments per poll → `_policy` resolves poll cap → `_stuck_review_gate` fires when cap hit → `_reset` on `continue_waiting`. | `pending_poll_counter` + `stuck_review_gate` in plan-level.yaml, with ADO mirror in ado-pr.yaml. |
 | **Per-platform PR lifecycle** | Parent invokes `pr_platform_router` → branches to `pr_lifecycle_<platform>` (`pr_lifecycle_github` or `pr_lifecycle_ado`) as a `type: workflow` node with `input_mapping`. Adding a platform = add a sub-workflow + add a route. | `feature-pr.yaml`, `implement-merge-group.yaml` (note: `pr_lifecycle_<platform>` is the ONLY platform-isolation pattern that has been driven home consistently — others still leak per-platform nodes through). |

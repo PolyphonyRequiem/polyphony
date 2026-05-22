@@ -43,7 +43,7 @@ public sealed record PlanDeriveAncestorChainResult
     /// is uniform across root-plan and descendant-plan invocations.
     /// </para>
     /// <para>
-    /// Bug #8 (dogfood apex #3043, 2026-05-08) surfaced the original wire
+    /// Bug #8 (dogfood root #3043, 2026-05-08) surfaced the original wire
     /// shape: <c>WhenWritingNull</c> elided the field for the root case,
     /// then conductor's <c>strict_undefined</c> raised on
     /// <c>ancestor_chain.output.parent_item_id | default(0)</c> because

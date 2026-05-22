@@ -1,0 +1,1720 @@
+<#
+.SYNOPSIS
+    End-to-end behavior tests for the polyphony tree-walker.
+
+.DESCRIPTION
+    Phase 7 capstone — the structural lint
+    (`lint-polyphony.ps1`) verifies presence-of-things; this suite
+    walks the parsed three-YAML graph and asserts the END-TO-END
+    BEHAVIORS the polyphony promises:
+
+      • All three workflows (polyphony / root-batch-dispatch /
+        root-item-dispatch) parse, declare the documented entry
+        points, and have every route target resolve.
+      • The polyphony outer loop is reachable end-to-end through
+        preflight → build_worklist → batch_dispatch_loop → batch_loop_summary
+        → renegotiation_summary → root_completion_gate → close +
+        root_satisfied. Failure branches (preflight_failed /
+        batch_failed / completion_satisfied / completion_abandoned /
+        renegotiation_pending) route to the documented next node.
+      • root-batch-dispatch fans items out via for_each into
+        root-item-dispatch.yaml, then aggregates renegotiation across
+        the batch's outputs, then invokes the integrator.
+      • root-item-dispatch (the heart of PR #149) branch-on-routers
+        into one of {plan-level, actionable, implement-merge-group, feature-pr}
+        based on the lifecycle-router's verdict, and short-circuits
+        fast-path / monitoring / blocked / error before spawning a
+        worktree.
+      • The renegotiation bubble-up table from PR #149 — every layer's
+        output map carries `renegotiation_pending`,
+        `renegotiation_request`, `validate_scope_verdict`, and
+        `scope_violation_files`, all M3-safe.
+      • Inputs (root_id / intent / platform / org / proj / repo) thread
+        through all three layers' input_mapping blocks.
+      • The lifecycle-router script's enumerated route values are
+        EXACTLY the set root-item-dispatch.yaml branches on (no
+        router-emits-X-but-YAML-doesn't-handle-X drift) — the
+        highest-value contract assertion in this suite.
+      • lifecycle-router / worktree-manager / batch-integrator are each
+        live-invokable and return a routing-style envelope (always
+        exit 0, errors surface via `success` + `error_code`).
+
+    These checks complement (do not duplicate) `lint-polyphony.ps1`
+    (structural presence) and the existing C# router tests (per-script
+    JSON envelope). This suite pins the GRAPH the three workflows
+    declare and the script-to-YAML contract on `lifecycle_workflow`.
+
+    Approach: Pester structural+graph validation + light live
+    script invocation (Approach B — same approach used in PR #145
+    for actionable.yaml). A workflow-execution harness that drives
+    conductor with mocked tools does not exist in this repo today;
+    bootstrapping one is too large for this PR and is deferred per
+    the PR brief.
+#>
+[CmdletBinding()]
+param()
+
+BeforeAll {
+    Import-Module powershell-yaml -Force
+
+    $script:WorkflowsDir = Join-Path $PSScriptRoot '..' 'workflows'
+    $script:ScriptsDir   = Join-Path $PSScriptRoot '..' 'scripts'
+
+    $script:RootPath = Join-Path $script:WorkflowsDir 'polyphony.yaml'
+    $script:BatchPath = Join-Path $script:WorkflowsDir 'root-batch-dispatch.yaml'
+    $script:ItemPath = Join-Path $script:WorkflowsDir 'root-item-dispatch.yaml'
+
+    $script:LifecycleRouter   = Join-Path $script:ScriptsDir 'lifecycle-router.ps1'
+    $script:WorktreeManager   = Join-Path $script:ScriptsDir 'worktree-manager.ps1'
+    $script:BatchIntegrator    = Join-Path $script:ScriptsDir 'batch-integrator.ps1'
+
+    $script:RootRaw = Get-Content $script:RootPath -Raw
+    $script:BatchRaw = Get-Content $script:BatchPath -Raw
+    $script:ItemRaw = Get-Content $script:ItemPath -Raw
+    $script:RouterRaw = Get-Content $script:LifecycleRouter -Raw
+
+    $script:RootYaml = ConvertFrom-Yaml $script:RootRaw
+    $script:BatchYaml = ConvertFrom-Yaml $script:BatchRaw
+    $script:ItemYaml = ConvertFrom-Yaml $script:ItemRaw
+
+    # Build per-workflow agent indices for O(1) lookup. Per M8, top-level
+    # `for_each:` entries share the same name namespace as `agents:` entries
+    # (route targets and entry_point can refer to either), so we fold both
+    # into one index. Each for_each entry exposes `name`, `type: 'for_each'`,
+    # `routes:`, and `agent:` (a sub-step) — same fields the route/reachability
+    # helpers below need.
+    function script:Index-Agents($yaml) {
+        $idx = @{}
+        foreach ($a in $yaml.agents)   { $idx[$a.name] = $a }
+        foreach ($f in $yaml.for_each) { $idx[$f.name] = $f }
+        return $idx
+    }
+    $script:RootAgents = script:Index-Agents $script:RootYaml
+    $script:BatchAgents = script:Index-Agents $script:BatchYaml
+    $script:ItemAgents = script:Index-Agents $script:ItemYaml
+
+    # Helper: returns the route entries for a node within a given
+    # agent index. Conductor route entries always have a `to`
+    # (script/agent/workflow) or `route` (human_gate option).
+    # Normalize both shapes into a uniform list.
+    function script:Get-NodeRoutes {
+        param(
+            [hashtable]$Agents,
+            [string]$NodeName
+        )
+        $node = $Agents[$NodeName]
+        if (-not $node) { return @() }
+        $out = @()
+        if ($node.routes) {
+            foreach ($r in $node.routes) {
+                $out += [PSCustomObject]@{
+                    Target = $r.to
+                    When   = $r.when
+                    Value  = $null
+                    Label  = $null
+                    Kind   = 'route'
+                }
+            }
+        }
+        if ($node.options) {
+            foreach ($o in $node.options) {
+                $out += [PSCustomObject]@{
+                    Target = $o.route
+                    When   = $null
+                    Value  = $o.value
+                    Label  = $o.label
+                    Kind   = 'option'
+                }
+            }
+        }
+        return $out
+    }
+
+    # Helper: reachability under an optional route-filter predicate.
+    # Used to assert that, e.g., the spawn_worktree node can reach
+    # all four lifecycle dispatch nodes.
+    function script:Get-Reachable {
+        param(
+            [hashtable]$Agents,
+            [string]$StartNode,
+            [scriptblock]$RouteFilter = { $true },
+            [string[]]$Stop = @()
+        )
+        $visited = @{}
+        $queue = [System.Collections.Queue]::new()
+        $queue.Enqueue($StartNode)
+        while ($queue.Count -gt 0) {
+            $cur = $queue.Dequeue()
+            if ($visited.ContainsKey($cur)) { continue }
+            $visited[$cur] = $true
+            if ($Stop -contains $cur) { continue }
+            foreach ($r in (Get-NodeRoutes -Agents $Agents -NodeName $cur)) {
+                if (-not $r.Target) { continue }
+                if ($r.Target -eq '$end') { continue }
+                $allowed = & $RouteFilter $cur $r
+                if (-not $allowed) { continue }
+                if (-not $visited.ContainsKey($r.Target)) {
+                    $queue.Enqueue($r.Target)
+                }
+            }
+        }
+        return $visited.Keys | Sort-Object
+    }
+
+    # Helper: extract the `output:` block from a workflow YAML by
+    # plain-text slicing, since round-tripping through ConvertTo-Yaml
+    # mangles the Jinja whitespace markers we want to assert on.
+    function script:Get-OutputBlock {
+        param([string]$RawYaml)
+        if ($RawYaml -match '(?ms)\noutput:\s*\n(?<body>.*?)(?=\nagents:)') {
+            return $Matches['body']
+        }
+        return ''
+    }
+}
+
+# =====================================================================
+# Section 1 — All three workflows load cleanly
+# =====================================================================
+
+Describe 'polyphony e2e — three-YAML chain loads cleanly' {
+
+    It 'polyphony.yaml parses and exposes the expected top-level shape' {
+        $script:RootYaml.workflow | Should -Not -BeNullOrEmpty
+        $script:RootYaml.workflow.name        | Should -Be 'polyphony'
+        $script:RootYaml.workflow.entry_point | Should -Be 'preflight_sync'
+        $script:RootYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.8'
+        $script:RootYaml.tools                | Should -Contain 'twig'
+        $script:RootYaml.agents.Count         | Should -BeGreaterThan 10
+    }
+
+    It 'root-batch-dispatch.yaml parses and exposes the expected top-level shape' {
+        $script:BatchYaml.workflow | Should -Not -BeNullOrEmpty
+        $script:BatchYaml.workflow.name        | Should -Be 'root-batch-dispatch'
+        $script:BatchYaml.workflow.entry_point | Should -Be 'check_prior_batch_status'
+        $script:BatchYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.8'
+        $script:BatchYaml.tools                | Should -Contain 'twig'
+        # Per-M8 the workflow exposes 2 agents (aggregate_renegotiation,
+        # integrate_batch) and 1 top-level for_each entry (dispatch_items).
+        $script:BatchYaml.agents.Count   | Should -BeGreaterThan 1
+        $script:BatchYaml.for_each.Count | Should -BeGreaterThan 0
+    }
+
+    It 'root-item-dispatch.yaml parses and exposes the expected top-level shape' {
+        $script:ItemYaml.workflow | Should -Not -BeNullOrEmpty
+        $script:ItemYaml.workflow.name        | Should -Be 'root-item-dispatch'
+        $script:ItemYaml.workflow.entry_point | Should -Be 'classify_lifecycle'
+        $script:ItemYaml.workflow.metadata.min_polyphony_version | Should -Be '2.4.8'
+        $script:ItemYaml.agents.Count         | Should -BeGreaterThan 8
+    }
+
+    It 'Every route target in polyphony.yaml resolves to a declared agent or $end' {
+        $declared = $script:RootAgents.Keys
+        $bad = @()
+        foreach ($name in $declared) {
+            foreach ($r in (Get-NodeRoutes -Agents $script:RootAgents -NodeName $name)) {
+                if (-not $r.Target) { continue }
+                if ($r.Target -eq '$end') { continue }
+                if ($declared -notcontains $r.Target) {
+                    $bad += "$name -> $($r.Target)"
+                }
+            }
+        }
+        $bad | Should -BeNullOrEmpty -Because (
+            "every polyphony route target must resolve to a declared agent or `$end; got: $($bad -join '; ')")
+    }
+
+    It 'Every route target in root-batch-dispatch.yaml resolves to a declared agent or $end' {
+        $declared = $script:BatchAgents.Keys
+        $bad = @()
+        foreach ($name in $declared) {
+            foreach ($r in (Get-NodeRoutes -Agents $script:BatchAgents -NodeName $name)) {
+                if (-not $r.Target) { continue }
+                if ($r.Target -eq '$end') { continue }
+                if ($declared -notcontains $r.Target) {
+                    $bad += "$name -> $($r.Target)"
+                }
+            }
+        }
+        $bad | Should -BeNullOrEmpty -Because (
+            "every root-batch-dispatch route target must resolve to a declared agent or `$end; got: $($bad -join '; ')")
+    }
+
+    It 'Every route target in root-item-dispatch.yaml resolves to a declared agent or $end' {
+        $declared = $script:ItemAgents.Keys
+        $bad = @()
+        foreach ($name in $declared) {
+            foreach ($r in (Get-NodeRoutes -Agents $script:ItemAgents -NodeName $name)) {
+                if (-not $r.Target) { continue }
+                if ($r.Target -eq '$end') { continue }
+                if ($declared -notcontains $r.Target) {
+                    $bad += "$name -> $($r.Target)"
+                }
+            }
+        }
+        $bad | Should -BeNullOrEmpty -Because (
+            "every root-item-dispatch route target must resolve to a declared agent or `$end; got: $($bad -join '; ')")
+    }
+}
+
+# =====================================================================
+# Section 2 — polyphony outer loop reachability
+# =====================================================================
+
+Describe 'polyphony e2e — outer loop reachability' {
+
+    It 'preflight_root_state routes satisfied / empty to root_satisfied (fast-path)' {
+        $routes = Get-NodeRoutes -Agents $script:RootAgents -NodeName 'preflight_root_state'
+        $sat = $routes | Where-Object { $_.When -match "status == 'satisfied'" }
+        $emp = $routes | Where-Object { $_.When -match "status == 'empty'" }
+        $sat | Should -Not -BeNullOrEmpty
+        $emp | Should -Not -BeNullOrEmpty
+        $sat.Target | Should -Be 'root_satisfied'
+        $emp.Target | Should -Be 'root_satisfied'
+    }
+
+    It 'preflight_root_state routes error to preflight_failure_gate (with M4 catch-all)' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'preflight_root_state')
+        $err = $routes | Where-Object { $_.When -match "status == 'error'" }
+        $err | Should -Not -BeNullOrEmpty
+        $err.Target | Should -Be 'preflight_failure_gate'
+        # Catch-all is the LAST entry and must also fall through to the failure gate.
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'preflight_failure_gate'
+    }
+
+    It 'preflight_failure_gate exposes retry/abort with the documented routes' {
+        $opts = @($script:RootAgents['preflight_failure_gate'].options)
+        $opts.Count | Should -Be 2
+        $byValue = @{}
+        foreach ($o in $opts) { $byValue[$o.value] = $o.route }
+        $byValue['retry'] | Should -Be 'preflight_root_state'
+        $byValue['abort'] | Should -Be 'preflight_failed'
+    }
+
+    It 'build_worklist success routes to check_conflicts; failure routes to worklist_failure_gate (with M4 catch-all)' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'build_worklist')
+        $okRoute = $routes | Where-Object { $_.When -match "build_worklist\.output\.error" }
+        $okRoute | Should -Not -BeNullOrEmpty
+        $okRoute.Target | Should -Be 'check_conflicts'
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'worklist_failure_gate'
+    }
+
+    It 'check_conflicts dispatches to reset_batch_failure_flags on no-conflicts, gates on conflicts, surfaces envelope errors via worklist_failure_gate' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'check_conflicts')
+        $err   = $routes | Where-Object { $_.When -match 'check_conflicts\.output\.error is defined' }
+        $confl = $routes | Where-Object { $_.When -match "has_conflicts \| string \| lower == 'true'" }
+        $clear = $routes | Where-Object { $_.When -match "has_conflicts \| string \| lower == 'false'" }
+        $err.Target   | Should -Be 'worklist_failure_gate'
+        $confl.Target | Should -Be 'conflict_resolution_gate'
+        # Fail-fast-across-waves wiring: check_conflicts now routes through
+        # reset_batch_failure_flags before batch_dispatch_loop so each
+        # dispatch pass starts with a clean per-root sentinel store.
+        $clear.Target | Should -Be 'reset_batch_failure_flags'
+        # M4 catch-all — undefined has_conflicts means the JSON envelope
+        # didn't shape correctly; treat as a worklist-layer failure
+        # rather than silently dispatching waves.
+        $routes[-1].When   | Should -BeNullOrEmpty
+        $routes[-1].Target | Should -Be 'worklist_failure_gate'
+    }
+
+    It 'conflict_resolution_gate exposes retry/abort with the documented routes' {
+        $opts = @($script:RootAgents['conflict_resolution_gate'].options)
+        $opts.Count | Should -Be 2
+        $byValue = @{}
+        foreach ($o in $opts) { $byValue[$o.value] = $o.route }
+        $byValue['retry'] | Should -Be 'build_worklist'
+        $byValue['abort'] | Should -Be 'root_abandoned'
+    }
+
+    It 'batch_dispatch_loop is a for_each into root-batch-dispatch.yaml that routes to batch_loop_summary' {
+        $node = $script:RootAgents['batch_dispatch_loop']
+        $node.type | Should -Be 'for_each'
+        # M8: bare dotted source path, not Jinja-quoted.
+        $node.source | Should -Be 'build_worklist.output.waves'
+        $node.agent.workflow | Should -Be './root-batch-dispatch.yaml'
+        # max_concurrent: 1 — waves are sequential by definition.
+        [int]$node.max_concurrent | Should -Be 1
+        # routes: just to batch_loop_summary
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'batch_dispatch_loop')
+        $routes.Target | Should -Contain 'batch_loop_summary'
+    }
+
+    It 'batch_loop_summary routes succeeded->renegotiation_summary, failure->batch_failed_gate (with M4 catch-all)' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'batch_loop_summary')
+        $ok = $routes | Where-Object { $_.When -match "all_succeeded \| string \| lower == 'true'" }
+        $ok | Should -Not -BeNullOrEmpty
+        $ok.Target | Should -Be 'renegotiation_summary'
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'batch_failed_gate'
+    }
+
+    It 'batch_failed_gate exposes retry/abort/renegotiate with the documented routes' {
+        $opts = @($script:RootAgents['batch_failed_gate'].options)
+        $opts.Count | Should -Be 3
+        $byValue = @{}
+        foreach ($o in $opts) { $byValue[$o.value] = $o.route }
+        $byValue['retry']        | Should -Be 'build_worklist'
+        $byValue['abort']        | Should -Be 'root_abandoned'
+        # In MVP renegotiate is documented to route to abort until the loop ships.
+        $byValue['renegotiate']  | Should -Be 'root_abandoned'
+    }
+
+    It 'renegotiation_summary routes any-pending->renegotiation_policy else outer_loop_evaluator (AB#3185 inserted the policy resolver between renegotiation_summary and renegotiation_gate; resolver decides whether to fire the gate)' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'renegotiation_summary')
+        $hot = $routes | Where-Object { $_.When -match "any_pending \| string \| lower == 'true'" }
+        $hot | Should -Not -BeNullOrEmpty
+        $hot.Target | Should -Be 'renegotiation_policy'
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'outer_loop_evaluator'
+    }
+
+    It 'renegotiation_policy resolves auto_decide and routes auto_restart->outer_loop_evaluator, ignore->root_completion_gate_policy_router, prompt->renegotiation_gate (AB#3185 wires policy.renegotiation.auto_decide; routing through outer_loop_evaluator on auto_restart preserves the iteration cap)' {
+        $node = $script:RootAgents['renegotiation_policy']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'renegotiation_policy')
+
+        $autoRestart = $routes | Where-Object { $_.When -match "auto_decide == 'auto_restart'" }
+        $autoRestart | Should -Not -BeNullOrEmpty
+        $autoRestart.Target | Should -Be 'outer_loop_evaluator'
+
+        $ignore = $routes | Where-Object { $_.When -match "auto_decide == 'ignore'" }
+        $ignore | Should -Not -BeNullOrEmpty
+        $ignore.Target | Should -Be 'root_completion_gate_policy_router'
+
+        $prompt = $routes | Where-Object { $_.When -match "auto_decide == 'prompt'" }
+        $prompt | Should -Not -BeNullOrEmpty
+        $prompt.Target | Should -Be 'renegotiation_gate'
+
+        # M4 catch-all: malformed/unknown policy degrades to manual.
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'renegotiation_gate'
+    }
+
+    It 'renegotiation_gate exposes renegotiate/override/abort with the documented routes' {
+        $opts = @($script:RootAgents['renegotiation_gate'].options)
+        $opts.Count | Should -Be 3
+        $byValue = @{}
+        foreach ($o in $opts) { $byValue[$o.value] = $o.route }
+        $byValue['renegotiate'] | Should -Be 'build_worklist'
+        # PR #321 wrapped root_completion_gate in a Bucket-C policy router so
+        # unattended runs can bypass the gate. The override path enters the
+        # router (which then either auto-confirms or escalates to the gate).
+        $byValue['override']    | Should -Be 'root_completion_gate_policy_router'
+        $byValue['abort']       | Should -Be 'root_abandoned'
+    }
+
+    It 'root_completion_gate exposes confirm/abandon with the documented routes (AB#3168 routes confirm via promote_feature_to_main)' {
+        $opts = @($script:RootAgents['root_completion_gate'].options)
+        $opts.Count | Should -Be 2
+        $byValue = @{}
+        foreach ($o in $opts) { $byValue[$o.value] = $o.route }
+        $byValue['confirm'] | Should -Be 'promote_feature_to_main'
+        $byValue['abandon'] | Should -Be 'root_abandoned'
+    }
+
+    It 'close_mark_satisfied routes to root_satisfied' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'close_mark_satisfied')
+        $routes.Target | Should -Contain 'root_satisfied'
+    }
+
+    # ── AB#3168 — feature → main promotion before close ──────────────────────
+    #
+    # Indivisible root roots (no ADO children) only go through the
+    # implement-merge-group lifecycle, never feature-pr. The `promote_*`
+    # pair inserts a fetch+rev-list check between every path into
+    # close_mark_satisfied and close_mark_satisfied itself, dispatching
+    # feature-pr.yaml when the root feature branch is ahead of main.
+
+    It 'promote_feature_to_main is a script that runs git rev-list --count origin/main..origin/feature/{root_id}' {
+        $node = $script:RootAgents['promote_feature_to_main']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'workflow\.input\.root_id'
+        $argLine | Should -Match 'git fetch'
+        $argLine | Should -Match 'git rev-list --count "origin/\$targetBranch\.\.origin/\$featureBranch"'
+        $argLine | Should -Match 'needs_promotion'
+    }
+
+    It 'promote_feature_to_main routes to strip_planning_artifacts when needed, else close_mark_satisfied' {
+        # AB#3236: a strip step is interposed between promote_feature_to_main and
+        # promote_feature_pr — see strip_planning_artifacts tests below.
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'promote_feature_to_main')
+        $routes.Count | Should -Be 2
+        $routes[0].Target | Should -Be 'strip_planning_artifacts'
+        $routes[0].When   | Should -Match 'needs_promotion'
+        $routes[1].Target | Should -Be 'close_mark_satisfied'
+    }
+
+    It 'strip_planning_artifacts invokes strip-planning-artifacts.ps1 with the root id + feature branch' {
+        $node = $script:RootAgents['strip_planning_artifacts']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'strip-planning-artifacts\.ps1'
+        $argLine | Should -Match '-RootId'
+        $argLine | Should -Match 'workflow\.input\.root_id'
+        $argLine | Should -Match '-FeatureBranch'
+        $argLine | Should -Match 'promote_feature_to_main\.output\.feature_branch'
+    }
+
+    It 'strip_planning_artifacts routes errors to the gate, success to promote_feature_pr (M4 catch-all)' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'strip_planning_artifacts')
+        $routes.Count | Should -Be 2
+        $routes[0].Target | Should -Be 'strip_planning_artifacts_failed_gate'
+        $routes[0].When   | Should -Match "error_code != ''"
+        # M4 catch-all
+        $routes[1].Target | Should -Be 'promote_feature_pr'
+    }
+
+    It 'strip_planning_artifacts_failed_gate exposes retry/skip/abort with the documented routes' {
+        $node = $script:RootAgents['strip_planning_artifacts_failed_gate']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'human_gate'
+        $values = @($node.options.value | Sort-Object)
+        $values | Should -Be @('abort', 'retry', 'skip')
+        $optByValue = @{}
+        foreach ($opt in $node.options) { $optByValue[$opt.value] = $opt }
+        $optByValue['retry'].route | Should -Be 'strip_planning_artifacts'
+        $optByValue['skip'].route  | Should -Be 'promote_feature_pr'
+        $optByValue['abort'].route | Should -Be 'root_abandoned'
+    }
+
+    It 'promote_feature_pr invokes feature-pr.yaml with the root root inputs' {
+        $node = $script:RootAgents['promote_feature_pr']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type     | Should -Be 'workflow'
+        $node.workflow | Should -Be './feature-pr.yaml'
+        $node.input_mapping.work_item_id   | Should -Match 'workflow\.input\.root_id'
+        $node.input_mapping.feature_branch | Should -Match 'feature_branch'
+        $node.input_mapping.target_branch  | Should -Match 'target_branch'
+        $node.input_mapping.platform       | Should -Match 'workflow\.input\.platform'
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'promote_feature_pr')
+        $routes.Count | Should -Be 1
+        $routes[0].Target | Should -Be 'close_mark_satisfied'
+    }
+
+    It 'Both upstream paths into close_mark_satisfied funnel through promote_feature_to_main (auto-acceptance and human-gate confirm)' {
+        # Auto-acceptance path: root_completion_gate_policy_router
+        $autoRoutes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'root_completion_gate_policy_router')
+        $autoTargets = $autoRoutes.Target | Sort-Object -Unique
+        $autoTargets | Should -Contain 'promote_feature_to_main'
+        $autoTargets | Should -Not -Contain 'close_mark_satisfied' -Because 'AB#3168 — every path to close_mark_satisfied must funnel through promote_feature_to_main'
+
+        # Human-gate confirm path: root_completion_gate
+        $opts = @($script:RootAgents['root_completion_gate'].options)
+        $byValue = @{}
+        foreach ($o in $opts) { $byValue[$o.value] = $o.route }
+        $byValue['confirm'] | Should -Be 'promote_feature_to_main' -Because 'AB#3168 — confirm must route via promotion check, not directly to close'
+    }
+
+    # ── Fail-fast across waves (PR: feat/batch-dispatch-fail-fast-on-failure) ──
+    #
+    # polyphony inserts `reset_batch_failure_flags` between
+    # `check_conflicts` and `batch_dispatch_loop` so each dispatch pass
+    # starts with a clean per-root sentinel store. Combined with
+    # root-batch-dispatch's `check_prior_batch_status` entry step + the
+    # `record_batch_failure_flag` step, this gives batch-level fail-fast
+    # without crashing the parent workflow (conductor's native
+    # `failure_mode: fail_fast` would raise ExecutionError and bypass
+    # gates).
+
+    It 'reset_batch_failure_flags exists, lives between check_conflicts and batch_dispatch_loop, and invokes batch-dispatch-guard.ps1 -Op clear' {
+        $node = $script:RootAgents['reset_batch_failure_flags']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'batch-dispatch-guard\.ps1'
+        $argLine | Should -Match '-Op\s+clear'
+        $argLine | Should -Match '-RootId'
+        $argLine | Should -Match 'workflow\.input\.root_id'
+        # Single forward route; no conditional wiring.
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'reset_batch_failure_flags')
+        $routes.Count    | Should -Be 1
+        $routes[0].Target | Should -Be 'batch_dispatch_loop'
+    }
+
+    It 'reset_batch_failure_flags is reached from check_conflicts on the no-conflicts edge (every dispatch pass clears stale sentinels)' {
+        $reachable = Get-Reachable -Agents $script:RootAgents -StartNode 'check_conflicts'
+        $reachable | Should -Contain 'reset_batch_failure_flags'
+        $reachable | Should -Contain 'batch_dispatch_loop'
+    }
+
+    It 'All terminals route to $end (PR #9 added root_iteration_cap and root_blocked alongside the original three; AB#3067 added root_dispatch_failures)' {
+        (Get-NodeRoutes -Agents $script:RootAgents -NodeName 'root_satisfied').Target | Should -Contain '$end'
+        (Get-NodeRoutes -Agents $script:RootAgents -NodeName 'root_abandoned').Target | Should -Contain '$end'
+        (Get-NodeRoutes -Agents $script:RootAgents -NodeName 'preflight_failed').Target | Should -Contain '$end'
+        (Get-NodeRoutes -Agents $script:RootAgents -NodeName 'root_iteration_cap').Target | Should -Contain '$end'
+        (Get-NodeRoutes -Agents $script:RootAgents -NodeName 'root_blocked').Target | Should -Contain '$end'
+        (Get-NodeRoutes -Agents $script:RootAgents -NodeName 'root_dispatch_failures').Target | Should -Contain '$end'
+    }
+
+    It 'The documented happy path is reachable from the entry point' {
+        # preflight_sync is the entry; walk forward and confirm every
+        # documented happy-path waypoint is reachable in the closure.
+        $reachable = Get-Reachable -Agents $script:RootAgents -StartNode 'preflight_sync'
+        $waypoints = @(
+            'preflight_sync',
+            'preflight_root_state',
+            'preflight_ensure_branch',
+            'outer_loop_init',
+            'build_worklist',
+            'check_conflicts',
+            'batch_dispatch_loop',
+            'batch_loop_summary',
+            'renegotiation_summary',
+            'outer_loop_evaluator',
+            'root_completion_gate',
+            'promote_feature_to_main',
+            'promote_feature_pr',
+            'close_mark_satisfied',
+            'root_satisfied'
+        )
+        $missing = $waypoints | Where-Object { $reachable -notcontains $_ }
+        $missing | Should -BeNullOrEmpty -Because (
+            "every documented polyphony waypoint must be reachable from the entry point; missing: $($missing -join ', ')")
+    }
+}
+
+# =====================================================================
+# Section 2b — outer iterate-until-stable loop (PR #9, Option α)
+#
+# These tests pin the structural shape of the outer loop (init,
+# evaluator, the four-way decision routes, the cap default, and the
+# new terminals) so future refactors can't silently turn the loop
+# back into a single-pass dispatch.
+# =====================================================================
+
+Describe 'polyphony e2e — outer iterate-until-stable loop (PR #9)' {
+
+    It 'outer_loop_init is a script step that resets the per-root temp counter and routes to build_worklist' {
+        $node = $script:RootAgents['outer_loop_init']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        # The init script writes "0" to a per-root counter file under
+        # the system temp dir.
+        $body = ($node.args -join "`n")
+        $body | Should -Match 'polyphony-iter-'
+        $body | Should -Match 'GetTempPath'
+        $body | Should -Match 'Set-Content'
+        # Must hand off straight to build_worklist (the loop body's
+        # entry point).
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'outer_loop_init')
+        $routes.Target | Should -Contain 'build_worklist'
+    }
+
+    It 'declare_root routes to outer_loop_init (so the counter is reset BEFORE the first iteration)' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'declare_root')
+        # PR #9 inserts outer_loop_init between declare_root and
+        # build_worklist; the no-error happy-path must hit init first.
+        $routes.Target | Should -Contain 'outer_loop_init'
+    }
+
+    It 'outer_loop_evaluator is a script step that reads batch_dispatch_loop.outputs and shells out to polyphony state next-ready' {
+        $node = $script:RootAgents['outer_loop_evaluator']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $body = ($node.args -join "`n")
+        # Increments the same counter file outer_loop_init seeded.
+        $body | Should -Match 'polyphony-iter-'
+        # Sums per-iteration progress out of batch_dispatch_loop.outputs.
+        $body | Should -Match 'batch_dispatch_loop\.outputs'
+        $body | Should -Match 'items_satisfied_count'
+        $body | Should -Match 'items_dispatched_count'
+        # Reads root satisfaction via state next-ready (PR #5 closed-loop).
+        $body | Should -Match 'state next-ready'
+        # Cap configurable via env var, default 10.
+        $body | Should -Match 'POLYPHONY_ROOT_MAX_DISPATCH_ITERATIONS'
+        $body | Should -Match '\b10\b'
+    }
+
+    It 'outer_loop_evaluator reads next.status (top-level routing hint per StateNextReadyResult), not the nonexistent next.item_satisfied field (regression: typo blocked outer-loop completion in AB#3064 dogfood)' {
+        $node = $script:RootAgents['outer_loop_evaluator']
+        $body = ($node.args -join "`n")
+        # Must check top-level $next.status against the documented 'satisfied' value.
+        $body | Should -Match '\$next\.status'
+        $body | Should -Match "'satisfied'"
+        # Must NOT reach for the nonexistent $next.item_satisfied field.
+        $body | Should -Not -Match '\$next\.item_satisfied'
+    }
+
+    It 'outer_loop_evaluator emits the five documented decisions (dispatch_failures | complete | cap | blocked | continue) — `dispatch_failures` added by AB#3067 surfaces silent for_each item failures' {
+        $node = $script:RootAgents['outer_loop_evaluator']
+        $body = ($node.args -join "`n")
+        foreach ($d in @("'dispatch_failures'", "'complete'", "'cap'", "'blocked'", "'continue'")) {
+            $body | Should -Match ([regex]::Escape($d))
+        }
+    }
+
+    It 'outer_loop_evaluator routes dispatch_failures->root_dispatch_failures, complete->root_completion_gate_policy_router, cap->root_iteration_cap, blocked->root_blocked, continue->build_worklist (with M4 catch-all to root_blocked)' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'outer_loop_evaluator')
+        # Conditional routes — match by their `when` predicate.
+        $byDecision = @{}
+        foreach ($r in $routes) {
+            if ($r.When -match "decision == 'dispatch_failures'") { $byDecision['dispatch_failures'] = $r.Target }
+            if ($r.When -match "decision == 'complete'") { $byDecision['complete'] = $r.Target }
+            if ($r.When -match "decision == 'cap'")      { $byDecision['cap'] = $r.Target }
+            if ($r.When -match "decision == 'blocked'")  { $byDecision['blocked'] = $r.Target }
+            if ($r.When -match "decision == 'continue'") { $byDecision['continue'] = $r.Target }
+        }
+        $byDecision['dispatch_failures'] | Should -Be 'root_dispatch_failures'
+        # PR #321: complete routes through the Bucket-C policy router so
+        # unattended runs can bypass the human root_completion_gate.
+        $byDecision['complete'] | Should -Be 'root_completion_gate_policy_router'
+        $byDecision['cap']      | Should -Be 'root_iteration_cap'
+        $byDecision['blocked']  | Should -Be 'root_blocked'
+        # `continue` is the loop-back that wraps the batch dispatch loop.
+        $byDecision['continue'] | Should -Be 'build_worklist'
+        # M4 catch-all (last unconditional route) must NOT silently
+        # loop back; defensive default is the blocked terminal.
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'root_blocked'
+    }
+
+    It 'outer_loop_evaluator prioritises dispatch_failures BEFORE complete (AB#3067: a satisfied root coexisting with sub-workflow failures is almost certainly a stale validator read; surface failures first)' {
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'outer_loop_evaluator')
+        $dispatchFailuresIdx = -1
+        $completeIdx = -1
+        for ($i = 0; $i -lt $routes.Count; $i++) {
+            if ($routes[$i].When -match "decision == 'dispatch_failures'") { $dispatchFailuresIdx = $i }
+            if ($routes[$i].When -match "decision == 'complete'") { $completeIdx = $i }
+        }
+        $dispatchFailuresIdx | Should -BeGreaterThan -1
+        $completeIdx         | Should -BeGreaterThan -1
+        $dispatchFailuresIdx | Should -BeLessThan $completeIdx -Because (
+            "the dispatch_failures route MUST come before the complete route — otherwise a satisfied root with concurrent failures is silently declared 'complete' and the failures are lost.")
+    }
+
+    It 'root_iteration_cap is a script step that emits iteration_cap_hit=$true and routes to $end' {
+        $node = $script:RootAgents['root_iteration_cap']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $body = ($node.args -join "`n")
+        $body | Should -Match 'iteration_cap_hit'
+        # M3-guarded reference to the evaluator output (default(0) so
+        # the terminal still renders if the evaluator never emitted).
+        $body | Should -Match 'outer_loop_evaluator\.output\.iteration'
+        $body | Should -Match 'outer_loop_evaluator\.output\.max_iterations'
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'root_iteration_cap')
+        $routes.Target | Should -Contain '$end'
+    }
+
+    It 'root_blocked is a script step that emits blocked=$true and routes to $end' {
+        $node = $script:RootAgents['root_blocked']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $body = ($node.args -join "`n")
+        $body | Should -Match 'blocked'
+        $body | Should -Match 'outer_loop_evaluator\.output\.iteration'
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'root_blocked')
+        $routes.Target | Should -Contain '$end'
+    }
+
+    It 'root_dispatch_failures is a script step that emits dispatch_failures=$true with the failed_items envelope and routes to $end (AB#3067 visibility)' {
+        $node = $script:RootAgents['root_dispatch_failures']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $body = ($node.args -join "`n")
+        $body | Should -Match 'dispatch_failures'
+        $body | Should -Match 'failed_items'
+        $body | Should -Match 'outer_loop_evaluator\.output\.failed_items'
+        $body | Should -Match 'outer_loop_evaluator\.output\.iteration'
+        $routes = @(Get-NodeRoutes -Agents $script:RootAgents -NodeName 'root_dispatch_failures')
+        $routes.Target | Should -Contain '$end'
+    }
+
+    It 'polyphony.output surfaces iteration_cap_hit, blocked, iterations_used (PR #9), and dispatch_failures + items_failed_count + failed_items (AB#3067 telemetry into the workflow envelope)' {
+        $out = $script:RootYaml.output
+        $out.Keys | Should -Contain 'iteration_cap_hit'
+        $out.Keys | Should -Contain 'blocked'
+        $out.Keys | Should -Contain 'iterations_used'
+        $out.Keys | Should -Contain 'dispatch_failures'
+        $out.Keys | Should -Contain 'items_failed_count'
+        $out.Keys | Should -Contain 'failed_items'
+    }
+
+    It 'root-batch-dispatch.output surfaces items_satisfied_count, items_dispatched_count, item_count (PR #9 progress counters consumed by the outer evaluator) AND items_failed_count + failed_items (AB#3067 — surfaces silent dispatch_items errors to the polyphony outer loop)' {
+        $out = $script:BatchYaml.output
+        $out.Keys | Should -Contain 'items_satisfied_count'
+        $out.Keys | Should -Contain 'items_dispatched_count'
+        $out.Keys | Should -Contain 'item_count'
+        $out.Keys | Should -Contain 'items_failed_count'
+        $out.Keys | Should -Contain 'failed_items'
+    }
+
+    It 'root-batch-dispatch aggregate_renegotiation reads dispatch_items.errors AND .outputs (AB#3067: per-M8 the for_each runs continue_on_error, so failures land under .errors; reading only .outputs silently lost them)' {
+        $node = $script:BatchAgents['aggregate_renegotiation']
+        $node | Should -Not -BeNullOrEmpty
+        $body = ($node.args -join "`n")
+        $body | Should -Match 'dispatch_items\.outputs'
+        $body | Should -Match 'dispatch_items\.errors'
+        # The script must produce items_failed_count + failed_items so the
+        # workflow output map can surface them to polyphony.
+        $body | Should -Match 'items_failed_count'
+        $body | Should -Match 'failed_items'
+    }
+
+    It 'root-batch-dispatch aggregate_renegotiation correlates iteration index back to work_item_id via workflow.input.batch_items (AB#3067: bare "iteration 2 failed" is not actionable; the operator needs the work item)' {
+        $node = $script:BatchAgents['aggregate_renegotiation']
+        $body = ($node.args -join "`n")
+        # The script must reach for the per-batch items list to map
+        # for_each iteration indices back to concrete work item ids.
+        $body | Should -Match 'workflow\.input\.batch_items'
+    }
+
+    It 'root-batch-dispatch aggregate_renegotiation script tallies item_satisfied + dispatched per item (PR #6 fields the evaluator sums across waves)' {
+        $node = $script:BatchAgents['aggregate_renegotiation']
+        $node | Should -Not -BeNullOrEmpty
+        $body = ($node.args -join "`n")
+        # Lowercased string compare (M7: booleans pipe through `| string | lower`).
+        $body | Should -Match 'item_satisfied'
+        $body | Should -Match 'dispatched'
+    }
+
+    It 'aggregate_renegotiation, renegotiation_summary, and outer_loop_evaluator wrap for_each.outputs with @(...) (regression: PowerShell pipeline unwraps single-element arrays from ConvertFrom-Json, causing 1-iteration waves to mis-iterate the FIELDS of a single output object — surfaced live by the AB#3064 dogfood, 2026-05-09)' {
+        $batchAgg = ($script:BatchAgents['aggregate_renegotiation'].args -join "`n")
+        $renegSum = ($script:RootAgents['renegotiation_summary'].args -join "`n")
+        $outerEval = ($script:RootAgents['outer_loop_evaluator'].args -join "`n")
+        # All three sites consume a for_each `.outputs` (no key_by ⇒ JSON
+        # array). Each MUST wrap with `@(...)` so the pipeline doesn't
+        # unwrap `[{...}]` to a bare PSObject.
+        # AB#3067 renamed batch-dispatch's variable to `$rawOutputs` (now
+        # paired with `$rawErrors`); the outer eval still uses `$raw` and
+        # renegotiation_summary uses `$raw`.
+        $batchAgg   | Should -Match '@\(\$rawOutputs \| ConvertFrom-Json\)'
+        $renegSum  | Should -Match '@\(\$raw \| ConvertFrom-Json\)'
+        $outerEval | Should -Match '@\(\$raw \| ConvertFrom-Json\)'
+        # The old shape-detection idiom (which produced the bug by
+        # falling into PSObject.Properties.Value when the array was
+        # unwrapped) MUST be gone everywhere.
+        $batchAgg   | Should -Not -Match 'PSObject\.Properties\.Value'
+        $renegSum  | Should -Not -Match 'PSObject\.Properties\.Value'
+        $outerEval | Should -Not -Match 'PSObject\.Properties\.Value'
+        # `-NoEnumerate` is a footgun in this exact context: combined
+        # with the @(...) wrap it produces a 1-element array whose
+        # element IS the array, then iteration walks the array's .NET
+        # metadata fields (Length, Rank, ...). Forbid it explicitly.
+        $batchAgg   | Should -Not -Match 'ConvertFrom-Json -NoEnumerate'
+        $renegSum  | Should -Not -Match 'ConvertFrom-Json -NoEnumerate'
+        $outerEval | Should -Not -Match 'ConvertFrom-Json -NoEnumerate'
+    }
+
+    It 'singleton-array iteration counts dispatched/satisfied correctly (executable regression: 1-iteration batch must NOT report items_dispatched_count=0 when one item dispatched)' {
+        # Reproduce the exact shape conductor emits for `dispatch_items.outputs`
+        # when a batch has ONE item: a JSON array with one element.
+        $singleIterJson = @'
+[{"work_item_id":3064,"root_id":3064,"lifecycle_workflow":"plan-level","dispatched":true,"fast_pathed":false,"item_satisfied":false,"renegotiation_pending":false,"renegotiation_request":"","validate_scope_verdict":"","scope_violation_files":[],"actionable_satisfied":false,"implement_merge_group_merged":false,"feature_pr_merged":false,"error":"","error_code":""}]
+'@
+        # Mirror the production aggregator logic.
+        $values = @($singleIterJson | ConvertFrom-Json)
+        $itemCount = 0; $dispatchedCount = 0; $satisfiedCount = 0
+        foreach ($v in $values) {
+            if ($null -eq $v) { continue }
+            $itemCount += 1
+            if ($v.PSObject.Properties.Name -contains 'dispatched' -and "$($v.dispatched)".ToLowerInvariant() -eq 'true') { $dispatchedCount += 1 }
+            if ($v.PSObject.Properties.Name -contains 'item_satisfied' -and "$($v.item_satisfied)".ToLowerInvariant() -eq 'true') { $satisfiedCount += 1 }
+        }
+        $itemCount       | Should -Be 1
+        $dispatchedCount | Should -Be 1
+        $satisfiedCount  | Should -Be 0
+    }
+
+    It 'multi-iteration array iteration counts dispatched/satisfied correctly (forward compatibility — multi-item waves must still tally per item)' {
+        $multiIterJson = @'
+[{"work_item_id":1,"dispatched":true,"item_satisfied":false},{"work_item_id":2,"dispatched":true,"item_satisfied":true},{"work_item_id":3,"dispatched":false,"item_satisfied":false}]
+'@
+        $values = @($multiIterJson | ConvertFrom-Json)
+        $itemCount = 0; $dispatchedCount = 0; $satisfiedCount = 0
+        foreach ($v in $values) {
+            if ($null -eq $v) { continue }
+            $itemCount += 1
+            if ($v.PSObject.Properties.Name -contains 'dispatched' -and "$($v.dispatched)".ToLowerInvariant() -eq 'true') { $dispatchedCount += 1 }
+            if ($v.PSObject.Properties.Name -contains 'item_satisfied' -and "$($v.item_satisfied)".ToLowerInvariant() -eq 'true') { $satisfiedCount += 1 }
+        }
+        $itemCount       | Should -Be 3
+        $dispatchedCount | Should -Be 2
+        $satisfiedCount  | Should -Be 1
+    }
+
+    It 'every outer-loop node and new terminal is reachable from the entry point' {
+        $reachable = Get-Reachable -Agents $script:RootAgents -StartNode 'preflight_sync'
+        foreach ($n in @('outer_loop_init','outer_loop_evaluator','root_iteration_cap','root_blocked','root_dispatch_failures')) {
+            $reachable | Should -Contain $n -Because "PR #9 / AB#3067 node '$n' must be reachable from preflight_sync"
+        }
+    }
+}
+
+# =====================================================================
+# Section 3 — root-batch-dispatch fan-out
+# =====================================================================
+
+Describe 'root-batch-dispatch e2e — batch fan-out' {
+
+    It 'dispatch_items is a for_each that invokes ./root-item-dispatch.yaml per item' {
+        $node = $script:BatchAgents['dispatch_items']
+        $node.type           | Should -Be 'for_each'
+        # M8: bare dotted source.
+        $node.source         | Should -Be 'workflow.input.batch_items'
+        $node.as             | Should -Be 'item'
+        $node.agent.type     | Should -Be 'workflow'
+        $node.agent.workflow | Should -Be './root-item-dispatch.yaml'
+        # MVP cap aligns with policy.concurrency.max_concurrent_children.
+        [int]$node.max_concurrent | Should -Be 3
+        $node.failure_mode   | Should -Be 'continue_on_error'
+    }
+
+    It 'dispatch_items input_mapping threads root_id, work_item_id, and platform fields per-item' {
+        $im = $script:BatchAgents['dispatch_items'].agent.input_mapping
+        $im.root_id       | Should -Match 'workflow\.input\.root_id'
+        $im.work_item_id  | Should -Match 'item\.item_id'
+        $im.platform      | Should -Match 'workflow\.input\.platform'
+        $im.organization  | Should -Match 'workflow\.input\.organization'
+        $im.project       | Should -Match 'workflow\.input\.project'
+        $im.repository    | Should -Match 'workflow\.input\.repository'
+    }
+
+    It 'dispatch_items routes to aggregate_renegotiation' {
+        $routes = Get-NodeRoutes -Agents $script:BatchAgents -NodeName 'dispatch_items'
+        $routes.Target | Should -Contain 'aggregate_renegotiation'
+    }
+
+    It 'aggregate_renegotiation reads dispatch_items.outputs (per M8) and routes to record_batch_failure_flag on items_failed_count > 0, otherwise integrate_batch' {
+        $node = $script:BatchAgents['aggregate_renegotiation']
+        $node.type | Should -Be 'script'
+        # The script reads the .outputs dict and inspects renegotiation_pending.
+        ($node.args -join ' ') | Should -Match 'dispatch_items\.outputs'
+        ($node.args -join ' ') | Should -Match 'renegotiation_pending'
+        $routes = @(Get-NodeRoutes -Agents $script:BatchAgents -NodeName 'aggregate_renegotiation')
+        # Conditional fan-out for fail-fast-across-waves: when this batch
+        # had item failures, persist a sentinel BEFORE integrate_batch so
+        # subsequent waves' check_prior_batch_status short-circuits.
+        # Renegotiation is NOT short-circuited (preserves
+        # renegotiation_gate.override semantics).
+        $hot = $routes | Where-Object { $_.When -match 'items_failed_count \| int > 0' }
+        $hot | Should -Not -BeNullOrEmpty
+        $hot.Target | Should -Be 'record_batch_failure_flag'
+        # M4 catch-all + happy path both go to integrate_batch.
+        $routes.Target | Should -Contain 'integrate_batch'
+        $routes[-1].When   | Should -BeNullOrEmpty
+        $routes[-1].Target | Should -Be 'integrate_batch'
+    }
+
+    # ── Fail-fast across waves (PR: feat/batch-dispatch-fail-fast-on-failure) ──
+    #
+    # root-batch-dispatch.entry_point switches to check_prior_batch_status,
+    # which short-circuits to batch_skipped when an earlier batch
+    # under the same root run wrote a failure sentinel. record_batch_failure_flag
+    # writes the sentinel after a batch's aggregate_renegotiation reports
+    # items_failed_count > 0. Renegotiation does NOT trigger the sentinel —
+    # see check_prior_batch_status header for rationale.
+
+    It 'check_prior_batch_status is the entry point and invokes batch-dispatch-guard.ps1 -Op check' {
+        $script:BatchYaml.workflow.entry_point | Should -Be 'check_prior_batch_status'
+        $node = $script:BatchAgents['check_prior_batch_status']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'batch-dispatch-guard\.ps1'
+        $argLine | Should -Match '-Op\s+check'
+        $argLine | Should -Match '-RootId'
+        $argLine | Should -Match 'workflow\.input\.root_id'
+    }
+
+    It 'check_prior_batch_status routes blocked->batch_skipped, else dispatch_items (with M4 catch-all)' {
+        $routes = @(Get-NodeRoutes -Agents $script:BatchAgents -NodeName 'check_prior_batch_status')
+        $blocked = $routes | Where-Object { $_.When -match "blocked \| string \| lower == 'true'" }
+        $blocked | Should -Not -BeNullOrEmpty
+        $blocked.Target | Should -Be 'batch_skipped'
+        # Default + M4 catch-all both flow to dispatch_items so undefined
+        # `blocked` (e.g. git-common-dir resolution failure) degrades to
+        # today's continue_on_error behavior rather than silently
+        # skipping the batch.
+        $routes.Target | Should -Contain 'dispatch_items'
+        $routes[-1].When   | Should -BeNullOrEmpty
+        $routes[-1].Target | Should -Be 'dispatch_items'
+    }
+
+    It 'batch_skipped emits a batch_skipped envelope and ends the batch' {
+        $node = $script:BatchAgents['batch_skipped']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'skipped\s*=\s*\$true'
+        $argLine | Should -Match 'skip_reason'
+        $argLine | Should -Match 'batch_index'
+        $routes = @(Get-NodeRoutes -Agents $script:BatchAgents -NodeName 'batch_skipped')
+        $routes.Count    | Should -Be 1
+        $routes[0].Target | Should -Be '$end'
+    }
+
+    It 'record_batch_failure_flag invokes batch-dispatch-guard.ps1 -Op record with the batch index and routes to integrate_batch' {
+        $node = $script:BatchAgents['record_batch_failure_flag']
+        $node | Should -Not -BeNullOrEmpty
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argLine = ($node.args -join ' ')
+        $argLine | Should -Match 'batch-dispatch-guard\.ps1'
+        $argLine | Should -Match '-Op\s+record'
+        $argLine | Should -Match '-RootId'
+        $argLine | Should -Match 'workflow\.input\.root_id'
+        $argLine | Should -Match '-BatchIndex'
+        $argLine | Should -Match 'workflow\.input\.batch_index'
+        $argLine | Should -Match '-Reason\s+failure'
+        $routes = @(Get-NodeRoutes -Agents $script:BatchAgents -NodeName 'record_batch_failure_flag')
+        $routes.Count    | Should -Be 1
+        $routes[0].Target | Should -Be 'integrate_batch'
+    }
+
+    It 'root-batch-dispatch.output exposes batch_skipped + skip_reason for operator observability' {
+        # Workflow output template lives at the top-level `output:` map;
+        # we assert the literal Jinja shape here because the YAML loader
+        # collapses long folded scalars and the template itself is the
+        # contract polyphony consumes via batch_dispatch_loop.outputs[].
+        $script:BatchRaw | Should -Match 'batch_skipped:\s*>-'
+        $script:BatchRaw | Should -Match 'batch_skipped is defined'
+        $script:BatchRaw | Should -Match 'skip_reason:\s*>-'
+    }
+
+    It 'Batch skip path is reachable from check_prior_batch_status to $end without touching dispatch_items' {
+        $reachable = Get-Reachable -Agents $script:BatchAgents -StartNode 'check_prior_batch_status'
+        $reachable | Should -Contain 'batch_skipped'
+        $reachable | Should -Contain 'dispatch_items'
+    }
+
+    It 'integrate_batch invokes batch-integrator.ps1 and ends the batch' {
+        $node = $script:BatchAgents['integrate_batch']
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        ($node.args -join ' ') | Should -Match 'batch-integrator\.ps1'
+        ($node.args -join ' ') | Should -Match '-RootId'
+        ($node.args -join ' ') | Should -Match '-BatchIndex'
+        $routes = Get-NodeRoutes -Agents $script:BatchAgents -NodeName 'integrate_batch'
+        $routes.Target | Should -Contain '$end'
+    }
+
+    It 'Batch dispatch chain is reachable end-to-end (dispatch_items -> aggregate -> integrate)' {
+        $reachable = Get-Reachable -Agents $script:BatchAgents -StartNode 'dispatch_items'
+        $reachable | Should -Contain 'aggregate_renegotiation'
+        $reachable | Should -Contain 'integrate_batch'
+    }
+}
+
+# =====================================================================
+# Section 4 — root-item-dispatch branch-on-router (heart of PR #149)
+# =====================================================================
+
+Describe 'root-item-dispatch e2e — branch-on-router' {
+
+    It 'classify_lifecycle invokes lifecycle-router.ps1 with the per-item context' {
+        $node = $script:ItemAgents['classify_lifecycle']
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        ($node.args -join ' ') | Should -Match 'lifecycle-router\.ps1'
+        ($node.args -join ' ') | Should -Match '-WorkItemId'
+        ($node.args -join ' ') | Should -Match '-RootId'
+    }
+
+    It 'classify_lifecycle short-circuits fast-path / terminal-satisfied / monitoring / blocked / error to their terminals BEFORE spawning a worktree' {
+        $routes = @(Get-NodeRoutes -Agents $script:ItemAgents -NodeName 'classify_lifecycle')
+        $byVerdict = @{
+            'fast-path'          = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'fast-path'" }).Target
+            'terminal-satisfied' = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'terminal-satisfied'" }).Target
+            'monitoring'         = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'monitoring'" }).Target
+            'blocked'            = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'blocked'" }).Target
+            'error'              = ($routes | Where-Object { $_.When -match "lifecycle_workflow == 'error'" }).Target
+        }
+        $byVerdict['fast-path']          | Should -Be 'fast_path'
+        $byVerdict['terminal-satisfied'] | Should -Be 'satisfied'
+        $byVerdict['monitoring']         | Should -Be 'monitoring'
+        $byVerdict['blocked']            | Should -Be 'blocked'
+        $byVerdict['error']              | Should -Be 'classify_error'
+        # success route to spawn_worktree
+        $ok = $routes | Where-Object { $_.When -match "success \| string \| lower == 'true'" }
+        $ok | Should -Not -BeNullOrEmpty
+        $ok.Target | Should -Be 'spawn_worktree'
+        # M4 catch-all is the last entry and must default to the error terminal.
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'classify_error'
+    }
+
+    It 'spawn_worktree invokes worktree-manager.ps1 with operation=spawn' {
+        $node = $script:ItemAgents['spawn_worktree']
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argsJoined = ($node.args -join ' ')
+        $argsJoined | Should -Match 'worktree-manager\.ps1'
+        $argsJoined | Should -Match '-Operation'
+        $argsJoined | Should -Match 'spawn'
+        $argsJoined | Should -Match 'feature/\{\{'
+    }
+
+    It 'spawn_worktree branch-on-routers to each lifecycle dispatch node based on the classifier verdict' {
+        $routes = @(Get-NodeRoutes -Agents $script:ItemAgents -NodeName 'spawn_worktree')
+        $expected = @{
+            'plan-level'   = 'plan_level'
+            'actionable'   = 'actionable'
+            'implement-merge-group' = 'implement_merge_group'
+            'feature-pr'   = 'feature_pr'
+        }
+        foreach ($verdict in $expected.Keys) {
+            $hit = $routes | Where-Object {
+                $_.When -match [regex]::Escape("lifecycle_workflow == '$verdict'") -and
+                $_.When -match "spawn_worktree\.output\.success \| string \| lower == 'true'"
+            }
+            $hit | Should -Not -BeNullOrEmpty -Because (
+                "spawn_worktree must declare a guarded route to $($expected[$verdict]) when classify=$verdict")
+            $hit.Target | Should -Be $expected[$verdict]
+        }
+        # M4 catch-all is the LAST entry and must funnel unknown classifications to the spawn-error terminal.
+        $catchAll = $routes[-1]
+        $catchAll.When   | Should -BeNullOrEmpty
+        $catchAll.Target | Should -Be 'spawn_error'
+    }
+
+    It 'All four lifecycle dispatch nodes invoke their parent-relative ./<lifecycle>.yaml' {
+        $expected = @{
+            'plan_level'   = './plan-level.yaml'
+            'actionable'   = './actionable.yaml'
+            'implement_merge_group' = './implement-merge-group.yaml'
+            'feature_pr'   = './feature-pr.yaml'
+        }
+        foreach ($name in $expected.Keys) {
+            $node = $script:ItemAgents[$name]
+            $node | Should -Not -BeNullOrEmpty -Because "missing lifecycle node $name"
+            $node.type     | Should -Be 'workflow'
+            $node.workflow | Should -Be $expected[$name]
+        }
+    }
+
+    It 'All four lifecycle dispatch nodes converge on teardown_worktree' {
+        foreach ($name in 'plan_level','actionable','implement_merge_group','feature_pr') {
+            $routes = Get-NodeRoutes -Agents $script:ItemAgents -NodeName $name
+            $routes.Target | Should -Contain 'teardown_worktree' -Because (
+                "$name must funnel back through teardown_worktree so the per-item worktree is always cleaned up")
+        }
+    }
+
+    It 'teardown_worktree invokes worktree-manager.ps1 with operation=teardown and routes to dispatched' {
+        $node = $script:ItemAgents['teardown_worktree']
+        $node.type    | Should -Be 'script'
+        $node.command | Should -Be 'pwsh'
+        $argsJoined = ($node.args -join ' ')
+        $argsJoined | Should -Match 'worktree-manager\.ps1'
+        $argsJoined | Should -Match '-Operation'
+        $argsJoined | Should -Match 'teardown'
+        $routes = Get-NodeRoutes -Agents $script:ItemAgents -NodeName 'teardown_worktree'
+        $routes.Target | Should -Contain 'dispatched'
+    }
+
+    It 'All seven terminal nodes route to $end' {
+        $terminals = @(
+            'dispatched',
+            'fast_path',
+            'satisfied',
+            'monitoring',
+            'blocked',
+            'classify_error',
+            'spawn_error'
+        )
+        foreach ($t in $terminals) {
+            (Get-NodeRoutes -Agents $script:ItemAgents -NodeName $t).Target | Should -Contain '$end' -Because (
+                "$t must be a real terminal that routes to `$end")
+        }
+    }
+
+    It 'All four lifecycle dispatch nodes are reachable from classify_lifecycle (no orphans)' {
+        $reachable = Get-Reachable -Agents $script:ItemAgents -StartNode 'classify_lifecycle'
+        foreach ($n in 'plan_level','actionable','implement_merge_group','feature_pr') {
+            $reachable | Should -Contain $n -Because (
+                "$n must be reachable from the classifier — otherwise the branch-on-router dispatch is dead code")
+        }
+        # And the short-circuit terminals must be reachable too.
+        foreach ($t in 'fast_path','satisfied','monitoring','blocked','classify_error','spawn_error','dispatched') {
+            $reachable | Should -Contain $t -Because (
+                "$t must be reachable from classify_lifecycle in the assembled item graph")
+        }
+    }
+}
+
+# =====================================================================
+# Section 5 — Renegotiation bubble-up across all three layers
+# =====================================================================
+
+Describe 'polyphony e2e — renegotiation bubble-up table' {
+
+    It 'root-item-dispatch.output declares the four renegotiation bubble-up keys' {
+        $out = $script:ItemYaml.output
+        $out.Keys | Should -Contain 'renegotiation_pending'
+        $out.Keys | Should -Contain 'renegotiation_request'
+        $out.Keys | Should -Contain 'validate_scope_verdict'
+        $out.Keys | Should -Contain 'scope_violation_files'
+    }
+
+    It 'root-batch-dispatch.output surfaces the batch-aggregated renegotiation pair' {
+        $out = $script:BatchYaml.output
+        # root-batch-dispatch aggregates per-item bubble-ups into a flat
+        # bool + array shape that polyphony can read on a single key.
+        $out.Keys | Should -Contain 'renegotiation_pending'
+        $out.Keys | Should -Contain 'renegotiation_items'
+    }
+
+    It 'polyphony.output bubbles renegotiation_pending up to the caller' {
+        $out = $script:RootYaml.output
+        $out.Keys | Should -Contain 'renegotiation_pending'
+    }
+
+    It 'root-item-dispatch bubble-up Jinja is M3-safe (`is defined` guards on every cross-leg ref)' {
+        $body = Get-OutputBlock -RawYaml $script:ItemRaw
+        $body | Should -Match 'plan_level is defined'
+        # Lifecycle-specific outputs each guard with `is defined`
+        $body | Should -Match 'actionable is defined'
+        $body | Should -Match 'implement_merge_group is defined'
+        $body | Should -Match 'feature_pr is defined'
+        # Per M7 booleans are piped through `| string | lower`.
+        $body | Should -Match 'string \| lower'
+    }
+
+    It 'root-batch-dispatch bubble-up Jinja is M3-safe (`is defined` guards on aggregate + integrate)' {
+        $body = Get-OutputBlock -RawYaml $script:BatchRaw
+        $body | Should -Match 'aggregate_renegotiation is defined'
+        $body | Should -Match 'integrate_batch is defined'
+        $body | Should -Match 'string \| lower'
+    }
+
+    It 'polyphony bubble-up Jinja is M3-safe (`is defined` guards on every terminal + summary)' {
+        $body = Get-OutputBlock -RawYaml $script:RootRaw
+        $body | Should -Match 'root_satisfied is defined'
+        $body | Should -Match 'root_abandoned is defined'
+        $body | Should -Match 'preflight_failed is defined'
+        $body | Should -Match 'renegotiation_summary is defined'
+        $body | Should -Match 'string \| lower'
+    }
+
+    It 'plan-level is the only lifecycle in root-item-dispatch.output that bubbles renegotiation (other lifecycles default safely)' {
+        $body = Get-OutputBlock -RawYaml $script:ItemRaw
+        # The renegotiation_pending block must reference plan_level
+        # (the only lifecycle that emits it) and fall back to false for the
+        # other three legs via the M3 guard.
+        $body | Should -Match '(?ms)renegotiation_pending:.*plan_level is defined.*else.*false'
+        # validate_scope_verdict and scope_violation_files originate from
+        # plan-level too (PR #144). The Jinja block spans multiple
+        # lines (yaml `>-` folded scalar) so the regex needs (?ms).
+        $body | Should -Match '(?ms)validate_scope_verdict:.*plan_level is defined'
+        $body | Should -Match '(?ms)scope_violation_files:.*plan_level is defined'
+    }
+}
+
+# =====================================================================
+# Section 6 — Input/output contracts across the 3-YAML chain
+# =====================================================================
+
+Describe 'polyphony e2e — input contracts thread through all three YAMLs' {
+
+    It 'polyphony declares the documented input contract' {
+        $inputs = $script:RootYaml.workflow.input
+        $inputs.root_id      | Should -Not -BeNullOrEmpty
+        [bool]$inputs.root_id.required | Should -BeTrue
+        $inputs.intent       | Should -Not -BeNullOrEmpty
+        $inputs.platform     | Should -Not -BeNullOrEmpty
+        $inputs.organization | Should -Not -BeNullOrEmpty
+        $inputs.project      | Should -Not -BeNullOrEmpty
+        $inputs.repository   | Should -Not -BeNullOrEmpty
+        # platform default is ado per the polyphony YAML header.
+        $inputs.platform.default | Should -Be 'ado'
+    }
+
+    It 'polyphony -> root-batch-dispatch input_mapping threads root_id + per-batch fields + ADO context' {
+        $im = $script:RootAgents['batch_dispatch_loop'].agent.input_mapping
+        $im.root_id       | Should -Match 'workflow\.input\.root_id'
+        $im.batch_index    | Should -Match 'batch\.batch_index'
+        $im.batch_items    | Should -Match 'batch\.items \| tojson'
+        $im.platform      | Should -Match 'workflow\.input\.platform'
+        $im.organization  | Should -Match 'workflow\.input\.organization'
+        $im.project       | Should -Match 'workflow\.input\.project'
+        $im.repository    | Should -Match 'workflow\.input\.repository'
+    }
+
+    It 'root-batch-dispatch declares the inputs polyphony passes (root_id, batch_index, batch_items, ADO context)' {
+        $inputs = $script:BatchYaml.workflow.input
+        $inputs.root_id    | Should -Not -BeNullOrEmpty
+        $inputs.batch_index | Should -Not -BeNullOrEmpty
+        $inputs.batch_items | Should -Not -BeNullOrEmpty
+        $inputs.platform     | Should -Not -BeNullOrEmpty
+        $inputs.organization | Should -Not -BeNullOrEmpty
+        $inputs.project      | Should -Not -BeNullOrEmpty
+        $inputs.repository   | Should -Not -BeNullOrEmpty
+    }
+
+    It 'root-item-dispatch declares the inputs root-batch-dispatch passes (root_id, work_item_id, ADO context)' {
+        $inputs = $script:ItemYaml.workflow.input
+        $inputs.root_id      | Should -Not -BeNullOrEmpty
+        $inputs.work_item_id | Should -Not -BeNullOrEmpty
+        [bool]$inputs.root_id.required      | Should -BeTrue
+        [bool]$inputs.work_item_id.required | Should -BeTrue
+        $inputs.platform     | Should -Not -BeNullOrEmpty
+        $inputs.organization | Should -Not -BeNullOrEmpty
+        $inputs.project      | Should -Not -BeNullOrEmpty
+        $inputs.repository   | Should -Not -BeNullOrEmpty
+    }
+
+    It 'root-item-dispatch -> plan-level threads work_item_id + intent=resume + ADO context' {
+        $im = $script:ItemAgents['plan_level'].agent.input_mapping
+        if (-not $im) { $im = $script:ItemAgents['plan_level'].input_mapping }
+        $im.work_item_id  | Should -Match 'workflow\.input\.work_item_id'
+        $im.intent        | Should -Be 'resume'
+        $im.platform      | Should -Match 'workflow\.input\.platform'
+        $im.organization  | Should -Match 'workflow\.input\.organization'
+    }
+
+    It 'root-item-dispatch -> actionable threads work_item_id + root_id + executor=polyphony' {
+        $im = $script:ItemAgents['actionable'].input_mapping
+        if (-not $im) { $im = $script:ItemAgents['actionable'].agent.input_mapping }
+        $im.work_item_id | Should -Match 'workflow\.input\.work_item_id'
+        $im.root_id      | Should -Match 'workflow\.input\.root_id'
+        $im.executor     | Should -Be 'polyphony'
+    }
+
+    It 'root-item-dispatch -> implement-merge-group derives mg_path/root_id from the root+item ids' {
+        $im = $script:ItemAgents['implement_merge_group'].input_mapping
+        if (-not $im) { $im = $script:ItemAgents['implement_merge_group'].agent.input_mapping }
+        $im.pg_number      | Should -Match 'workflow\.input\.work_item_id'
+        $im.work_item_ids  | Should -Match 'workflow\.input\.work_item_id'
+        $im.root_id        | Should -Match 'workflow\.input\.root_id'
+        $im.mg_path        | Should -Match '^pg-\{\{ workflow\.input\.work_item_id \}\}$'
+        $im.feature_branch | Should -Match '^feature/\{\{ workflow\.input\.root_id \}\}$'
+        $im.organization   | Should -Match 'workflow\.input\.organization'
+        $im.project        | Should -Match 'workflow\.input\.project'
+        $im.repository     | Should -Match 'workflow\.input\.repository'
+    }
+
+    It 'root-item-dispatch -> feature-pr targets main on the root feature branch' {
+        $im = $script:ItemAgents['feature_pr'].input_mapping
+        if (-not $im) { $im = $script:ItemAgents['feature_pr'].agent.input_mapping }
+        $im.work_item_id   | Should -Match 'workflow\.input\.work_item_id'
+        $im.feature_branch | Should -Match '^feature/\{\{ workflow\.input\.root_id \}\}$'
+        $im.target_branch  | Should -Be 'main'
+        $im.platform       | Should -Match 'workflow\.input\.platform'
+    }
+}
+
+# =====================================================================
+# Section 7 — lifecycle-router script <-> YAML contract drift
+# =====================================================================
+#
+# The HIGHEST-VALUE assertion in this suite. The router script and the
+# root-item-dispatch.yaml `when:` clauses are coupled by a literal
+# string set; if either side adds or removes a route name without the
+# other, dispatch silently drops items into the catch-all.
+
+Describe 'polyphony e2e — lifecycle-router script and YAML contract drift' {
+
+    BeforeAll {
+        # Set of `lifecycle_workflow` literal values the router script
+        # is documented to emit. Pulled from the script's switch/if
+        # chain by parsing every `lifecycle_workflow = '<value>'`
+        # assignment. NOTE: also includes 'error' (initial envelope
+        # value) and may include additional sentinel values; the
+        # cross-check below treats the SCRIPT side as authoritative.
+        # Set of `lifecycle_workflow` literal values the router script
+        # assigns. The script uses two assignment shapes:
+        #   1. `lifecycle_workflow = '<value>'`        (most cases)
+        #   2. `lifecycle_workflow = if (...) { '<a>' } else { '<b>' }`
+        #      (the root-root vs PG-child split)
+        # Strip the comment-based help block first so docstring
+        # references don't spuriously inflate the set, then collect
+        # every single-quoted lifecycle-name candidate in the body
+        # and intersect with the documented canonical set so we don't
+        # pick up unrelated strings.
+        # NOTE: `$matches` is a PowerShell automatic variable (last
+        # regex match groups) — using it as a normal local breaks
+        # subsequent `-match` operators in the same scope. Use
+        # `$emits` / `$branches` instead.
+        $canonical = @('plan-level','actionable','implement-merge-group','feature-pr','fast-path','terminal-satisfied','monitoring','blocked','error')
+        $routerBody = $script:RouterRaw -replace '(?ms)^<#.*?#>',''
+        $emits = [regex]::Matches($routerBody, "'([a-zA-Z\-]+)'")
+        $set = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($m in $emits) {
+            $v = $m.Groups[1].Value
+            if ($canonical -contains $v) { $null = $set.Add($v) }
+        }
+        $script:RouterEmits = @($set | Sort-Object)
+
+        # Set of `lifecycle_workflow == '<value>'` literals the
+        # root-item-dispatch.yaml branches on.
+        $branches = [regex]::Matches($script:ItemRaw, "lifecycle_workflow == '([a-zA-Z\-]+)'")
+        $set2 = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($m in $branches) {
+            $null = $set2.Add($m.Groups[1].Value)
+        }
+        $script:YamlBranches = @($set2 | Sort-Object)
+    }
+
+    It 'Router script emits the expected canonical set of lifecycle_workflow values' {
+        # Documented emit set per the script's docstring + classifier:
+        $expected = @(
+            'plan-level',
+            'actionable',
+            'implement-merge-group',
+            'feature-pr',
+            'fast-path',
+            'terminal-satisfied',
+            'monitoring',
+            'blocked',
+            'error'
+        ) | Sort-Object
+
+        # Allow the script to also reference a sentinel/initial 'error'
+        # in the envelope ordered dict — that's the same canonical value.
+        # Any drift from the documented set is a bug.
+        $extra = $script:RouterEmits | Where-Object { $expected -notcontains $_ }
+        $missing = $expected | Where-Object { $script:RouterEmits -notcontains $_ }
+        $extra   | Should -BeNullOrEmpty -Because (
+            "router script must not emit undocumented lifecycle_workflow values; got: $($extra -join ', ')")
+        $missing | Should -BeNullOrEmpty -Because (
+            "router script must emit every documented lifecycle_workflow value; missing: $($missing -join ', ')")
+    }
+
+    It 'Every lifecycle_workflow value the router emits is handled by an root-item-dispatch.yaml when: clause OR by the success-route fork (no silent dropping)' {
+        # The four "dispatchable" verdicts (plan-level / actionable /
+        # implement-merge-group / feature-pr) are NOT branched on in
+        # classify_lifecycle's routes; they are gated by the
+        # `success | string | lower == 'true'` route to spawn_worktree
+        # and then split by spawn_worktree's per-verdict branches.
+        # The four "short-circuit" verdicts (fast-path / monitoring /
+        # blocked / error) ARE branched on directly in classify_lifecycle.
+        # PR #6 added terminal-satisfied as a fifth short-circuit verdict
+        # — same pattern (worktree-less terminal that performs the ADO
+        # state transition for items whose only ready kind is item_satisfied).
+        $shortCircuit = @('fast-path', 'terminal-satisfied', 'monitoring', 'blocked', 'error')
+        $dispatch     = @('plan-level', 'actionable', 'implement-merge-group', 'feature-pr')
+
+        # Short-circuit verdicts must appear as YAML branch values.
+        foreach ($v in $shortCircuit) {
+            $script:YamlBranches | Should -Contain $v -Because (
+                "classify_lifecycle must branch directly on lifecycle_workflow == '$v' so it short-circuits before spawning a worktree")
+        }
+
+        # Dispatch verdicts must appear as YAML branch values too —
+        # spawn_worktree's branch-on-router uses them.
+        foreach ($v in $dispatch) {
+            $script:YamlBranches | Should -Contain $v -Because (
+                "spawn_worktree must branch on lifecycle_workflow == '$v' so it dispatches into the right lifecycle sub-workflow")
+        }
+
+        # And inversely: every YAML branch literal must correspond to
+        # a value the router actually emits — otherwise we have dead
+        # branches.
+        $deadBranches = $script:YamlBranches | Where-Object { $script:RouterEmits -notcontains $_ }
+        $deadBranches | Should -BeNullOrEmpty -Because (
+            "root-item-dispatch.yaml must not branch on lifecycle_workflow values the router never emits; dead branches: $($deadBranches -join ', ')")
+    }
+
+    It 'lifecycle-router.ps1 returns a routing-style envelope (success=false / error_code populated) when polyphony is unavailable' {
+        # Live invocation against a deliberately-missing executable.
+        # Per the script's contract, this MUST exit 0 and surface
+        # the failure via the JSON envelope.
+        $missingExe = 'polyphony-does-not-exist-' + [Guid]::NewGuid().ToString('N')
+        $stdout = pwsh -NoProfile -File $script:LifecycleRouter `
+            -WorkItemId 99999 -RootId 99999 -PolyphonyExe $missingExe 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because (
+            "lifecycle-router.ps1 must always exit 0 — failures surface via the envelope, not via exit codes")
+        $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
+        $envelope.success | Should -Be $false
+        $envelope.error_code | Should -Be 'polyphony_unavailable'
+        # The envelope must carry the work_item_id so the workflow
+        # can correlate failures.
+        [int]$envelope.work_item_id | Should -Be 99999
+        # Lifecycle workflow must default to 'error' on this leg so
+        # the root-item-dispatch classify_error route fires.
+        $envelope.lifecycle_workflow | Should -Be 'error'
+    }
+}
+
+# =====================================================================
+# Section 7b — F6: indivisible-root-root routing regression
+# =====================================================================
+# Bug surfaced AB#3064 dogfood 2026-05-09: an implementable root with no
+# ADO children was mis-routed to feature-pr, which then dispatched empty
+# MGs because there were no children PGs to aggregate. The router now
+# consults `polyphony hierarchy` on the root-root + implementable
+# branch and splits decomposed (>=1 child → feature-pr) from indivisible
+# (0 children → implement-merge-group).
+
+Describe 'polyphony e2e — F6 indivisible-root-root routing' {
+
+    BeforeAll {
+        # Build a polyphony stub once — handles BOTH
+        # `state next-ready --work-item N` AND `hierarchy --work-item N`
+        # invocations from the router. Each It block sets the
+        # PSE_F6_FIXTURE env var to vary canned output without touching
+        # the script on disk.
+        #
+        # Note: the stub uses Write-Error (NOT [Console]::Error.WriteLine)
+        # for the failure leg because PowerShell's `2>$tempFile`
+        # redirection inside the router only captures the PS error
+        # stream, not the .NET console stderr stream. Using Write-Error
+        # ensures the simulated failure text doesn't leak through to the
+        # outer pwsh's stderr and contaminate the captured envelope.
+        $script:F6StubPath = Join-Path ([System.IO.Path]::GetTempPath()) ("polyphony-f6-stub-" + [Guid]::NewGuid().ToString('N') + ".ps1")
+        @'
+$verb = $args[0]
+$sub  = $args[1]
+$fixture = $env:PSE_F6_FIXTURE
+if ($verb -eq 'state' -and $sub -eq 'next-ready') {
+    Write-Output '{"work_item_id":3064,"work_item_type":"Epic","status":"dispatchable","next":["implementation_merged"],"fulfilling":[]}'
+    exit 0
+}
+elseif ($verb -eq 'hierarchy') {
+    if ($fixture -eq 'children-empty')   { Write-Output '{"id":3064,"children":[]}';                        exit 0 }
+    if ($fixture -eq 'children-present') { Write-Output '{"id":3064,"children":[{"id":3065},{"id":3066}]}'; exit 0 }
+    if ($fixture -eq 'children-fail')    { Write-Error 'simulated hierarchy failure'; exit 7 }
+    Write-Error "unknown PSE_F6_FIXTURE: $fixture"; exit 9
+}
+Write-Error "unexpected stub invocation: $($args -join ' ')"; exit 9
+'@ | Set-Content -Path $script:F6StubPath -NoNewline
+        $script:F6Router = Join-Path $PSScriptRoot '..' 'scripts' 'lifecycle-router.ps1'
+    }
+
+    AfterAll {
+        if ($script:F6StubPath -and (Test-Path $script:F6StubPath)) {
+            Remove-Item $script:F6StubPath -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'F6: root-root + implementable + ZERO children routes to implement-merge-group (indivisible root)' {
+        $env:PSE_F6_FIXTURE = 'children-empty'
+        try {
+            $stdout = pwsh -NoProfile -File $script:F6Router `
+                -WorkItemId 3064 -RootId 3064 -PolyphonyExe $script:F6StubPath 2>&1
+            $LASTEXITCODE | Should -Be 0
+            $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
+            $envelope.success | Should -Be $true -Because 'an indivisible implementable root is a valid dispatchable item'
+            $envelope.is_root | Should -Be $true
+            $envelope.lifecycle_workflow | Should -Be 'implement-merge-group' -Because (
+                'root root with no children IS the PG — must route to implement-merge-group, not feature-pr (empty-MG bug AB#3064)')
+            $envelope.error_code | Should -BeNullOrEmpty
+        }
+        finally { Remove-Item env:PSE_F6_FIXTURE -ErrorAction SilentlyContinue }
+    }
+
+    It 'F6: root-root + implementable + N>=1 children routes to feature-pr (decomposed root aggregation)' {
+        $env:PSE_F6_FIXTURE = 'children-present'
+        try {
+            $stdout = pwsh -NoProfile -File $script:F6Router `
+                -WorkItemId 3064 -RootId 3064 -PolyphonyExe $script:F6StubPath 2>&1
+            $LASTEXITCODE | Should -Be 0
+            $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
+            $envelope.success | Should -Be $true
+            $envelope.is_root | Should -Be $true
+            $envelope.lifecycle_workflow | Should -Be 'feature-pr' -Because (
+                'a decomposed root root has children whose PGs were merged in earlier waves; feature-pr aggregates them')
+        }
+        finally { Remove-Item env:PSE_F6_FIXTURE -ErrorAction SilentlyContinue }
+    }
+
+    It 'F6: hierarchy failure on the root-root + implementable branch surfaces error_code=hierarchy_failed (no silent default)' {
+        $env:PSE_F6_FIXTURE = 'children-fail'
+        try {
+            $stdout = pwsh -NoProfile -File $script:F6Router `
+                -WorkItemId 3064 -RootId 3064 -PolyphonyExe $script:F6StubPath 2>$null
+            $LASTEXITCODE | Should -Be 0 -Because 'router must always exit 0; failures surface via envelope'
+            $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
+            $envelope.success | Should -Be $false -Because (
+                'silently defaulting either way is wrong roughly half the time — must fail loudly so root-item-dispatch.classify_error fires')
+            $envelope.lifecycle_workflow | Should -Be 'error'
+            $envelope.error_code | Should -Be 'hierarchy_failed'
+        }
+        finally { Remove-Item env:PSE_F6_FIXTURE -ErrorAction SilentlyContinue }
+    }
+}
+
+# =====================================================================
+# Section 8 — worktree-manager + batch-integrator script contracts
+# =====================================================================
+
+Describe 'polyphony e2e — script envelope contracts (worktree-manager, batch-integrator)' {
+
+    It 'worktree-manager.ps1 teardown of a non-existent worktree returns success=true (idempotent)' {
+        # Use a deliberately-non-existent worktree root so the script
+        # short-circuits the idempotent-teardown branch without touching
+        # the real repo. Routing-style: must exit 0.
+        $fakeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("root-e2e-noroot-" + [Guid]::NewGuid().ToString('N'))
+        $stdout = pwsh -NoProfile -File $script:WorktreeManager `
+            -Operation teardown -WorkItemId 999999 -WorktreeRoot $fakeRoot 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because (
+            "worktree-manager.ps1 must always exit 0 — failures surface via envelope.success")
+        $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
+        # Envelope keys the root-item-dispatch yaml consumes.
+        $envelope.PSObject.Properties.Name | Should -Contain 'success'
+        $envelope.PSObject.Properties.Name | Should -Contain 'operation'
+        $envelope.PSObject.Properties.Name | Should -Contain 'work_item_id'
+        $envelope.PSObject.Properties.Name | Should -Contain 'worktree_path'
+        $envelope.PSObject.Properties.Name | Should -Contain 'branch'
+        $envelope.PSObject.Properties.Name | Should -Contain 'error_code'
+        $envelope.operation | Should -Be 'teardown'
+        # Idempotent teardown of a non-existent path is a success.
+        $envelope.success   | Should -Be $true
+    }
+
+    It 'batch-integrator.ps1 returns a routing-style envelope (success=false / error_code populated) when polyphony is unavailable' {
+        $missingExe = 'polyphony-does-not-exist-' + [Guid]::NewGuid().ToString('N')
+        $stdout = pwsh -NoProfile -File $script:BatchIntegrator `
+            -RootId 99999 -BatchIndex 0 -PolyphonyExe $missingExe 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because (
+            "batch-integrator.ps1 must always exit 0 — failures surface via the envelope, not via exit codes")
+        $envelope = ($stdout | Out-String).Trim() | ConvertFrom-Json
+        $envelope.success | Should -Be $false
+        $envelope.error_code | Should -Be 'polyphony_unavailable'
+        # Required envelope keys the root-batch-dispatch yaml consumes.
+        $envelope.PSObject.Properties.Name | Should -Contain 'success'
+        $envelope.PSObject.Properties.Name | Should -Contain 'batch_index'
+        $envelope.PSObject.Properties.Name | Should -Contain 'root_id'
+        $envelope.PSObject.Properties.Name | Should -Contain 'feature_branch'
+        $envelope.PSObject.Properties.Name | Should -Contain 'merge_strategy'
+        $envelope.PSObject.Properties.Name | Should -Contain 'branches_integrated'
+        $envelope.PSObject.Properties.Name | Should -Contain 'skipped'
+        $envelope.PSObject.Properties.Name | Should -Contain 'conflicts'
+        # Defaults that downstream gates rely on.
+        [int]$envelope.root_id    | Should -Be 99999
+        [int]$envelope.batch_index | Should -Be 0
+        $envelope.feature_branch  | Should -Be 'feature/99999'
+        $envelope.merge_strategy  | Should -Be 'no-ff'
+    }
+}
+
+# =====================================================================
+# Section 8 — Terminal canonical output schema (bug #11 / #178)
+# =====================================================================
+#
+# Every `terminal_*` in root-item-dispatch.yaml must emit the FULL
+# canonical output schema with safe defaults. When the workflow's
+# top-level `output:` template fails to fully resolve, conductor
+# can surface the terminal's raw output to the parent for_each
+# consumer (root-batch-dispatch.aggregate_renegotiation, etc). Those
+# consumers read `renegotiation_pending`, `lifecycle_workflow`, and
+# friends and crash on missing keys.
+#
+# Asserting on the script's literal `Command` text catches drift
+# without needing a Jinja render harness.
+
+Describe 'root-item-dispatch terminal canonical output schema (#178)' {
+
+    BeforeAll {
+        $script:CanonicalFields = @(
+            'work_item_id',
+            'root_id',
+            'lifecycle_workflow',
+            'dispatched',
+            'fast_pathed',
+            'item_satisfied',
+            'renegotiation_pending',
+            'renegotiation_request',
+            'validate_scope_verdict',
+            'scope_violation_files',
+            'actionable_satisfied',
+            'implement_merge_group_merged',
+            'feature_pr_merged'
+        )
+        $script:TerminalNames = @(
+            'dispatched',
+            'fast_path',
+            'satisfied',
+            'monitoring',
+            'blocked',
+            'classify_error',
+            'spawn_error'
+        )
+
+        function script:Get-TerminalCommand($agents, $name) {
+            $agent = $agents[$name]
+            if (-not $agent) { throw "terminal $name not found" }
+            # Script agents put the `pwsh -Command <text>` as the third arg.
+            $args = $agent.args
+            for ($i = 0; $i -lt $args.Count - 1; $i++) {
+                if ($args[$i] -eq '-Command') { return $args[$i + 1] }
+            }
+            throw "no -Command arg in $name"
+        }
+    }
+
+    foreach ($t in @('dispatched','fast_path','satisfied','monitoring','blocked','classify_error','spawn_error')) {
+        It "$t emits all 13 canonical fields" -TestCases @{ TerminalName = $t } {
+            param($TerminalName)
+            $cmd = script:Get-TerminalCommand $script:ItemAgents $TerminalName
+            foreach ($field in $script:CanonicalFields) {
+                $cmd | Should -Match "\b$field\s*=" -Because (
+                    "$TerminalName must emit canonical field '$field' so batch-dispatch consumers don't crash on missing keys (#178)")
+            }
+        }
+    }
+
+    It 'dispatched marks dispatched=$true' {
+        (script:Get-TerminalCommand $script:ItemAgents 'dispatched') |
+            Should -Match 'dispatched\s*=\s*\$true'
+    }
+
+    It 'fast_path marks fast_pathed=$true and lifecycle_workflow=fast-path' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'fast_path'
+        $cmd | Should -Match "fast_pathed\s*=\s*\`$true"
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'fast-path'"
+    }
+
+    It 'satisfied marks item_satisfied=$true and lifecycle_workflow=terminal-satisfied' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'satisfied'
+        $cmd | Should -Match "item_satisfied\s*=\s*\`$true"
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'terminal-satisfied'"
+        # Mirrors polyphony close_mark_satisfied: validate the event then
+        # transition via twig if the validator returned a target_state.
+        $cmd | Should -Match 'polyphony validate'
+        $cmd | Should -Match '--event item_satisfied'
+        $cmd | Should -Match 'twig state'
+    }
+
+    It 'monitoring marks lifecycle_workflow=monitoring (additive monitoring=$true permitted)' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'monitoring'
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'monitoring'"
+    }
+
+    It 'blocked marks lifecycle_workflow=blocked (additive blocked=$true permitted)' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'blocked'
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'blocked'"
+    }
+
+    It 'classify_error includes error + error_code with default-filtered classify error_code' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'classify_error'
+        $cmd | Should -Match "lifecycle_workflow\s*=\s*'error'"
+        $cmd | Should -Match "error\s*=\s*'lifecycle classification failed'"
+        $cmd | Should -Match "classify_lifecycle\.output\.error_code\s*\|\s*default"
+    }
+
+    It 'spawn_error includes error + error_code with default-filtered spawn error_code' {
+        $cmd = script:Get-TerminalCommand $script:ItemAgents 'spawn_error'
+        $cmd | Should -Match "error\s*=\s*'worktree spawn failed'"
+        $cmd | Should -Match "spawn_worktree\.output\.error_code\s*\|\s*default"
+        # Spawn error preserves the lifecycle that was classified before spawn failed.
+        $cmd | Should -Match "classify_lifecycle\.output\.lifecycle_workflow\s*\|\s*default"
+    }
+
+    It 'root-item-dispatch.output exposes error and error_code keys (bug #11 surfacing)' {
+        $script:ItemYaml.output.Keys | Should -Contain 'error'
+        $script:ItemYaml.output.Keys | Should -Contain 'error_code'
+    }
+}

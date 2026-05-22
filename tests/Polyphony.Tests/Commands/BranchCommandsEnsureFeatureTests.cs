@@ -35,7 +35,7 @@ public sealed class BranchCommandsEnsureFeatureTests : CommandTestBase
         var validator = new TransitionValidator(config);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new BranchCommands(twig, walker, repo, validator, git, config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null)), runner);
+        return (new BranchCommands(twig, walker, repo, validator, git, config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null), JournalTestSupport.CreateRunContext(), JournalTestSupport.CreateDecorator()), runner);
     }
 
     private static void StubLsRemote(FakeProcessRunner runner, string branch, bool exists)
@@ -100,7 +100,7 @@ public sealed class BranchCommandsEnsureFeatureTests : CommandTestBase
     [Fact]
     public async Task EnsureFeature_LocalExistsButHeldByOtherWorktree_ReturnsExistsInOtherWorktreeSuccess()
     {
-        // Parallel-fleet apex convention: the feature branch lives in a
+        // Parallel-fleet root convention: the feature branch lives in a
         // sibling worktree (e.g. polyphony-item-3043) so `git checkout`
         // in *this* worktree fails with exit 128. AB#211: existence IS
         // satisfied — we should succeed with the sibling path on the

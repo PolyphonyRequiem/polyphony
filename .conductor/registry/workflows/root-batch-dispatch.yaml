@@ -1,0 +1,534 @@
+# root-batch-dispatch — Phase 7 inner sub-workflow of polyphony.
+#
+# One iteration of polyphony's batch_dispatch_loop. Receives a single
+# batch (set of work items in topological order with no intra-batch
+# dependencies) and:
+#
+#   1. Fans the batch's items out across per-item worktrees (parallel,
+#      bounded by max_concurrent).
+#   2. For each item: classify lifecycle → spawn worktree → invoke the
+#      classified lifecycle sub-workflow → tear down worktree.
+#   3. Invokes batch-integrator.ps1 to merge completed branches back
+#      into the root feature branch in topological order.
+#
+# Lifecycle dispatch is deferred for the MVP — see DEFERRED note below.
+# Batch integration happens unconditionally so partial-batch completions
+# still bring their merged branches forward.
+#
+# Invariants:
+#   Pre:  polyphony has built the worklist + edge-checked + decided
+#         to dispatch this batch.
+#   Post: every item in the batch has either been dispatched into its
+#         lifecycle sub-workflow or recorded as failed in
+#         dispatch_items.errors. batch-integrator has been invoked.
+#
+# Per-item lifecycle dispatch is now wired (see root-item-dispatch.yaml's
+# branch-on-router into plan-level / actionable / implement-merge-group /
+# feature-pr / fast-path). After the batch dispatch settles, this
+# workflow:
+#   * Aggregates renegotiation_pending across the batch's items so
+#     polyphony can read a single bool/array per batch instead of
+#     iterating dispatch_items.outputs in Jinja.
+#   * Invokes batch-integrator.ps1 to merge completed branches back
+#     into the root feature branch in topological order.
+#
+# DEFERRED (DO NOT add in this PR):
+#   * Per-MG worktree serialization (currently per-item only).
+#   * E2E execution tests (separate PR p7-polyphony-e2e).
+#
+# Conductor mechanics gotchas honored:
+#   M3  StrictUndefined `is defined` guards on all cross-leg outputs.
+#   M4  Catch-all `to:` last on every routing block.
+#   M7  Booleans piped through `| string | lower` in workflow output.
+#   M8  for_each `source:` is a BARE dotted path; errors via .errors;
+#       per-item results land under `dispatch_items.outputs.<key>`.
+
+workflow:
+  name: root-batch-dispatch
+  description: >-
+    One batch of the polyphony dispatch loop. Per-item worktree fanout
+    + lifecycle classification + branch-on-router lifecycle dispatch
+    (plan-level / actionable / implement-merge-group / feature-pr / fast-path) +
+    batch integration via batch-integrator.ps1. Aggregates renegotiation
+    bubble-up AND per-item progress counts (items_satisfied_count,
+    items_dispatched_count) so the polyphony outer loop (PR #9) can
+    decide whether the iteration made progress.
+  version: "2.4.8"
+  entry_point: check_prior_batch_status
+  metadata:
+    min_polyphony_version: "2.4.8"
+  limits:
+    # Each batch can hold dozens of items; the for_each iteration count
+    # multiplies up. 200 covers waves of ~50 items with comfortable
+    # headroom for the surrounding orchestration.
+    max_iterations: 200
+
+  input:
+    root_id:
+      type: number
+      required: true
+      description: >-
+        ADO work item id of the root (run-root). Threaded into every
+        per-item dispatch and into the batch integrator.
+    batch_index:
+      type: number
+      required: true
+      description: 0-based batch index. Used for naming + integrator correlation.
+    batch_items:
+      type: string
+      required: true
+      description: >-
+        JSON-encoded array of work items in this batch. Each element is a
+        WorklistItem ({ item_id, parent_item_id, plan_status, ... }).
+        Encoded as a string because conductor's input_mapping flattens
+        nested arrays; the `dispatch_items` for_each parses this back.
+    platform:
+      type: string
+      required: false
+      default: ado
+    organization:
+      type: string
+      required: false
+      default: ""
+    project:
+      type: string
+      required: false
+      default: ""
+    repository:
+      type: string
+      required: false
+      default: ""
+
+tools:
+  - twig
+
+# ── Workflow output ──────────────────────────────────────────────────
+#
+# Per M3, every cross-leg verb output is `is defined`-guarded — both
+# `aggregate_renegotiation` and `integrate_batch` may be unreached on
+# certain failure paths. Per M7 booleans are piped through
+# `| string | lower` so polyphony receives a real bool rather than
+# capital "True"/"False".
+#
+# `renegotiation_pending` aggregates across the batch's items: true
+# when ANY item's root-item-dispatch.output.renegotiation_pending was
+# true. polyphony consults this to decide whether to fire its
+# renegotiation gate after each batch settles.
+output:
+  batch_index: "{{ workflow.input.batch_index }}"
+  root_id: "{{ workflow.input.root_id }}"
+  integrated: >-
+    {%- if integrate_batch is defined -%}{{ (integrate_batch.output.success | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  renegotiation_pending: >-
+    {%- if aggregate_renegotiation is defined -%}{{ (aggregate_renegotiation.output.renegotiation_pending | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  renegotiation_items: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.renegotiation_items | default('[]') }}
+    {%- else -%}[]{%- endif -%}
+  # ── Batch progress counters (PR #9 — polyphony outer loop) ─────────────
+  # Sums per-item terminal envelopes across this batch so the outer loop
+  # can detect "iteration made progress" (any item satisfied or dispatched).
+  # Per M3 these are guarded with `is defined`; counters default to 0.
+  items_satisfied_count: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.items_satisfied_count | default(0) }}
+    {%- else -%}0{%- endif -%}
+  items_dispatched_count: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.items_dispatched_count | default(0) }}
+    {%- else -%}0{%- endif -%}
+  item_count: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.item_count | default(0) }}
+    {%- else -%}0{%- endif -%}
+  # ── Batch failure surfacing (AB#3067 dogfood — outer-loop visibility) ────
+  # `items_failed_count` and `failed_items` capture per-item sub-workflow
+  # failures from the `dispatch_items` for_each (which runs
+  # `failure_mode: continue_on_error`). Without these, the polyphony
+  # outer loop has no signal that items silently failed and would
+  # terminate as `root_blocked` (zero-progress) without ever
+  # surfacing the underlying errors. polyphony's outer_loop_evaluator
+  # rolls these up across waves and routes to
+  # root_dispatch_failures when `items_failed_count > 0`.
+  items_failed_count: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.items_failed_count | default(0) }}
+    {%- else -%}0{%- endif -%}
+  failed_items: >-
+    {%- if aggregate_renegotiation is defined -%}{{ aggregate_renegotiation.output.failed_items | default('[]') }}
+    {%- else -%}[]{%- endif -%}
+  # ── Batch skip surfacing (fail-fast across waves) ────────────────────────
+  # When `check_prior_batch_status` short-circuits this batch because an
+  # earlier batch under the same root run already failed, the workflow
+  # exits via `batch_skipped` and `aggregate_renegotiation` is
+  # never reached — every counter above falls through to its `is defined`
+  # default of 0 / 'false' / '[]'. `batch_skipped` + `skip_reason` make
+  # the short-circuit visible to polyphony's outer-loop diagnostics
+  # without changing the aggregator routing (zero counters are invisible
+  # to outer_loop_evaluator's progress + failure rollup, exactly as
+  # intended — only the batch that ORIGINALLY failed contributes its
+  # non-zero items_failed_count).
+  batch_skipped: >-
+    {%- if batch_skipped is defined -%}true{%- else -%}false{%- endif -%}
+  skip_reason: >-
+    {%- if batch_skipped is defined -%}{{ batch_skipped.output.skip_reason | default('') }}
+    {%- else -%}{%- endif -%}
+
+agents:
+  # ── Check prior batch status (fail-fast across waves) ────────────────────
+  #
+  # Entry point. Asks scripts/batch-dispatch-guard.ps1 whether any
+  # earlier batch under the same root run already wrote a failure
+  # sentinel. When blocked, short-circuits to `batch_skipped`
+  # (which emits zero counters) so the outer loop's
+  # `outer_loop_evaluator` is unaffected by this batch (it still sees
+  # the ORIGINAL failing batch's non-zero `items_failed_count` and
+  # routes to `root_dispatch_failures`).
+  #
+  # polyphony's `batch_dispatch_loop` is `failure_mode: continue_on_error`
+  # because conductor's native `failure_mode: fail_fast` raises
+  # ExecutionError to the parent and bypasses every gate. This sentinel-
+  # based short-circuit is the workflow-level equivalent: graceful,
+  # routed, observable.
+  #
+  # NOT short-circuited on renegotiation (intentional). The existing
+  # `renegotiation_gate.override` route flips straight to
+  # `root_completion_gate` and assumes every batch ran; skipping later
+  # waves on a renegotiation request would let `override` declare root
+  # completion having silently skipped real work. Failure is safe to
+  # short-circuit because `outer_loop_evaluator` routes failures to
+  # `root_dispatch_failures` regardless of how many waves
+  # actually executed.
+  - name: check_prior_batch_status
+    type: script
+    description: Short-circuit this batch if a prior batch under the same root run already failed
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/batch-dispatch-guard.ps1"
+      - "-Op"
+      - "check"
+      - "-RootId"
+      - "{{ workflow.input.root_id }}"
+    routes:
+      - to: batch_skipped
+        when: "{{ check_prior_batch_status.output.blocked | string | lower == 'true' }}"
+      # M4 catch-all — undefined `blocked` means the guard helper
+      # returned an unexpected envelope shape (or git-common-dir
+      # resolution failed). Degrade to today's behavior — dispatch
+      # the batch — rather than silently skipping it.
+      - to: dispatch_items
+
+  # ── Terminal: batch skipped due to prior-batch failure ────────────────────
+  #
+  # No-op terminal that emits a structured envelope marking this batch
+  # as skipped. The workflow output template (above) hoists
+  # `batch_skipped` + `skip_reason` to polyphony scope so operators
+  # can distinguish "batch ran with zero items" from "batch skipped due
+  # to prior failure" in the dashboard/event log.
+  - name: batch_skipped
+    type: script
+    description: Batch was short-circuited because a prior batch under the same root run already failed
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        [ordered]@{
+          batch_index  = {{ workflow.input.batch_index }};
+          root_id     = {{ workflow.input.root_id }};
+          skipped     = $true;
+          skip_reason = '{{ check_prior_batch_status.output.first_reason | default("prior_batch_failure") }}';
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Dispatch items ────────────────────────────────────────────────────────
+  #
+  # See top-level `for_each: dispatch_items` at end of file. Conductor
+  # schema requires for_each blocks to live in their own top-level section,
+  # not nested under `agents:` (M8). Routes cross sections — `dispatch_items`
+  # routes to `aggregate_renegotiation` below.
+
+  # ── Aggregate renegotiation bubble-up + per-item progress counts ────────
+  #
+  # Plan-level invocations may emit `renegotiation_pending=true` along
+  # with a `renegotiation_request` body (PR #144). Each per-item
+  # root-item-dispatch surfaces those verbatim. Here we collapse the
+  # batch's per-item outputs into a single bool + a list of (item_id,
+  # request) pairs so polyphony can read a flat shape on its
+  # post-batch check.
+  #
+  # PR #9 (polyphony outer loop) extension — also sum the per-item
+  # `item_satisfied` and `dispatched` flags into counters so the outer
+  # loop can detect "this iteration made progress" (Option α stability
+  # signal). `items_satisfied_count` is the canonical close-out signal
+  # for "batch settled an item"; `items_dispatched_count` covers the
+  # case where an item moved through a corridor (plan/impl/PR) but is
+  # not yet item_satisfied — still progress, just multi-pass progress.
+  #
+  # Reads `dispatch_items.outputs` — the for_each result dict keyed by
+  # iteration index. Per M8 there is no `output:` on the group; results
+  # live under `.outputs` (success) and `.errors` (failure).
+  - name: aggregate_renegotiation
+    type: script
+    description: Aggregate per-item renegotiation_pending + progress + failure counts across the batch
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $rawOutputs = @'
+        {{ dispatch_items.outputs | tojson }}
+        '@;
+        # Per M8: `for_each` failures land under `.errors`, NOT `.outputs`.
+        # Without aggregating these, per-item sub-workflow failures (e.g.
+        # plan-level Jinja TemplateError on AB#3067 dogfood) are silently
+        # lost — the batch returns "success", the polyphony outer loop
+        # sees zero progress, and silently flips to root_blocked
+        # with no actionable detail. Surface them here so polyphony can
+        # route to root_dispatch_failures instead.
+        $rawErrors = @'
+        {{ dispatch_items.errors | tojson }}
+        '@;
+        # batch_items is the JSON-encoded WorklistItem[] this batch consumed.
+        # We re-parse it here so we can correlate dispatch_items.errors
+        # (keyed by iteration index when there is no `key_by:`) back to a
+        # concrete work_item_id rather than reporting "iteration 2 failed".
+        $rawWaveItems = @'
+        {{ workflow.input.batch_items }}
+        '@;
+        $items = @();
+        $any = $false;
+        $satisfiedCount = 0;
+        $dispatchedCount = 0;
+        $itemCount = 0;
+        $failedCount = 0;
+        $failedItems = @();
+        $batchItems = @();
+        try { $batchItems = @($rawWaveItems | ConvertFrom-Json) } catch { $batchItems = @() }
+        try {
+          # `dispatch_items` for_each has no `key_by`, so conductor emits
+          # `.outputs` as a JSON array of per-iteration outputs. Wrap with
+          # `@(...)` so that PowerShell's pipeline-unwrapping of a single-
+          # element array doesn't collapse `[{...}]` to a bare PSObject —
+          # otherwise a 1-iteration batch was misread as the FIELDS of the
+          # single iteration's output (14 properties), not the iteration
+          # itself, and `dispatched`/`item_satisfied` counters silently
+          # reported 0. Surfaced live by the AB#3064 dogfood (2026-05-09).
+          $values = @($rawOutputs | ConvertFrom-Json);
+          foreach ($v in $values) {
+            if ($null -eq $v) { continue }
+            $itemCount += 1;
+            $pending = $false;
+            if ($v.PSObject.Properties.Name -contains 'renegotiation_pending') {
+              $val = "$($v.renegotiation_pending)".ToLowerInvariant();
+              $pending = ($val -eq 'true');
+            }
+            if ($pending) {
+              $any = $true;
+              $items += [ordered]@{
+                work_item_id = $v.work_item_id;
+                lifecycle_workflow = $v.lifecycle_workflow;
+                renegotiation_request = $v.renegotiation_request;
+                validate_scope_verdict = $v.validate_scope_verdict;
+                scope_violation_files = $v.scope_violation_files;
+              };
+            }
+            # PR #9 — progress counters. Booleans arrive as strings
+            # ("true"/"false") via the M7 `| string | lower` pipeline
+            # in root-item-dispatch.output, so compare lowercased.
+            if ($v.PSObject.Properties.Name -contains 'item_satisfied') {
+              if ("$($v.item_satisfied)".ToLowerInvariant() -eq 'true') { $satisfiedCount += 1 }
+            }
+            if ($v.PSObject.Properties.Name -contains 'dispatched') {
+              if ("$($v.dispatched)".ToLowerInvariant() -eq 'true') { $dispatchedCount += 1 }
+            }
+          }
+        } catch {
+          # Bubble parse failures as no-renegotiation rather than
+          # halting the batch; the integrate step still needs to run.
+          $any = $false;
+          $items = @();
+          $satisfiedCount = 0;
+          $dispatchedCount = 0;
+          $itemCount = 0;
+        }
+        # ── Surface dispatch_items.errors to polyphony (AB#3067 fix) ─────
+        # Per M8: `dispatch_items` runs `failure_mode: continue_on_error`,
+        # so per-item failures land under `.errors` keyed by iteration
+        # index (no `key_by:` on this for_each). Defensively also handle
+        # an array shape in case the engine serializes it that way.
+        try {
+          $errsTrimmed = if ($null -eq $rawErrors) { '' } else { $rawErrors.Trim() };
+          if ($errsTrimmed -and ($errsTrimmed -notin @('null', '{}', '[]'))) {
+            $errs = $rawErrors | ConvertFrom-Json;
+            $errProps = @();
+            if ($null -ne $errs) {
+              if ($errs -is [System.Collections.IEnumerable] -and -not ($errs -is [string])) {
+                $i = 0;
+                foreach ($e in @($errs)) {
+                  $errProps += [PSCustomObject]@{ Name = "$i"; Value = $e };
+                  $i += 1;
+                }
+              } else {
+                foreach ($p in $errs.PSObject.Properties) {
+                  $errProps += [PSCustomObject]@{ Name = $p.Name; Value = $p.Value };
+                }
+              }
+            }
+            foreach ($p in $errProps) {
+              $failedCount += 1;
+              $idx = -1;
+              [void][int]::TryParse("$($p.Name)", [ref]$idx);
+              $workItemId = $null;
+              if ($idx -ge 0 -and $idx -lt $batchItems.Count) {
+                $workItemId = $batchItems[$idx].item_id;
+              }
+              $msg = $null;
+              if ($null -ne $p.Value) {
+                if ($p.Value.PSObject.Properties.Name -contains 'message') {
+                  $msg = "$($p.Value.message)";
+                } elseif ($p.Value.PSObject.Properties.Name -contains 'error') {
+                  $msg = "$($p.Value.error)";
+                } else {
+                  $msg = ($p.Value | ConvertTo-Json -Compress -Depth 4);
+                }
+              }
+              $failedItems += [ordered]@{
+                iteration_index = $p.Name;
+                work_item_id    = $workItemId;
+                error           = $msg;
+              };
+            }
+          }
+        } catch {
+          # Defensive default per the surrounding pattern: empty failure
+          # info is benign; the batch still ran and produced outputs.
+          $failedCount = 0;
+          $failedItems = @();
+        }
+        [ordered]@{
+          renegotiation_pending  = $any;
+          renegotiation_items    = ($items | ConvertTo-Json -Compress -Depth 6);
+          item_count             = $itemCount;
+          items_satisfied_count  = $satisfiedCount;
+          items_dispatched_count = $dispatchedCount;
+          items_failed_count     = $failedCount;
+          failed_items           = ($failedItems | ConvertTo-Json -Compress -Depth 6);
+        } | ConvertTo-Json -Compress -Depth 6
+    routes:
+      - to: record_batch_failure_flag
+        when: "{{ aggregate_renegotiation.output.items_failed_count | int > 0 }}"
+      # M4 catch-all — undefined `items_failed_count` (script crashed,
+      # `| int` cast on empty string) defaults to "no failures observed"
+      # → proceed to batch integration. Matches the script's documented
+      # degrade behavior.
+      - to: integrate_batch
+
+  # ── Record batch failure flag (fail-fast across waves) ────────────────────
+  #
+  # Persists a per-root sentinel so subsequent waves' `check_prior_batch_status`
+  # short-circuits via batch_skipped. Runs ONLY when this batch
+  # observed item-level failures (items_failed_count > 0) — see
+  # check_prior_batch_status header for why renegotiation does NOT
+  # trigger this.
+  #
+  # The flag persists in the worktree until the next dispatch pass's
+  # `reset_batch_failure_flags` step (in polyphony) wipes it. On
+  # terminal exit (no further outer-loop iteration) the flag remains
+  # but is harmless — the next run starts from `init_manifest` which
+  # is followed by `build_worklist → check_conflicts → reset_batch_failure_flags`.
+  #
+  # The script always exits 0; on git-common-dir resolution failure the
+  # envelope reports `error_code: git_common_dir_failed` and the next
+  # batch will not short-circuit — system degrades to today's behavior.
+  - name: record_batch_failure_flag
+    type: script
+    description: Persist a per-root sentinel so subsequent waves short-circuit via batch_skipped
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/batch-dispatch-guard.ps1"
+      - "-Op"
+      - "record"
+      - "-RootId"
+      - "{{ workflow.input.root_id }}"
+      - "-BatchIndex"
+      - "{{ workflow.input.batch_index }}"
+      - "-Reason"
+      - "failure"
+    routes:
+      - to: integrate_batch
+
+  # ── Integrate batch ────────────────────────────────────────────────────────
+  #
+  # After every item dispatch settles (success or failure), merge the
+  # completed child branches back into the root feature branch in
+  # topological order. batch-integrator.ps1 reads the edge graph from
+  # `polyphony edges check` and orders merges so prerequisite items
+  # land before dependents.
+  #
+  # The script always exits 0 (routing-style); conflicts surface via
+  # the `conflicts[]` envelope field.
+  #
+  # Invariants:
+  #   Pre:  dispatch_items has run (failures captured in .errors).
+  #   Post: every successfully-dispatched item's branch is either in
+  #         integrate_batch.output.branches_integrated or has a row in
+  #         .skipped / .conflicts.
+  - name: integrate_batch
+    type: script
+    description: Merge completed child branches into the root feature branch
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/batch-integrator.ps1"
+      - "-RootId"
+      - "{{ workflow.input.root_id }}"
+      - "-BatchIndex"
+      - "{{ workflow.input.batch_index }}"
+    routes:
+      - to: $end
+
+# ── Dispatch items (for_each) ─────────────────────────────────────────────
+#
+# Parallel per-item lifecycle classification + worktree spawn. Each
+# iteration calls lifecycle-router.ps1 to determine which lifecycle
+# workflow the item belongs in, then spawns a per-item worktree so
+# the eventual lifecycle dispatch (DEFERRED — see workflow header)
+# has an isolated checkout to operate on.
+#
+# max_concurrent: 3 mirrors policy.concurrency.max_concurrent_children and
+# is the conservative MVP cap — runs comfortably under most ADO rate
+# limits and saturates a typical developer workstation.
+#
+# failure_mode: continue_on_error so a single bad item doesn't stop
+# the batch; the integrator step decides how to handle partial waves.
+#
+# Conductor schema: for_each lives at workflow root, not nested under
+# `agents:` (M8). `source:` is a BARE dotted path. Routes cross sections
+# — `dispatch_items` routes to `aggregate_renegotiation` in agents.
+for_each:
+  - name: dispatch_items
+    type: for_each
+    description: Per-item parallel classification + worktree spawn
+    # batch_items is a JSON string; conductor parses it on iteration so
+    # the per-item template sees an object.
+    source: workflow.input.batch_items
+    as: item
+    max_concurrent: 3
+    failure_mode: continue_on_error
+    agent:
+      name: dispatch_one_item
+      type: workflow
+      workflow: ./root-item-dispatch.yaml
+      input_mapping:
+        root_id: "{{ workflow.input.root_id }}"
+        work_item_id: "{{ item.item_id }}"
+        platform: "{{ workflow.input.platform }}"
+        organization: "{{ workflow.input.organization }}"
+        project: "{{ workflow.input.project }}"
+        repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: aggregate_renegotiation

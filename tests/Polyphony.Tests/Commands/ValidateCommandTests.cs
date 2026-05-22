@@ -236,7 +236,7 @@ public sealed class ValidateCommandTests : CommandTestBase
     [Fact]
     public async Task Validate_AlreadyInTargetState_ReturnsSuccessExitCode()
     {
-        // AB#3170 reproducer: apex root work item is already in Done; the
+        // AB#3170 reproducer: root root work item is already in Done; the
         // terminal-completion site fires `implementation_complete` (target
         // Done). Pre-AB#3170 this exited 1 with "precondition failed: must
         // be in InProgress, but is in Completed". Post-AB#3170 the validator

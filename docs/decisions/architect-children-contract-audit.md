@@ -2,8 +2,8 @@
 
 **Status:** Accepted (audit-only — no code changes).
 **Date:** 2026-05-09.
-**Apex:** AB#3065.
-**Related work:** PR #214 (closed-loop §3.4(a) — `apex_facets` marker), PR #225 (F3 — strict seed-children), F4 (queued — PR-time prose-children lint).
+**Root:** AB#3065.
+**Related work:** PR #214 (closed-loop §3.4(a) — `root_facets` marker), PR #225 (F3 — strict seed-children), F4 (queued — PR-time prose-children lint).
 
 ## Background
 
@@ -11,8 +11,8 @@ The closed-loop plan §3.4(a) introduced a hard contract: an architect's
 `children` array is the *sole* machine declaration of child work items. Prose
 declarations in the plan body (under headings like `## Child Issues` or in
 narrative paragraphs) MUST NOT create child items, and MUST NOT silently
-satisfy the parent's planning facet. PR #214 added the `apex_facets`
-front-matter marker so an architect can explicitly declare an apex
+satisfy the parent's planning facet. PR #214 added the `root_facets`
+front-matter marker so an architect can explicitly declare an root
 indivisible. PR #225 (F3) made `polyphony plan seed-children` *refuse* to
 stamp the `polyphony:planned` tag when `children:[]` arrives without
 front-matter — closing the false-satisfied loophole that bit the AB#3064
@@ -36,13 +36,13 @@ in markdown body while leaving the structured array empty?
 1. **Prompt language is unambiguous.** Both sections explicitly state that
    the structured `children` array is canonical, that prose-only
    declarations are non-binding and will halt the workflow, and that
-   indivisibility requires explicit `apex_facets` front matter rather than
+   indivisibility requires explicit `root_facets` front matter rather than
    bare `children: []`. The "no exceptions, no prose-only declarations"
    sentence (line 361) is normative.
 
 2. **Indivisibility ergonomics are correct.** The contract gives the
-   architect a non-broken way to express "this apex IS the unit of work" —
-   the `apex_facets: [...]` front-matter — and the prompt walks through
+   architect a non-broken way to express "this root IS the unit of work" —
+   the `root_facets: [...]` front-matter — and the prompt walks through
    the YAML shape with an example (lines 366–388). The audit's own dogfood
    (this PR's plan, [`plans/plan-3065.md`](../../plans/plan-3065.md))
    exercised the indivisible path successfully on first try, end-to-end.
@@ -52,7 +52,7 @@ in markdown body while leaving the structured array empty?
    error") was outdated by the time this audit ran — F3 (PR #225) shipped
    the message at `PlanCommands.SeedChildren.cs:122–126`:
 
-   > `children-json is empty and plan front-matter declares no apex_facets — refusing to stamp #N as planned. To declare an indivisible apex, add `apex_facets: [<facet>, ...]` to the front-matter of '<file>'. Otherwise, supply --children-json containing the architect's structured decomposition.`
+   > `children-json is empty and plan front-matter declares no root_facets — refusing to stamp #N as planned. To declare an indivisible root, add `root_facets: [<facet>, ...]` to the front-matter of '<file>'. Otherwise, supply --children-json containing the architect's structured decomposition.`
 
    That message is specific, names the file, and tells the architect (or
    operator) what to add. It is not the "generic ambiguous error" the
@@ -71,8 +71,8 @@ in markdown body while leaving the structured array empty?
 ## Decision
 
 **Accept the existing language as sufficient. Ship no prompt edits and no
-new verb under this apex.** The four-layer defense — (1) prompt language
-making the contract explicit, (2) `apex_facets` marker giving
+new verb under this root.** The four-layer defense — (1) prompt language
+making the contract explicit, (2) `root_facets` marker giving
 indivisibility a non-broken expression, (3) seeder refusing ambiguous
 empty-children, (4) clear actionable seed-time error — is already in
 place after PR #214 + PR #225.
@@ -85,7 +85,7 @@ prose-children lint)** is the right home for catching this class:
 PR-time the plan markdown is fixed, the structured `children` are
 materialized as actual seeded work items, and a diff-aware lint can
 compare the prose against the realised children with full context. F4 is
-explicitly out of scope for this apex and tracked separately.
+explicitly out of scope for this root and tracked separately.
 
 ## Non-decisions
 

@@ -1,0 +1,643 @@
+# root-item-dispatch — Phase 7 innermost sub-workflow of polyphony.
+#
+# Dispatches a single work item from a batch through:
+#
+#   1. lifecycle-router.ps1 — classify which lifecycle workflow this
+#      item belongs in (plan-level / actionable / implement-merge-group /
+#      feature-pr / fast-path) using `polyphony state next-ready`.
+#   2. worktree-manager.ps1 spawn — create a per-item worktree so the
+#      lifecycle dispatch can run in parallel with siblings without
+#      racing branch checkouts.
+#   3. Lifecycle dispatch — branch-on-router into the classified
+#      sub-workflow (this file's reason for existing).
+#   4. worktree-manager.ps1 teardown — clean up the worktree.
+#
+# Per-item isolation is the thing that lets root-batch-dispatch run with
+# max_concurrent: 3. Without per-item worktrees, three concurrent
+# lifecycle dispatches would race on the same working tree.
+#
+# ── Branch-on-router pattern ─────────────────────────────────────────
+#
+# Each lifecycle gets its own `type: workflow` agent node
+# (`plan_level`, `actionable`, `implement_merge_group`,
+# `feature_pr`). The classifier emits a `lifecycle_workflow`
+# string and the routes from `spawn_worktree` (and the catch-all branch
+# from classify) fan into the right node based on that value. The
+# pattern mirrors `feature-pr.yaml`'s `pr_platform_router` →
+# `pr_lifecycle_github` / `pr_lifecycle_ado` split — proven, lintable,
+# and self-documenting in the YAML topology.
+#
+# Conductor does NOT support dynamic templated `workflow:` paths
+# (`workflow: "./{{ classify.output.workflow }}.yaml"`), so the
+# branch-on-router pattern is the canonical mechanism for "invoke
+# sub-workflow X or Y based on a router output". See
+# `.github/skills/polyphony-workflow-author/SKILL.md` ("Branch-on-router
+# into sub-workflow") for the canonical write-up.
+#
+# ── Multi-facet handling (Q2 design pick) ────────────────────────────
+#
+# The `facet_sequence: [actionable, implementable]` planner declaration
+# is honored implicitly through `polyphony state next-ready`'s ordered
+# requirement-kind dispositions, NOT through this workflow re-invoking
+# itself. If an item has both an actionable and an implementable facet,
+# the action_satisfied requirement gates the implementation_merged
+# requirement; the classifier returns whichever is currently
+# dispatchable. Subsequent waves of the polyphony outer loop pick up
+# the next facet once the previous one is satisfied. Each invocation of
+# root-item-dispatch therefore dispatches exactly ONE lifecycle.
+#
+# ── Renegotiation bubble-up ──────────────────────────────────────────
+#
+# Plan-level invocations may produce `renegotiation_pending` along with
+# the supporting `renegotiation_request`, `validate_scope_verdict`, and
+# `scope_violation_files` outputs (PR #144). Those are bubbled up
+# verbatim to root-batch-dispatch (which aggregates across the batch) and
+# ultimately to polyphony's renegotiation gate. M3 guards keep the
+# references safe on every leg the plan-level dispatch did not run.
+#
+# ── Conductor mechanics gotchas honored ──────────────────────────────
+#   M3  StrictUndefined `is defined` guards on every cross-leg output.
+#   M4  Explicit catch-all `to:` last on every routing block.
+#   M7  Booleans piped through `| string | lower`.
+#   M8  Sub-workflow paths are parent-relative (`./plan-level.yaml`).
+#
+# ── Out of scope (DO NOT add in this PR) ─────────────────────────────
+#   * E2E execution tests (separate PR p7-polyphony-e2e).
+#   * Auto-restart on renegotiation (currently prompt-equivalent).
+#   * Per-MG worktree serialization (currently per-item only).
+
+workflow:
+  name: root-item-dispatch
+  description: >-
+    Dispatches a single work item: classify lifecycle, spawn per-item
+    worktree, branch-on-router into the classified lifecycle
+    sub-workflow (plan-level / actionable / implement-merge-group / feature-pr /
+    fast-path), tear down worktree. Inner sub-workflow of
+    root-batch-dispatch.
+  version: "2.4.8"
+  entry_point: classify_lifecycle
+  metadata:
+    min_polyphony_version: "2.4.8"
+  limits:
+    # Five branch nodes plus a teardown plus terminals. Sub-workflow
+    # invocations count as one iteration each — the actual recursion
+    # happens inside the lifecycle workflow's own limits.
+    max_iterations: 50
+
+  input:
+    root_id:
+      type: number
+      required: true
+    work_item_id:
+      type: number
+      required: true
+    platform:
+      type: string
+      required: false
+      default: ado
+    organization:
+      type: string
+      required: false
+      default: ""
+      description: ADO organization (threaded into platform-aware lifecycles).
+    project:
+      type: string
+      required: false
+      default: ""
+      description: ADO project (threaded into platform-aware lifecycles).
+    repository:
+      type: string
+      required: false
+      default: ""
+      description: ADO repository GUID/name (threaded into platform-aware lifecycles).
+
+# ── Workflow output ──────────────────────────────────────────────────
+#
+# Per M3 every cross-leg verb output is `is defined`-guarded — only
+# ONE of the four lifecycle nodes runs in any given execution; the
+# other three remain undefined. Per M7 booleans are piped through
+# `| string | lower` so root-batch-dispatch (and ultimately polyphony)
+# receives a real bool, not capital "True"/"False".
+#
+# `lifecycle_workflow` echoes the classifier's verdict — useful for
+# the batch summary and for polyphony's renegotiation gate prompt
+# (so the operator can see which lifecycle bubbled up the signal).
+output:
+  work_item_id: "{{ workflow.input.work_item_id }}"
+  root_id: "{{ workflow.input.root_id }}"
+  lifecycle_workflow: >-
+    {%- if classify_lifecycle is defined -%}{{ classify_lifecycle.output.lifecycle_workflow }}
+    {%- else -%}error{%- endif -%}
+  dispatched: >-
+    {%- if dispatched is defined -%}true
+    {%- else -%}false{%- endif -%}
+  fast_pathed: >-
+    {%- if fast_path is defined -%}true
+    {%- else -%}false{%- endif -%}
+  # ── Terminal-satisfied bubble-up (PR #6 — closed-loop step 6) ──
+  # `item_satisfied` is true ONLY when the satisfied node
+  # actually ran and performed the ADO state transition. PR #9 (polyphony
+  # outer loop) consumes this to count items as DONE in the batch aggregator
+  # rather than DISPATCHED. Other terminals default to false.
+  item_satisfied: >-
+    {%- if satisfied is defined -%}true
+    {%- else -%}false{%- endif -%}
+  # ── Renegotiation bubble-up (PR #144 — plan-level outputs) ──
+  # Only plan-level emits these; the other lifecycles leave them
+  # undefined. The `is defined` guards collapse to safe defaults.
+  #
+  # `renegotiation_request` is bubbled up from
+  # PlanExtractRenegotiationFlagResult.RenegotiationRequest which is
+  # `string?` and OMITTED when null. plan-level.yaml's output: block
+  # always emits the field as a string (post-fix at the plan-level
+  # source) but if plan-level itself crashes mid-run, the .output
+  # dict can be partial. Two-level guard is defense-in-depth against
+  # any future plan-level failure mode that leaves outputs incomplete.
+  # Cf. plan-level.yaml output: block for the source-of-truth fix.
+  renegotiation_pending: >-
+    {%- if plan_level is defined -%}{{ (plan_level.output.renegotiation_pending | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  renegotiation_request: >-
+    {%- if plan_level is defined and plan_level.output.renegotiation_request is defined -%}{{ plan_level.output.renegotiation_request }}
+    {%- else -%}{%- endif -%}
+  validate_scope_verdict: >-
+    {%- if plan_level is defined -%}{{ plan_level.output.validate_scope_verdict | default('') }}
+    {%- else -%}{%- endif -%}
+  scope_violation_files: >-
+    {%- if plan_level is defined -%}{{ plan_level.output.scope_violation_files | default('[]') }}
+    {%- else -%}[]{%- endif -%}
+  # Lifecycle-specific outcome surfaces (only the matching leg's value
+  # is meaningful; others collapse to safe defaults via M3 guards).
+  actionable_satisfied: >-
+    {%- if actionable is defined -%}{{ (actionable.output.satisfied | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  implement_merge_group_merged: >-
+    {%- if implement_merge_group is defined -%}{{ (implement_merge_group.output.merged | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  feature_pr_merged: >-
+    {%- if feature_pr is defined -%}{{ (feature_pr.output.merged | default(false)) | string | lower }}
+    {%- else -%}false{%- endif -%}
+  # ── Error surfacing (issue #178) ──
+  # The two terminal-error legs (`classify_error`,
+  # `spawn_error`) emit `error` + `error_code` in their canonical
+  # envelope. Surface them at the workflow output so the batch consumer
+  # can attribute failures without parsing the for_each `errors` array.
+  error: >-
+    {%- if classify_error is defined -%}lifecycle classification failed
+    {%- elif spawn_error is defined -%}worktree spawn failed
+    {%- else -%}{%- endif -%}
+  error_code: >-
+    {%- if classify_error is defined -%}{{ classify_lifecycle.output.error_code | default('classification_failed') }}
+    {%- elif spawn_error is defined -%}{{ spawn_worktree.output.error_code | default('worktree_spawn_failed') }}
+    {%- else -%}{%- endif -%}
+
+agents:
+  # ── Classify lifecycle ────────────────────────────────────────────────────
+  #
+  # Calls lifecycle-router.ps1 which wraps `polyphony state next-ready`
+  # and emits the classified `lifecycle_workflow` field. Routing-style
+  # envelope: errors surface via error_code and route to the failure leg.
+  - name: classify_lifecycle
+    type: script
+    description: Classify which lifecycle workflow this item belongs in
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/lifecycle-router.ps1"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-RootId"
+      - "{{ workflow.input.root_id }}"
+    routes:
+      # Fast-path / monitoring / blocked / error short-circuits BEFORE
+      # spawning a worktree — these legs are pure observable-state
+      # transitions with no per-item working-tree need. terminal-satisfied
+      # is also worktree-less: the only ready kind is item_satisfied, so
+      # we just perform the ADO state transition and emit item_satisfied=true.
+      - to: fast_path
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'fast-path' }}"
+      - to: satisfied
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'terminal-satisfied' }}"
+      - to: monitoring
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'monitoring' }}"
+      - to: blocked
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'blocked' }}"
+      - to: classify_error
+        when: "{{ classify_lifecycle.output.lifecycle_workflow == 'error' }}"
+      - to: spawn_worktree
+        when: "{{ classify_lifecycle.output.success | string | lower == 'true' }}"
+      # M4 catch-all
+      - to: classify_error
+
+  # ── Spawn worktree ───────────────────────────────────────────────────────
+  #
+  # Per-item worktree lets parallel sibling dispatches operate
+  # independently. worktree-manager.ps1 is idempotent on resume.
+  - name: spawn_worktree
+    type: script
+    description: Spawn a per-item git worktree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/worktree-manager.ps1"
+      - "-Operation"
+      - "spawn"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-BaseBranch"
+      - "feature/{{ workflow.input.root_id }}"
+    routes:
+      # Branch-on-router: dispatch into the lifecycle picked by classify_lifecycle.
+      # Each lifecycle has an explicit `when:` clause, plus an M4 catch-all
+      # last that funnels unknown classifications to the spawn-error terminal.
+      - to: plan_level
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'plan-level' }}"
+      - to: actionable
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'actionable' }}"
+      - to: implement_merge_group
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'implement-merge-group' }}"
+      - to: feature_pr
+        when: "{{ spawn_worktree.output.success | string | lower == 'true' and classify_lifecycle.output.lifecycle_workflow == 'feature-pr' }}"
+      # M4 catch-all — unknown classifications + spawn-failure both funnel
+      # to the spawn-error terminal.
+      - to: spawn_error
+
+  # ── Lifecycle dispatch — plan-level ──────────────────────────────────────
+  #
+  # Recursive planning core. Inputs are the minimum stable shape from
+  # PR #136 / #141 / #144: work_item_id required; intent defaults to
+  # `resume` so re-entry hits the existing plan PR; child_scope_globs
+  # left empty (polyphony does not yet derive per-child scope —
+  # tracked separately).
+  #
+  # On completion, this node bubbles up the renegotiation_* and
+  # validate_scope_* outputs that PR #144 added to plan-level.yaml.
+  - name: plan_level
+    type: workflow
+    description: Recursive planning lifecycle (plan-level.yaml)
+    workflow: ./plan-level.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      intent: "resume"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: teardown_worktree
+
+  # ── Lifecycle dispatch — actionable ──────────────────────────────────────
+  #
+  # Single-item actionable facet lifecycle. `executor` defaults to
+  # `polyphony` per actionable.yaml's own default; the polyphony does
+  # not currently override it (a future PR could thread an explicit
+  # planner-declared executor through `polyphony state next-ready`).
+  - name: actionable
+    type: workflow
+    description: Actionable facet lifecycle (actionable.yaml)
+    workflow: ./actionable.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      root_id: "{{ workflow.input.root_id }}"
+      executor: "polyphony"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: teardown_worktree
+
+  # ── Lifecycle dispatch — implement-merge-group ───────────────────────────
+  #
+  # Single merge-group implementation lifecycle. The polyphony's per-item
+  # dispatch model treats each work item as its own MG container —
+  # `pg_number` = work_item_id (transitional input — see implement-merge-group
+  # comment block re: `PG-N` tag dependency), `work_item_ids` =
+  # [work_item_id], `mg_path` = `pg-{work_item_id}` (synthesized to satisfy
+  # the Rev 4 grammar while the legacy `PG-N` tagging is in place). The
+  # `feature_branch` is the root's feature branch.
+  #
+  # NOTE: This input mapping is the MVP shape for the polyphony →
+  # implement-merge-group bridge. A richer mapping (multiple work_item_ids
+  # per MG, planner-declared MG paths) requires the polyphony to surface
+  # MG grouping from the worklist build, which is a follow-up.
+  - name: implement_merge_group
+    type: workflow
+    description: Single merge-group implementation lifecycle (implement-merge-group.yaml)
+    workflow: ./implement-merge-group.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      root_id: "{{ workflow.input.root_id }}"
+      pg_number: "{{ workflow.input.work_item_id }}"
+      mg_path: "pg-{{ workflow.input.work_item_id }}"
+      work_item_ids: "[{{ workflow.input.work_item_id }}]"
+      feature_branch: "feature/{{ workflow.input.root_id }}"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: teardown_worktree
+
+  # ── Lifecycle dispatch — feature-pr ──────────────────────────────────────
+  #
+  # Root-root implementation lifecycle: the classifier returns
+  # `feature-pr` when the work item is the root root and
+  # implementation_merged is the next ready requirement. Merges
+  # the root feature branch into target (default `main`).
+  - name: feature_pr
+    type: workflow
+    description: Feature PR lifecycle (feature-pr.yaml) — root root only
+    workflow: ./feature-pr.yaml
+    input_mapping:
+      work_item_id: "{{ workflow.input.work_item_id }}"
+      feature_branch: "feature/{{ workflow.input.root_id }}"
+      target_branch: "main"
+      platform: "{{ workflow.input.platform }}"
+      organization: "{{ workflow.input.organization }}"
+      project: "{{ workflow.input.project }}"
+      repository: "{{ workflow.input.repository }}"
+    routes:
+      - to: teardown_worktree
+
+  # ── Teardown worktree ────────────────────────────────────────────────────
+  #
+  # Always run, regardless of dispatch success/failure. Idempotent.
+  - name: teardown_worktree
+    type: script
+    description: Remove the per-item worktree
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/worktree-manager.ps1"
+      - "-Operation"
+      - "teardown"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: dispatched
+
+  # ── Terminals ────────────────────────────────────────────────────────────
+  #
+  # Issue #178 (canonical-output): Every terminal MUST emit the FULL canonical output
+  # schema with safe defaults. When the workflow `output:` template
+  # reference resolution misbehaves, conductor can surface a terminal's
+  # raw output in place of the rendered workflow output; consumers in
+  # root-batch-dispatch and polyphony assume the canonical shape and
+  # blow up on missing keys (TemplateError: 'dict object' has no
+  # attribute 'renegotiation_pending'). Defense-in-depth — even when the
+  # template path works, having the terminals self-describe makes
+  # debugging tractable and pre-positions us for #173 (typed verb
+  # output schema registry).
+  #
+  # Canonical fields (13): work_item_id, root_id, lifecycle_workflow,
+  # dispatched, fast_pathed, item_satisfied, renegotiation_pending,
+  # renegotiation_request, validate_scope_verdict, scope_violation_files,
+  # actionable_satisfied, implement_merge_group_merged, feature_pr_merged. Error
+  # terminals add `error` and `error_code`. `monitoring`/`blocked` legs
+  # keep their additive boolean as a non-canonical convenience — harmless
+  # to consumers that ignore unknown keys.
+  - name: dispatched
+    type: script
+    description: Terminal — item dispatched into its lifecycle sub-workflow
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          root_id = '{{ workflow.input.root_id }}';
+          lifecycle_workflow = '{{ classify_lifecycle.output.lifecycle_workflow | default('') }}';
+          dispatched = $true;
+          fast_pathed = $false;
+          item_satisfied = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_merge_group_merged = $false;
+          feature_pr_merged = $false;
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: fast_path
+    type: script
+    description: Terminal — item is already satisfied or empty (fast-path)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          root_id = '{{ workflow.input.root_id }}';
+          lifecycle_workflow = 'fast-path';
+          dispatched = $false;
+          fast_pathed = $true;
+          item_satisfied = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_merge_group_merged = $false;
+          feature_pr_merged = $false;
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  # ── Terminal: terminal-satisfied (PR #6) ─────────────────────────────────
+  #
+  # Performs the ADO state transition for an item whose only ready
+  # requirement is `item_satisfied` — every facet-driven kind has
+  # already settled. Mirrors polyphony.yaml's `close_mark_satisfied`
+  # (validate-then-twig-state) so the same terminal-state mapping
+  # rules apply (per `.polyphony-config/process-config.yaml > transitions`).
+  #
+  # The `polyphony validate --event item_satisfied` call is the
+  # canonical event-to-target-state lookup. When it returns a
+  # `target_state`, we transition via `twig state`; otherwise we
+  # leave the item in place (the surrounding workflow surfaces the
+  # condition via `item_satisfied=true` so the batch aggregator can
+  # count it).
+  #
+  # No worktree is spawned — this leg is purely an observable-state
+  # transition, same as fast-path / monitoring / blocked.
+  #
+  # AB#3129 (sister of AB#3126): both `twig sync` calls are durability-
+  # critical. The first refreshes the local cache so the validate event
+  # sees fresh ADO state; the second flushes the staged `twig state`
+  # transition back to ADO so the next reader (polyphony outer loop,
+  # next-ready evaluator, downstream batch) sees the item in its terminal
+  # state rather than its pre-transition state still queued in twig.
+  # `$ErrorActionPreference = 'Stop'` and
+  # `$PSNativeCommandUseErrorActionPreference = $true` ensure that a
+  # failed sync raises a terminating error caught by the surrounding
+  # try/catch — the AB#3066 observable-error envelope still applies.
+  - name: satisfied
+    type: script
+    description: Terminal — perform ADO state transition for item_satisfied
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - |
+        $ErrorActionPreference = 'Stop';
+        $PSNativeCommandUseErrorActionPreference = $true;
+        $errMsg = '';
+        try {
+          twig sync;
+          $validate = polyphony validate --work-item {{ workflow.input.work_item_id }} --event item_satisfied | ConvertFrom-Json;
+          if ($validate.target_state) {
+            twig state $validate.target_state --id {{ workflow.input.work_item_id }};
+            twig sync;
+          }
+        } catch {
+          # Capture, don't swallow: the root driver's outer loop (PR #9)
+          # re-evaluates next-ready on the next pass — transient ADO/twig
+          # failures still surface there rather than failing the whole
+          # batch here. But we now log the message to stderr (visible in
+          # the conductor event log) AND surface it in the structured
+          # output so batch-aggregator consumers can observe failures
+          # instead of silently re-looping. AB#3066 fix.
+          $errMsg = $_.Exception.Message;
+          [Console]::Error.WriteLine("satisfied caught: $errMsg");
+        }
+        $out = @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          root_id = '{{ workflow.input.root_id }}';
+          lifecycle_workflow = 'terminal-satisfied';
+          dispatched = $false;
+          fast_pathed = $false;
+          item_satisfied = $true;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_merge_group_merged = $false;
+          feature_pr_merged = $false;
+        };
+        if ($errMsg -ne '') {
+          $out.error = $errMsg;
+          $out.error_code = 'satisfied_caught';
+        }
+        $out | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: monitoring
+    type: script
+    description: Terminal — item is in flight (monitoring); skip this batch
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          root_id = '{{ workflow.input.root_id }}';
+          lifecycle_workflow = 'monitoring';
+          dispatched = $false;
+          fast_pathed = $false;
+          item_satisfied = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_merge_group_merged = $false;
+          feature_pr_merged = $false;
+          monitoring = $true;
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: blocked
+    type: script
+    description: Terminal — item has unmet prerequisites (blocked)
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          root_id = '{{ workflow.input.root_id }}';
+          lifecycle_workflow = 'blocked';
+          dispatched = $false;
+          fast_pathed = $false;
+          item_satisfied = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_merge_group_merged = $false;
+          feature_pr_merged = $false;
+          blocked = $true;
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: classify_error
+    type: script
+    description: Terminal — lifecycle classification failed
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          root_id = '{{ workflow.input.root_id }}';
+          lifecycle_workflow = 'error';
+          dispatched = $false;
+          fast_pathed = $false;
+          item_satisfied = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_merge_group_merged = $false;
+          feature_pr_merged = $false;
+          error = 'lifecycle classification failed';
+          error_code = '{{ classify_lifecycle.output.error_code | default('classification_failed') }}';
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end
+
+  - name: spawn_error
+    type: script
+    description: Terminal — worktree spawn failed
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-Command"
+      - >-
+        @{
+          work_item_id = {{ workflow.input.work_item_id }};
+          root_id = '{{ workflow.input.root_id }}';
+          lifecycle_workflow = '{{ classify_lifecycle.output.lifecycle_workflow | default('') }}';
+          dispatched = $false;
+          fast_pathed = $false;
+          item_satisfied = $false;
+          renegotiation_pending = $false;
+          renegotiation_request = '';
+          validate_scope_verdict = '';
+          scope_violation_files = @();
+          actionable_satisfied = $false;
+          implement_merge_group_merged = $false;
+          feature_pr_merged = $false;
+          error = 'worktree spawn failed';
+          error_code = '{{ spawn_worktree.output.error_code | default('worktree_spawn_failed') }}';
+        } | ConvertTo-Json -Compress
+    routes:
+      - to: $end

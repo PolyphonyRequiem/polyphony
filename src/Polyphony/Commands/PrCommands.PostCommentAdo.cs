@@ -4,6 +4,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.AzureDevOps.Auth;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Routing;
 
 namespace Polyphony.Commands;
@@ -32,6 +34,8 @@ public sealed partial class PrCommands
     /// <param name="body">The comment body (Markdown).</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("post-comment-ado")]
+    [JournaledAction(Action = "pr_post_comment_ado")]
+    [MutatesResource(ResourceKind.AdoPrComment)]
     [VerbResult(typeof(PrPostCommentAdoResult))]
     public async Task<int> PostCommentAdo(
         string organization = "",
@@ -79,69 +83,182 @@ public sealed partial class PrCommands
                 "invalid_argument");
             return ExitCodes.Success;
         }
-        if (ado is null)
-        {
-            // Shouldn't happen in production (DI registers IAdoClient) but the
-            // ctor allows null so unit tests can opt out of the ADO leg.
-            EmitPostCommentAdoError(
-                prUrl, slug, prNumber, bodyEcho,
-                "IAdoClient is not configured",
-                "ado_failed");
-            return ExitCodes.Success;
-        }
 
-        try
-        {
-            var posted = await ado.CreatePullRequestCommentThreadAsync(
-                organization, project, repository, prNumber, body, ct)
-                .ConfigureAwait(false);
-            if (posted is null)
-            {
-                EmitPostCommentAdoError(
-                    prUrl, slug, prNumber, bodyEcho,
-                    $"PR #{prNumber} not found in {slug}",
-                    "pr_not_found");
-                return ExitCodes.Success;
-            }
+        PrPostCommentAdoPayload? payload = null;
 
-            EmitPostCommentAdo(new PrPostCommentAdoResult
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_post_comment_ado", PullRequestJournalTarget(prUrl, prNumber), null, null),
+            async innerCt =>
             {
-                PrNumber = prNumber,
-                Body = bodyEcho,
-                Posted = true,
-                ThreadId = posted.ThreadId,
-                CommentId = posted.CommentId,
-                RepoSlug = slug,
-                PrUrl = prUrl,
-            });
-            return ExitCodes.Success;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (AdoAuthenticationException ex)
-        {
-            // Raised by IPolyphonyAuthProvider when no ADO credential chain succeeds (PAT env or AAD).
-            EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, ex.Message, "no_pat");
-            return ExitCodes.Success;
-        }
-        catch (TimeoutException ex)
-        {
-            EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, ex.Message, "ado_timeout");
-            return ExitCodes.Success;
-        }
-        catch (HttpRequestException ex)
-        {
-            // 401/403 → no_pat (PAT is missing or rejected); everything else → ado_failed.
-            var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-                ? "no_pat"
-                : "ado_failed";
-            EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, ex.Message, code);
-            return ExitCodes.Success;
-        }
-        catch (Exception ex)
-        {
-            EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, ex.Message, "ado_failed");
-            return ExitCodes.Success;
-        }
+                if (ado is null)
+                {
+                    const string error = "IAdoClient is not configured";
+                    payload = new PrPostCommentAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        Body = bodyEcho,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_failed",
+                        Error = error,
+                    };
+                    EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, error, "ado_failed");
+                    return ExitCodes.Success;
+                }
+
+                try
+                {
+                    var posted = await ado.CreatePullRequestCommentThreadAsync(
+                        organization, project, repository, prNumber, body, innerCt)
+                        .ConfigureAwait(false);
+                    if (posted is null)
+                    {
+                        var error = $"PR #{prNumber} not found in {slug}";
+                        payload = new PrPostCommentAdoPayload
+                        {
+                            Organization = organization,
+                            Project = project,
+                            Repository = repository,
+                            RepoSlug = slug,
+                            PrNumber = prNumber,
+                            PrUrl = prUrl,
+                            Body = bodyEcho,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            ErrorCode = "pr_not_found",
+                            Error = error,
+                        };
+                        EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, error, "pr_not_found");
+                        return ExitCodes.Success;
+                    }
+
+                    var result = new PrPostCommentAdoResult
+                    {
+                        PrNumber = prNumber,
+                        Body = bodyEcho,
+                        Posted = true,
+                        ThreadId = posted.ThreadId,
+                        CommentId = posted.CommentId,
+                        RepoSlug = slug,
+                        PrUrl = prUrl,
+                    };
+                    payload = new PrPostCommentAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = result.PrNumber,
+                        PrUrl = result.PrUrl,
+                        Body = result.Body,
+                        ThreadId = result.ThreadId,
+                        CommentId = result.CommentId,
+                        ResultAction = "posted",
+                        Succeeded = true,
+                        WasMutated = true,
+                    };
+                    EmitPostCommentAdo(result);
+                    return ExitCodes.Success;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (AdoAuthenticationException ex)
+                {
+                    payload = new PrPostCommentAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        Body = bodyEcho,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "no_pat",
+                        Error = ex.Message,
+                    };
+                    EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, ex.Message, "no_pat");
+                    return ExitCodes.Success;
+                }
+                catch (TimeoutException ex)
+                {
+                    payload = new PrPostCommentAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        Body = bodyEcho,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_timeout",
+                        Error = ex.Message,
+                    };
+                    EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, ex.Message, "ado_timeout");
+                    return ExitCodes.Success;
+                }
+                catch (HttpRequestException ex)
+                {
+                    var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                        ? "no_pat"
+                        : "ado_failed";
+                    payload = new PrPostCommentAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        Body = bodyEcho,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = code,
+                        Error = ex.Message,
+                    };
+                    EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, ex.Message, code);
+                    return ExitCodes.Success;
+                }
+                catch (Exception ex)
+                {
+                    payload = new PrPostCommentAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        Body = bodyEcho,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_failed",
+                        Error = ex.Message,
+                    };
+                    EmitPostCommentAdoError(prUrl, slug, prNumber, bodyEcho, ex.Message, "ado_failed");
+                    return ExitCodes.Success;
+                }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrPostCommentAdoPayload),
+            effectsSelector: _ => SelectPostCommentAdoEffects(payload),
+            ct: ct).ConfigureAwait(false);
     }
 
     private static void EmitPostCommentAdo(PrPostCommentAdoResult result)

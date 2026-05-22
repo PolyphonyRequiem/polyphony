@@ -5,6 +5,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -26,13 +28,15 @@ public sealed partial class PrCommands
     /// <param name="organization">ADO organization name (e.g. <c>contoso</c>).</param>
     /// <param name="project">ADO project name.</param>
     /// <param name="repository">ADO repository identifier — GUID or name; both accepted.</param>
-    /// <param name="rootId">Root work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">Root work-item id of the run's root (focus) item.</param>
     /// <param name="itemId">ADO work-item id of the task.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path of the enclosing MG.</param>
     /// <param name="title">Optional PR title; deterministic fallback derived from the cached work-item title.</param>
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-impl-ado")]
+    [JournaledAction(Action = "pr_open_impl_ado")]
+    [MutatesResource(ResourceKind.AdoPr)]
     [VerbResult(typeof(PrOpenImplAdoResult))]
     public async Task<int> OpenImplAdo(
         string organization = "",
@@ -56,7 +60,6 @@ public sealed partial class PrCommands
 
         var slug = BuildAdoSlug(organization, project, repository);
 
-        // ── 1. Validate inputs. ────────────────────────────────────────────
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
             EmitOpenImplAdoError(rootId, itemId, mgPath, organization, project, repository, slug,
@@ -79,32 +82,66 @@ public sealed partial class PrCommands
 
         var headBranch = BranchNameBuilder.Impl(root, item).Value;
         var baseBranch = BranchNameBuilder.MergeGroup(root, path).Value;
+        PrOpenImplAdoPayload? payload = null;
 
-        var outcome = await OpenImplAdoCoreAsync(
-            organization, project, repository, slug,
-            rootId, itemId, path,
-            headBranch, baseBranch,
-            title, body, ct).ConfigureAwait(false);
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_open_impl_ado", BranchPairJournalTarget(headBranch, baseBranch), rootId, itemId),
+            async innerCt =>
+            {
+                var outcome = await OpenImplAdoCoreAsync(
+                    organization, project, repository, slug,
+                    rootId, itemId, path,
+                    headBranch, baseBranch,
+                    title, body, innerCt).ConfigureAwait(false);
 
-        EmitOpenImplAdo(new PrOpenImplAdoResult
-        {
-            RootId = rootId,
-            ItemId = itemId,
-            MgPath = path.Canonical,
-            HeadBranch = outcome.HeadBranch,
-            BaseBranch = outcome.BaseBranch,
-            Organization = organization,
-            Project = project,
-            Repository = repository,
-            RepoSlug = slug,
-            PrNumber = outcome.PrNumber,
-            PrUrl = outcome.PrUrl,
-            Title = outcome.Title,
-            Created = outcome.Created,
-            ErrorCode = outcome.ErrorCode,
-            Error = outcome.Error,
-        });
-        return ExitCodes.Success;
+                var result = new PrOpenImplAdoResult
+                {
+                    RootId = rootId,
+                    ItemId = itemId,
+                    MgPath = path.Canonical,
+                    HeadBranch = outcome.HeadBranch,
+                    BaseBranch = outcome.BaseBranch,
+                    Organization = organization,
+                    Project = project,
+                    Repository = repository,
+                    RepoSlug = slug,
+                    PrNumber = outcome.PrNumber,
+                    PrUrl = outcome.PrUrl,
+                    Title = outcome.Title,
+                    Created = outcome.Created,
+                    ErrorCode = outcome.ErrorCode,
+                    Error = outcome.Error,
+                };
+                payload = new PrOpenImplAdoPayload
+                {
+                    RootId = rootId,
+                    ItemId = itemId,
+                    MergeGroupPath = path.Canonical,
+                    Organization = organization,
+                    Project = project,
+                    Repository = repository,
+                    HeadBranch = result.HeadBranch,
+                    BaseBranch = result.BaseBranch,
+                    RepoSlug = slug,
+                    PrNumber = result.PrNumber,
+                    PrUrl = result.PrUrl,
+                    Title = result.Title,
+                    ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.Created ? "created" : "reused_existing_pr"),
+                    Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                    WasMutated = result.Created,
+                    ErrorCode = result.ErrorCode,
+                    Error = result.Error,
+                };
+                EmitOpenImplAdo(result);
+                return ExitCodes.Success;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenImplAdoPayload),
+            effectsSelector: _ => SelectOpenImplAdoEffects(payload),
+            ct: ct).ConfigureAwait(false);
     }
 
     /// <summary>

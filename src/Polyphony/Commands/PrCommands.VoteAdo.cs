@@ -4,6 +4,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.AzureDevOps.Auth;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Routing;
 
 namespace Polyphony.Commands;
@@ -33,6 +35,8 @@ public sealed partial class PrCommands
     /// <param name="vote">Vote name: <c>approve</c>, <c>approve-with-suggestions</c>, <c>reject</c>, <c>wait-for-author</c>, or <c>reset</c>.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("vote-ado")]
+    [JournaledAction(Action = "pr_vote_ado")]
+    [MutatesResource(ResourceKind.AdoPrVote)]
     [VerbResult(typeof(PrVoteAdoResult))]
     public async Task<int> VoteAdo(
         string organization = "",
@@ -89,69 +93,194 @@ public sealed partial class PrCommands
                 "invalid_vote");
             return ExitCodes.Success;
         }
-        if (ado is null)
-        {
-            // Shouldn't happen in production (DI registers IAdoClient) but the
-            // ctor allows null so unit tests can opt out of the ADO leg.
-            EmitVoteAdoError(
-                prUrl, slug, prNumber, reviewerId, vote, voteValue,
-                "IAdoClient is not configured",
-                "ado_failed");
-            return ExitCodes.Success;
-        }
 
-        try
-        {
-            var ok = await ado.SetPullRequestVoteAsync(
-                organization, project, repository, prNumber, reviewerId, voteValue, ct)
-                .ConfigureAwait(false);
-            if (!ok)
-            {
-                EmitVoteAdoError(
-                    prUrl, slug, prNumber, reviewerId, vote, voteValue,
-                    $"PR #{prNumber} or reviewer {reviewerId} not found in {slug}",
-                    "pr_not_found");
-                return ExitCodes.Success;
-            }
+        PrVoteAdoPayload? payload = null;
 
-            EmitVoteAdo(new PrVoteAdoResult
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_vote_ado", PullRequestJournalTarget(prUrl, prNumber), null, null),
+            async innerCt =>
             {
-                PrNumber = prNumber,
-                ReviewerId = reviewerId,
-                Vote = vote,
-                VoteValue = voteValue,
-                Submitted = true,
-                RepoSlug = slug,
-                PrUrl = prUrl,
-            });
-            return ExitCodes.Success;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (AdoAuthenticationException ex)
-        {
-            // Raised by IPolyphonyAuthProvider when no ADO credential chain succeeds (PAT env or AAD).
-            EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, ex.Message, "no_pat");
-            return ExitCodes.Success;
-        }
-        catch (TimeoutException ex)
-        {
-            EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, ex.Message, "ado_timeout");
-            return ExitCodes.Success;
-        }
-        catch (HttpRequestException ex)
-        {
-            // 401/403 → no_pat (PAT is missing or rejected); everything else → ado_failed.
-            var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-                ? "no_pat"
-                : "ado_failed";
-            EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, ex.Message, code);
-            return ExitCodes.Success;
-        }
-        catch (Exception ex)
-        {
-            EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, ex.Message, "ado_failed");
-            return ExitCodes.Success;
-        }
+                if (ado is null)
+                {
+                    const string error = "IAdoClient is not configured";
+                    payload = new PrVoteAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        ReviewerId = reviewerId,
+                        Vote = vote,
+                        VoteValue = voteValue,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_failed",
+                        Error = error,
+                    };
+                    EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, error, "ado_failed");
+                    return ExitCodes.Success;
+                }
+
+                try
+                {
+                    var ok = await ado.SetPullRequestVoteAsync(
+                        organization, project, repository, prNumber, reviewerId, voteValue, innerCt)
+                        .ConfigureAwait(false);
+                    if (!ok)
+                    {
+                        var error = $"PR #{prNumber} or reviewer {reviewerId} not found in {slug}";
+                        payload = new PrVoteAdoPayload
+                        {
+                            Organization = organization,
+                            Project = project,
+                            Repository = repository,
+                            RepoSlug = slug,
+                            PrNumber = prNumber,
+                            PrUrl = prUrl,
+                            ReviewerId = reviewerId,
+                            Vote = vote,
+                            VoteValue = voteValue,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            ErrorCode = "pr_not_found",
+                            Error = error,
+                        };
+                        EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, error, "pr_not_found");
+                        return ExitCodes.Success;
+                    }
+
+                    var result = new PrVoteAdoResult
+                    {
+                        PrNumber = prNumber,
+                        ReviewerId = reviewerId,
+                        Vote = vote,
+                        VoteValue = voteValue,
+                        Submitted = true,
+                        RepoSlug = slug,
+                        PrUrl = prUrl,
+                    };
+                    payload = new PrVoteAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        ReviewerId = reviewerId,
+                        Vote = vote,
+                        VoteValue = voteValue,
+                        ResultAction = "submitted",
+                        Succeeded = true,
+                        WasMutated = true,
+                    };
+                    EmitVoteAdo(result);
+                    return ExitCodes.Success;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (AdoAuthenticationException ex)
+                {
+                    payload = new PrVoteAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        ReviewerId = reviewerId,
+                        Vote = vote,
+                        VoteValue = voteValue,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "no_pat",
+                        Error = ex.Message,
+                    };
+                    EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, ex.Message, "no_pat");
+                    return ExitCodes.Success;
+                }
+                catch (TimeoutException ex)
+                {
+                    payload = new PrVoteAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        ReviewerId = reviewerId,
+                        Vote = vote,
+                        VoteValue = voteValue,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_timeout",
+                        Error = ex.Message,
+                    };
+                    EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, ex.Message, "ado_timeout");
+                    return ExitCodes.Success;
+                }
+                catch (HttpRequestException ex)
+                {
+                    var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                        ? "no_pat"
+                        : "ado_failed";
+                    payload = new PrVoteAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        ReviewerId = reviewerId,
+                        Vote = vote,
+                        VoteValue = voteValue,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = code,
+                        Error = ex.Message,
+                    };
+                    EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, ex.Message, code);
+                    return ExitCodes.Success;
+                }
+                catch (Exception ex)
+                {
+                    payload = new PrVoteAdoPayload
+                    {
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        ReviewerId = reviewerId,
+                        Vote = vote,
+                        VoteValue = voteValue,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "ado_failed",
+                        Error = ex.Message,
+                    };
+                    EmitVoteAdoError(prUrl, slug, prNumber, reviewerId, vote, voteValue, ex.Message, "ado_failed");
+                    return ExitCodes.Success;
+                }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrVoteAdoPayload),
+            effectsSelector: _ => SelectVoteAdoEffects(payload),
+            ct: ct).ConfigureAwait(false);
     }
 
     /// <summary>

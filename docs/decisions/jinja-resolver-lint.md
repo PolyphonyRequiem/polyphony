@@ -156,7 +156,7 @@ A reference `{{ X.output.foo }}` is considered guarded when any of:
    idiom that pervades the workflow corpus — Jinja's short-circuit
    semantics make these safe at runtime, and the lint must mirror
    them. Without this, the lint false-positives on five+ occurrences
-   in `apex-driver.yaml`, `feature-pr.yaml`, and `implement-mg.yaml`
+   in `polyphony.yaml`, `feature-pr.yaml`, and `implement-mg.yaml`
    alone.
 
 The guard-stack is per Jinja-evaluated string field (one stack per
@@ -195,7 +195,7 @@ For `kind: scalar` with a trailing path segment → `JINJA005`.
 | **Control-flow availability** | `preflight_failure_gate.prompt` references `commit_and_push_manifest.output.error` before the agent has run. (Bug #13a class.) | Requires dominance / reachability analysis over the workflow graph — separate machinery, separate PR. |
 | **Sub-workflow output access** | `{{ feature_pr.output.merged }}` where `feature_pr` is a `type: workflow` step. | Needs cross-workflow resolution: load the sub-workflow YAML, walk its `output:` mapping, map back to the parent's references. Tractable but out of scope here. |
 | **Agent step `output:` declarations** | `actionable_agent` declares an `output: { summary: ... }` but the agent might not emit it. | Schema is hand-authored YAML rather than registry-derived — cross-checks against the agent's actual output are conductor-runtime concerns, not static lint. |
-| **Terminal envelope conformance** | Bug #11 — `apex-item-dispatch` terminals emit `{}` instead of the canonical 12-field envelope. | The envelope shape lives in YAML, not C#. Needs a workflow-level "terminal envelope conformance" lint. |
+| **Terminal envelope conformance** | Bug #11 — `root-item-dispatch` terminals emit `{}` instead of the canonical 12-field envelope. | The envelope shape lives in YAML, not C#. Needs a workflow-level "terminal envelope conformance" lint. |
 | **Workflow-builtin shape** | `workflow.input.foo` is unchecked against the workflow's `input:` declaration. | Easy to add later; not in #175's scope. |
 
 These gaps are documented in the lint's `SYNOPSIS` block and the

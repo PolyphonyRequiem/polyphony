@@ -5,7 +5,7 @@ using Xunit;
 namespace Polyphony.Tests.Manifest;
 
 /// <summary>
-/// Unit tests for <see cref="ManifestRebaseLedger.Apply"/>. The cascade-remedy
+/// Unit tests for <see cref="ManifestRebaseLedger.Apply"/>. The restack-remedy
 /// verb (Phase 3 P9 step 2) calls this on every successful rebase, including
 /// idempotent replays after partial failures, so the duplicate-skip path
 /// must hold tight.
@@ -59,8 +59,8 @@ public sealed class ManifestRebaseLedgerTests
     public void Apply_SameCommitDifferentReason_BothAppend()
     {
         // (branch, commit, reason) is the key — distinct reason must NOT
-        // count as a duplicate. The cascade-remedy verb relies on this when
-        // the same SHA is reachable via multiple cascade paths.
+        // count as a duplicate. The restack-remedy verb relies on this when
+        // the same SHA is reachable via multiple restack paths.
         var manifest = new RunManifest();
         ManifestRebaseLedger.Apply(manifest, "plan/100", "sha", "child_plan_drift", Ts);
         ManifestRebaseLedger.Apply(manifest, "plan/100", "sha", "cross_mg_code_dep", Ts);

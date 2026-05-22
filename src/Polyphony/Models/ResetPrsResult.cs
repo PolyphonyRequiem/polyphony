@@ -1,8 +1,8 @@
 namespace Polyphony;
 
 /// <summary>
-/// Output envelope for <c>polyphony reset prs --apex N</c> — abandons all
-/// OPEN polyphony PRs targeting branches under the apex's scope
+/// Output envelope for <c>polyphony reset prs --root N</c> — abandons all
+/// OPEN polyphony PRs targeting branches under the root's scope
 /// (<c>plan/{N}</c>, <c>mg/{N}-*</c>, <c>impl/{N}-*</c>,
 /// <c>evidence/{N}-*</c>, <c>feature/{N}</c>).
 ///
@@ -15,8 +15,8 @@ namespace Polyphony;
 /// </summary>
 public sealed record ResetPrsResult
 {
-    /// <summary>Apex root work-item ID (mirrors <c>--apex</c>).</summary>
-    public required int Apex { get; init; }
+    /// <summary>Root root work-item ID (mirrors <c>--root</c>).</summary>
+    public required int Root { get; init; }
 
     /// <summary>True when enumeration + abandon completed (per-PR failures permitted).</summary>
     public required bool Success { get; init; }

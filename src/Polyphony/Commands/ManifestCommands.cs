@@ -3,6 +3,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Paths;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Manifest;
 
 namespace Polyphony.Commands;
@@ -45,9 +47,14 @@ namespace Polyphony.Commands;
 /// branch shared by every verb.</para>
 /// </summary>
 [VerbGroup("manifest")]
-public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
+public sealed partial class ManifestCommands(
+    PolyphonyStatePaths statePaths,
+    RunContext? runContext = null,
+    JournaledActionDecorator? journalDecorator = null)
 {
     private readonly PolyphonyStatePaths statePaths = statePaths;
+    private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
+    private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
 
     // ── Path resolution helpers (Rev 4.2) ──────────────────────────────
 
@@ -155,7 +162,7 @@ public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
     /// <paramref name="platformProject"/>, and (optionally) <paramref name="createdBy"/>.
     /// Refuses to overwrite an existing file unless <paramref name="force"/>.
     /// </summary>
-    /// <param name="rootId">Run's apex (focus) work-item id (positive). REQUIRED.</param>
+    /// <param name="rootId">Run's root (focus) work-item id (positive). REQUIRED.</param>
     /// <param name="platformProject">Platform-qualified project (e.g. <c>dev.azure.com/org/project</c>).</param>
     /// <param name="path">Optional explicit path. When empty, derived from <paramref name="rootId"/> via <see cref="PolyphonyStatePaths"/>.</param>
     /// <param name="createdBy">Who initiated the run. Defaults to <c>git config user.name</c> or <c>$USERNAME</c>.</param>
@@ -163,13 +170,49 @@ public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
     /// <param name="ct">Cancellation token.</param>
     [Command("init")]
     [VerbResult(typeof(ManifestInitResult))]
-    public async Task<int> Init(
+    [JournaledAction(Action = "manifest_init")]
+    [MutatesResource(ResourceKind.ManifestFile)]
+    public Task<int> Init(
         int rootId = RequiredInput.MissingInt,
         string platformProject = "",
         string path = "",
         string createdBy = "",
         bool force = false,
         CancellationToken ct = default)
+        => JournalCommandSupport.RunWithCapturedResultAsync<ManifestInitResult, ManifestMutationPayload>(
+            _journalDecorator,
+            _runContext,
+            "manifest_init",
+            string.IsNullOrEmpty(path) ? $"manifest:{rootId}" : path,
+            innerCt => InitCoreAsync(rootId, platformProject, path, createdBy, force, innerCt),
+            PolyphonyJsonContext.Default.ManifestInitResult,
+            (_, result) => new ManifestMutationPayload
+            {
+                RootId = result?.RootId ?? rootId,
+                Path = result?.Path ?? path,
+                PathSource = result?.PathSource,
+                ResultAction = result?.Created == true ? "init_created" : "init_overwritten",
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && string.IsNullOrEmpty(result.Error),
+                PlatformProject = result?.PlatformProject ?? platformProject,
+                TopologyHash = result?.TopologyHash,
+                ErrorCode = result?.ErrorCode,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ManifestMutationPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectManifestMutationEffects,
+            ct,
+            rootId: rootId);
+
+    private async Task<int> InitCoreAsync(
+        int rootId,
+        string platformProject,
+        string path,
+        string createdBy,
+        bool force,
+        CancellationToken ct)
     {
         if (RequiredInput.HaltIfMissing("manifest init",
             ("--root-id", rootId == RequiredInput.MissingInt),
@@ -362,7 +405,9 @@ public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
     /// <param name="ct">Cancellation token.</param>
     [Command("record-rebase")]
     [VerbResult(typeof(ManifestRebaseRecordResult))]
-    public async Task<int> RecordRebase(
+    [JournaledAction(Action = "manifest_record_rebase")]
+    [MutatesResource(ResourceKind.ManifestFile)]
+    public Task<int> RecordRebase(
         string branch = "",
         string onto = "",
         string reason = "",
@@ -371,6 +416,45 @@ public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
         string path = "",
         string at = "",
         CancellationToken ct = default)
+        => JournalCommandSupport.RunWithCapturedResultAsync<ManifestRebaseRecordResult, ManifestMutationPayload>(
+            _journalDecorator,
+            _runContext,
+            "manifest_record_rebase",
+            string.IsNullOrEmpty(path) ? $"manifest:{rootId}" : path,
+            innerCt => RecordRebaseCoreAsync(branch, onto, reason, commit, rootId, path, at, innerCt),
+            PolyphonyJsonContext.Default.ManifestRebaseRecordResult,
+            (_, result) => new ManifestMutationPayload
+            {
+                RootId = rootId,
+                Path = result?.Path ?? path,
+                PathSource = result?.PathSource,
+                ResultAction = "record_rebase",
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && string.IsNullOrEmpty(result.Error),
+                Branch = result?.Branch ?? branch,
+                Onto = result?.Onto ?? onto,
+                Reason = result?.Reason ?? reason,
+                Commit = result?.Commit ?? commit,
+                RecordedAt = result?.RecordedAt,
+                ErrorCode = result?.ErrorCode,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ManifestMutationPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectManifestMutationEffects,
+            ct,
+            rootId: rootId);
+
+    private async Task<int> RecordRebaseCoreAsync(
+        string branch,
+        string onto,
+        string reason,
+        string commit,
+        int rootId,
+        string path,
+        string at,
+        CancellationToken ct)
     {
         if (RequiredInput.HaltIfMissing("manifest record-rebase",
             ("--branch", string.IsNullOrEmpty(branch)),
@@ -467,7 +551,9 @@ public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
     /// <param name="ct">Cancellation token.</param>
     [Command("record-approval")]
     [VerbResult(typeof(ManifestApprovalRecordResult))]
-    public async Task<int> RecordApproval(
+    [JournaledAction(Action = "manifest_record_approval")]
+    [MutatesResource(ResourceKind.ManifestFile)]
+    public Task<int> RecordApproval(
         string gate = "",
         string approvedBy = "",
         int rootId = RequiredInput.MissingInt,
@@ -475,6 +561,43 @@ public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
         string detail = "",
         string at = "",
         CancellationToken ct = default)
+        => JournalCommandSupport.RunWithCapturedResultAsync<ManifestApprovalRecordResult, ManifestMutationPayload>(
+            _journalDecorator,
+            _runContext,
+            "manifest_record_approval",
+            string.IsNullOrEmpty(path) ? $"manifest:{rootId}" : path,
+            innerCt => RecordApprovalCoreAsync(gate, approvedBy, rootId, path, detail, at, innerCt),
+            PolyphonyJsonContext.Default.ManifestApprovalRecordResult,
+            (_, result) => new ManifestMutationPayload
+            {
+                RootId = rootId,
+                Path = result?.Path ?? path,
+                PathSource = result?.PathSource,
+                ResultAction = "record_approval",
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && string.IsNullOrEmpty(result.Error),
+                Gate = result?.Gate ?? gate,
+                ApprovedBy = result?.ApprovedBy ?? approvedBy,
+                ApprovedAt = result?.ApprovedAt,
+                Detail = result?.Detail ?? detail,
+                ErrorCode = result?.ErrorCode,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ManifestMutationPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectManifestMutationEffects,
+            ct,
+            rootId: rootId);
+
+    private async Task<int> RecordApprovalCoreAsync(
+        string gate,
+        string approvedBy,
+        int rootId,
+        string path,
+        string detail,
+        string at,
+        CancellationToken ct)
     {
         if (RequiredInput.HaltIfMissing("manifest record-approval",
             ("--gate", string.IsNullOrEmpty(gate)),
@@ -592,13 +715,52 @@ public sealed partial class ManifestCommands(PolyphonyStatePaths statePaths)
     /// <param name="ct">Cancellation token.</param>
     [Command("record-plan-merge")]
     [VerbResult(typeof(ManifestRecordPlanMergeResult))]
-    public async Task<int> RecordPlanMerge(
+    [JournaledAction(Action = "manifest_record_plan_merge")]
+    [MutatesResource(ResourceKind.ManifestFile)]
+    public Task<int> RecordPlanMerge(
         string item = "",
         int rootId = RequiredInput.MissingInt,
         string path = "",
         int prNumber = 0,
         string mergeCommit = "",
         CancellationToken ct = default)
+        => JournalCommandSupport.RunWithCapturedResultAsync<ManifestRecordPlanMergeResult, ManifestMutationPayload>(
+            _journalDecorator,
+            _runContext,
+            "manifest_record_plan_merge",
+            string.IsNullOrEmpty(path) ? $"manifest:{rootId}" : path,
+            innerCt => RecordPlanMergeCoreAsync(item, rootId, path, prNumber, mergeCommit, innerCt),
+            PolyphonyJsonContext.Default.ManifestRecordPlanMergeResult,
+            (_, result) => new ManifestMutationPayload
+            {
+                RootId = rootId,
+                Path = result?.Path ?? path,
+                PathSource = result?.PathSource,
+                ResultAction = result?.Recorded == true ? "record_plan_merge" : "record_plan_merge_noop",
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result?.Recorded == true,
+                ItemKey = result?.ItemKey ?? item,
+                PreviousGeneration = result?.PreviousGeneration,
+                CurrentGeneration = result?.CurrentGeneration,
+                PrNumber = result?.PrNumber,
+                MergeCommit = result?.MergeCommit ?? mergeCommit,
+                ErrorCode = result?.ErrorCode,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ManifestMutationPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectManifestMutationEffects,
+            ct,
+            rootId: rootId);
+
+    private async Task<int> RecordPlanMergeCoreAsync(
+        string item,
+        int rootId,
+        string path,
+        int prNumber,
+        string mergeCommit,
+        CancellationToken ct)
     {
         if (RequiredInput.HaltIfMissing("manifest record-plan-merge",
             ("--item", string.IsNullOrEmpty(item))) is { } halt)

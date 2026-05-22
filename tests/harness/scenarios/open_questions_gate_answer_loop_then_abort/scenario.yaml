@@ -22,7 +22,7 @@
 #       in the real workflow this would route to error_gate for
 #       operator action — we exercise the abort branch here)
 #     → ensure_plan_branch_error_gate (scripted=abort, STRING SHORTHAND)
-#     → terminal_abort_run → $end
+#     → abort_run → $end
 #
 # This scenario doubles as the proof for BOTH gate-script forms:
 #   - mapping form  (open_questions_gate: {value, additional_input})
@@ -189,7 +189,7 @@ expected_trace:
     - open_questions_counter
     - ensure_plan_branch
     - ensure_plan_branch_error_gate
-    - terminal_abort_run
+    - abort_run
   scripts_executed:
     - depth_guard
     - guidance_loader
@@ -204,7 +204,7 @@ expected_trace:
     - open_questions_policy
     - open_questions_counter
     - ensure_plan_branch
-    - terminal_abort_run
+    - abort_run
   gates_presented:
     - open_questions_gate
     - ensure_plan_branch_error_gate

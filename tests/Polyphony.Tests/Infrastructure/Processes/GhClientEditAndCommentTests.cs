@@ -6,7 +6,7 @@ namespace Polyphony.Tests.Infrastructure.Processes;
 
 /// <summary>
 /// Unit tests for <see cref="GhClient.EditPullRequestBodyAsync"/> and
-/// <see cref="GhClient.CommentPullRequestAsync"/>. The cascade-remedy
+/// <see cref="GhClient.CommentPullRequestAsync"/>. The restack-remedy
 /// contract is "always return a routable bool — never throw on tool
 /// failure", so most of these tests pin that contract: timeout retries,
 /// non-zero exits, and stdin payload preservation.

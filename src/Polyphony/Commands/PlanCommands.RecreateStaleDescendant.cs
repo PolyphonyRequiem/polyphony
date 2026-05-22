@@ -4,6 +4,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Locking;
 using Polyphony.Manifest;
@@ -13,7 +15,7 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// <c>polyphony plan recreate-stale-descendant</c> — the second policy
-/// outcome of the Phase 3 P9 cascade-remedy. When a stale descendant plan
+/// outcome of the Phase 3 P9 restack-remedy. When a stale descendant plan
 /// PR cannot (or should not) be auto-rebased, this verb closes the stale PR,
 /// removes its head branch (best-effort), re-creates the plan branch from
 /// the current parent-plan tip, opens a fresh PR with an up-to-date
@@ -21,13 +23,13 @@ namespace Polyphony.Commands;
 /// the manifest's rebase ledger under reason <c>child_plan_drift</c>.
 ///
 /// <para>This GitHub-only implementation matches the reach of the rebase
-/// sibling shipped in #107. ADO P9 cascade is a separate later workstream.</para>
+/// sibling shipped in #107. ADO P9 restack is a separate later workstream.</para>
 ///
 /// <para><b>Compound transactional sequence</b> (mirrors the discipline of
 /// <c>plan rebase-stale-descendant</c> step-by-step):</para>
 /// <list type="bullet">
 ///   <item><b>Lock-before-read</b>: same-root run lock at <c>.polyphony/locks/run-{rootId}.lock</c> acquired before any read of the manifest, so concurrent remedies on the same root cannot race.</item>
-///   <item><b>Cascade-precondition</b>: refuses with <c>parent_stale</c> if the parent plan PR's snapshot is itself behind the manifest — recreating onto a stale parent would just re-stage the staleness.</item>
+///   <item><b>Restack-precondition</b>: refuses with <c>parent_stale</c> if the parent plan PR's snapshot is itself behind the manifest — recreating onto a stale parent would just re-stage the staleness.</item>
 ///   <item><b>Identity-verified close</b>: PR poll captures head/base refs first; refuses with <c>pr_identity_mismatch</c> if either is not what the verb expects.</item>
 ///   <item><b>Best-effort branch delete</b>: <c>git push origin --delete {head}</c> failure is a warning, not a terminal error — branch may already have been removed.</item>
 ///   <item><b>Build-the-replay-safety-net before pushing manifest</b>: branch + PR + manifest mutations land in that order. Failure between any two leaves the verb in a state that re-running can complete via the noop / partial-success paths.</item>
@@ -66,7 +68,12 @@ public sealed partial class PlanCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("recreate-stale-descendant")]
     [VerbResult(typeof(PlanRecreateStaleDescendantResult))]
-    public async Task<int> RecreateStaleDescendant(
+    [JournaledAction(Action = "plan_recreate_stale_descendant")]
+    [MutatesResource(ResourceKind.GitBranch)]
+    [MutatesResource(ResourceKind.GitHubPr)]
+    [MutatesResource(ResourceKind.AdoPr)]
+    [MutatesResource(ResourceKind.ManifestFile)]
+    public Task<int> RecreateStaleDescendant(
         int rootId = RequiredInput.MissingInt,
         int itemId = RequiredInput.MissingInt,
         int parentItemId = RequiredInput.MissingInt,
@@ -86,8 +93,64 @@ public sealed partial class PlanCommands
             ("--item-id", itemId == RequiredInput.MissingInt),
             ("--parent-item-id", parentItemId == RequiredInput.MissingInt),
             ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<PlanRecreateStaleDescendantResult, PlanRecreateStaleDescendantPayload>(
+            _journalDecorator,
+            _runContext,
+            "plan_recreate_stale_descendant",
+            $"plan-pr:{prNumber}",
+            innerCt => RecreateStaleDescendantCoreAsync(rootId, itemId, parentItemId, prNumber, ancestorIds, manifestPath, by, lockTtlHours, platform, organization, project, repositoryOverride, innerCt),
+            PolyphonyJsonContext.Default.PlanRecreateStaleDescendantResult,
+            (_, result) => new PlanRecreateStaleDescendantPayload
+            {
+                RootId = result?.RootId ?? rootId,
+                ItemId = result?.ItemId ?? itemId,
+                ParentItemId = result?.ParentItemId ?? parentItemId,
+                OldPrNumber = result?.OldPrNumber ?? prNumber,
+                OldPrUrl = result?.OldPrUrl ?? string.Empty,
+                OldHeadBranch = result?.OldHeadBranch ?? string.Empty,
+                ParentPlanBranch = result?.ParentPlanBranch ?? string.Empty,
+                Outcome = result?.Outcome ?? string.Empty,
+                NewPrNumber = result?.NewPrNumber,
+                NewPrUrl = result?.NewPrUrl,
+                NewHeadBranch = result?.NewHeadBranch,
+                OldPrClosed = result?.OldPrClosed ?? false,
+                OldBranchDeleted = result?.OldBranchDeleted ?? false,
+                NewBranchCreated = result?.NewBranchCreated ?? false,
+                NewPrOpened = result?.NewPrOpened ?? false,
+                ManifestRecorded = result?.ManifestRecorded ?? false,
+                ManifestPushed = result?.ManifestPushed ?? false,
+                Warnings = result?.Warnings ?? [],
+                Succeeded = result is not null && string.IsNullOrEmpty(result.ErrorCode) && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && (result.Outcome == "recreated" || result.OldPrClosed || result.NewBranchCreated || result.NewPrOpened || result.ManifestRecorded),
+                ErrorCode = result?.ErrorCode,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.PlanRecreateStaleDescendantPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectPlanRecreateStaleDescendantEffects,
+            ct,
+            rootId: rootId,
+            workItemId: itemId);
+    }
+
+    private async Task<int> RecreateStaleDescendantCoreAsync(
+        int rootId,
+        int itemId,
+        int parentItemId,
+        int prNumber,
+        string ancestorIds,
+        string manifestPath,
+        string by,
+        int lockTtlHours,
+        string platform,
+        string organization,
+        string project,
+        string repositoryOverride,
+        CancellationToken ct)
+    {
         // ── 1. Validate inputs + derive head/parent branches. ──────────────
         if (!Polyphony.Branching.RootId.TryParse(rootId, out var root))
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "invalid_argument",
@@ -316,7 +379,7 @@ public sealed partial class PlanCommands
         var ancestorKeys = ParseAncestorKeysForRecreate(ancestorIds, snapshotInBody);
         var desiredSnapshot = ProjectManifestOntoAncestorsForRecreate(manifest.PlanGenerations, ancestorKeys, snapshotInBody);
 
-        // ── 9. Cascade-precondition: parent plan branch must be fresh. ─────
+        // ── 9. Restack-precondition: parent plan branch must be fresh. ─────
         var parentFreshness = await CheckParentFreshnessForRecreateAsync(identity, parentPlanBranch, manifest, ct).ConfigureAwait(false);
         if (parentFreshness is { } parentMessage)
         {
@@ -360,7 +423,7 @@ public sealed partial class PlanCommands
         if (!string.Equals(poll.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "pr_state_invalid",
-                $"PR #{prNumber} is in state '{poll.State}'; only OPEN PRs are eligible for cascade recreate (and the noop replay condition was not satisfied).",
+                $"PR #{prNumber} is in state '{poll.State}'; only OPEN PRs are eligible for restack recreate (and the noop replay condition was not satisfied).",
                 oldHeadBranch: headBranch, parentPlanBranch: parentPlanBranch,
                 oldPrUrl: oldPrUrl);
         }

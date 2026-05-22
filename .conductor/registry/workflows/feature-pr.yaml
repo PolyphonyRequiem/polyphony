@@ -126,8 +126,8 @@ agents:
   # unrelated files (compounding with AB#3236's revise_counter loop).
   #
   # This script is the entry point of feature-pr.yaml so EVERY feature
-  # PR (apex→main from apex-driver, child→feature/<apex> from
-  # apex-item-dispatch, GitHub or ADO) is protected.
+  # PR (root→main from polyphony, child→feature/<root> from
+  # root-item-dispatch, GitHub or ADO) is protected.
   #
   # Strategy: `git rebase origin/<target>` on the feature branch, then
   # force-push with `--force-with-lease=<feature>:<expected-sha>`. Rebase
@@ -405,14 +405,14 @@ agents:
       `polyphony pr create-feature-ado` and `pr merge-feature-ado` require
       all three of `--organization`, `--project`, and `--repository`.
       Re-invoke the workflow chain with those inputs supplied (typically
-      threaded from the apex driver's inputs).
+      threaded from the root driver's inputs).
 
       Feature branch:
       `{{ workflow.input.feature_branch }}`
     options:
       - label: "🛑 Abort (will re-invoke with inputs)"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── ADO feature-PR creator failure gate ────────────────────────────────
   #
@@ -456,7 +456,7 @@ agents:
         route: feature_pr_creator_ado
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── GitHub PR lifecycle sub-workflow ─────────────────────────────────────
   #
@@ -616,7 +616,7 @@ agents:
   #                          re-evaluated next cycle and re-fires —
   #                          auto_proceed effectively turns
   #                          max_remediation_cycles into "advisory".)
-  #   • `auto_fail`        → terminal_cap_auto_fail (NOT remediation_abort
+  #   • `auto_fail`        → cap_auto_fail (NOT remediation_abort
   #                          which encodes operator intent in its reason
   #                          field — honest about who decided to halt)
   #
@@ -633,7 +633,7 @@ agents:
     routes:
       - to: remediation_guidance_loader
         when: "{{ remediation_cap_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
-      - to: terminal_cap_auto_fail
+      - to: cap_auto_fail
         when: "{{ remediation_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
       # Default + 'manual' + any unknown → surface the human gate.
       - to: remediation_cap_gate
@@ -746,7 +746,7 @@ agents:
   #         the work needed.
   - name: remediation_guidance_loader
     type: script
-    description: Load agent guidance for the apex (drives remediation_planner's architect refinement)
+    description: Load agent guidance for the root (drives remediation_planner's architect refinement)
     command: polyphony
     args:
       - "plan"
@@ -1027,13 +1027,13 @@ agents:
     workflow: ./implement-merge-group.yaml
     input_mapping:
       work_item_id: "{{ workflow.input.work_item_id }}"
-      # Remediation runs at the apex layer — the apex IS the root for the
-      # remediation MG. Mirrors the root_id synthesis the apex driver uses
+      # Remediation runs at the root layer — the root IS the root for the
+      # remediation MG. Mirrors the root_id synthesis the root driver uses
       # when dispatching MGs to implement-merge-group.yaml.
       root_id: "{{ workflow.input.work_item_id }}"
       pg_number: "{{ remediation_seeder.output.pg_number }}"
       # Synthesize Rev 4-valid mg_path from the legacy pg_number using the
-      # same `pg-{number}` convention the apex driver applies when
+      # same `pg-{number}` convention the root driver applies when
       # dispatching MGs. Items in the remediation PG still carry the
       # legacy `PG-{number}` tag for `branch next-impl` /
       # `branch close-scope` to find them.
@@ -1232,11 +1232,11 @@ agents:
 
   # ── Terminal abort (operator chose Abort on an error gate) ────────────
   #
-  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # Identical to plan-level.yaml's abort_run. Invokes
   # abort-run.ps1, which POSTs to conductor's /api/stop endpoint. The
   # engine raises InterruptError at every nested between-agent check,
   # unwinding the entire run cleanly (no process-kill, no zombies).
-  - name: terminal_abort_run
+  - name: abort_run
     type: script
     description: Operator-initiated full-run abort — POSTs /api/stop to halt the run cleanly
     command: pwsh
@@ -1254,11 +1254,11 @@ agents:
   # ── Terminal: policy-driven cap-mode auto-fail (AB#3186) ─────────────────
   #
   # Reached when `policy.unattended.cap_mode == 'auto_fail'` triggers at
-  # remediation_cap_gate. Distinct from terminal_abort_run so post-mortem
+  # remediation_cap_gate. Distinct from abort_run so post-mortem
   # diagnostics can tell policy-driven failures apart from human-initiated
   # aborts — the abort-run.ps1 envelope's `reason` field is the
   # discriminator (`cap-auto-fail` vs `operator-abort`).
-  - name: terminal_cap_auto_fail
+  - name: cap_auto_fail
     type: script
     description: Policy-driven full-run abort — unattended.cap_mode='auto_fail' at a cap-hit gate
     command: pwsh

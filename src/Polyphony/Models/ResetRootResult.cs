@@ -1,0 +1,26 @@
+namespace Polyphony;
+
+public sealed record ResetApexResult
+{
+    public required int Root { get; init; }
+    public required bool Success { get; init; }
+    public required bool DryRun { get; init; }
+    public required string Strategy { get; init; }
+    public required string Coverage { get; init; }
+    public required bool FallbackUsed { get; init; }
+    public IReadOnlyList<string> StepsCompleted { get; init; } = [];
+    public IReadOnlyList<string> StepsFailed { get; init; } = [];
+    public IReadOnlyList<ResetTargetDescriptor> AttemptedTargets { get; init; } = [];
+    public IReadOnlyList<ResetTargetDescriptor> DeletedTargets { get; init; } = [];
+    public IReadOnlyList<FailedResetTargetDescriptor> FailedTargets { get; init; } = [];
+    public IReadOnlyList<ResetTargetDescriptor> RemainingResetTargets { get; init; } = [];
+    public IReadOnlyList<ResetTargetDescriptor> BlockedMutatedTargets { get; init; } = [];
+    public ResetPrsResult? Prs { get; init; }
+    public ResetWorktreesResult? Worktrees { get; init; }
+    public ResetBranchesResult? Branches { get; init; }
+    public ResetFacetsResult? Facets { get; init; }
+    public ResetManifestResult? Manifest { get; init; }
+    public ResetStateResult? State { get; init; }
+    public bool StateSkipped { get; init; }
+    public string? Error { get; init; }
+}

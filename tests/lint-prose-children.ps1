@@ -6,11 +6,11 @@
     Scans `plans/*.md` for the false-satisfied bug class first surfaced by the
     AB#3064 dogfood: an architect emits a plan whose body lists child work
     items under a `## Child(ren) …` heading but whose YAML front-matter
-    declares neither `apex_facets:` (the explicit-indivisibility marker) nor
+    declares neither `root_facets:` (the explicit-indivisibility marker) nor
     a structured `children:` block. In that shape `polyphony plan
     seed-children` historically stamped the `polyphony:planned` tag with no
-    children created, the requirement-derivation observer treated the apex
-    as `children_seeded=Satisfied`, and the apex terminated as satisfied
+    children created, the requirement-derivation observer treated the root
+    as `children_seeded=Satisfied`, and the root terminated as satisfied
     without ever doing the work.
 
     `polyphony plan seed-children` already refuses this case at run-time
@@ -24,7 +24,7 @@
         1. Detect prose-children indicator: a markdown heading whose text
            starts with `Child` or `Children` (case-insensitive).
         2. If indicator present, REQUIRE at least one of:
-             a. `apex_facets:` key in YAML front-matter.
+             a. `root_facets:` key in YAML front-matter.
              b. `children:` key in YAML front-matter.
         3. Otherwise emit a violation pointing at the heading.
 
@@ -83,7 +83,7 @@ function Test-FrontMatterDeclaresIntent {
     # Front-matter body is lines 2..($FrontMatterEndLine - 1) inclusive
     # (1-based), i.e. indices 1..($FrontMatterEndLine - 2).
     for ($i = 1; $i -lt ($FrontMatterEndLine - 1); $i++) {
-        if ($Lines[$i] -match '^\s*(apex_facets|children)\s*:') {
+        if ($Lines[$i] -match '^\s*(root_facets|children)\s*:') {
             return $true
         }
     }
@@ -151,7 +151,7 @@ foreach ($file in $planFiles) {
 
 if ($violations.Count -eq 0) { exit 0 }
 
-$message = "declares children in prose without front-matter signal — add ``apex_facets:`` (indivisible) or a structured ``children:`` block to the YAML front-matter, OR remove the prose section if children should not exist."
+$message = "declares children in prose without front-matter signal — add ``root_facets:`` (indivisible) or a structured ``children:`` block to the YAML front-matter, OR remove the prose section if children should not exist."
 
 if ($Format -eq 'github') {
     foreach ($v in $violations) {

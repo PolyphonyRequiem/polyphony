@@ -23,7 +23,7 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         var c = cfg ?? Config;
         var walker = new HierarchyWalker(c, Repository);
         var validator = new TransitionValidator(c);
-        return (new BranchCommands(twig, walker, Repository, validator, git, c, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null)), runner);
+        return (new BranchCommands(twig, walker, Repository, validator, git, c, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null), JournalTestSupport.CreateRunContext(), JournalTestSupport.CreateDecorator()), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)
@@ -103,9 +103,9 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         exit.ShouldBe(ExitCodes.Success);
         var result = Deserialize(output);
         result.Action.ShouldBe("implement_item");
-        result.PrimaryId.ShouldBe(300);
-        result.PrimaryTitle.ShouldBe("First Task");
-        result.PrimaryType.ShouldBe("Task");
+        result.RootId.ShouldBe(300);
+        result.RootTitle.ShouldBe("First Task");
+        result.RootType.ShouldBe("Task");
         result.ContainerId.ShouldBe(200);
         result.ContainerTitle.ShouldBe("Issue 1");
         result.ContainerType.ShouldBe("Issue");
@@ -134,7 +134,7 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         var result = Deserialize(output);
 
         result.Action.ShouldBe("all_items_done", $"Output was: {output}");
-        result.PrimaryId.ShouldBe(0);
+        result.RootId.ShouldBe(0);
         result.RemainingCount.ShouldBe(0);
         result.BranchName.ShouldBe("");
     }
@@ -160,7 +160,7 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         var result = Deserialize(output);
 
         result.CurrentMergeGroup.ShouldBe("PG-3");
-        result.PrimaryId.ShouldBe(300);
+        result.RootId.ShouldBe(300);
     }
 
     [Fact]
@@ -197,7 +197,7 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         var result = Deserialize(output);
 
         result.Action.ShouldBe("implement_item", $"Output was: {output}");
-        result.PrimaryId.ShouldBe(300);
+        result.RootId.ShouldBe(300);
         result.ContainerId.ShouldBe(200);
     }
 
@@ -263,9 +263,9 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.NextImpl(workItem: 100, pgName: "PG-1"));
 
-        output.ShouldContain("\"primary_id\"");
-        output.ShouldContain("\"primary_title\"");
-        output.ShouldContain("\"primary_type\"");
+        output.ShouldContain("\"root_id\"");
+        output.ShouldContain("\"root_title\"");
+        output.ShouldContain("\"root_type\"");
         output.ShouldContain("\"container_id\"");
         output.ShouldContain("\"container_title\"");
         output.ShouldContain("\"container_type\"");
@@ -284,7 +284,7 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         // after `twig state` so the staged begin_implementation transition
         // is durable in ADO before the verb returns. Otherwise the staged
         // change is invisible to the next reader (e.g. `polyphony validate`
-        // in `primary_completer`), which reads cache directly without
+        // in `root_completer`), which reads cache directly without
         // syncing first.
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
@@ -325,11 +325,11 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
     public async Task NextImpl_PostSyncStateMismatch_EmitsErrorWithDiagnostics()
     {
         // AB#3189 regression: when `twig state` + `twig sync` both exit 0
-        // but the cache still reports the pre-transition state (apex 3165
+        // but the cache still reports the pre-transition state (root 3165
         // dispatch_items[0] for AB#3172 — observed 12-minute self-heal
         // before second next-impl invocation finally saw Doing), the verb
         // must surface action=error with the task id, transition, and ADO
-        // URL instead of returning success and leaving primary_completer
+        // URL instead of returning success and leaving root_completer
         // to refuse implementation_complete with no diagnostic.
         var runner = new FakeProcessRunner();
         var twig = new TwigClient(runner);
@@ -337,7 +337,7 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         var gh = new GhClient(runner);
         var walker = new HierarchyWalker(Config, Repository);
         var validator = new TransitionValidator(Config);
-        var cmd = new BranchCommands(twig, walker, Repository, validator, git, Config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null));
+        var cmd = new BranchCommands(twig, walker, Repository, validator, git, Config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null), JournalTestSupport.CreateRunContext(), JournalTestSupport.CreateDecorator());
 
         StubSync(runner);
         StubConfig(runner);
@@ -402,55 +402,55 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
     }
 
     [Fact]
-    public async Task NextImpl_ApexRootTaggedImplMergedInMg_ReportsAllItemsDone()
+    public async Task NextImpl_RootRootTaggedImplMergedInMg_ReportsAllItemsDone()
     {
-        // AB#3217 regression: when primary_completer has stamped the
-        // impl-merged-in-mg=<mg-path> marker on the apex root (because the
-        // apex root's terminal transition is deferred to
+        // AB#3217 regression: when root_completer has stamped the
+        // impl-merged-in-mg=<mg-path> marker on the root root (because the
+        // root root's terminal transition is deferred to
         // close_mark_satisfied per AB#3169), next-impl MUST filter that
         // item out and report all_items_done, not re-dispatch the same
-        // apex root for another empty squash that fails the coverage
-        // assertion. Apex 62286666 dogfood: same item came back from
+        // root root for another empty squash that fails the coverage
+        // assertion. Root 62286666 dogfood: same item came back from
         // next-impl three times before the user killed the loop.
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
         StubConfig(runner);
 
-        var apexRoot = new WorkItemBuilder().WithId(100).WithType("Task").WithTitle("Apex")
+        var rootRoot = new WorkItemBuilder().WithId(100).WithType("Task").WithTitle("Root")
             .WithState("Doing").WithTags("polyphony:root; PG-1; polyphony:impl-merged-in-mg=pg-1");
-        await SeedAsync(apexRoot.Build());
+        await SeedAsync(rootRoot.Build());
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.NextImpl(workItem: 100, pgNumber: 1, mgPath: "pg-1"));
         var result = Deserialize(output);
 
         result.Action.ShouldBe("all_items_done", $"Output was: {output}");
-        result.PrimaryId.ShouldBe(0);
+        result.RootId.ShouldBe(0);
         result.RemainingCount.ShouldBe(0);
     }
 
     [Fact]
-    public async Task NextImpl_ApexRootTaggedForDifferentMg_StillDispatches()
+    public async Task NextImpl_RootRootTaggedForDifferentMg_StillDispatches()
     {
-        // Multi-MG hygiene: the marker is per-MG. An apex root that has
+        // Multi-MG hygiene: the marker is per-MG. An root root that has
         // completed its impl in pg-1 can still be the next implementable
-        // for pg-2 (e.g. apex root participates in two parallel MGs).
+        // for pg-2 (e.g. root root participates in two parallel MGs).
         var (cmd, runner) = CreateCommand();
         StubSync(runner);
         StubConfig(runner);
         StubBranch(runner, "");
         ExpectStateTransition(runner, 100, "Doing");
 
-        var apexRoot = new WorkItemBuilder().WithId(100).WithType("Task").WithTitle("Apex")
+        var rootRoot = new WorkItemBuilder().WithId(100).WithType("Task").WithTitle("Root")
             .WithState("To Do").WithTags("polyphony:root; PG-2; polyphony:impl-merged-in-mg=pg-1");
-        await SeedAsync(apexRoot.Build());
+        await SeedAsync(rootRoot.Build());
 
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.NextImpl(workItem: 100, pgNumber: 2, mgPath: "pg-2"));
         var result = Deserialize(output);
 
         result.Action.ShouldBe("implement_item", $"Output was: {output}");
-        result.PrimaryId.ShouldBe(100);
+        result.RootId.ShouldBe(100);
     }
 
     [Fact]
@@ -464,9 +464,9 @@ public sealed class BranchCommandsNextImplTests : CommandTestBase
         StubSync(runner);
         StubConfig(runner);
 
-        var apexRoot = new WorkItemBuilder().WithId(100).WithType("Task").WithTitle("Apex")
+        var rootRoot = new WorkItemBuilder().WithId(100).WithType("Task").WithTitle("Root")
             .WithState("Doing").WithTags("polyphony:root; PG-1; polyphony:impl-merged-in-mg=pg-1");
-        await SeedAsync(apexRoot.Build());
+        await SeedAsync(rootRoot.Build());
 
         var (_, output) = await CaptureConsoleAsync(
             // Caller passes PG-1 (upper) — must still match the stamped pg-1 (lower).

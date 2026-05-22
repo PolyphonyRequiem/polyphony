@@ -909,7 +909,7 @@ function Test-VerbInvocation {
 
         These catch the same class of silent-fail signature drift that PR #159's
         manual audit found across `branch ensure-feature` / `worklist build` /
-        `wave-integrator.ps1`'s `edges check` call sites — the case where the CLI
+        `batch-integrator.ps1`'s `edges check` call sites — the case where the CLI
         exits 0 because ConsoleAppFramework's required-arg path bypasses the
         routing-style envelope (#191).
 

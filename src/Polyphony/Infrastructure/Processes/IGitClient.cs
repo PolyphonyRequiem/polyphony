@@ -141,7 +141,7 @@ public interface IGitClient
     /// "delete failed" (any other non-zero) without losing diagnostic detail.
     /// Does not throw on non-zero exit; only throws if the runner itself
     /// fails (e.g. git binary missing).
-    /// <para>Used by the P9 cascade-remedy <c>recreate</c> path to clean up
+    /// <para>Used by the P9 restack-remedy <c>recreate</c> path to clean up
     /// the head branch of the closed PR before opening a fresh PR. Branch
     /// deletion failure on that path is logged as a warning, not a terminal
     /// error, so the verb consumes <see cref="ProcessResult.Succeeded"/>
@@ -153,7 +153,7 @@ public interface IGitClient
     /// <c>git for-each-ref --format=%(refname:short) refs/heads/{pattern}</c>.
     /// Returns the local branch names matching <paramref name="pattern"/>
     /// (glob — empty list when none). Used by reset-family verbs that
-    /// need to sweep apex-scoped local branches in addition to the
+    /// need to sweep root-scoped local branches in addition to the
     /// origin-side enumeration.
     /// </summary>
     Task<IReadOnlyList<string>> ListLocalBranchesAsync(string pattern, CancellationToken ct = default);
@@ -334,7 +334,7 @@ public interface IGitClient
     /// <c>git merge-base {a} {b}</c>. Returns the trimmed SHA of the best
     /// common ancestor, or null when no merge base exists (disconnected
     /// histories, exit code 1) or when the call fails for any other reason.
-    /// Used by the cascade remedy to compute the <c>oldBase</c> argument
+    /// Used by the restack remedy to compute the <c>oldBase</c> argument
     /// for <see cref="RebaseOntoAsync"/>.
     /// </summary>
     Task<string?> MergeBaseAsync(string a, string b, CancellationToken ct = default);
@@ -358,7 +358,7 @@ public interface IGitClient
     /// actor cannot be silently overwritten.
     ///
     /// <para><b>Returns the raw <see cref="ProcessResult"/></b> so the
-    /// cascade-remedy verb can route on git's exit code and stderr without
+    /// restack-remedy verb can route on git's exit code and stderr without
     /// catching exceptions: a lease failure (stderr contains "stale info" or
     /// "rejected") becomes <c>pr_head_changed</c> in the verb output, while
     /// any other non-zero exit is surfaced as <c>git_failed</c> with the raw

@@ -101,15 +101,15 @@ Describe 'lint-m10-iterate-stable' {
     routes:
       - to: cap_gate
         when: "{{ my_counter.output.cap_reached == true }}"
-      - to: terminal_fallback
+      - to: fallback
 
   - name: cap_gate
     type: human_gate
     prompt: cap
     options:
       - label: continue
-        route: terminal_fallback
-  - name: terminal_fallback
+        route: fallback
+  - name: fallback
     type: script
     command: pwsh
     args: ['-NoProfile', '-Command', 'echo done']
@@ -246,7 +246,7 @@ Describe 'lint-m10-iterate-stable' {
     command: pwsh
     args: ['-NoProfile', '-Command', 'echo "{}"']
     routes:
-      - to: terminal_abort
+      - to: abort
         when: "{{ skip_router.output.mode == 'abort' }}"
       - to: poll_step
         when: "{{ skip_router.output.mode == 'skip' }}"
@@ -263,7 +263,7 @@ Describe 'lint-m10-iterate-stable' {
     prompt: poll
     routes:
       - to: skip_counter
-  - name: terminal_abort
+  - name: abort
     type: script
     command: pwsh
     args: ['-NoProfile', '-Command', 'echo done']

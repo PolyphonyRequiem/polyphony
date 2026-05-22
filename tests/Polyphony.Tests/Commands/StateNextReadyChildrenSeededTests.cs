@@ -22,8 +22,8 @@ namespace Polyphony.Tests.Commands;
 /// <remarks>
 /// <para>
 /// Pre-PR-#3 the verb derived <c>children_seeded</c> from "any non-Done
-/// child" semantics — which mis-labelled an apex with seeded children
-/// (any of which were still in flight) as <c>Fulfilling</c>, and an apex
+/// child" semantics — which mis-labelled an root with seeded children
+/// (any of which were still in flight) as <c>Fulfilling</c>, and an root
 /// where the seeder had legitimately produced zero children (the
 /// indivisible case from §3.4) as <c>Needed</c> for ever. The fix wires
 /// the canonical write-once <c>polyphony:planned</c> tag (set by
@@ -39,7 +39,7 @@ namespace Polyphony.Tests.Commands;
 /// </remarks>
 public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
 {
-    private const int ApexId = 3043;
+    private const int RootId = 3043;
     private const string PlanBranch = "plan/3043";
     private const string OriginUrl = "https://github.com/acme/repo.git";
 
@@ -103,20 +103,20 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
     private async Task SeedApexAsync(string state = "Doing")
     {
         var item = new WorkItemBuilder()
-            .WithId(ApexId).WithType("Issue").WithTitle("Apex 3043").WithState(state).Build();
+            .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState(state).Build();
         await SeedAsync(item);
     }
 
     private async Task SeedApexWithChildrenAsync(int childCount, string childState = "To Do")
     {
-        var apex = new WorkItemBuilder()
-            .WithId(ApexId).WithType("Issue").WithTitle("Apex 3043").WithState("Doing").Build();
-        var children = new List<Twig.Domain.Aggregates.WorkItem> { apex };
+        var root = new WorkItemBuilder()
+            .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState("Doing").Build();
+        var children = new List<Twig.Domain.Aggregates.WorkItem> { root };
         for (var i = 0; i < childCount; i++)
         {
             children.Add(new WorkItemBuilder()
-                .WithId(ApexId + 100 + i).WithType("Task").WithTitle($"Child {i}").WithState(childState)
-                .WithParentId(ApexId).Build());
+                .WithId(RootId + 100 + i).WithType("Task").WithTitle($"Child {i}").WithState(childState)
+                .WithParentId(RootId).Build());
         }
         await SeedAsync(children.ToArray());
     }
@@ -126,16 +126,16 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
     [Fact]
     public async Task NextReady_NoPlannedTag_ChildrenSeededNeeded_RegardlessOfChildCount()
     {
-        // Apex 3043 reproduction: seeder never ran → no tag → children_seeded
+        // Root 3043 reproduction: seeder never ran → no tag → children_seeded
         // must report Needed even though there are zero children. Pre-PR-#3
         // the verb hit the "(0, _, _) => Needed" arm of the legacy switch
         // and got the same answer for the wrong reason.
         await SeedApexAsync();
         var runner = NewRunnerWithPlanBaseline();
-        StubTwigShowWithTags(runner, ApexId, tags: "");
+        StubTwigShowWithTags(runner, RootId, tags: "");
 
         var cmd = CreateCommand(runner, DecomposableIssueConfig());
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -157,10 +157,10 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
         // The tag is the only authoritative signal that the seeder ran.
         await SeedApexWithChildrenAsync(childCount: 3);
         var runner = NewRunnerWithPlanBaseline();
-        StubTwigShowWithTags(runner, ApexId, tags: "polyphony;some-other-tag");
+        StubTwigShowWithTags(runner, RootId, tags: "polyphony;some-other-tag");
 
         var cmd = CreateCommand(runner, DecomposableIssueConfig());
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -177,10 +177,10 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
     {
         await SeedApexWithChildrenAsync(childCount: 3);
         var runner = NewRunnerWithPlanBaseline();
-        StubTwigShowWithTags(runner, ApexId, tags: "polyphony;polyphony:planned");
+        StubTwigShowWithTags(runner, RootId, tags: "polyphony;polyphony:planned");
 
         var cmd = CreateCommand(runner, DecomposableIssueConfig());
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -198,16 +198,16 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
     [Fact]
     public async Task NextReady_PlannedTagPresent_ZeroChildren_ChildrenSeededSatisfied_IndivisibleCase()
     {
-        // The "decomposable but indivisible" apex: planner ran, decided
+        // The "decomposable but indivisible" root: planner ran, decided
         // no children were warranted, stamped polyphony:planned. Pre-PR-#3
         // this returned Needed forever because the legacy switch's
         // (0, _, _) => Needed arm ignored the tag.
         await SeedApexAsync();
         var runner = NewRunnerWithPlanBaseline();
-        StubTwigShowWithTags(runner, ApexId, tags: "polyphony:planned");
+        StubTwigShowWithTags(runner, RootId, tags: "polyphony:planned");
 
         var cmd = CreateCommand(runner, DecomposableIssueConfig());
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -228,10 +228,10 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
         // "not present" reason. The verb must still exit 0.
         await SeedApexAsync();
         var runner = NewRunnerWithPlanBaseline();
-        StubTwigShowError(runner, ApexId);
+        StubTwigShowError(runner, RootId);
 
         var cmd = CreateCommand(runner, DecomposableIssueConfig());
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -249,10 +249,10 @@ public sealed class StateNextReadyChildrenSeededTests : CommandTestBase
         // via PlannedTagFetchError → Needed with a non-empty reason.
         await SeedApexAsync();
         var runner = NewRunnerWithPlanBaseline();
-        StubTwigShowThrows(runner, ApexId);
+        StubTwigShowThrows(runner, RootId);
 
         var cmd = CreateCommand(runner, DecomposableIssueConfig());
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;

@@ -60,7 +60,7 @@ public class EdgeGraphTests
     // -------- single-item graphs ----------------------------------------
 
     [Fact]
-    public void Build_SingleLeaf_NoCrossItemEdges_OneWave()
+    public void Build_SingleLeaf_NoCrossItemEdges_OneBatch()
     {
         var graph = EdgeGraph.Build([Item(100, parentId: 0, "implementable")]);
 
@@ -70,15 +70,15 @@ public class EdgeGraphTests
 
         var waves = graph.ToWaves();
         waves.Count.ShouldBe(1);
-        waves[0].WaveIndex.ShouldBe(0);
+        waves[0].BatchIndex.ShouldBe(0);
         waves[0].ItemIds.ShouldBe([100]);
     }
 
     [Fact]
-    public void Build_PureContainerAlone_OneWave()
+    public void Build_PureContainerAlone_OneBatch()
     {
         // Pure container with no facets — only ItemSatisfied. No children
-        // means no cross-item edges. Dispatchable in wave 0.
+        // means no cross-item edges. Dispatchable in batch 0.
         var graph = EdgeGraph.Build([Container(100, parentId: 0)]);
 
         graph.Edges.ShouldBeEmpty();
@@ -151,7 +151,7 @@ public class EdgeGraphTests
         // Pure container parent + leaf child. The rollup edge
         // (child.ItemSatisfied → parent.ItemSatisfied) targets a non-entry
         // requirement, so it must NOT gate dispatch — both items are in
-        // wave 0 (parent has no children_seeded, child has no unblock edge).
+        // batch 0 (parent has no children_seeded, child has no unblock edge).
         var graph = EdgeGraph.Build([
             Container(100, parentId: 0),
             Item(200, parentId: 100, "implementable"),
@@ -162,7 +162,7 @@ public class EdgeGraphTests
         waves[0].ItemIds.ShouldBe([100, 200]);
     }
 
-    // -------- multi-wave dispatch ----------------------------------------
+    // -------- multi-batch dispatch ----------------------------------------
 
     [Fact]
     public void ToWaves_PlannableParentChild_TwoWaves()
@@ -200,7 +200,7 @@ public class EdgeGraphTests
     public void ToWaves_DeterministicOrderById()
     {
         // Two siblings under one plannable parent — both unblocked by the
-        // parent in wave 1, sorted by id ascending.
+        // parent in batch 1, sorted by id ascending.
         var graph = EdgeGraph.Build([
             Container(100, parentId: 0, "plannable"),
             Item(300, parentId: 100, "implementable"),

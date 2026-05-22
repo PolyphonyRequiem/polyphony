@@ -192,13 +192,13 @@ public sealed class GitClientTests
         // would silently change git's semantics (attach vs create).
         var fake = new FakeProcessRunner();
         fake.WhenExact("git",
-            ["worktree", "add", "/runs/apex-3085/impl-3085-3072", "impl/3085-3072"],
+            ["worktree", "add", "/runs/root-3085/impl-3085-3072", "impl/3085-3072"],
             new ProcessResult(0, "Preparing worktree...\n", ""));
         var client = new GitClient(fake);
 
         var result = await client.WorktreeAddAttachAsync(
             branch: "impl/3085-3072",
-            path: "/runs/apex-3085/impl-3085-3072");
+            path: "/runs/root-3085/impl-3085-3072");
 
         result.Succeeded.ShouldBeTrue();
         var invocation = fake.Invocations.ShouldHaveSingleItem();
@@ -210,11 +210,11 @@ public sealed class GitClientTests
     {
         var fake = new FakeProcessRunner();
         fake.WhenExact("git",
-            ["worktree", "add", "/runs/apex-3085/impl-3085-3072", "impl/3085-3072"],
+            ["worktree", "add", "/runs/root-3085/impl-3085-3072", "impl/3085-3072"],
             new ProcessResult(128, "", "fatal: 'impl/3085-3072' is already checked out at '/elsewhere'\n"));
         var client = new GitClient(fake);
 
-        var result = await client.WorktreeAddAttachAsync("impl/3085-3072", "/runs/apex-3085/impl-3085-3072");
+        var result = await client.WorktreeAddAttachAsync("impl/3085-3072", "/runs/root-3085/impl-3085-3072");
 
         result.Succeeded.ShouldBeFalse();
         result.Stderr.ShouldContain("already checked out");

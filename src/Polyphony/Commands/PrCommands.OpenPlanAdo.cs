@@ -8,6 +8,8 @@ using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.AzureDevOps.Auth;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Manifest;
 
 namespace Polyphony.Commands;
@@ -55,6 +57,8 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body summary (rendered after the front-matter); minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-plan-ado")]
+    [JournaledAction(Action = "pr_open_plan_ado")]
+    [MutatesResource(ResourceKind.AdoPr)]
     [VerbResult(typeof(PrOpenPlanAdoResult))]
     public async Task<int> OpenPlanAdo(
         string organization = "",
@@ -76,6 +80,100 @@ public sealed partial class PrCommands
             ("--root-id", rootId == RequiredInput.MissingInt),
             ("--item-id", itemId == RequiredInput.MissingInt)) is { } halt)
             return halt;
+
+        string jHead = "", jBase = "";
+        if (Branching.RootId.TryParse(rootId, out var jRoot) && WorkItemId.TryParse(itemId, out var jItem))
+        {
+            if (itemId == rootId)
+            {
+                jHead = BranchNameBuilder.RootPlan(jRoot).Value;
+                jBase = BranchNameBuilder.Feature(jRoot).Value;
+            }
+            else if (parentItemId != 0 && parentItemId != itemId && parentItemId != rootId
+                     && WorkItemId.TryParse(parentItemId, out var jParent))
+            {
+                jHead = BranchNameBuilder.DescendantPlan(jRoot, jItem).Value;
+                jBase = BranchNameBuilder.DescendantPlan(jRoot, jParent).Value;
+            }
+            else
+            {
+                jHead = BranchNameBuilder.DescendantPlan(jRoot, jItem).Value;
+                jBase = BranchNameBuilder.RootPlan(jRoot).Value;
+            }
+        }
+
+        PrOpenPlanAdoPayload? payload = null;
+
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_open_plan_ado", BranchPairJournalTarget(jHead, jBase), rootId, itemId),
+            async innerCt =>
+            {
+                var sw = new StringWriter();
+                var originalOut = Console.Out;
+                int exitCode;
+                try
+                {
+                    Console.SetOut(sw);
+                    exitCode = await OpenPlanAdoBodyAsync(organization, project, repository, rootId, itemId, parentItemId, ancestorIds, manifestPath, title, body, innerCt).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                }
+                var output = sw.ToString();
+                Console.Write(output);
+                PrOpenPlanAdoResult? result = null;
+                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrOpenPlanAdoResult); }
+                catch (JsonException) { }
+                payload = result is null
+                    ? new PrOpenPlanAdoPayload { RootId = rootId, ItemId = itemId, ParentItemId = parentItemId, ItemKey = itemId == rootId ? "root" : (itemId > 0 ? itemId.ToString(CultureInfo.InvariantCulture) : ""), IsRootPlan = itemId == rootId, Organization = organization, Project = project, Repository = repository, HeadBranch = jHead, BaseBranch = jBase, ResultAction = "error", Succeeded = false, WasMutated = false, Stale = false, Error = output.Trim() }
+                    : new PrOpenPlanAdoPayload
+                    {
+                        RootId = result.RootId,
+                        ItemId = result.ItemId,
+                        ParentItemId = result.ParentItemId,
+                        ItemKey = result.ItemKey,
+                        IsRootPlan = result.IsRootPlan,
+                        Organization = result.Organization,
+                        Project = result.Project,
+                        Repository = result.Repository,
+                        HeadBranch = result.HeadBranch,
+                        BaseBranch = result.BaseBranch,
+                        RepoSlug = result.RepoSlug,
+                        PrNumber = result.PrNumber,
+                        PrUrl = result.PrUrl,
+                        Title = result.Title,
+                        ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.Stale ? "stale" : (result.Created ? "created" : "reused_existing_pr")),
+                        Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                        WasMutated = result.Created,
+                        Stale = result.Stale,
+                        ErrorCode = result.ErrorCode,
+                        Error = result.Error,
+                    };
+                return exitCode;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenPlanAdoPayload),
+            effectsSelector: _ => SelectOpenPlanAdoEffects(payload),
+            ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task<int> OpenPlanAdoBodyAsync(
+        string organization,
+        string project,
+        string repository,
+        int rootId,
+        int itemId,
+        int parentItemId,
+        string ancestorIds,
+        string manifestPath,
+        string title,
+        string body,
+        CancellationToken ct)
+    {
         var slug = BuildAdoSlug(organization, project, repository);
 
         // ── 1. Validate inputs. ────────────────────────────────────────────
@@ -396,6 +494,7 @@ public sealed partial class PrCommands
             return ExitCodes.Success;
         }
     }
+
 
     private static void EmitOpenPlanAdo(PrOpenPlanAdoResult result)
         => Console.WriteLine(JsonSerializer.Serialize(

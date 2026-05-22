@@ -4,7 +4,7 @@ namespace Polyphony;
 /// Output of <c>polyphony pr assert-impl-pr-coverage</c>: verifies that
 /// the squash-merge of an impl PR onto the MG branch carries the full
 /// cumulative diff of the source impl branch. Defends against AB#3211 —
-/// silent commit drop on squash merge, observed in apex 3165 where
+/// silent commit drop on squash merge, observed in root 3165 where
 /// <c>mg/3165_pg-3176</c> received only 1 of 3 commits' worth of diff
 /// from <c>impl/3165-3176</c>.
 ///

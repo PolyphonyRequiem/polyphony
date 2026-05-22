@@ -323,11 +323,11 @@ public sealed class HierarchyWalkerTests
     [Fact]
     public async Task WalkAsync_ItemWithFacetsOverrideTag_UsesOverrideInsteadOfTypeDefaults()
     {
-        // F11 / indivisible-apex case: architect declared apex_facets:[implementable]
+        // F11 / indivisible-root case: architect declared root_facets:[implementable]
         // in plan front-matter; declare-root stamped polyphony:facets=implementable on
         // the Epic. Walker MUST surface implementable so next-impl/route can pick it up.
         var item = new WorkItemBuilder()
-            .WithId(3064).WithType("Epic").WithTitle("Indivisible apex")
+            .WithId(3064).WithType("Epic").WithTitle("Indivisible root")
             .WithState("To Do").WithTags("polyphony:facets=implementable; polyphony:planned; polyphony:root")
             .Build();
 

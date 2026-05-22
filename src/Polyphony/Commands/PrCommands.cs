@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
@@ -6,6 +7,8 @@ using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Paths;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Routing;
 using Twig.Domain.Interfaces;
 
@@ -37,8 +40,13 @@ public sealed partial class PrCommands(
     Polyphony.Locking.RunLockPathResolver lockPathResolver,
     PolyphonyStatePaths statePaths,
     Polyphony.Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
+    RunContext runContext,
+    JournaledActionDecorator decorator,
     IAdoClient? ado = null)
 {
+    private readonly RunContext _runContext = runContext;
+    private readonly JournaledActionDecorator _journalDecorator = decorator;
+
     private static readonly Regex PullUrlRegex =
         new(@"/pull/(\d+)", RegexOptions.Compiled);
     private static readonly Regex GitHubSlugRegex =
@@ -55,6 +63,8 @@ public sealed partial class PrCommands(
     /// <param name="title">Optional PR title; auto-generated from the work item when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("create-feature-pr")]
+    [JournaledAction(Action = "pr_create_feature_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
     [VerbResult(typeof(PrCreateFeatureResult))]
     public async Task<int> CreateFeaturePr(
         int workItem = RequiredInput.MissingInt,
@@ -75,94 +85,181 @@ public sealed partial class PrCommands(
             return ExitCodes.ConfigError;
         }
 
-        try
-        {
-            // Optional consistency check against polyphony's own routing hint.
-            try
+        PrCreateFeaturePrPayload? payload = null;
+
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation(
+                "pr_create_feature_pr",
+                BranchPairJournalTarget(featureBranch, targetBranch),
+                workItem,
+                workItem),
+            async innerCt =>
             {
-                var item = await repository.GetByIdAsync(workItem, ct).ConfigureAwait(false);
-                if (item is not null)
+                try
                 {
-                    var hint = BranchNameResolver.Resolve(processConfig, item);
-                    if (!string.IsNullOrEmpty(hint?.FeatureBranch)
-                        && !string.Equals(hint.FeatureBranch, featureBranch, StringComparison.Ordinal))
+                    // Optional consistency check against polyphony's own routing hint.
+                    try
                     {
-                        Console.Error.WriteLine(
-                            $"WARNING: workspace_hint feature_branch '{hint.FeatureBranch}' differs from supplied "
-                            + $"FeatureBranch '{featureBranch}'");
+                        var item = await repository.GetByIdAsync(workItem, innerCt).ConfigureAwait(false);
+                        if (item is not null)
+                        {
+                            var hint = BranchNameResolver.Resolve(processConfig, item);
+                            if (!string.IsNullOrEmpty(hint?.FeatureBranch)
+                                && !string.Equals(hint.FeatureBranch, featureBranch, StringComparison.Ordinal))
+                            {
+                                Console.Error.WriteLine(
+                                    $"WARNING: workspace_hint feature_branch '{hint.FeatureBranch}' differs from supplied "
+                                    + $"FeatureBranch '{featureBranch}'");
+                            }
+                        }
                     }
+                    catch { }
+
+                    var heads = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{featureBranch}", innerCt).ConfigureAwait(false);
+                    if (heads.Count == 0)
+                    {
+                        var error = $"Feature branch '{featureBranch}' does not exist on remote";
+                        payload = new PrCreateFeaturePrPayload
+                        {
+                            WorkItemId = workItem,
+                            FeatureBranch = featureBranch,
+                            TargetBranch = targetBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitError(error);
+                        return ExitCodes.RoutingFailure;
+                    }
+
+                    var slug = await TryResolveSlugAsync(innerCt).ConfigureAwait(false);
+                    if (string.IsNullOrEmpty(slug))
+                    {
+                        const string error = "Could not resolve repo slug from origin remote";
+                        payload = new PrCreateFeaturePrPayload
+                        {
+                            WorkItemId = workItem,
+                            FeatureBranch = featureBranch,
+                            TargetBranch = targetBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitError(error);
+                        return ExitCodes.RoutingFailure;
+                    }
+
+                    var prTitle = string.IsNullOrWhiteSpace(title)
+                        ? await ResolvePrTitleAsync(workItem, innerCt).ConfigureAwait(false)
+                        : title;
+                    var body = await BuildPrBodyAsync(workItem, featureBranch, targetBranch, innerCt).ConfigureAwait(false);
+
+                    var existing = await gh.ListPullRequestsAsync(
+                        slug,
+                        new PrListFilters(Head: featureBranch, Base: targetBranch, State: "open", Limit: 1),
+                        innerCt).ConfigureAwait(false);
+                    if (existing.Count > 0)
+                    {
+                        var found = existing[0];
+                        var reuseResult = new PrCreateFeatureResult
+                        {
+                            PrNumber = found.Number,
+                            PrUrl = found.Url ?? "",
+                            Title = prTitle,
+                            DescriptionSummary = "Reusing existing open feature PR",
+                            Created = false,
+                        };
+                        payload = new PrCreateFeaturePrPayload
+                        {
+                            WorkItemId = workItem,
+                            FeatureBranch = featureBranch,
+                            TargetBranch = targetBranch,
+                            RepoSlug = slug,
+                            PrNumber = reuseResult.PrNumber,
+                            PrUrl = reuseResult.PrUrl,
+                            Title = reuseResult.Title,
+                            ResultAction = "reused_existing_pr",
+                            Succeeded = true,
+                            WasMutated = false,
+                        };
+                        Emit(reuseResult);
+                        return ExitCodes.Success;
+                    }
+
+                    var url = await gh.CreatePullRequestAsync(slug, targetBranch, featureBranch, prTitle, body, innerCt)
+                        .ConfigureAwait(false);
+                    if (string.IsNullOrWhiteSpace(url))
+                    {
+                        const string error = "gh pr create failed — no URL returned";
+                        payload = new PrCreateFeaturePrPayload
+                        {
+                            WorkItemId = workItem,
+                            FeatureBranch = featureBranch,
+                            TargetBranch = targetBranch,
+                            RepoSlug = slug,
+                            Title = prTitle,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitError(error);
+                        return ExitCodes.RoutingFailure;
+                    }
+
+                    var trimmedUrl = url.Trim();
+                    var prNumber = ExtractPrNumber(trimmedUrl);
+
+                    var createdResult = new PrCreateFeatureResult
+                    {
+                        PrNumber = prNumber,
+                        PrUrl = trimmedUrl,
+                        Title = prTitle,
+                        DescriptionSummary = $"Feature PR created: {featureBranch} -> {targetBranch}",
+                        Created = true,
+                    };
+                    payload = new PrCreateFeaturePrPayload
+                    {
+                        WorkItemId = workItem,
+                        FeatureBranch = featureBranch,
+                        TargetBranch = targetBranch,
+                        RepoSlug = slug,
+                        PrNumber = createdResult.PrNumber,
+                        PrUrl = createdResult.PrUrl,
+                        Title = createdResult.Title,
+                        ResultAction = "created",
+                        Succeeded = true,
+                        WasMutated = true,
+                    };
+                    Emit(createdResult);
+                    return ExitCodes.Success;
                 }
-            }
-            catch { /* non-fatal — branch validation is best-effort */ }
-
-            var heads = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{featureBranch}", ct).ConfigureAwait(false);
-            if (heads.Count == 0)
-            {
-                EmitError($"Feature branch '{featureBranch}' does not exist on remote");
-                return ExitCodes.RoutingFailure;
-            }
-
-            var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(slug))
-            {
-                EmitError("Could not resolve repo slug from origin remote");
-                return ExitCodes.RoutingFailure;
-            }
-
-            var prTitle = string.IsNullOrWhiteSpace(title)
-                ? await ResolvePrTitleAsync(workItem, ct).ConfigureAwait(false)
-                : title;
-            var body = await BuildPrBodyAsync(workItem, featureBranch, targetBranch, ct).ConfigureAwait(false);
-
-            // Reuse an existing open PR for the same head/base pair if one exists.
-            var existing = await gh.ListPullRequestsAsync(
-                slug,
-                new PrListFilters(Head: featureBranch, Base: targetBranch, State: "open", Limit: 1),
-                ct).ConfigureAwait(false);
-            if (existing.Count > 0)
-            {
-                var found = existing[0];
-                var reuseResult = new PrCreateFeatureResult
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
                 {
-                    PrNumber = found.Number,
-                    PrUrl = found.Url ?? "",
-                    Title = prTitle,
-                    DescriptionSummary = "Reusing existing open feature PR",
-                    Created = false,
-                };
-                Emit(reuseResult);
-                return ExitCodes.Success;
-            }
-
-            // Create the PR.
-            var url = await gh.CreatePullRequestAsync(slug, targetBranch, featureBranch, prTitle, body, ct)
-                .ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(url))
-            {
-                EmitError("gh pr create failed — no URL returned");
-                return ExitCodes.RoutingFailure;
-            }
-
-            var trimmedUrl = url.Trim();
-            var prNumber = ExtractPrNumber(trimmedUrl);
-
-            var createdResult = new PrCreateFeatureResult
-            {
-                PrNumber = prNumber,
-                PrUrl = trimmedUrl,
-                Title = prTitle,
-                DescriptionSummary = $"Feature PR created: {featureBranch} -> {targetBranch}",
-                Created = true,
-            };
-            Emit(createdResult);
-            return ExitCodes.Success;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            EmitError(ex.Message);
-            return ExitCodes.RoutingFailure;
-        }
+                    payload = new PrCreateFeaturePrPayload
+                    {
+                        WorkItemId = workItem,
+                        FeatureBranch = featureBranch,
+                        TargetBranch = targetBranch,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        Error = ex.Message,
+                    };
+                    EmitError(ex.Message);
+                    return ExitCodes.RoutingFailure;
+                }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrCreateFeaturePrPayload),
+            effectsSelector: _ => SelectCreateFeaturePrEffects(payload),
+            ct: ct).ConfigureAwait(false);
     }
 
     private async Task<string> ResolvePrTitleAsync(int workItem, CancellationToken ct)
@@ -244,4 +341,50 @@ public sealed partial class PrCommands(
         };
         Emit(result);
     }
+
+    private JournaledActionInvocation CreateJournalInvocation(
+        string action,
+        string target,
+        int? rootId = null,
+        int? workItemId = null,
+        string? payloadJson = null)
+        => new()
+        {
+            RunId = _runContext.RunId,
+            RootId = rootId,
+            WorkItemId = workItemId,
+            Action = action,
+            Target = target,
+            PayloadJson = payloadJson,
+        };
+
+    private static JournalOutcome SelectJournalOutcome(int exitCode, bool succeeded, bool wasMutated)
+    {
+        if (exitCode != ExitCodes.Success || !succeeded)
+        {
+            return JournalOutcome.Failure;
+        }
+
+        return wasMutated ? JournalOutcome.Success : JournalOutcome.NoOp;
+    }
+
+    private static string? SerializePayload<TPayload>(TPayload? payload, JsonTypeInfo<TPayload> jsonTypeInfo)
+        where TPayload : class
+        => payload is null ? null : JsonSerializer.Serialize(payload, jsonTypeInfo);
+
+    private static string PullRequestJournalTarget(int prNumber)
+        => prNumber > 0 ? $"pr#{prNumber}" : string.Empty;
+
+    private static string PullRequestJournalTarget(string prUrl, int prNumber)
+        => !string.IsNullOrWhiteSpace(prUrl) ? prUrl : PullRequestJournalTarget(prNumber);
+
+    private static string PullRequestCommentJournalTarget(string prUrl, int prNumber, int? commentId)
+        => !string.IsNullOrWhiteSpace(prUrl)
+            ? (commentId is > 0 ? $"{prUrl}#comment-{commentId.Value}" : prUrl)
+            : PullRequestJournalTarget(prNumber);
+
+    private static string BranchPairJournalTarget(string headBranch, string baseBranch)
+        => string.IsNullOrWhiteSpace(headBranch) || string.IsNullOrWhiteSpace(baseBranch)
+            ? string.Empty
+            : $"{headBranch}->{baseBranch}";
 }

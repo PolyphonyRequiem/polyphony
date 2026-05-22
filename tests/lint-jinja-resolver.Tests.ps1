@@ -439,7 +439,8 @@ Describe 'lint-jinja-resolver.ps1 — verb invocation diagnostics (CR+CRL)' {
 
     Context 'VERB003 — missing required input' {
         It 'flags a required input that is threaded by neither --flag nor positional' {
-            $r = Invoke-Lint -WorkflowsDir $script:SyntheticDir -OnlyFile 'VERB003-missing-required.yaml'
+            $synthRegistry = Join-Path $script:FixturesDir 'verb-output-schemas-verb003.json'
+            $r = Invoke-Lint -WorkflowsDir $script:SyntheticDir -OnlyFile 'VERB003-missing-required.yaml' -RegistryPath $synthRegistry
             $r.ExitCode | Should -Be 1
             $r.Output | Should -Match 'VERB003'
             $r.Output | Should -Match "does not thread required input '--work-item'"

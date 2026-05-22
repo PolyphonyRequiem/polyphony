@@ -35,7 +35,7 @@ public sealed class PrCommandsCheckEvidenceFloorAdoTests : CommandTestBase
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
             new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
-            new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
+            new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateRunContext(), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateDecorator(),
             ado);
         return (cmd, runner, ado);
     }

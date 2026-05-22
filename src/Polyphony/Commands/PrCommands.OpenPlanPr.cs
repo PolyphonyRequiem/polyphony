@@ -5,6 +5,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Manifest;
 
 namespace Polyphony.Commands;
@@ -24,7 +26,7 @@ public sealed partial class PrCommands
     /// the verb fetches its body, parses the embedded snapshot, and:
     /// <list type="bullet">
     ///   <item>If the snapshot matches the current manifest, returns the existing PR (<c>created=false, stale=false</c>) — the verb is idempotent.</item>
-    ///   <item>If the snapshot is stale (any ancestor's manifest generation has advanced past the embedded value), returns <c>created=false, stale=true</c> with a non-zero exit code so the operator can decide. The verb refuses to silently rewrite the PR body — that's a P9 concern (ancestor cascade).</item>
+    ///   <item>If the snapshot is stale (any ancestor's manifest generation has advanced past the embedded value), returns <c>created=false, stale=true</c> with a non-zero exit code so the operator can decide. The verb refuses to silently rewrite the PR body — that's a P9 concern (ancestor restack).</item>
     /// </list>
     /// Fails with <c>RoutingFailure</c> when the head/base branch is missing on the remote, or with <c>CacheError</c> when the manifest cannot be read from <c>origin/feature/{root}</c>.
     /// </summary>
@@ -37,6 +39,8 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body summary (rendered after the front-matter); minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-plan-pr")]
+    [JournaledAction(Action = "pr_open_plan_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
     [VerbResult(typeof(PrOpenPlanPrResult))]
     public async Task<int> OpenPlanPr(
         int rootId = RequiredInput.MissingInt,
@@ -52,6 +56,109 @@ public sealed partial class PrCommands
             ("--root-id", rootId == RequiredInput.MissingInt),
             ("--item-id", itemId == RequiredInput.MissingInt)) is { } halt)
             return halt;
+
+        string jHead = "", jBase = "";
+        if (Branching.RootId.TryParse(rootId, out var jRoot) && WorkItemId.TryParse(itemId, out var jItem))
+        {
+            if (itemId == rootId)
+            {
+                jHead = BranchNameBuilder.RootPlan(jRoot).Value;
+                jBase = BranchNameBuilder.Feature(jRoot).Value;
+            }
+            else if (parentItemId != 0 && parentItemId != itemId && parentItemId != rootId
+                     && WorkItemId.TryParse(parentItemId, out var jParent))
+            {
+                jHead = BranchNameBuilder.DescendantPlan(jRoot, jItem).Value;
+                jBase = BranchNameBuilder.DescendantPlan(jRoot, jParent).Value;
+            }
+            else
+            {
+                jHead = BranchNameBuilder.DescendantPlan(jRoot, jItem).Value;
+                jBase = BranchNameBuilder.RootPlan(jRoot).Value;
+            }
+        }
+
+        PrOpenPlanPrPayload? payload = null;
+
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_open_plan_pr", BranchPairJournalTarget(jHead, jBase), rootId, itemId),
+            async innerCt =>
+            {
+                var sw = new StringWriter();
+                var originalOut = Console.Out;
+                int exitCode;
+                try
+                {
+                    Console.SetOut(sw);
+                    exitCode = await OpenPlanPrBodyAsync(rootId, itemId, parentItemId, ancestorIds, manifestPath, title, body, innerCt).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                }
+                var output = sw.ToString();
+                Console.Write(output);
+                PrOpenPlanPrResult? result = null;
+                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrOpenPlanPrResult); }
+                catch (JsonException) { }
+                payload = result is null
+                    ? new PrOpenPlanPrPayload
+                    {
+                        RootId = rootId,
+                        ItemId = itemId,
+                        ParentItemId = parentItemId,
+                        ItemKey = itemId == rootId ? "root" : (itemId > 0 ? itemId.ToString(CultureInfo.InvariantCulture) : ""),
+                        IsRootPlan = itemId == rootId,
+                        HeadBranch = jHead,
+                        BaseBranch = jBase,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        Stale = false,
+                        Error = output.Trim(),
+                    }
+                    : new PrOpenPlanPrPayload
+                    {
+                        RootId = result.RootId,
+                        ItemId = result.ItemId,
+                        ParentItemId = result.ParentItemId,
+                        ItemKey = result.ItemKey,
+                        IsRootPlan = result.IsRootPlan,
+                        HeadBranch = result.HeadBranch,
+                        BaseBranch = result.BaseBranch,
+                        RepoSlug = result.RepoSlug,
+                        PrNumber = result.PrNumber,
+                        PrUrl = result.PrUrl,
+                        Title = result.Title,
+                        ResultAction = result.Error is not null ? "error"
+                            : (result.Stale ? "stale"
+                            : (result.Created ? "created" : "reused_existing_pr")),
+                        Succeeded = result.Error is null && !result.Stale,
+                        WasMutated = result.Created,
+                        Stale = result.Stale,
+                        Error = result.Error,
+                    };
+                return exitCode;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenPlanPrPayload),
+            effectsSelector: _ => SelectOpenPlanPrEffects(payload),
+            ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task<int> OpenPlanPrBodyAsync(
+        int rootId,
+        int itemId,
+        int parentItemId,
+        string ancestorIds,
+        string manifestPath,
+        string title,
+        string body,
+        CancellationToken ct)
+    {
 
         // ── 1. Validate input + derive head/base + ancestor chain. ────────
         if (!Branching.RootId.TryParse(rootId, out var root))
@@ -297,6 +404,7 @@ public sealed partial class PrCommands
             return ExitCodes.RoutingFailure;
         }
     }
+
 
     /// <summary>
     /// Parse the comma-separated ancestor chain. Mirrors the validation

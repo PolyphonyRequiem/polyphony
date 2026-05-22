@@ -1,11 +1,11 @@
-# Run-reset: per-apex run watermark + observer filter + proactive cleanup
+# Run-reset: per-root run watermark + observer filter + proactive cleanup
 
 **Status:** Accepted (PR 1 of 3)
 **Date:** 2026-05-17
 
 ## Context
 
-`polyphony state next-ready` decides whether an apex (and each item beneath
+`polyphony state next-ready` decides whether an root (and each item beneath
 it) is `satisfied` by **observing** the world: it queries ADO/GitHub for the
 latest PR on the canonical branch (`plan/{root}`, `impl/{root}-{item}`,
 `feature/{root}`) and reduces the per-kind observations into a disposition.
@@ -18,29 +18,29 @@ This is correct for the first run. It fails on the **redo** path:
   not deleted; GitHub PRs can be closed but the record persists.
 - When the observer queries by branch, it finds the **prior** run's merged
   PR and emits `Satisfied`.
-- The driver refuses to dispatch a satisfied apex.
+- The driver refuses to dispatch a satisfied root.
 
-Concrete instance: apex 62286666 hit a 4000-char ADO description bug on
+Concrete instance: root 62286666 hit a 4000-char ADO description bug on
 v2.4.6, we shipped fixes in v2.4.7+, we want to redo the run. The previous
 plan PR #15605689 and impl PR #15606101 are both merged; the feature PR was
-abandoned but the apex is still "Started" in ADO. Every redispatch attempt
+abandoned but the root is still "Started" in ADO. Every redispatch attempt
 short-circuits to `satisfied` because the observer can't tell "current run"
 from "any prior run."
 
 ## Decision
 
-Introduce a **per-apex run watermark** plus an **observer filter**.
+Introduce a **per-root run watermark** plus an **observer filter**.
 
 ### Watermark
 
-Single tag on the apex root work item:
+Single tag on the root root work item:
 
 ```
 polyphony:run-started-at=<ISO-8601-UTC>
 ```
 
 Stamped by `polyphony reset state` (PR 2). Re-stamped on every subsequent
-reset. **Not** stamped on a fresh apex's first dispatch — fresh apexes
+reset. **Not** stamped on a fresh root's first dispatch — fresh apexes
 have no prior PRs to filter, so absent-tag = no-filter is the correct
 no-op semantics.
 
@@ -72,7 +72,7 @@ diagnostic reason naming both timestamps.
 
 The watermark fetch (`PlanObserver.ReadRunStartedAtAsync`) throws
 `InvalidOperationException` when `twig show` returns null — the only
-way that happens is a twig-process failure, since the apex root is
+way that happens is a twig-process failure, since the root root is
 known to exist by the time we get here. The composers capture the
 exception into `NextReadyObservationScope.RunStartedAtFetchError` and
 **force all four plan-state composers to `Needed`** with a fetch-error
@@ -98,7 +98,7 @@ run manifest lives at `feature/{root}:.polyphony/run.yaml`.
 ### Positive
 
 - **Reset becomes structurally complete.** After PR 2's `reset state`
-  stamps a fresh `run-started-at`, every observer query for the apex flips
+  stamps a fresh `run-started-at`, every observer query for the root flips
   to `Needed` for the prior PRs — the driver can re-dispatch cleanly.
 - **No migration burden.** Existing apexes work as before until they're
   explicitly reset; the absent-tag path preserves all current semantics.
@@ -201,11 +201,11 @@ populated by the server — no per-PR write needed.
 
 - `polyphony reset state` verb (the only writer of the watermark).
 - Full reset verb family (`reset prs`, `reset worktrees`, `reset branches`,
-  `reset facets`, `reset manifest`, `reset state`, composite `reset apex`).
+  `reset facets`, `reset manifest`, `reset state`, composite `reset root`).
 
 **Out of scope for PR 1, planned for PR 3:**
 
-- `reset-apex.yaml` workflow.
+- `reset-root.yaml` workflow.
 - `Invoke-PolyphonySdlc.ps1 -Intent reset -ToStage planning` launcher
   mode.
 - Default `--delete-branch true` for merge-group and plan PR merges.
@@ -219,18 +219,18 @@ Ships six verbs under the `polyphony reset` verb group:
 | Verb                  | Role                                                     |
 | --------------------- | -------------------------------------------------------- |
 | `reset state`         | **Sole** writer of the `polyphony:run-started-at=*` tag. |
-| `reset prs`           | Abandon every open PR in the apex's polyphony scope.     |
-| `reset branches`      | Delete every apex-scoped branch on origin and locally.   |
-| `reset worktrees`     | Remove every git worktree under `{runs_root}/apex-{N}/`. |
-| `reset facets`        | Strip persisted planning tags (`polyphony:facets=*`, `polyphony:planned`) from the apex subtree. |
+| `reset prs`           | Abandon every open PR in the root's polyphony scope.     |
+| `reset branches`      | Delete every root-scoped branch on origin and locally.   |
+| `reset worktrees`     | Remove every git worktree under `{runs_root}/root-{N}/`. |
+| `reset facets`        | Strip persisted planning tags (`polyphony:facets=*`, `polyphony:planned`) from the root subtree. |
 | `reset manifest`      | Read-only inspection (clearing deferred — see below).    |
-| `reset apex`          | Composite: `prs → worktrees → branches → facets → manifest → state`. |
+| `reset root`          | Composite: `prs → worktrees → branches → facets → manifest → state`. |
 
 ### Convention divergence: dry-run by default, `--execute` opt-in
 
 Every reset verb defaults to **dry-run**; the operator must pass
 `--execute` to mutate state. This diverges from the existing
-`WorktreeCommands.InitApex` convention (`--dry-run` opt-in). The reset
+`WorktreeCommands.InitRoot` convention (`--dry-run` opt-in). The reset
 family is failsafe because the per-verb actions are destructive across
 multiple boundaries simultaneously (ADO PRs, git branches, filesystem
 worktrees) and partial damage is hard to undo. Rubber-duck flagged this
@@ -252,7 +252,7 @@ envelope before committing.
 3. **branches before facets** — facets are persisted planning
    decisions stamped on work items by the planner. Cleaning those tags
    only makes sense once the plan branch and its PR are gone; otherwise
-   the apex remains in a paradoxical state (plan branch exists but the
+   the root remains in a paradoxical state (plan branch exists but the
    work item declares "planning already done"). See
    §"Why facets cleanup is separate from watermark" below.
 4. **manifest after facets** — the manifest lives on `feature/{N}`,
@@ -269,15 +269,15 @@ envelope before committing.
 
 ### Why facets cleanup is separate from watermark
 
-**Incident, apex 62286666 (2026-05-18):** an operator ran
-`polyphony reset apex --execute` after a failed first run, then
+**Incident, root 62286666 (2026-05-18):** an operator ran
+`polyphony reset root --execute` after a failed first run, then
 re-dispatched with `-Intent new`. The new run skipped the plan-level
 sub-workflow entirely and went straight to `implement-merge-group` —
 without ever surfacing the plan gate the operator expected to review.
 The classifier was correct: it read `polyphony:facets=implementable`
-from the apex work item and concluded "planning already done". The
+from the root work item and concluded "planning already done". The
 tag had been stamped by the prior run's `polyphony plan seed-children`
-when the architect declared `apex_facets: [implementable]` in plan
+when the architect declared `root_facets: [implementable]` in plan
 front-matter. The reset chain cleaned the plan branch + plan PR but
 left the tag stamped, so the next run's classifier saw a stale
 "planning done" decision over a phantom plan that no longer existed.
@@ -290,7 +290,7 @@ marker are NOT PR observations — they are **persisted planning
 decisions** stamped directly on the work item. A watermark cannot
 demote them, so a separate reset step is required.
 
-`reset facets` walks the apex subtree (via `HierarchyWalker`, max
+`reset facets` walks the root subtree (via `HierarchyWalker`, max
 depth 16) and strips:
 
 - Every `polyphony:facets=<csv>` tag (the per-item facet override
@@ -329,7 +329,7 @@ Two implementation patterns are deliberately non-obvious:
   to track whether a discovered branch lives on origin, locally, or
   both. This lets a single per-branch loop emit the right delete
   command on each side without doubling up the enumeration.
-- `ResetCommands.Apex.cs` uses a `Console.SetOut` **capture-and-reparse**
+- `ResetCommands.Root.cs` uses a `Console.SetOut` **capture-and-reparse**
   pattern to call each public sub-verb from the composite. The verbs
   emit their own JSON envelope as the last step, so the composite swaps
   in a `StringWriter`, invokes the verb, and parses its output back
@@ -365,29 +365,29 @@ Tracked as future work; not blocking PR 2.
 
 Closes the redispatch dead-end documented at the top of this ADR. The
 verbs in PR 2 are now reachable from an operator-friendly path:
-`./scripts/Invoke-PolyphonySdlc.ps1 -ApexId N -Intent reset [-Execute]`.
+`./scripts/Invoke-PolyphonySdlc.ps1 -RootId N -Intent reset [-Execute]`.
 
-### `reset-apex@polyphony` workflow
+### `reset-root@polyphony` workflow
 
-`.conductor/registry/workflows/reset-apex.yaml` — 5-terminal shallow
-workflow that drives `polyphony reset apex` through a preview → confirm
-→ execute pipeline. Inputs: `apex_id` (required), `execute` (default
+`.conductor/registry/workflows/reset-root.yaml` — 5-terminal shallow
+workflow that drives `polyphony reset root` through a preview → confirm
+→ execute pipeline. Inputs: `root_id` (required), `execute` (default
 `false`), `auto_confirm` (default `false`), `skip_state` (default
 `false`), `comment` (default empty string).
 
 Flow:
 
-1. `preview` — always dry-run. Routes to `terminal_failure_preview` if
+1. `preview` — always dry-run. Routes to `failure_preview` if
    `preview.output.success == false` (operator must investigate before
-   mutation), `terminal_success_preview_only` when `execute=false`,
+   mutation), `success_preview_only` when `execute=false`,
    `execute` step when `auto_confirm=true`, or the confirmation gate
    otherwise.
 2. `confirm_gate` — human gate showing the preview's per-leg counts.
    Operator picks **Execute** (→ execute step) or **Abort** (→
-   `terminal_success_aborted` with no mutations).
-3. `execute` — re-invokes `polyphony reset apex --execute`. Routes to
-   `terminal_failure_execute` on chain failure,
-   `terminal_success_executed` otherwise.
+   `success_aborted` with no mutations).
+3. `execute` — re-invokes `polyphony reset root --execute`. Routes to
+   `failure_execute` on chain failure,
+   `success_executed` otherwise.
 
 The dry-run-by-default contract is enforced at three layers — verb
 default, workflow input default, launcher switch — so an operator who
@@ -405,16 +405,16 @@ parameters: `-Execute`, `-AutoConfirm`, `-SkipState`, `-Comment`.
 Reset-only parameters throw when supplied with any other intent;
 reset intent rejects `-WorktreeRoot` / `-GitRepo` / `-Repository` /
 `-RepoOrganization` / `-RepoProject` (the reset workflow operates from
-the operator's cwd and resolves apex state internally — silently
+the operator's cwd and resolves root state internally — silently
 ignoring those would mask what the workflow actually does).
 
 The reset path diverts immediately after Phase 2 (bare-repo preflight)
 and skips every subsequent phase: terminal-state refusal (we WANT to
-operate on completed items), init-apex (we are tearing down worktrees,
+operate on completed items), init-root (we are tearing down worktrees,
 not creating them), worktree hydration, assert-clean, and the
 destination-worktree preflight. Conductor runs from the operator's
 current cwd with the same web-port pinning + new-window + transcript +
-exit-sidecar shape as the apex-driver path, so the operator's UX
+exit-sidecar shape as the polyphony path, so the operator's UX
 (dashboard URL banner, tail-friendly transcript, machine-readable exit
 JSON) is unchanged.
 
@@ -434,7 +434,7 @@ chain needs `GH_TOKEN` exported to the conductor child process.
 3. **Residual gotchas.** Operator-introduced edge cases the automation
    cannot handle: uncommitted edits in worktrees, twig.config drift,
    manually-curated work-item state, completed-PR irreversibility.
-4. **Post-reset smoke test.** `validate-config`, validate apex, branch
+4. **Post-reset smoke test.** `validate-config`, validate root, branch
    / worktree enumeration, re-launch.
 
 The deleted sections (5-axis state inventory, cleanup ordering, per-
@@ -444,7 +444,7 @@ the operator no longer needs to know the ordering because the workflow
 
 ### Files touched
 
-- `.conductor/registry/workflows/reset-apex.yaml` — NEW (workflow)
+- `.conductor/registry/workflows/reset-root.yaml` — NEW (workflow)
 - `scripts/Invoke-PolyphonySdlc.ps1` — added 4 reset-only params,
   reset-only param guard, and the reset-intent diversion block
 - `.github/skills/polyphony-dogfood-recovery/SKILL.md` — full rewrite
@@ -455,9 +455,9 @@ the operator no longer needs to know the ordering because the workflow
 
 - Branch deletion on PR merge (proactive hygiene) — separate PR; the
   reset workflow handles it for the historical case.
-- `apex_completion_gate` vestige removal — separate small PR; the
+- `root_completion_gate` vestige removal — separate small PR; the
   reset workflow lets us redispatch past it but does not delete it.
-- `feature-pr` abandon propagation to apex state — separate PR.
+- `feature-pr` abandon propagation to root state — separate PR.
 - Lint coverage for reset workflow YAML — relying on
   `conductor validate` for now; will revisit if false-positive
   regressions surface in dogfood.

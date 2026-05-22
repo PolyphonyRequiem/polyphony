@@ -112,7 +112,7 @@ workflow:
     # poll_status routes straight to merge_plan_pr. The
     # extract_renegotiation_flag step still runs post-merge so the
     # workflow's `renegotiation_pending` output is always populated for
-    # future callers (apex-driver) regardless of whether scope was
+    # future callers (polyphony) regardless of whether scope was
     # supplied.
     #
     # See docs/decisions/scope-renegotiation.md (handler design — workflow
@@ -134,10 +134,10 @@ tools:
 
 # ── Workflow output (Phase 3 P8c — scope renegotiation handler) ──────────
 #
-# Bubble-up outputs consumed by the (forthcoming) apex-driver workflow.
+# Bubble-up outputs consumed by the (forthcoming) polyphony workflow.
 # Per M7, sub-workflow outputs are the only surface a parent workflow can
 # read; we explicitly export the renegotiation + scope-validation result
-# so apex-driver can decide whether to re-enter parent planning. Per M3
+# so polyphony can decide whether to re-enter parent planning. Per M3
 # (StrictUndefined) every reference is guarded with `is defined` because
 # only ONE of the validate_scope / merge legs runs in any execution. Per
 # M7 booleans are piped through `| string | lower` so the parent receives
@@ -158,7 +158,7 @@ tools:
 #
 # Design rationale — option (C) in docs/decisions/scope-renegotiation.md
 # (handler design — workflow output bubble-up). Today plan-level has no
-# caller, so these outputs go nowhere; that is intentional. apex-driver
+# caller, so these outputs go nowhere; that is intentional. polyphony
 # (a downstream PR) consumes them.
 output:
   # FlagPresent is `required bool` in PlanExtractRenegotiationFlagResult
@@ -219,13 +219,13 @@ agents:
   #                          operator acknowledgement
   #   • `auto_proceed`     → silent acknowledge → $end (planning of this
   #                          branch stops without operator input)
-  #   • `auto_fail`        → terminal_cap_auto_fail (NOT terminal_abort_run —
+  #   • `auto_fail`        → cap_auto_fail (NOT abort_run —
   #                          honest about who decided to halt)
   #
   # The shared helper degrades to `cap_mode = 'manual'` on any policy /
   # CLI failure (with `policy_error` populated for diagnostics), so a
   # broken policy can't silently flip unattended behavior. Same defensive
-  # posture as `renegotiation_policy` in apex-driver.yaml.
+  # posture as `renegotiation_policy` in polyphony.yaml.
   - name: depth_exceeded_gate_policy_router
     type: script
     description: Resolve policy.unattended.cap_mode for depth_exceeded_gate (AB#3186)
@@ -237,7 +237,7 @@ agents:
     routes:
       - to: $end
         when: "{{ depth_exceeded_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
-      - to: terminal_cap_auto_fail
+      - to: cap_auto_fail
         when: "{{ depth_exceeded_gate_policy_router.output.cap_mode == 'auto_fail' }}"
       # Default + 'manual' + any unknown → surface the human gate.
       - to: depth_exceeded_gate
@@ -295,7 +295,7 @@ agents:
   #
   # Resolves the run's root work-item id by walking up from work_item_id
   # looking for the polyphony:root tag. plan-level.yaml is invoked from
-  # the apex driver (which only threads work_item_id); the plan-PR
+  # the root driver (which only threads work_item_id); the plan-PR
   # verbs (branch ensure-plan, pr open-plan-pr, pr merge-plan-pr) need
   # both root_id and item_id, so we derive root_id once at entry.
   #
@@ -341,7 +341,7 @@ agents:
     options:
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Root resolver error gate ──────────────────────────────────────────
   - name: root_resolver_error_gate
@@ -361,7 +361,7 @@ agents:
     options:
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Type loader ──────────────────────────────────────────────────────────
   #
@@ -399,7 +399,7 @@ agents:
     options:
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Ancestor chain derivation ─────────────────────────────────────────
   #
@@ -447,7 +447,7 @@ agents:
     options:
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── State detector ────────────────────────────────────────────────────
   #
@@ -535,7 +535,7 @@ agents:
     options:
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Closed-unmerged gate ───────────────────────────────────────────────
   #
@@ -706,9 +706,9 @@ agents:
 
   # ── Research loop counter ───────────────────────────────────────────────
   #
-  # Counts the number of research_dispatch invocations in this run's
+  # Counts the number of research invocations in this run's
   # history. When the architect emits research_request_kind == "request"
-  # and the cap has not been reached, routes to research_dispatch. When
+  # and the cap has not been reached, routes to research. When
   # the cap is reached or kind == "none", falls through to
   # open_questions_policy.
   #
@@ -733,7 +733,7 @@ agents:
       - "-NoProfile"
       - "-Command"
       - |
-        $count = [int]'{{ context.history | select('eq', 'research_dispatch') | list | length }}'
+        $count = [int]'{{ context.history | select('eq', 'research') | list | length }}'
         $maxLoops = 3
         $capReached = $count -ge $maxLoops
         @{ iteration = $count; max_loops = $maxLoops; cap_reached = $capReached } | ConvertTo-Json
@@ -752,7 +752,7 @@ agents:
       # M10 defensive catch-all (#222): if cap_reached evaluates to
       # anything other than true/false (counter script crash, malformed
       # JSON, template eval edge case), fail safe to the cap-hit gate
-      # rather than re-entering research_dispatch indefinitely.
+      # rather than re-entering research indefinitely.
       - to: research_cap_gate
 
   # ── Research policy resolver (AB#3188) ─────────────────────────────────
@@ -782,7 +782,7 @@ agents:
   # load` verb (or equivalent extension to `policy resolve`) lands.
   - name: research_policy_resolver
     type: script
-    description: Resolve policy.research.defaults.{escalation_cap, mode} for research_dispatch (AB#3188)
+    description: Resolve policy.research.defaults.{escalation_cap, mode} for research (AB#3188)
     command: pwsh
     args:
       - "-NoProfile"
@@ -791,7 +791,7 @@ agents:
       - "-Scope"
       - "type:{{ type_loader.output.type }}"
     routes:
-      - to: research_dispatch
+      - to: research
 
   # ── Research dispatch ──────────────────────────────────────────────────
   #
@@ -809,9 +809,9 @@ agents:
   #
   # Invariants:
   #   Pre:  architect.output.research_request_kind == "request".
-  #   Post: research_dispatch.output.findings contains the synthesized
+  #   Post: research.output.findings contains the synthesized
   #         Markdown document; routes back to architect for incorporation.
-  - name: research_dispatch
+  - name: research
     type: workflow
     description: Invoke archive-only research sub-workflow to answer architect's research questions.
     workflow: ./research.yaml
@@ -1004,7 +1004,7 @@ agents:
       # on workflow re-entry (e.g. when state_detector lands in
       # awaiting_review and the architect agent is skipped). Always pass
       # — even an empty array `[]` — so commit_and_push --paths sees a
-      # file. The seeder's resolution order is CLI > sidecar > apex_facets.
+      # file. The seeder's resolution order is CLI > sidecar > root_facets.
       - "--children-json"
       - "{{ architect.output.children | tojson }}"
     routes:
@@ -1034,7 +1034,7 @@ agents:
         route: write_plan
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Ensure plan branch ────────────────────────────────────────────────
   #
@@ -1089,7 +1089,7 @@ agents:
         route: ensure_plan_branch
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Commit and push ────────────────────────────────────────────────────
   #
@@ -1153,7 +1153,7 @@ agents:
         route: commit_and_push
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Open plan PR ───────────────────────────────────────────────────────
   #
@@ -1217,7 +1217,7 @@ agents:
         route: open_plan_pr
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Plan reviewer (LLM advisory — sentiment-driven model) ─────────────
   #
@@ -1526,7 +1526,7 @@ agents:
         route: pr_poll_platform_router
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Extract parent patch (P8d wiring) ──────────────────────────────────
   #
@@ -1791,7 +1791,7 @@ agents:
       - "policy"
       - "load"
     routes:
-      - to: terminal_abort_auto_mode_unsupported
+      - to: abort_auto_mode_unsupported
         when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
       - to: pr_poll_platform_router
         when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
@@ -1803,8 +1803,8 @@ agents:
   # so the human can review on GitHub/ADO and come back to continue.
   #
   # NOTE: design doc Q3 recommended option (b) "exit-with-pending" so the
-  # outer apex driver re-enters when human feedback lands. We currently
-  # use option (a) human_gate because the apex driver is being rebuilt
+  # outer root driver re-enters when human feedback lands. We currently
+  # use option (a) human_gate because the root driver is being rebuilt
   # around the requirement+disposition model. Switch to option (b) lands
   # with Phase 2c (workflow YAML migration to requirement+disposition).
   # ── Pending-review throttle gate (sentiment-driven loop) ──────────────
@@ -1884,7 +1884,7 @@ agents:
         route: pr_poll_platform_router
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Stuck-review gate policy router (AB#3104) ─────────────────────────
   #
@@ -1966,7 +1966,7 @@ agents:
         route: stuck_review_override_router
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Stuck-review reset ────────────────────────────────────────────────
   #
@@ -2124,7 +2124,7 @@ agents:
   #                          semantic as the operator picking "Force one
   #                          more revision" — counter keeps climbing
   #                          so the cap eventually re-fires)
-  #   • `auto_fail`        → terminal_cap_auto_fail (NOT terminal_abort_run —
+  #   • `auto_fail`        → cap_auto_fail (NOT abort_run —
   #                          honest about who decided to halt)
   #
   # Note: `auto_proceed` here does NOT loop forever silently. The
@@ -2145,7 +2145,7 @@ agents:
     routes:
       - to: architect
         when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
-      - to: terminal_cap_auto_fail
+      - to: cap_auto_fail
         when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
       # Default + 'manual' + any unknown → surface the human gate.
       - to: revise_cap_gate
@@ -2184,7 +2184,7 @@ agents:
         route: architect
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Validate scope (Phase 3 P8c — scope renegotiation handler) ────────
   #
@@ -2289,7 +2289,7 @@ agents:
         route: merge_plan_pr
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Merge plan PR ─────────────────────────────────────────────────────
   #
@@ -2327,10 +2327,10 @@ agents:
   # GitHub-leg only. Runs post-merge to harvest the plan PR's
   # `<!-- polyphony:requests-parent-change -->` fenced block (if any)
   # for the workflow's bubble-up output. The signal goes to the parent
-  # workflow (apex-driver, downstream PR) which decides whether to
+  # workflow (polyphony, downstream PR) which decides whether to
   # re-enter parent planning. Today the workflow has no caller — the
   # output goes nowhere — but extracting it now ensures the contract is
-  # in place when apex-driver lands.
+  # in place when polyphony lands.
   #
   # Always runs regardless of whether validate_scope ran — a child can
   # legitimately declare a renegotiation request whose diff stays inside
@@ -2345,8 +2345,8 @@ agents:
   #
   # Always exits 0 (routing-style). On verb error (gh_failed,
   # pr_not_found, malformed_renegotiation_block) flag_present is false
-  # and the workflow proceeds to cascade_remedy as if no flag were
-  # present. The error surface is left to the future apex-driver
+  # and the workflow proceeds to restack_remedy as if no flag were
+  # present. The error surface is left to the future polyphony
   # consumer to inspect via the bubbled output.
   - name: extract_renegotiation_flag
     type: script
@@ -2366,13 +2366,13 @@ agents:
       - "--repository-override"
       - "{{ workflow.input.repository }}"
     routes:
-      - to: cascade_remedy
+      - to: restack_remedy
 
-  # ── Cascade remedy ────────────────────────────────────────────────────
+  # ── Restack remedy ────────────────────────────────────────────────────
   #
   # Phase 3 P9 step 4. After merge_plan_pr bumps a plan_generation, any
   # OPEN descendant plan PRs whose snapshot referenced the prior generation
-  # are now stale. Invoke the cascade-remedy sub-workflow to classify and
+  # are now stale. Invoke the restack-remedy sub-workflow to classify and
   # remediate them (auto-rebase / recreate / per-PR human gate).
   #
   # The sub-workflow is a no-op when there are no stale descendants.
@@ -2383,10 +2383,10 @@ agents:
   #   Pre:  merge_plan_pr succeeded; manifest has the new generation.
   #   Post: All open descendant PRs of the resolved root have been
   #         remediated or surfaced for manual handling.
-  - name: cascade_remedy
+  - name: restack_remedy
     type: workflow
-    description: Cascade-remedy open descendant plan PRs whose snapshot is now stale.
-    workflow: ./cascade-remedy.yaml
+    description: Restack-remedy open descendant plan PRs whose snapshot is now stale.
+    workflow: ./restack-remedy.yaml
     input_mapping:
       root_id: "{{ root_resolver.output.resolved_root_id }}"
     routes:
@@ -2396,9 +2396,9 @@ agents:
   #
   # Fires when merge_plan_pr itself reports stale_generation — i.e. THIS
   # plan PR's own ancestor snapshot is behind the manifest at merge time.
-  # This is a different cascade trigger than the descendant cascade
-  # (cascade_remedy above): the parent's bump must be reconciled here
-  # BEFORE we can merge this plan, so we route to the cascade-remedy
+  # This is a different restack trigger than the descendant restack
+  # (restack_remedy above): the parent's bump must be reconciled here
+  # BEFORE we can merge this plan, so we route to the restack-remedy
   # sub-workflow scoped to this PR's own root, then the operator can
   # re-attempt merge.
   - name: stale_generation_gate
@@ -2415,31 +2415,31 @@ agents:
         - `{{ entry.ancestor_key }}` — PR snapshot generation **{{ entry.snapshot_generation }}**, current manifest generation **{{ entry.current_generation }}**
       {% endfor %}
 
-      Run the cascade-remedy sub-workflow (which will auto-rebase or
+      Run the restack-remedy sub-workflow (which will auto-rebase or
       recreate this PR), then retry the merge.
 
       ---
 
       Choose an action:
-      - **Run cascade-remedy** — invoke the cascade and re-attempt merge.
+      - **Run restack-remedy** — invoke the restack and re-attempt merge.
       - **Acknowledge** — stop planning this branch (escalate to human).
     options:
-      - label: "🔄 Run cascade-remedy + retry merge"
-        value: cascade
-        route: cascade_remedy_for_self
+      - label: "🔄 Run restack-remedy + retry merge"
+        value: restack
+        route: restack_remedy_for_self
       - label: "✅ Acknowledge"
         value: acknowledge
         route: $end
 
-  # ── Cascade remedy (self-trigger from stale_generation_gate) ──────────
+  # ── Restack remedy (self-trigger from stale_generation_gate) ──────────
   #
-  # Same sub-workflow as the post-merge cascade, but invoked here when
-  # this PR itself is the stale one. After the cascade rebases/recreates
+  # Same sub-workflow as the post-merge restack, but invoked here when
+  # this PR itself is the stale one. After the restack rebases/recreates
   # this PR, we route back to merge_plan_pr to re-attempt.
-  - name: cascade_remedy_for_self
+  - name: restack_remedy_for_self
     type: workflow
-    description: Cascade-remedy invoked because THIS plan PR is the stale one at merge time.
-    workflow: ./cascade-remedy.yaml
+    description: Restack-remedy invoked because THIS plan PR is the stale one at merge time.
+    workflow: ./restack-remedy.yaml
     input_mapping:
       root_id: "{{ root_resolver.output.resolved_root_id }}"
     routes:
@@ -2478,7 +2478,7 @@ agents:
       orphan `.txt` / `.json` files at the repo root).
       {% elif merge_plan_pr.output.error_code == 'lock_held' %}
       Another polyphony run holds the same-root run lock. Check for an
-      in-flight workflow on the same apex; wait for it to finish, or
+      in-flight workflow on the same root; wait for it to finish, or
       use `polyphony lock force-release` if it's a stale lock.
       {% elif merge_plan_pr.output.error_code == 'lock_stale' %}
       The run lock is older than the staleness threshold. Run
@@ -2536,7 +2536,7 @@ agents:
         route: merge_plan_pr
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Seeder ─────────────────────────────────────────────────────────────
   #
@@ -2558,7 +2558,7 @@ agents:
   # Routing-style envelope: the seeder verb exits 0 even on per-child
   # failures (errors arrive as a populated `errors[]` array with
   # `error_count > 0`). Without an error gate, downstream child_router
-  # then walks into a half-seeded tree and the apex silently terminates
+  # then walks into a half-seeded tree and the root silently terminates
   # blocked. AB#3067 dogfood reproduced this exact pattern when a child
   # title clashed during ADO `twig new` and the parent had no plannable
   # children to discover. Mirrors the write_plan error-gate pattern at
@@ -2579,7 +2579,7 @@ agents:
       # to reading the children-json sidecar at
       # plans/plan-{id}.children.json. (An explicit '[]' would mean
       # "architect ran and emitted no children" — a different signal
-      # that routes to the apex_facets check.)
+      # that routes to the root_facets check.)
       - "--children-json"
       - "{{ architect.output.children | tojson if (architect is defined and architect.output.children is defined) else '' }}"
       # AB#3106 rubber-duck #1 (2026-05-12): re-entry recovery seam. When
@@ -2592,7 +2592,7 @@ agents:
       # `git show <ref>:plans/plan-{id}.children.json` (with a best-
       # effort `git fetch` first) when CLI input AND local sidecar are
       # both empty. If the ref doesn't carry the file, it falls through
-      # to apex_facets / refusal — so this is safe to set
+      # to root_facets / refusal — so this is safe to set
       # unconditionally.
       - "--children-from-ref"
       - "origin/main"
@@ -2606,7 +2606,7 @@ agents:
   # `polyphony plan seed-children` always exits 0 and carries per-child
   # failures in `errors[]`. This gate fires when `error_count > 0` so the
   # operator sees the failure rather than continuing into child_router with
-  # a half-seeded tree (which silently terminates the apex blocked).
+  # a half-seeded tree (which silently terminates the root blocked).
   #
   # Retry routes back to `seeder` because the verb is idempotent — it
   # reconciles against existing children via marker-aware matching, so
@@ -2655,7 +2655,7 @@ agents:
         route: child_router
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Child router ─────────────────────────────────────────────────────────
   #
@@ -2762,7 +2762,7 @@ agents:
       - `project`: `{{ workflow.input.project }}`
       - `repository`: `{{ workflow.input.repository }}`
 
-      Re-run the apex driver with all three set, or pass `platform: github`.
+      Re-run the root driver with all three set, or pass `platform: github`.
 
       ---
 
@@ -2771,7 +2771,7 @@ agents:
     options:
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Open plan PR (ADO) ────────────────────────────────────────────────
   #
@@ -2834,7 +2834,7 @@ agents:
         route: open_plan_pr_ado
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Plan reviewer poster (ADO) ────────────────────────────────────────
   #
@@ -2955,14 +2955,14 @@ agents:
       # NOTE: stale_generation reuses stale_generation_gate. The gate's
       # prompt references merge_plan_pr.output.* fields — those are
       # undefined when we arrive via the ADO leg. The gate offers
-      # cascade_remedy_for_self → routes back to merge_plan_pr (github).
+      # restack_remedy_for_self → routes back to merge_plan_pr (github).
       # On ADO we want to route back to merge_plan_pr_ado instead, so we
       # use a dedicated gate.
       - to: merge_plan_pr_ado_stale_gate
         when: "{{ merge_plan_pr_ado.output.error_code is defined and merge_plan_pr_ado.output.error_code == 'stale_generation' }}"
       - to: merge_plan_pr_ado_error_gate
         when: "{{ merge_plan_pr_ado.output.error_code is defined and merge_plan_pr_ado.output.error_code != '' and merge_plan_pr_ado.output.error_code != 'stale_generation' }}"
-      - to: cascade_remedy
+      - to: restack_remedy
 
   # ── Merge plan PR (ADO) stale-generation gate ─────────────────────────
   - name: merge_plan_pr_ado_stale_gate
@@ -2979,27 +2979,27 @@ agents:
         - `{{ entry.ancestor_key }}` — PR snapshot generation **{{ entry.snapshot_generation }}**, current manifest generation **{{ entry.current_generation }}**
       {% endfor %}
 
-      Run the cascade-remedy sub-workflow (which will auto-rebase or
+      Run the restack-remedy sub-workflow (which will auto-rebase or
       recreate this PR), then retry the merge.
 
       ---
 
       Choose an action:
-      - **Run cascade-remedy** — invoke the cascade and re-attempt merge.
+      - **Run restack-remedy** — invoke the restack and re-attempt merge.
       - **Acknowledge** — stop planning this branch (escalate to human).
     options:
-      - label: "🔄 Run cascade-remedy + retry merge"
-        value: cascade
-        route: cascade_remedy_for_self_ado
+      - label: "🔄 Run restack-remedy + retry merge"
+        value: restack
+        route: restack_remedy_for_self_ado
       - label: "✅ Acknowledge"
         value: acknowledge
         route: $end
 
-  # ── Cascade remedy (ADO self-trigger) ─────────────────────────────────
-  - name: cascade_remedy_for_self_ado
+  # ── Restack remedy (ADO self-trigger) ─────────────────────────────────
+  - name: restack_remedy_for_self_ado
     type: workflow
-    description: Cascade-remedy invoked because THIS ADO plan PR is the stale one at merge time.
-    workflow: ./cascade-remedy.yaml
+    description: Restack-remedy invoked because THIS ADO plan PR is the stale one at merge time.
+    workflow: ./restack-remedy.yaml
     input_mapping:
       root_id: "{{ root_resolver.output.resolved_root_id }}"
     routes:
@@ -3031,7 +3031,7 @@ agents:
         route: merge_plan_pr_ado
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Plan children summary gate ───────────────────────────────────────────
   #
@@ -3062,9 +3062,9 @@ agents:
   #
   # Routed-to from error gates whose "Abort" option means "halt the entire
   # conductor run, not just this sub-workflow". Plain `route: $end` ends
-  # only plan-level; the parent (apex-item-dispatch / apex-wave-dispatch /
-  # apex-driver) then proceeds to teardown_worktree → next item → next
-  # wave, producing confusing downstream errors. This agent invokes
+  # only plan-level; the parent (root-item-dispatch / root-batch-dispatch /
+  # polyphony) then proceeds to teardown_worktree → next item → next
+  # batch, producing confusing downstream errors. This agent invokes
   # abort-run.ps1, which POSTs to conductor's /api/stop endpoint. The
   # engine raises InterruptError at every nested between-agent check
   # (workflow.py:_check_interrupt at workflow.py:2309), unwinding the
@@ -3073,7 +3073,7 @@ agents:
   #
   # New error gates that surface a "halt everything" outcome should route
   # their Abort option here too.
-  - name: terminal_abort_run
+  - name: abort_run
     type: script
     description: Operator-initiated full-run abort — POSTs /api/stop to halt the run cleanly
     command: pwsh
@@ -3094,10 +3094,10 @@ agents:
   #
   # Reached when `policy.unattended.cap_mode == 'auto_fail'` triggers at
   # any cap-hit gate (depth_exceeded_gate, revise_cap_gate). Distinct from
-  # terminal_abort_run so post-mortem diagnostics can tell policy-driven
+  # abort_run so post-mortem diagnostics can tell policy-driven
   # failures apart from human-initiated aborts — the abort-run.ps1 envelope's
   # `reason` field is the discriminator (`cap-auto-fail` vs `operator-abort`).
-  - name: terminal_cap_auto_fail
+  - name: cap_auto_fail
     type: script
     description: Policy-driven full-run abort — unattended.cap_mode='auto_fail' at a cap-hit gate
     command: pwsh
@@ -3126,7 +3126,7 @@ agents:
   # so an operator who set `auto` finds out at policy-load time instead
   # of watching the run poll forever (or, worse, escalate to a stuck
   # gate days later) under what looks like normal `skip` behavior.
-  - name: terminal_abort_auto_mode_unsupported
+  - name: abort_auto_mode_unsupported
     type: script
     description: Abort — policy.unattended.review_wait_mode='auto' is unsupported under the sentiment-driven PR-review loop.
     command: pwsh
@@ -3177,7 +3177,7 @@ for_each:
         depth: "{{ workflow.input.depth + 1 }}"
         max_depth: "{{ workflow.input.max_depth }}"
         # v2.1: inherit platform threading so recursive child planning
-        # targets the same platform as the apex run. Defaults preserve
+        # targets the same platform as the root run. Defaults preserve
         # github behavior when these inputs were never supplied.
         platform: "{{ workflow.input.platform }}"
         organization: "{{ workflow.input.organization }}"

@@ -1,9 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Routing;
 using Twig.Domain.Enums;
 using Twig.Domain.Interfaces;
@@ -29,8 +32,13 @@ public sealed partial class BranchCommands(
     IGitClient git,
     ProcessConfig processConfig,
     Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
-    Sdlc.Observers.PullRequestReader pullRequestReader)
+    Sdlc.Observers.PullRequestReader pullRequestReader,
+    RunContext runContext,
+    JournaledActionDecorator decorator)
 {
+    private readonly RunContext _runContext = runContext;
+    private readonly JournaledActionDecorator _journalDecorator = decorator;
+
     /// <summary>
     /// Check ADO predecessor links for blocking dependencies on a work item.
     /// Replaces <c>scripts/dependency-check.ps1</c>.
@@ -247,7 +255,10 @@ public sealed partial class BranchCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("close-scope")]
     [VerbResult(typeof(BranchCloseScopeResult))]
-    public async Task<int> CloseScope(
+    [JournaledAction(Action = "branch_close_scope")]
+    [MutatesResource(ResourceKind.AdoWorkItemState)]
+    [MayObserveResource(ResourceKind.AdoWorkItem)]
+    public Task<int> CloseScope(
         int workItem = RequiredInput.MissingInt,
         string pgName = "",
         int pgNumber = 0,
@@ -256,12 +267,47 @@ public sealed partial class BranchCommands(
     {
         if (RequiredInput.HaltIfMissing("branch close-scope",
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
         var resolvedMergeGroup = string.IsNullOrEmpty(pgName) && pgNumber > 0
             ? $"PG-{pgNumber}"
             : pgName;
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<BranchCloseScopeResult, BranchCloseScopePayload>(
+            _journalDecorator,
+            _runContext,
+            "branch_close_scope",
+            WorkItemJournalTarget(workItem),
+            innerCt => CloseScopeCoreAsync(workItem, resolvedMergeGroup, prNumber, innerCt),
+            PolyphonyJsonContext.Default.BranchCloseScopeResult,
+            (_, result) => new BranchCloseScopePayload
+            {
+                RootWorkItemId = workItem,
+                MergeGroupName = result?.MergeGroupName ?? resolvedMergeGroup,
+                PrNumber = result?.PrNumber ?? prNumber,
+                ResultAction = (result?.TotalClosed ?? 0) > 0 ? "closed_items" : "no_changes",
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = (result?.TotalClosed ?? 0) > 0,
+                ClosedItems = result?.ClosedItems ?? [],
+                FailedClosures = result?.FailedClosures ?? [],
+                AdoWorkspace = result?.AdoWorkspace,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.BranchCloseScopePayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectCloseScopeEffects,
+            ct,
+            rootId: workItem,
+            workItemId: workItem);
+    }
+
+    private async Task<int> CloseScopeCoreAsync(
+        int workItem,
+        string resolvedMergeGroup,
+        int prNumber,
+        CancellationToken ct)
+    {
         if (string.IsNullOrEmpty(resolvedMergeGroup))
         {
             EmitClose(EmptyClose("", prNumber, "Either --pg-name or --pg-number must be provided.", ""));
@@ -489,5 +535,89 @@ public sealed partial class BranchCommands(
         => Console.WriteLine(JsonSerializer.Serialize(
             result,
             PolyphonyJsonContext.Default.BranchCloseScopeResult));
+
+    private JournaledActionInvocation CreateJournalInvocation(
+        string action,
+        string target,
+        int? rootId = null,
+        int? workItemId = null,
+        string? payloadJson = null)
+        => new()
+        {
+            RunId = _runContext.RunId,
+            RootId = rootId,
+            WorkItemId = workItemId,
+            Action = action,
+            Target = target,
+            PayloadJson = payloadJson,
+        };
+
+    private static JournalOutcome SelectJournalOutcome(int exitCode, bool succeeded, bool wasMutated)
+    {
+        if (exitCode != ExitCodes.Success || !succeeded)
+        {
+            return JournalOutcome.Failure;
+        }
+
+        return wasMutated ? JournalOutcome.Success : JournalOutcome.NoOp;
+    }
+
+    private static string? SerializePayload<TPayload>(TPayload? payload, JsonTypeInfo<TPayload> jsonTypeInfo)
+        where TPayload : class
+        => payload is null ? null : JsonSerializer.Serialize(payload, jsonTypeInfo);
+
+    private static string WorkItemJournalTarget(int workItemId) => $"workitem:{workItemId}";
+
+    private async Task<string?> TryGetCurrentBranchAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await git.GetCurrentBranchAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<string?> TryGetBranchShaAsync(string branch, CancellationToken ct)
+    {
+        try
+        {
+            return await git.RevParseLocalBranchAsync(branch, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int? TryParseFeatureRootId(string branch)
+    {
+        if (!branch.StartsWith(Polyphony.Branching.BranchNameBuilder.FeaturePrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return TryParseLeadingPositiveInt(branch[Polyphony.Branching.BranchNameBuilder.FeaturePrefix.Length..]);
+    }
+
+    private static int? TryParseLeadingPositiveInt(string value)
+    {
+        if (string.IsNullOrEmpty(value) || !char.IsDigit(value[0]))
+        {
+            return null;
+        }
+
+        var length = 0;
+        while (length < value.Length && char.IsDigit(value[length]))
+        {
+            length++;
+        }
+
+        return int.TryParse(value[..length], out var parsed) && parsed > 0
+            ? parsed
+            : null;
+    }
 }
 

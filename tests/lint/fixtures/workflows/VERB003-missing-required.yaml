@@ -1,7 +1,10 @@
 # VERB003 — `command: polyphony` calls a known verb but does not thread one
 # of its required inputs. CLI would exit with "missing required argument"
-# at runtime. `branch check-deps` requires --work-item (and accepts no
-# other inputs), so an empty arg list after the verb path triggers VERB003.
+# at runtime. Uses the synthetic `verb-output-schemas-verb003.json` registry
+# (one fake verb with required: true) because post-Move-#2 the live registry
+# has no verbs with required:true — every required input uses the
+# RequiredInput sentinel pattern (verb body halts at runtime, but the
+# schema lists the param as optional with a sentinel default).
 
 workflow:
   name: verb003-missing-required
@@ -12,7 +15,7 @@ agents:
     type: script
     command: polyphony
     args:
-      - "branch"
-      - "check-deps"
+      - "synthetic"
+      - "require-input"
     routes:
       - to: $end

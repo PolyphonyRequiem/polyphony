@@ -39,7 +39,7 @@
 # Permanent design contract (NOT transitional):
 #   - The run lock and run manifest (`polyphony lock acquire`,
 #     `polyphony manifest init` + `record-approval`) are NOT acquired or
-#     written here. The apex workflow that wraps multiple MGs is
+#     written here. The root workflow that wraps multiple MGs is
 #     responsible for lock acquisition, manifest init, and final
 #     approval recording. Adding those here would defeat parallel-MG
 #     execution under one root.
@@ -54,7 +54,7 @@
 #   and user_acceptance will re-run.
 #
 # Risk acknowledged (rubber-duck finding #7):
-#   `primary_completer` transitions tasks to their template's done state
+#   `root_completer` transitions tasks to their template's done state
 #   immediately after the impl PR merges, before the MG PR merges. If the
 #   MG PR fails to merge afterwards, ADO will reflect tasks as Done while
 #   the feature branch lacks the work. Recovery: re-run this workflow;
@@ -90,7 +90,7 @@ workflow:
     root_id:
       type: number
       required: true
-      description: ADO work item ID of the run's apex (focus) item
+      description: ADO work item ID of the run's root (focus) item
     pg_number:
       type: number
       required: true
@@ -198,7 +198,7 @@ agents:
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
     routes:
-      - to: primary_router
+      - to: root_router
 
   # ── Per-item router ───────────────────────────────────────────────────
   #
@@ -213,8 +213,8 @@ agents:
   # Invariants:
   #   Pre:  MG branch is checked out; tasks in this MG carry `PG-N` tags.
   #   Post: output.action is `implement_item` or `all_items_done`;
-  #         output.primary_id and output.primary_title set when implementing.
-  - name: primary_router
+  #         output.root_id and output.root_title set when implementing.
+  - name: root_router
     type: script
     description: Route to next implementable task within this MG
     command: polyphony
@@ -226,26 +226,26 @@ agents:
       - "--pg-number"
       - "{{ workflow.input.pg_number }}"
       # AB#3217: thread the structural mg-path so next-impl can match the
-      # impl-merged-in-mg marker stamped by primary_completer's apex-root
+      # impl-merged-in-mg marker stamped by root_completer's root-root
       # branch. Without this, next-impl falls back to the pg-name form
-      # (PG-N) which doesn't agree with primary_completer's mg-path
-      # (pg-N) under casing rules and lets the same apex root re-dispatch
+      # (PG-N) which doesn't agree with root_completer's mg-path
+      # (pg-N) under casing rules and lets the same root root re-dispatch
       # forever.
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
     routes:
       - to: impl_branch_ensure
-        when: "{{ primary_router.output.action == 'implement_item' }}"
+        when: "{{ root_router.output.action == 'implement_item' }}"
       - to: dependency_check
-        when: "{{ primary_router.output.action == 'all_items_done' }}"
+        when: "{{ root_router.output.action == 'all_items_done' }}"
       # AB#3126: explicit error route. `branch next-impl` returns
       # action='error' with a populated `error` field when its internal
       # try/catch trips (e.g. ADO unreachable during the post-state
       # twig sync). Without this route the catch-all below silently
       # treats errors as "done with tasks" and proceeds toward MG
       # closure — masking real failures and leaving items unstarted.
-      - to: primary_router_error_gate
-        when: "{{ primary_router.output.action == 'error' or (primary_router.output.error is defined and primary_router.output.error != '') }}"
+      - to: root_router_error_gate
+        when: "{{ root_router.output.action == 'error' or (root_router.output.error is defined and root_router.output.error != '') }}"
       # Catch-all per M4: unknown action from next-impl should fail
       # safely to dependency_check (the natural "we're done with tasks"
       # path) rather than raise `No matching route found`.
@@ -257,8 +257,8 @@ agents:
   # MG branch. Re-entry safe.
   #
   # Invariants:
-  #   Pre:  primary_router selected a task (output.action == 'implement_item').
-  #   Post: `impl/{root}-{primary_id}` is checked out and pushed to origin.
+  #   Pre:  root_router selected a task (output.action == 'implement_item').
+  #   Post: `impl/{root}-{root_id}` is checked out and pushed to origin.
   - name: impl_branch_ensure
     type: script
     description: Idempotently create or check out the per-item impl branch
@@ -269,7 +269,7 @@ agents:
       - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--item-id"
-      - "{{ primary_router.output.primary_id }}"
+      - "{{ root_router.output.root_id }}"
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
     routes:
@@ -280,13 +280,13 @@ agents:
   # Loads repo-specific agent guidance for the per-task work item being
   # implemented. Returns role-wide guidance + per-type refinement for each
   # of the three canonical roles (architect / coder / reviewer); coder and
-  # primary_reviewer prompts read their respective role + type_refinement
+  # root_reviewer prompts read their respective role + type_refinement
   # blocks via Jinja2 conditionals so prompts degrade gracefully when no
   # guidance files exist. Runs per task (not once per MG) so per-task type
   # drives the refinement lookup when an MG mixes types.
   #
   # Invariants:
-  #   Pre:  primary_router selected a task; impl branch is checked out.
+  #   Pre:  root_router selected a task; impl branch is checked out.
   #   Post: output exposes architect/coder/reviewer keys, each with
   #         role + type_refinement strings (empty when files absent).
   - name: guidance_loader
@@ -297,20 +297,20 @@ agents:
       - "plan"
       - "load-agent-guidance"
       - "--work-item"
-      - "{{ primary_router.output.primary_id }}"
+      - "{{ root_router.output.root_id }}"
     routes:
       - to: branch_assert_on_impl_pre_coder
 
   # ── Pre-coder branch assertion (AB#3210) ──────────────────────────────
   #
   # Defends against silent commit misroute. `branch ensure-impl` (above)
-  # checks out `impl/{root}-{primary_id}`, but the worktree may already
+  # checks out `impl/{root}-{root_id}`, but the worktree may already
   # have HEAD on a sibling impl branch from a prior task in the same
-  # wave; if `ensure-impl` returned `action="checked_out"` based on a
+  # batch; if `ensure-impl` returned `action="checked_out"` based on a
   # branch existence check while a separate cwd state is what the agent
   # actually sees, the coder commits land on the wrong branch.
   #
-  # In apex run 3165 (run_id 9c857363, 2026-05-14), this exact failure
+  # In root run 3165 (run_id 9c857363, 2026-05-14), this exact failure
   # mode put the AB#3175 verb commit on `impl/3165-3176` (sibling task's
   # branch) instead of `impl/3165-3175`, and AB#3175 reached the scope
   # reviewer as an "empty MG" — a misleading symptom several stages
@@ -323,12 +323,12 @@ agents:
   #
   # Invariants:
   #   Pre:  branch ensure-impl succeeded; HEAD should be on
-  #         impl/{root_id}-{primary_id}.
+  #         impl/{root_id}-{root_id}.
   #   Post: output.action is "ok" (continue), "mismatch" (gate), or
   #         "error" (gate; treat like mismatch so operator sees it).
   - name: branch_assert_on_impl_pre_coder
     type: script
-    description: Assert HEAD is on impl/{root}-{primary_id} before dispatching the coder agent (AB#3210)
+    description: Assert HEAD is on impl/{root}-{root_id} before dispatching the coder agent (AB#3210)
     command: polyphony
     args:
       - "branch"
@@ -336,7 +336,7 @@ agents:
       - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--item-id"
-      - "{{ primary_router.output.primary_id }}"
+      - "{{ root_router.output.root_id }}"
     routes:
       - to: coder
         when: "{{ branch_assert_on_impl_pre_coder.output.action == 'ok' }}"
@@ -351,7 +351,7 @@ agents:
   # ── Pre-coder branch mismatch gate (AB#3210) ──────────────────────────
   #
   # Fires when the pre-coder assertion observed HEAD on a branch other
-  # than `impl/{root}-{primary_id}`. The recovery path is operator-only:
+  # than `impl/{root}-{root_id}`. The recovery path is operator-only:
   # the workflow has no safe automated way to reconcile a divergent
   # cwd/branch state (the wrong branch may already carry uncommitted
   # work, the right branch may be checked out elsewhere, etc.).
@@ -364,18 +364,18 @@ agents:
     type: human_gate
     description: HEAD is not on the expected impl branch — operator decides retry or abort
     prompt: |
-      ## ⚠️ Branch mismatch BEFORE coder dispatch — task `{{ primary_router.output.primary_id }}`
+      ## ⚠️ Branch mismatch BEFORE coder dispatch — task `{{ root_router.output.root_id }}`
 
       `polyphony branch assert-on-impl` observed that git HEAD is **not** on
       the expected per-item impl branch. Dispatching the coder agent now
       would route its commits onto the wrong branch (the AB#3210 failure
-      mode that struck apex run 3165).
+      mode that struck root run 3165).
 
       | Field | Value |
       |---|---|
       | Expected branch | `{{ branch_assert_on_impl_pre_coder.output.expected_branch }}` |
       | Actual branch | `{{ branch_assert_on_impl_pre_coder.output.actual_branch | default('(detached or unknown)') }}` |
-      | Work item | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
+      | Work item | AB#{{ root_router.output.root_id }} — {{ root_router.output.root_title }} |
       | MG branch | `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` |
       {% if branch_assert_on_impl_pre_coder.output.error is defined and branch_assert_on_impl_pre_coder.output.error %}
       | Error | `{{ branch_assert_on_impl_pre_coder.output.error | default('') }}` |
@@ -399,14 +399,14 @@ agents:
       - **Retry** — re-run `branch assert-on-impl`. Use after
         `git checkout` to the expected branch.
       - **Abort** — end the workflow. The MG state is unchanged; a
-        later workflow re-entry resumes from `primary_router`.
+        later workflow re-entry resumes from `root_router`.
     options:
       - label: "🔄 Retry assertion"
         value: retry
         route: branch_assert_on_impl_pre_coder
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Coder agent ───────────────────────────────────────────────────────
   #
@@ -436,28 +436,28 @@ agents:
 
       ## Context
 
-      - **Work Item ID:** {{ primary_router.output.primary_id }}
-      - **Work item title:** {{ primary_router.output.primary_title }}
-      - **Impl branch:** `impl/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`
+      - **Work Item ID:** {{ root_router.output.root_id }}
+      - **Work item title:** {{ root_router.output.root_title }}
+      - **Impl branch:** `impl/{{ workflow.input.root_id }}-{{ root_router.output.root_id }}`
       - **Enclosing MG branch:** `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
       - **Parent work item:** {{ workflow.input.work_item_id }}
-      - **Run apex:** {{ workflow.input.root_id }}
+      - **Run root:** {{ workflow.input.root_id }}
 
       ## Instructions
 
-      1. Read the full task description from ADO using `twig show {{ primary_router.output.primary_id }}`.
+      1. Read the full task description from ADO using `twig show {{ root_router.output.root_id }}`.
       2. Understand the codebase context — read related files, understand patterns.
       3. Implement the changes required by the task.
       4. Write tests covering the new functionality.
       5. Run the build and tests to verify correctness.
-      6. Commit and push your changes with a descriptive message including `AB#{{ primary_router.output.primary_id }}`.
+      6. Commit and push your changes with a descriptive message including `AB#{{ root_router.output.root_id }}`.
 
       ## Constraints
 
       - Follow existing code conventions and patterns.
       - Do NOT modify files outside the scope of this task.
       - Do NOT skip tests — every implementation must have test coverage.
-      - Commit messages must reference the ADO work item: `AB#{{ primary_router.output.primary_id }}`.
+      - Commit messages must reference the ADO work item: `AB#{{ root_router.output.root_id }}`.
       - Stage only the files you actually modified for this task. Use
         `git add <path1> <path2>` with explicit paths — never `git add -A`,
         `git add .`, or `git add --all`. The working tree may contain
@@ -465,10 +465,10 @@ agents:
         workflow iterations; sweeping them in pollutes the commit, breaks
         AB# traceability, and creates phantom changes in PR review.
 
-      {% if primary_reviewer is defined and primary_reviewer.output is defined and primary_reviewer.output.verdict == 'changes_requested' and primary_reviewer.output.feedback %}
+      {% if root_reviewer is defined and root_reviewer.output is defined and root_reviewer.output.verdict == 'changes_requested' and root_reviewer.output.feedback %}
       ## Previous Reviewer Feedback (this task)
 
-      Your previous attempt at this task was rejected by `primary_reviewer`. Address the
+      Your previous attempt at this task was rejected by `root_reviewer`. Address the
       feedback below specifically — the implementation already exists on the branch;
       do NOT re-research the problem from scratch and conclude "already implemented".
       Apply the changes the reviewer asked for, commit, and let the reviewer re-check.
@@ -477,7 +477,7 @@ agents:
       finding, fix the others and explain in your commit message and via
       `twig note --text "..."` why you did not apply that one.
 
-      {{ primary_reviewer.output.feedback }}
+      {{ root_reviewer.output.feedback }}
       {% endif %}
 
       {% if scope_reviewer is defined and scope_reviewer.output is defined and scope_reviewer.output.verdict == 'changes_requested' and scope_reviewer.output.feedback %}
@@ -526,12 +526,12 @@ agents:
   #
   # Invariants:
   #   Pre:  Coder agent has run; HEAD should still be on
-  #         impl/{root_id}-{primary_id}.
+  #         impl/{root_id}-{root_id}.
   #   Post: output.action is "ok" (continue), "mismatch" (gate), or
   #         "error" (gate).
   - name: branch_assert_on_impl_post_coder
     type: script
-    description: Assert HEAD is still on impl/{root}-{primary_id} after the coder agent ran (AB#3210)
+    description: Assert HEAD is still on impl/{root}-{root_id} after the coder agent ran (AB#3210)
     command: polyphony
     args:
       - "branch"
@@ -539,7 +539,7 @@ agents:
       - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--item-id"
-      - "{{ primary_router.output.primary_id }}"
+      - "{{ root_router.output.root_id }}"
     routes:
       - to: fetch_for_primary_review
         when: "{{ branch_assert_on_impl_post_coder.output.action == 'ok' }}"
@@ -553,7 +553,7 @@ agents:
   # ── Post-coder branch mismatch gate (AB#3210) ─────────────────────────
   #
   # Fires when the post-coder assertion observed HEAD on a branch other
-  # than `impl/{root}-{primary_id}`. Worse than the pre-coder gate: the
+  # than `impl/{root}-{root_id}`. Worse than the pre-coder gate: the
   # agent has already committed somewhere. The commits may be on the
   # wrong branch (same data-loss shape as AB#3175) and need manual
   # cherry-pick recovery before the workflow can safely advance.
@@ -567,7 +567,7 @@ agents:
     type: human_gate
     description: HEAD is not on the expected impl branch after coder ran — operator decides retry or abort
     prompt: |
-      ## ⚠️ Branch mismatch AFTER coder dispatch — task `{{ primary_router.output.primary_id }}`
+      ## ⚠️ Branch mismatch AFTER coder dispatch — task `{{ root_router.output.root_id }}`
 
       `polyphony branch assert-on-impl` observed that git HEAD moved off
       the expected per-item impl branch during the coder agent's
@@ -579,7 +579,7 @@ agents:
       |---|---|
       | Expected branch | `{{ branch_assert_on_impl_post_coder.output.expected_branch }}` |
       | Actual branch | `{{ branch_assert_on_impl_post_coder.output.actual_branch | default('(detached or unknown)') }}` |
-      | Work item | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
+      | Work item | AB#{{ root_router.output.root_id }} — {{ root_router.output.root_title }} |
       | MG branch | `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` |
       {% if branch_assert_on_impl_post_coder.output.error is defined and branch_assert_on_impl_post_coder.output.error %}
       | Error | `{{ branch_assert_on_impl_post_coder.output.error | default('') }}` |
@@ -614,18 +614,18 @@ agents:
       - **Retry** — re-run `branch assert-on-impl`. Use after
         recovering the commits and checking out the expected branch.
       - **Abort** — end the workflow. The MG state is unchanged; a
-        later workflow re-entry resumes from `primary_router`.
+        later workflow re-entry resumes from `root_router`.
     options:
       - label: "🔄 Retry assertion"
         value: retry
         route: branch_assert_on_impl_post_coder
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Fetch for primary review (AB#3157 / AB#3161) ──────────────────────
   #
-  # Mirror of `fetch_for_scope_review` placed before `primary_reviewer`.
+  # Mirror of `fetch_for_scope_review` placed before `root_reviewer`.
   # The reviewer prompt compares against `origin/mg/...` to avoid the
   # stale-local-ref bug class (PR #358 audit candidate, hardened by the
   # bare-ref lint added in AB#3161). Even though the impl branch is
@@ -642,7 +642,7 @@ agents:
   #         has been fast-forwarded when safe.
   - name: fetch_for_primary_review
     type: script
-    description: Pre-fetch origin MG ref so primary_reviewer sees fresh state (AB#3157 / AB#3161)
+    description: Pre-fetch origin MG ref so root_reviewer sees fresh state (AB#3157 / AB#3161)
     command: pwsh
     args:
       - "-NoProfile"
@@ -664,7 +664,7 @@ agents:
         }
         @{ ok = $true } | ConvertTo-Json -Compress
     routes:
-      - to: primary_reviewer
+      - to: root_reviewer
 
   # ── Primary reviewer ──────────────────────────────────────────────────
   #
@@ -675,7 +675,7 @@ agents:
   # Invariants:
   #   Pre:  Coder has committed changes to the impl branch.
   #   Post: output.verdict is 'approved' or 'changes_requested'.
-  - name: primary_reviewer
+  - name: root_reviewer
     type: agent
     model: claude-opus-4.6
     description: Review per-item task implementation for correctness and quality
@@ -684,7 +684,7 @@ agents:
       - filesystem
     output:
       # Schema mirrors this agent's JSON contract below. Required by M2:
-      # routes read primary_reviewer.output.verdict.
+      # routes read root_reviewer.output.verdict.
       verdict:
         type: string
         description: Review outcome — "approved" or "changes_requested"
@@ -701,27 +701,27 @@ agents:
 
       ## Your Mission
 
-      Review the implementation of item {{ primary_router.output.primary_id }} on its
+      Review the implementation of item {{ root_router.output.root_id }} on its
       per-item impl branch for correctness, code quality, and alignment with the work
       item requirements.
 
       ## Context
 
-      - **Work Item ID:** {{ primary_router.output.primary_id }}
-      - **Work item title:** {{ primary_router.output.primary_title }}
-      - **Impl branch:** `impl/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`
+      - **Work Item ID:** {{ root_router.output.root_id }}
+      - **Work item title:** {{ root_router.output.root_title }}
+      - **Impl branch:** `impl/{{ workflow.input.root_id }}-{{ root_router.output.root_id }}`
       - **Enclosing MG branch:** `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
 
-      {% if primary_reviewer is defined and primary_reviewer.output is defined and primary_reviewer.output.verdict == 'changes_requested' %}
+      {% if root_reviewer is defined and root_reviewer.output is defined and root_reviewer.output.verdict == 'changes_requested' %}
       ## ⚠️ This is a RE-REVIEW
 
       You previously reviewed this item and requested changes. Your prior feedback:
 
-      {{ primary_reviewer.output.feedback }}
+      {{ root_reviewer.output.feedback }}
 
-      {% if primary_reviewer.output.issues is defined and primary_reviewer.output.issues | length > 0 %}
+      {% if root_reviewer.output.issues is defined and root_reviewer.output.issues | length > 0 %}
       ### Prior issues flagged:
-      {% for issue in primary_reviewer.output.issues %}
+      {% for issue in root_reviewer.output.issues %}
       {{ loop.index }}. {{ issue }}
       {% endfor %}
       {% endif %}
@@ -735,7 +735,7 @@ agents:
 
       ## Instructions
 
-      1. Read the item description from ADO: `twig show {{ primary_router.output.primary_id }}`.
+      1. Read the item description from ADO: `twig show {{ root_router.output.root_id }}`.
       2. Inspect the latest commits on the impl branch — start with
          `git log --oneline origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}..HEAD`
          and `git diff origin/mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}...HEAD`
@@ -769,10 +769,10 @@ agents:
       - **Request changes** only for substantive issues (bugs, missing requirements, no tests).
       - Do NOT request changes for style preferences or minor nits.
 
-      {% if guidance_loader is defined and guidance_loader.output.agents.primary_reviewer is defined and guidance_loader.output.agents.primary_reviewer %}
-      ## Repo-Specific Guidance — primary_reviewer (override)
+      {% if guidance_loader is defined and guidance_loader.output.agents.root_reviewer is defined and guidance_loader.output.agents.root_reviewer %}
+      ## Repo-Specific Guidance — root_reviewer (override)
 
-      {{ guidance_loader.output.agents.primary_reviewer }}
+      {{ guidance_loader.output.agents.root_reviewer }}
       {% elif guidance_loader is defined and guidance_loader.output.reviewer is defined and guidance_loader.output.reviewer.role %}
       ## Repo-Specific Guidance
 
@@ -786,9 +786,9 @@ agents:
       {% endif %}
     routes:
       - to: impl_pr_open
-        when: "{{ primary_reviewer.output.verdict == 'approved' }}"
+        when: "{{ root_reviewer.output.verdict == 'approved' }}"
       - to: coder
-        when: "{{ primary_reviewer.output.verdict == 'changes_requested' }}"
+        when: "{{ root_reviewer.output.verdict == 'changes_requested' }}"
       # Catch-all per M4: an unexpected verdict value (typo, schema drift)
       # routes back to coder for another iteration rather than raising
       # `No matching route found`.
@@ -813,7 +813,7 @@ agents:
       - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--item-id"
-      - "{{ primary_router.output.primary_id }}"
+      - "{{ root_router.output.root_id }}"
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
       - "--platform"
@@ -854,7 +854,7 @@ agents:
       - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--item-id"
-      - "{{ primary_router.output.primary_id }}"
+      - "{{ root_router.output.root_id }}"
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
       - "--delete-branch"
@@ -913,7 +913,7 @@ agents:
   #
   # Verifies that the squash commit on `mg/{root}_{path}` carries the
   # full cumulative diff of `impl/{root}-{item}`. Defends against the
-  # AB#3211 failure mode that struck apex run 3165 (mg/3165_pg-3175):
+  # AB#3211 failure mode that struck root run 3165 (mg/3165_pg-3175):
   # gh's squash-merge silently dropped commits that referenced foreign
   # task IDs, leaving the MG branch missing the work the impl branch
   # had produced.
@@ -942,7 +942,7 @@ agents:
       - "--root-id"
       - "{{ workflow.input.root_id }}"
       - "--item-id"
-      - "{{ primary_router.output.primary_id }}"
+      - "{{ root_router.output.root_id }}"
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
       - "--platform"
@@ -976,18 +976,18 @@ agents:
     type: human_gate
     description: Squash merge dropped commits — operator decides abort or force-accept
     prompt: |
-      ## ❌ Squash-merge coverage mismatch — task `{{ primary_router.output.primary_id }}` (AB#3211)
+      ## ❌ Squash-merge coverage mismatch — task `{{ root_router.output.root_id }}` (AB#3211)
 
       `polyphony pr assert-impl-pr-coverage` reports the squash commit on
       `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}` does
       **not** carry the cumulative diff of
-      `impl/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`.
+      `impl/{{ workflow.input.root_id }}-{{ root_router.output.root_id }}`.
       Commits the impl branch produced were silently dropped during the
-      squash — the apex 3165 / pg-3175 incident.
+      squash — the root 3165 / pg-3175 incident.
 
       | Field | Value |
       |---|---|
-      | Work item | AB#{{ primary_router.output.primary_id }} — {{ primary_router.output.primary_title }} |
+      | Work item | AB#{{ root_router.output.root_id }} — {{ root_router.output.root_title }} |
       | Impl ref | `{{ assert_impl_pr_coverage.output.impl_ref }}` |
       | MG ref | `{{ assert_impl_pr_coverage.output.mg_ref }}` |
       | Comparison base | `{{ assert_impl_pr_coverage.output.comparison_base }}` |
@@ -1008,7 +1008,7 @@ agents:
       ### Recovery options
 
       - **Abort** — END this workflow. The impl branch
-        (`impl/{{ workflow.input.root_id }}-{{ primary_router.output.primary_id }}`)
+        (`impl/{{ workflow.input.root_id }}-{{ root_router.output.root_id }}`)
         is left intact so you can cherry-pick or re-PR the dropped commits.
         The MG state remains as-is in ADO — reconcile out-of-band before
         re-entering.
@@ -1018,7 +1018,7 @@ agents:
     options:
       - label: "🛑 Abort (preserve impl branch for inspection)"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
       - label: "⚡ Force-accept (acknowledge loss, proceed to delete branch)"
         value: force_accept
         route: delete_impl_branch
@@ -1033,7 +1033,7 @@ agents:
     type: human_gate
     description: assert-impl-pr-coverage tool error — operator decides retry or abort
     prompt: |
-      ## ⚠️ Coverage assertion failed to run — task `{{ primary_router.output.primary_id }}`
+      ## ⚠️ Coverage assertion failed to run — task `{{ root_router.output.root_id }}`
 
       `polyphony pr assert-impl-pr-coverage` returned an error envelope
       (the verb itself could not complete; this is a tool failure, not
@@ -1061,7 +1061,7 @@ agents:
         route: fetch_for_coverage_assertion
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Delete impl branch (deferred from impl_pr_merge per AB#3211) ──────
   #
@@ -1085,7 +1085,7 @@ agents:
       - >-
         $ErrorActionPreference = 'Continue';
         $rootId = '{{ workflow.input.root_id }}';
-        $itemId = '{{ primary_router.output.primary_id }}';
+        $itemId = '{{ root_router.output.root_id }}';
         $branch = "impl/$rootId-$itemId";
         $output = git push origin --delete $branch 2>&1 | Out-String;
         Write-Host $output;
@@ -1097,17 +1097,17 @@ agents:
         }
         @{ branch = $branch; deleted = ($exit -eq 0); already_gone = $alreadyGone } | ConvertTo-Json
     routes:
-      - to: primary_completer
+      - to: root_completer
 
   # ── Primary completer ─────────────────────────────────────────────────
   #
   # Transitions the completed task to its template's done state in ADO
-  # and adds a summary note. Then routes back to primary_router to pick
+  # and adds a summary note. Then routes back to root_router to pick
   # up the next task.
   #
   # ── Trust chain (AB#3214) ─────────────────────────────────────────────
   #
-  # AB#3175 incident (apex run 3165, 2026-05-14): a child task reached
+  # AB#3175 incident (root run 3165, 2026-05-14): a child task reached
   # `state = Done` in ADO via this step while the implementing commit
   # was stranded on a sibling task's impl branch and the squash-merge
   # to the MG carried zero diff. Net result: ADO reported the work as
@@ -1127,27 +1127,27 @@ agents:
   #      `polyphony pr assert-impl-pr-coverage` runs at
   #      `assert_impl_pr_coverage` and computes diff hashes for the
   #      cumulative impl-branch range vs the squash on the MG branch.
-  #      On `ok` it routes through `delete_impl_branch → primary_completer`.
+  #      On `ok` it routes through `delete_impl_branch → root_completer`.
   #      On `mismatch` it surfaces `squash_coverage_mismatch_gate` for
   #      the operator; only `force_accept` (an explicit operator
   #      acknowledgement of loss) routes onward to `delete_impl_branch
-  #      → primary_completer`.
+  #      → root_completer`.
   #
   # Routing invariant (enforced by
-  # tests/lint-primary-completer-trust-chain.ps1):
-  #   - The ONLY route INTO `primary_completer` is from
+  # tests/lint-root-completer-trust-chain.ps1):
+  #   - The ONLY route INTO `root_completer` is from
   #     `delete_impl_branch`.
   #   - The ONLY routes INTO `delete_impl_branch` are from
   #     `assert_impl_pr_coverage` (action='ok') or
   #     `squash_coverage_mismatch_gate` (option='force_accept').
   #
-  # Together these mean: by the time `primary_completer` fires, either
+  # Together these mean: by the time `root_completer` fires, either
   # the squash-coverage assertion confirmed diff equivalence, or the
   # operator has explicitly acknowledged a known mismatch. The AB#3175
   # green-wash is structurally impossible.
   #
   # If you change this routing, the lint will fail. If you intentionally
-  # add a new predecessor to `primary_completer` or `delete_impl_branch`,
+  # add a new predecessor to `root_completer` or `delete_impl_branch`,
   # update the lint's expected-predecessor lists in lockstep — and think
   # very hard about whether the new path preserves the diff-coverage
   # guarantee.
@@ -1161,37 +1161,37 @@ agents:
   # above) — only the feature-branch promotion is missing. Recovery:
   # re-run this workflow; the MG PR open + merge are idempotent.
   #
-  # AB#3169 carve-out (indivisible apex root): when `primary_id == root_id`
-  # the "task" being completed IS the apex root work item itself (an
-  # indivisible apex with zero ADO children — the lifecycle classifier
-  # dispatches the apex root through implement-merge-group as its own
+  # AB#3169 carve-out (indivisible root root): when `root_id == root_id`
+  # the "task" being completed IS the root root work item itself (an
+  # indivisible root with zero ADO children — the lifecycle classifier
+  # dispatches the root root through implement-merge-group as its own
   # implementable). In that case, firing `implementation_complete` here
-  # transitions the apex root to its template's done state at MG → feature
+  # transitions the root root to its template's done state at MG → feature
   # merge time — which is BEFORE feature → main has been promoted (see
-  # AB#3168 for the matching promotion-routing fix). The apex would then
+  # AB#3168 for the matching promotion-routing fix). The root would then
   # be reported done in ADO while `main` lacks any of its commits — a
   # high-blast-radius lie that cascades to ancestor work items.
   # Mitigation: skip the validate + state transition when this is the
-  # apex root. The apex's terminal state is fired by `close_mark_satisfied`
-  # in apex-driver.yaml AFTER `promote_feature_to_main` succeeds (and
+  # root root. The root's terminal state is fired by `close_mark_satisfied`
+  # in polyphony.yaml AFTER `promote_feature_to_main` succeeds (and
   # therefore AFTER feature → main is merged).
   #
   # Invariants:
   #   Pre:  Impl PR is merged into MG branch.
   #   Post: For child tasks, item is transitioned to its template's done
   #         state in ADO and a note added.
-  #         For an indivisible apex root, only a note is added; terminal
-  #         state is deferred to apex-driver close-out (AB#3169). When
-  #         this is the apex root, the impl-merged-in-mg marker is
-  #         stamped on the apex via `polyphony branch mark-impl-merged`
-  #         so the next `primary_router` poll reports `all_items_done`
+  #         For an indivisible root root, only a note is added; terminal
+  #         state is deferred to polyphony close-out (AB#3169). When
+  #         this is the root root, the impl-merged-in-mg marker is
+  #         stamped on the root via `polyphony branch mark-impl-merged`
+  #         so the next `root_router` poll reports `all_items_done`
   #         instead of re-dispatching the same item (AB#3217 fix to the
-  #         apex-3175 redispatch loop). The marker is cleared on every
+  #         root-3175 redispatch loop). The marker is cleared on every
   #         revision route that re-dispatches the MG (see
-  #         `clear_apex_impl_marker_*` nodes below). # type is runtime-injected; do not hardcode type names
-  - name: primary_completer
+  #         `clear_root_impl_marker_*` nodes below). # type is runtime-injected; do not hardcode type names
+  - name: root_completer
     type: script
-    description: "Transition completed child task to its template's done state (apex root: defer to close_mark_satisfied per AB#3169) and route to next"
+    description: "Transition completed child task to its template's done state (root root: defer to close_mark_satisfied per AB#3169) and route to next"
     command: pwsh
     args:
       - "-NoProfile"
@@ -1199,17 +1199,17 @@ agents:
       - >-
         $ErrorActionPreference = 'Stop';
         $PSNativeCommandUseErrorActionPreference = $true;
-        $taskId = [int]'{{ primary_router.output.primary_id }}';
+        $taskId = [int]'{{ root_router.output.root_id }}';
         $rootId = [int]'{{ workflow.input.root_id }}';
         $mgPath = '{{ workflow.input.mg_path }}';
         $isApexRoot = ($taskId -eq $rootId);
         twig set $taskId;
         if ($isApexRoot) {
-          twig note --text 'Apex root implementation merged into MG branch via impl PR; deferring terminal state transition to close_mark_satisfied after feature-to-main promotion (AB#3169).';
+          twig note --text 'Root root implementation merged into MG branch via impl PR; deferring terminal state transition to close_mark_satisfied after feature-to-main promotion (AB#3169).';
           twig sync;
           $marker = polyphony branch mark-impl-merged --work-item $taskId --mg-path $mgPath | ConvertFrom-Json;
-          if (-not $marker.success) { throw "Failed to mark apex root #$taskId impl-merged-in-mg=$($mgPath) (AB#3217 break-loop guard): $($marker.error)" };
-          @{ child_id = $taskId; completed = $true; target_state = $null; deferred_apex_root = $true; marker_tag = $marker.tag; marker_already_present = $marker.already_in_desired_state } | ConvertTo-Json
+          if (-not $marker.success) { throw "Failed to mark root root #$taskId impl-merged-in-mg=$($mgPath) (AB#3217 break-loop guard): $($marker.error)" };
+          @{ child_id = $taskId; completed = $true; target_state = $null; deferred_root_root = $true; marker_tag = $marker.tag; marker_already_present = $marker.already_in_desired_state } | ConvertTo-Json
         } else {
           twig note --text 'Item implementation merged into MG branch via impl PR';
           twig sync;
@@ -1217,14 +1217,14 @@ agents:
           if (-not $validate.is_valid) { throw "Cannot transition task $($taskId): $($validate.message)" };
           twig state $validate.target_state;
           twig sync;
-          @{ child_id = $taskId; completed = $true; target_state = $validate.target_state; deferred_apex_root = $false } | ConvertTo-Json
+          @{ child_id = $taskId; completed = $true; target_state = $validate.target_state; deferred_root_root = $false } | ConvertTo-Json
         }
     routes:
-      - to: primary_router
+      - to: root_router
 
   # ── Primary router error gate ─────────────────────────────────────────
   #
-  # Fires when `branch next-impl` (primary_router) emits action='error' or
+  # Fires when `branch next-impl` (root_router) emits action='error' or
   # a non-empty `error` field. Without an explicit route, the catch-all
   # below would silently treat the error as "all items done" and proceed
   # toward MG closure — masking the failure and skipping every remaining
@@ -1236,7 +1236,7 @@ agents:
   # action='error'.
   #
   # Operator options:
-  #   - Retry: re-enter primary_router. `next-impl` is idempotent —
+  #   - Retry: re-enter root_router. `next-impl` is idempotent —
   #     transitions a Doing item to Doing is a no-op for the validator
   #     (begin_implementation accepts both Proposed and InProgress), and
   #     the second `twig sync` will retry the push.
@@ -1245,9 +1245,9 @@ agents:
   #     same point.
   #
   # Invariants:
-  #   Pre:  primary_router emitted action='error' or a populated `error`.
-  #   Post: Operator has retried (route to primary_router) or aborted ($end).
-  - name: primary_router_error_gate
+  #   Pre:  root_router emitted action='error' or a populated `error`.
+  #   Post: Operator has retried (route to root_router) or aborted ($end).
+  - name: root_router_error_gate
     type: human_gate
     description: next-impl signaled error — operator decides retry or abort
     prompt: |
@@ -1258,11 +1258,11 @@ agents:
       `twig sync` that flushes the `begin_implementation` transition
       (AB#3126).
 
-      **Detail:** {{ primary_router.output.error | default('(no error message)') }}
+      **Detail:** {{ root_router.output.error | default('(no error message)') }}
 
       Choose an action:
 
-      - **Retry** — re-enter `primary_router`. `next-impl` is idempotent
+      - **Retry** — re-enter `root_router`. `next-impl` is idempotent
         (selecting the same task again, validating `begin_implementation`
         on a Doing item, and re-flushing all are no-ops or safe retries).
       - **Abort** — exit without advancing any further items. The MG
@@ -1271,10 +1271,10 @@ agents:
     options:
       - label: "🔄 Retry (re-run next-impl)"
         value: retry
-        route: primary_router
+        route: root_router
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Dependency check ──────────────────────────────────────────────────
   #
@@ -1286,7 +1286,7 @@ agents:
   # have since reached a terminal state.
   #
   # Invariants:
-  #   Pre:  primary_router.output.action == 'all_items_done'.
+  #   Pre:  root_router.output.action == 'all_items_done'.
   #   Post: output.status is 'blocked' or 'not_blocked'; blocking_items
   #         populated if blocked.
   - name: dependency_check
@@ -1640,7 +1640,7 @@ agents:
       - **MG path:** `{{ workflow.input.mg_path }}`
       - **MG branch:** `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
       - **Parent work item:** {{ workflow.input.work_item_id }}
-      - **Run apex:** {{ workflow.input.root_id }}
+      - **Run root:** {{ workflow.input.root_id }}
       - **Tasks in this MG:** {{ workflow.input.work_item_ids | length }}
         ({{ workflow.input.work_item_ids | join(', ') }})
 
@@ -1692,14 +1692,14 @@ agents:
              feedback: a short paragraph naming the broken invariant and
                        pointing at the upstream classifier/seeder/feature-pr-router
                        as the likely cause. DO NOT rationalize the void by
-                       claiming the apex's requirements "must be covered
+                       claiming the root's requirements "must be covered
                        elsewhere" — the MG layer is responsible for the work
                        it was dispatched with; an empty MG is a bug somewhere
                        upstream and approving it green-washes that bug.
 
          The user_acceptance gate is not the right place to confirm
-         "did the apex get done somewhere else?" — that check happens
-         at the apex level, not inside the MG reviewer.
+         "did the root get done somewhere else?" — that check happens
+         at the root level, not inside the MG reviewer.
 
       4. **Zero-commit disambiguation** (AB#3166 — direction-asymmetry fix):
 
@@ -1801,7 +1801,7 @@ agents:
       # Catch-all per M4: unknown verdict (typo, schema drift) routes
       # through the revise counter so that even malformed verdicts cannot
       # bypass the cap. This is the AB#3125 fix — previously this catch-all
-      # routed back to primary_router, which combined with `next-impl`
+      # routed back to root_router, which combined with `next-impl`
       # returning `all_items_done` produced an infinite loop burning Opus
       # calls when an MG was structurally empty (see dogfood Run #7).
       - to: scope_approvals_policy
@@ -1839,7 +1839,7 @@ agents:
 
   # ── Scope revise counter (AB#3125) ────────────────────────────────────
   #
-  # Caps the scope_reviewer → primary_router revise cycle so that when
+  # Caps the scope_reviewer → root_router revise cycle so that when
   # an MG is structurally broken (empty branch, no implementable items,
   # reviewer correctly emits `changes_requested` per its empty-MG check)
   # the workflow escalates to a human gate after MAX_REVISIONS instead
@@ -1889,11 +1889,11 @@ agents:
     routes:
       - to: scope_revise_cap_gate_policy_router
         when: "{{ scope_revise_counter.output.cap_reached == true }}"
-      # AB#3217: route revision passes through clear_apex_impl_marker so
-      # the impl-merged-in-mg marker (stamped by primary_completer when
-      # the apex root completed last round) doesn't suppress this round's
+      # AB#3217: route revision passes through clear_root_impl_marker so
+      # the impl-merged-in-mg marker (stamped by root_completer when
+      # the root root completed last round) doesn't suppress this round's
       # re-dispatch.
-      - to: clear_apex_impl_marker
+      - to: clear_root_impl_marker
         when: "{{ scope_revise_counter.output.cap_reached == false }}"
       # Catch-all per M4: defensive against cap_reached missing/malformed.
       # Routes to the policy router so a human resolves it rather than
@@ -1916,7 +1916,7 @@ agents:
   #                          loop at the cap again. Operators who
   #                          want re-loop semantics should leave
   #                          cap_mode='manual' and pick it interactively.)
-  #   • `auto_fail`        → terminal_cap_auto_fail (NOT terminal_abort_run —
+  #   • `auto_fail`        → cap_auto_fail (NOT abort_run —
   #                          honest about who decided to halt)
   #
   # Helper degrades to `cap_mode = 'manual'` on policy / CLI failure.
@@ -1932,7 +1932,7 @@ agents:
     routes:
       - to: pr_platform_router
         when: "{{ scope_revise_cap_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
-      - to: terminal_cap_auto_fail
+      - to: cap_auto_fail
         when: "{{ scope_revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
       # Default + 'manual' + any unknown → surface the human gate.
       - to: scope_revise_cap_gate
@@ -2006,12 +2006,12 @@ agents:
         route: pr_platform_router
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Scope revise reset (AB#3125) ──────────────────────────────────────
   #
   # Resets the scope-revise iteration counter when the operator chooses
-  # to continue at the cap gate. Routes back to primary_router to resume
+  # to continue at the cap gate. Routes back to root_router to resume
   # the loop with a fresh budget. Mirrors `review_counter_reset` in
   # github-pr.yaml.
   #
@@ -2030,29 +2030,29 @@ agents:
         Set-Content $counterFile 0
         @{ iteration = 0; reset = $true } | ConvertTo-Json
     routes:
-      # AB#3217: clear the apex-root impl-merged-in-mg marker so the
-      # restarted loop can actually re-dispatch the apex root for revision.
-      - to: clear_apex_impl_marker
+      # AB#3217: clear the root-root impl-merged-in-mg marker so the
+      # restarted loop can actually re-dispatch the root root for revision.
+      - to: clear_root_impl_marker
 
-  # ── Clear apex impl marker (AB#3217) ─────────────────────────────────
+  # ── Clear root impl marker (AB#3217) ─────────────────────────────────
   #
   # Deterministic single-node funnel for every workflow route that
   # re-dispatches the same MG for revision. Clears the
   # `polyphony:impl-merged-in-mg=<mg-path>` marker stamped by
-  # `primary_completer`'s apex-root branch (see AB#3217 / AB#3169 for
+  # `root_completer`'s root-root branch (see AB#3217 / AB#3169 for
   # why the marker exists).
   #
-  # Without this funnel, when the apex root IS the sole implementable
+  # Without this funnel, when the root root IS the sole implementable
   # item in the MG, the marker stays on the work item across revision
-  # passes and `primary_router` reports `all_items_done` immediately —
+  # passes and `root_router` reports `all_items_done` immediately —
   # the scope_reviewer's feedback is silently lost and the workflow
   # loops between user_acceptance and pr_platform_router with nothing
   # actually re-implemented.
   #
   # Idempotent: `polyphony branch clear-impl-merged` returns
   # `success=true, already_in_desired_state=true` when the tag is
-  # already absent (e.g. the apex root never completed for this MG, or
-  # this is a non-apex-root MG where primary_completer never stamped),
+  # already absent (e.g. the root root never completed for this MG, or
+  # this is a non-root-root MG where root_completer never stamped),
   # so this node is safe on every revision route regardless of whether
   # the marker was actually present.
   #
@@ -2060,12 +2060,12 @@ agents:
   #   Pre:  A revision route has fired (scope_revise_counter cap_reached
   #         == false, scope_revise_reset, or user_acceptance Request
   #         Changes).
-  #   Post: The impl-merged-in-mg marker is absent from the apex root;
-  #         primary_router is free to re-dispatch the apex root if it is
+  #   Post: The impl-merged-in-mg marker is absent from the root root;
+  #         root_router is free to re-dispatch the root root if it is
   #         non-terminal.
-  - name: clear_apex_impl_marker
+  - name: clear_root_impl_marker
     type: script
-    description: Clear the impl-merged-in-mg marker on the apex root before re-dispatching for revision (AB#3217)
+    description: Clear the impl-merged-in-mg marker on the root root before re-dispatching for revision (AB#3217)
     command: polyphony
     args:
       - "branch"
@@ -2075,7 +2075,7 @@ agents:
       - "--mg-path"
       - "{{ workflow.input.mg_path }}"
     routes:
-      - to: primary_router
+      - to: root_router
 
   # ── PR platform router ────────────────────────────────────────────────
   #
@@ -2287,14 +2287,14 @@ agents:
       `polyphony pr open-mg-ado` and `pr merge-mg-ado` require all three
       of `--organization`, `--project`, and `--repository`. Re-invoke the
       workflow chain with those inputs supplied (typically threaded from
-      the apex driver's inputs).
+      the root driver's inputs).
 
       MG branch:
       `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
     options:
       - label: "🛑 Abort (will re-invoke with inputs)"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── ADO MG-PR failure gate ────────────────────────────────────────────
   #
@@ -2353,13 +2353,13 @@ agents:
         route: mg_pr_open_ado
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Scope closer ──────────────────────────────────────────────────────
   #
   # After the MG PR merges, transitions completed items in this MG to
   # their template's done state in ADO. (Most are already Done from
-  # primary_completer; this step covers any that weren't and provides a
+  # root_completer; this step covers any that weren't and provides a
   # consistent end-of-MG boundary.) Uses `polyphony branch close-scope`
   # which validates each item before transitioning.
   #
@@ -2385,11 +2385,11 @@ agents:
 
   # ── Terminal abort (operator chose Abort on an error gate) ────────────
   #
-  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # Identical to plan-level.yaml's abort_run. Invokes
   # abort-run.ps1, which POSTs to conductor's /api/stop endpoint. The
   # engine raises InterruptError at every nested between-agent check,
   # unwinding the entire run cleanly (no process-kill, no zombies).
-  - name: terminal_abort_run
+  - name: abort_run
     type: script
     description: Operator-initiated full-run abort — POSTs /api/stop to halt the run cleanly
     command: pwsh
@@ -2407,11 +2407,11 @@ agents:
   # ── Terminal: policy-driven cap-mode auto-fail (AB#3186) ─────────────────
   #
   # Reached when `policy.unattended.cap_mode == 'auto_fail'` triggers at
-  # scope_revise_cap_gate. Distinct from terminal_abort_run so post-mortem
+  # scope_revise_cap_gate. Distinct from abort_run so post-mortem
   # diagnostics can tell policy-driven failures apart from human-initiated
   # aborts — the abort-run.ps1 envelope's `reason` field is the
   # discriminator (`cap-auto-fail` vs `operator-abort`).
-  - name: terminal_cap_auto_fail
+  - name: cap_auto_fail
     type: script
     description: Policy-driven full-run abort — unattended.cap_mode='auto_fail' at a cap-hit gate
     command: pwsh

@@ -4,6 +4,8 @@ using System.Text.RegularExpressions;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Sdlc;
 using Polyphony.Tagging;
 
@@ -140,7 +142,7 @@ public sealed partial class PlanCommands
     /// <param name="plannedTag">Tag value to apply to the parent on success
     /// (defaults to <c>polyphony:planned</c>).</param>
     /// <param name="planFile">Optional plan markdown file to read for
-    /// <c>apex_facets</c> front-matter (closed-loop PR #7). When omitted,
+    /// <c>root_facets</c> front-matter (closed-loop PR #7). When omitted,
     /// defaults to <c>plans/plan-{workItem}.md</c> relative to cwd. Missing
     /// file is treated as "no front-matter declared" and behaviour is
     /// unchanged.</param>
@@ -158,7 +160,7 @@ public sealed partial class PlanCommands
     /// the ref looks like <c>&lt;remote&gt;/&lt;branch&gt;</c>, then
     /// <c>git show &lt;ref&gt;:plans/plan-{workItem}.children.json</c>.
     /// When the ref does not contain the sidecar, falls through to
-    /// apex_facets / refusal — so a ref that lacks the file is NOT a hard
+    /// root_facets / refusal — so a ref that lacks the file is NOT a hard
     /// error. A bad ref or other git failure IS a hard error. AB#3106
     /// rubber-duck #1, deferred from the prior PR.</param>
     /// <param name="configDir">Polyphony config directory containing
@@ -172,7 +174,10 @@ public sealed partial class PlanCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("seed-children")]
     [VerbResult(typeof(PlanSeedChildrenResult))]
-    public async Task<int> SeedChildren(
+    [JournaledAction(Action = "plan_seed_children")]
+    [MutatesResource(ResourceKind.AdoWorkItem)]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
+    public Task<int> SeedChildren(
         int workItem = RequiredInput.MissingInt,
         string childrenJson = "",
         string plannedTag = "polyphony:planned",
@@ -182,9 +187,50 @@ public sealed partial class PlanCommands
         string childrenFromRef = "",
         CancellationToken ct = default)
     {
+        return JournalCommandSupport.RunWithCapturedResultAsync<PlanSeedChildrenResult, PlanSeedChildrenPayload>(
+            _journalDecorator,
+            _runContext,
+            "plan_seed_children",
+            JournalCommandSupport.WorkItemTarget(workItem),
+            innerCt => SeedChildrenCoreAsync(workItem, childrenJson, plannedTag, planFile, configDir, childrenFile, childrenFromRef, innerCt),
+            PolyphonyJsonContext.Default.PlanSeedChildrenResult,
+            (exitCode, result) => new PlanSeedChildrenPayload
+            {
+                WorkItemId = result?.WorkItemId ?? workItem,
+                ChildCount = result?.ChildCount ?? 0,
+                SeededItems = result?.SeededItems ?? [],
+                ReusedItems = result?.ReusedItems ?? [],
+                Errors = result?.Errors ?? [],
+                Warnings = result?.Warnings ?? [],
+                PlannedTagMutated = result?.PlannedTagSet ?? false,
+                PlannedTagAlreadyPresent = result?.PlannedTagAlready ?? false,
+                RootFacets = result?.RootFacets ?? [],
+                FacetsTagMutated = result?.FacetsTagSet ?? false,
+                Succeeded = exitCode == ExitCodes.Success && result is not null && result.ErrorCount == 0,
+                WasMutated = result is not null && (result.SeededCount > 0 || result.PlannedTagSet || result.FacetsTagSet),
+            },
+            PolyphonyJsonContext.Default.PlanSeedChildrenPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectPlanSeedChildrenEffects,
+            ct,
+            rootId: workItem,
+            workItemId: workItem);
+    }
+
+    private async Task<int> SeedChildrenCoreAsync(
+        int workItem,
+        string childrenJson,
+        string plannedTag,
+        string planFile,
+        string configDir,
+        string childrenFile,
+        string childrenFromRef,
+        CancellationToken ct)
+    {
         // --children-json is intentionally NOT in the required-input check:
         // when omitted, the verb falls back to the sidecar (or — for
-        // indivisible apexes — the plan front-matter's apex_facets). This
+        // indivisible apexes — the plan front-matter's root_facets). This
         // is the recovery seam for re-entering workflow executions where
         // architect.output.children is no longer in workflow context
         // (AB#3106 dogfood, 2026-05-12).
@@ -198,7 +244,7 @@ public sealed partial class PlanCommands
         //   3. Sidecar at git ref via --children-from-ref (re-entry recovery
         //      after merge_plan_pr — sidecar exists in the merged ref but
         //      not in the local worktree; AB#3106 rubber-duck #1)
-        //   4. apex_facets fallback (handled below)
+        //   4. root_facets fallback (handled below)
         //   5. Refusal (existing behaviour)
         // We track sourceLabel for diagnostics so a future failure can tell
         // us whether the verb consumed CLI input, the sidecar, the from-ref
@@ -355,7 +401,7 @@ public sealed partial class PlanCommands
                     childrenSource = "from-ref";
                 }
                 // else: ref simply doesn't carry the sidecar — fall through
-                // to apex_facets / refusal below. ShowFileAtRefAsync returns
+                // to root_facets / refusal below. ShowFileAtRefAsync returns
                 // null only for the "file does not exist at this ref" case;
                 // bad-ref / repo-error cases have already thrown above.
             }
@@ -363,9 +409,9 @@ public sealed partial class PlanCommands
 
         var children = childrenNode is JsonArray arr ? arr : new JsonArray();
 
-        // Read plan-file front-matter for apex_facets (opt-in). Architects
-        // declare apex_facets in plans/plan-{id}.md when they choose NOT to
-        // decompose ("indivisible apex" — see closed-loop plan §3.4(a)). The
+        // Read plan-file front-matter for root_facets (opt-in). Architects
+        // declare root_facets in plans/plan-{id}.md when they choose NOT to
+        // decompose ("indivisible root" — see closed-loop plan §3.4(a)). The
         // resolved facets land on the parent work item as a
         // polyphony:facets=... tag so RequirementInputResolver consumers
         // (worklist build, edges check, next-ready) can override the type-
@@ -373,35 +419,35 @@ public sealed partial class PlanCommands
         var resolvedPlanFile = string.IsNullOrEmpty(planFile)
             ? Path.Combine("plans", $"plan-{workItem}.md")
             : planFile;
-        var apexFacets = ReadApexFacets(resolvedPlanFile, out var apexFacetsError);
-        if (apexFacetsError is not null)
+        var rootFacets = ReadApexFacets(resolvedPlanFile, out var rootFacetsError);
+        if (rootFacetsError is not null)
         {
-            EmitError(apexFacetsError);
+            EmitError(rootFacetsError);
             return ExitCodes.ConfigError;
         }
 
-        // apex_facets is mutually exclusive with a non-empty children list.
-        // The two say opposite things: "this apex is indivisible" vs "here
+        // root_facets is mutually exclusive with a non-empty children list.
+        // The two say opposite things: "this root is indivisible" vs "here
         // are its sub-items". A planner that emits both is incoherent; we
         // refuse rather than guess.
-        if (apexFacets is { Count: > 0 } && children.Count > 0)
+        if (rootFacets is { Count: > 0 } && children.Count > 0)
         {
             EmitError(
-                $"plan front-matter declares apex_facets ({string.Join(",", apexFacets)}) but children-json contains {children.Count} child entr{(children.Count == 1 ? "y" : "ies")}; the two are mutually exclusive (apex_facets is for indivisible apexes — see closed-loop plan §3.4(a)).");
+                $"plan front-matter declares root_facets ({string.Join(",", rootFacets)}) but children-json contains {children.Count} child entr{(children.Count == 1 ? "y" : "ies")}; the two are mutually exclusive (root_facets is for indivisible apexes — see closed-loop plan §3.4(a)).");
             return ExitCodes.ConfigError;
         }
 
         // Indivisibility must be EXPLICIT. An empty children list with no
-        // apex_facets declaration is ambiguous: it could mean "this apex is
+        // root_facets declaration is ambiguous: it could mean "this root is
         // genuinely indivisible" or — more commonly in practice — "the
         // planner declared children in plan body prose but forgot to
         // populate the structured architect.output.children". Silent-tag of
         // zero-children plans is exactly what produced the false-satisfied
-        // apex surfaced by the AB#3064 dogfood (2026-05-09): the observer
+        // root surfaced by the AB#3064 dogfood (2026-05-09): the observer
         // reads only the polyphony:planned tag, the rollup then collapses
         // item_satisfied to satisfied, and the driver short-circuits at
         // preflight having implemented nothing. We refuse rather than guess.
-        // To declare indivisibility, the planner must add `apex_facets:` to
+        // To declare indivisibility, the planner must add `root_facets:` to
         // the plan front-matter.
         //
         // Note (AB#3106 dogfood, 2026-05-12): when the workflow re-enters
@@ -409,11 +455,11 @@ public sealed partial class PlanCommands
         // sidecar fallback path runs first (see resolution above). If the
         // sidecar is also absent, we land here. The error message names
         // both recovery surfaces so the operator knows what's missing.
-        if (children.Count == 0 && (apexFacets is null || apexFacets.Count == 0))
+        if (children.Count == 0 && (rootFacets is null || rootFacets.Count == 0))
         {
             // Trust childrenSource for the exact diagnostic shape so the
             // operator knows whether they need to fix the architect output,
-            // restore the sidecar, or declare apex_facets.
+            // restore the sidecar, or declare root_facets.
             string sourceClause = childrenSource switch
             {
                 "cli"      => "the architect supplied an empty children-json",
@@ -422,8 +468,8 @@ public sealed partial class PlanCommands
                 _          => BuildEmptySourceClause(workItem, childrenFile, childrenFromRef),
             };
             EmitError(
-                $"children-json is empty and plan front-matter declares no apex_facets — refusing to stamp #{workItem} as planned ({sourceClause}). " +
-                $"To declare an indivisible apex, add `apex_facets: [<facet>, ...]` to the front-matter of '{resolvedPlanFile}'. " +
+                $"children-json is empty and plan front-matter declares no root_facets — refusing to stamp #{workItem} as planned ({sourceClause}). " +
+                $"To declare an indivisible root, add `root_facets: [<facet>, ...]` to the front-matter of '{resolvedPlanFile}'. " +
                 $"Otherwise, supply --children-json containing the architect's structured decomposition (or commit a children-json sidecar via `polyphony plan write-plan --children-json`).");
             return ExitCodes.ConfigError;
         }
@@ -554,10 +600,10 @@ public sealed partial class PlanCommands
                     tags = tags.Add(plannedTag);
                 }
 
-                // Apply the facets-override tag when apex_facets was declared.
+                // Apply the facets-override tag when root_facets was declared.
                 // Replace any existing polyphony:facets=... tag so a re-plan
                 // with a different facet set converges, rather than stacking.
-                if (apexFacets is { Count: > 0 })
+                if (rootFacets is { Count: > 0 })
                 {
                     var existing = FacetTagParser.TryExtract(tags);
                     if (existing is not null)
@@ -573,7 +619,7 @@ public sealed partial class PlanCommands
                             }
                         }
                     }
-                    var newFacetsTag = FacetTagParser.FormatTag(apexFacets);
+                    var newFacetsTag = FacetTagParser.FormatTag(rootFacets);
                     tags = tags.Add(newFacetsTag);
                     facetsTagSet = true;
                 }
@@ -587,7 +633,7 @@ public sealed partial class PlanCommands
                     // returning. `twig patch` only mutates the local cache +
                     // pending queue; without this push the planned/facets
                     // tag is invisible to any subsequent process (e.g.
-                    // `state_detector` in `apex-driver.yaml` checking
+                    // `state_detector` in `polyphony.yaml` checking
                     // `polyphony:planned`) that reads cache directly without
                     // first calling sync. AB#3128: sister-bug to AB#3126 —
                     // same staged-but-never-pushed failure mode at the
@@ -619,7 +665,7 @@ public sealed partial class PlanCommands
             Warnings = warnings,
             PlannedTagSet = tagSet,
             PlannedTagAlready = tagAlreadyPresent,
-            ApexFacets = apexFacets ?? [],
+            RootFacets = rootFacets ?? [],
             FacetsTagSet = facetsTagSet,
         };
 
@@ -654,7 +700,7 @@ public sealed partial class PlanCommands
 
     /// <summary>
     /// Reads the plan markdown file at <paramref name="planFilePath"/> and
-    /// returns the architect-declared <c>apex_facets</c> if present and
+    /// returns the architect-declared <c>root_facets</c> if present and
     /// well-formed. Missing file or absent front-matter return null with no
     /// error (opt-in feature). Malformed front-matter populates
     /// <paramref name="error"/> so the caller can route to the error envelope.
@@ -687,7 +733,7 @@ public sealed partial class PlanCommands
                 error = $"plan front-matter in '{planFilePath}' is malformed: {parsed.ErrorDetail}";
                 return null;
             case PlanFileFrontMatterStatus.Present:
-                return parsed.ApexFacets.Count == 0 ? null : parsed.ApexFacets;
+                return parsed.RootFacets.Count == 0 ? null : parsed.RootFacets;
             default:
                 throw new InvalidOperationException($"Unhandled PlanFileFrontMatterStatus: {parsed.Status}");
         }
@@ -959,7 +1005,7 @@ public sealed partial class PlanCommands
             Warnings = Array.Empty<string>(),
             PlannedTagSet = false,
             PlannedTagAlready = false,
-            ApexFacets = Array.Empty<string>(),
+            RootFacets = Array.Empty<string>(),
             FacetsTagSet = false,
         };
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.PlanSeedChildrenResult));

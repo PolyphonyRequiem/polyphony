@@ -24,6 +24,11 @@ var app = ConsoleApp.Create()
 app.Add<ValidateCommand>();
 app.Add<ValidateConfigCommand>();
 app.Add<HierarchyCommand>();
+app.Add<JournalCommands>();
+app.Add<JournalHasCommand>();
+app.Add<JournalQueryCommand>();
+app.Add<JournalOwnedCommand>();
+app.Add<JournalDriftCommand>();
 app.Add<HealthCommand>();
 app.Add<StatusCommand>();
 app.Add<PlanCommands>("plan");
@@ -52,7 +57,7 @@ app.Add<ResetCommands>("reset");
 // app.Add<...>() calls above.
 var knownVerbRoots = new HashSet<string>(StringComparer.Ordinal)
 {
-    "validate", "validate-config", "hierarchy", "health", "status",
+    "validate", "validate-config", "hierarchy", "journal", "health", "status",
     "plan", "policy", "guidance", "branch", "state", "pr", "scope", "root",
     "requirements", "merge-group", "manifest", "lock", "worktree", "worklist", "edges", "agent",
     "research", "reset",

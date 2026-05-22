@@ -89,6 +89,16 @@ Two places must change for a new command:
 
 You do not need to register the command class itself.
 
+### Journaled branch verbs and run context
+
+State-mutating verbs that opt into `JournaledActionDecorator` should resolve
+`RunContext` from DI rather than reading environment variables directly.
+`RunContext` reads `POLYPHONY_RUN_ID`; when the variable is unset, it falls back
+to a process-scoped `manual_<guid>` value so ad-hoc CLI runs still journal.
+Branch verbs should pass the resolved `RunContext.RunId` into
+`JournaledActionInvocation` and keep per-verb payloads AOT-safe via
+`PolyphonyJsonContext`.
+
 ---
 
 ## Result records and JSON serialization

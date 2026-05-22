@@ -33,7 +33,7 @@ public static class PolyphonyTags
     /// Tag-name prefix for the per-item facet override (closed-loop PR #7).
     /// Stamped by <c>polyphony plan seed-children</c> as
     /// <c>polyphony:facets=&lt;csv&gt;</c> when the architect declared
-    /// <c>apex_facets</c> in plan front-matter for an indivisible apex.
+    /// <c>root_facets</c> in plan front-matter for an indivisible root.
     /// Read by <see cref="Sdlc.RequirementInputResolver"/> to override the
     /// type-config default facet set on a per-call basis. The full tag
     /// shape (prefix + <c>=</c> + canonical csv) is owned by
@@ -47,19 +47,19 @@ public static class PolyphonyTags
     /// AB#3169). Stamped as
     /// <c>polyphony:impl-merged-in-mg=&lt;mg-key&gt;</c> by
     /// <c>polyphony branch mark-impl-merged</c> at the end of
-    /// <c>primary_completer</c>'s apex-root branch; cleared by
+    /// <c>root_completer</c>'s root-root branch; cleared by
     /// <c>polyphony branch clear-impl-merged</c> on every workflow route
     /// that re-dispatches the same MG for revision
     /// (scope_revise_counter, scope_revise_reset, user_acceptance
     /// Request Changes). Read by <see cref="Commands.BranchCommands.NextImpl"/>
-    /// to skip the apex root and report <c>all_items_done</c>, breaking
+    /// to skip the root root and report <c>all_items_done</c>, breaking
     /// the redispatch loop documented in AB#3217.
     ///
-    /// Without this tag: when the apex root is the sole implementable item
-    /// in its merge group, <c>primary_completer</c> deliberately does NOT
+    /// Without this tag: when the root root is the sole implementable item
+    /// in its merge group, <c>root_completer</c> deliberately does NOT
     /// transition state (terminal transition is deferred to
     /// <c>close_mark_satisfied</c> per AB#3169 so feature → main has
-    /// promoted first); <c>primary_router</c> filters only on terminal
+    /// promoted first); <c>root_router</c> filters only on terminal
     /// state and re-dispatches the same item forever, each iteration
     /// producing an empty squash-coverage mismatch.
     /// </summary>
@@ -124,8 +124,8 @@ public static class PolyphonyTags
     }
 
     /// <summary>
-    /// Tag-name prefix for the "this apex's current run started at this
-    /// ISO-8601 UTC instant" marker, stamped on the apex root by
+    /// Tag-name prefix for the "this root's current run started at this
+    /// ISO-8601 UTC instant" marker, stamped on the root root by
     /// <c>polyphony reset state</c> (and re-stamped on every subsequent
     /// reset). Observers consume it as a watermark — any merged PR whose
     /// <c>MergedAt</c> is at or before this instant is treated as an

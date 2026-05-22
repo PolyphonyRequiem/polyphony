@@ -426,7 +426,7 @@ agents:
         route: poll_status
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Already-merged emitter ────────────────────────────────────────────
   #
@@ -743,7 +743,7 @@ agents:
   #                          more revision". NOT force_merge — auto-
   #                          merging an unapproved PR is dangerous and
   #                          requires explicit human authorization.)
-  #   • `auto_fail`        → terminal_cap_auto_fail (NOT terminal_abort_run —
+  #   • `auto_fail`        → cap_auto_fail (NOT abort_run —
   #                          honest about who decided to halt)
   #
   # Helper degrades to `cap_mode = 'manual'` on policy / CLI failure.
@@ -759,7 +759,7 @@ agents:
     routes:
       - to: pr_fixer
         when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_proceed' }}"
-      - to: terminal_cap_auto_fail
+      - to: cap_auto_fail
         when: "{{ revise_cap_gate_policy_router.output.cap_mode == 'auto_fail' }}"
       # Default + 'manual' + any unknown → surface the human gate.
       - to: revise_cap_gate
@@ -824,7 +824,7 @@ agents:
         route: pr_merger
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── PR fixer ───────────────────────────────────────────────────────────
   #
@@ -1003,7 +1003,7 @@ agents:
       - "policy"
       - "load"
     routes:
-      - to: terminal_abort_auto_mode_unsupported
+      - to: abort_auto_mode_unsupported
         when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
       - to: poll_status
         when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
@@ -1052,7 +1052,7 @@ agents:
         route: poll_status
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Stuck-review gate policy router ───────────────────────────────────
   #
@@ -1111,7 +1111,7 @@ agents:
         route: pr_merger
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── Stuck-review reset ────────────────────────────────────────────────
   #
@@ -1181,7 +1181,7 @@ agents:
   #
   #   - approve  → pr_merger (proceed with squash merge)
   #   - defer    → pending_review_gate (wait for more input / re-poll)
-  #   - abort    → terminal_abort_run
+  #   - abort    → abort_run
   - name: pr_pre_merge_gate
     type: human_gate
     description: Policy mode=manual — operator approves the merge before pr_merger fires.
@@ -1212,7 +1212,7 @@ agents:
         route: pending_review_gate
       - label: "🛑 Abort"
         value: abort
-        route: terminal_abort_run
+        route: abort_run
 
   # ── PR merger ──────────────────────────────────────────────────────────
   #
@@ -1289,11 +1289,11 @@ agents:
 
   # ── Terminal abort (operator chose Abort on an error gate) ────────────
   #
-  # Identical to plan-level.yaml's terminal_abort_run. Invokes
+  # Identical to plan-level.yaml's abort_run. Invokes
   # abort-run.ps1, which POSTs to conductor's /api/stop endpoint. The
   # engine raises InterruptError at every nested between-agent check,
   # unwinding the entire run cleanly (no process-kill, no zombies).
-  - name: terminal_abort_run
+  - name: abort_run
     type: script
     description: Operator-initiated full-run abort — POSTs /api/stop to halt the run cleanly
     command: pwsh
@@ -1311,11 +1311,11 @@ agents:
   # ── Terminal: policy-driven cap-mode auto-fail (AB#3186) ─────────────────
   #
   # Reached when `policy.unattended.cap_mode == 'auto_fail'` triggers at
-  # revise_cap_gate. Distinct from terminal_abort_run so post-mortem
+  # revise_cap_gate. Distinct from abort_run so post-mortem
   # diagnostics can tell policy-driven failures apart from human-initiated
   # aborts — the abort-run.ps1 envelope's `reason` field is the
   # discriminator (`cap-auto-fail` vs `operator-abort`).
-  - name: terminal_cap_auto_fail
+  - name: cap_auto_fail
     type: script
     description: Policy-driven full-run abort — unattended.cap_mode='auto_fail' at a cap-hit gate
     command: pwsh
@@ -1339,7 +1339,7 @@ agents:
   # in the sentiment-driven loop. Refuse the misconfiguration loudly so
   # an operator who set `auto` finds out at policy-load time instead of
   # watching the run poll forever.
-  - name: terminal_abort_auto_mode_unsupported
+  - name: abort_auto_mode_unsupported
     type: script
     description: Abort — policy.unattended.review_wait_mode='auto' is unsupported under the sentiment-driven PR-review loop.
     command: pwsh

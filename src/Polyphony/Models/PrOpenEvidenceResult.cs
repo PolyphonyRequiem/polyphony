@@ -3,8 +3,8 @@ namespace Polyphony;
 /// <summary>
 /// Output of <c>polyphony pr open-evidence-pr</c>: opens (or reuses) the
 /// pull request that promotes an evidence branch into its parent
-/// <c>feature/&lt;apex&gt;</c> branch (or <c>main</c> for the orphan
-/// evidence case where no apex is supplied).
+/// <c>feature/&lt;root&gt;</c> branch (or <c>main</c> for the orphan
+/// evidence case where no root is supplied).
 ///
 /// <para>The verb is platform-aware: when <c>--platform ado</c> is
 /// supplied (or the resolver detects an ADO origin), the ADO-specific
@@ -34,8 +34,8 @@ public sealed record PrOpenEvidenceResult
     /// <summary>The actionable work-item id this evidence PR satisfies.</summary>
     public required int WorkItemId { get; init; }
 
-    /// <summary>The apex (run-root feature) work-item id; equals <see cref="WorkItemId"/> in the orphan-evidence case.</summary>
-    public required int ApexId { get; init; }
+    /// <summary>The root (run-root feature) work-item id; equals <see cref="WorkItemId"/> in the orphan-evidence case.</summary>
+    public required int RootId { get; init; }
 
     /// <summary>True when a new PR was opened; false when an existing open PR was reused.</summary>
     public required bool Created { get; init; }

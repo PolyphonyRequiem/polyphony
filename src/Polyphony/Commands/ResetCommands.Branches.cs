@@ -2,15 +2,17 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony reset branches --apex N [--execute]</c> — deletes
-/// every polyphony-scoped branch for the apex on both origin and the
+/// <c>polyphony reset branches --root N [--execute]</c> — deletes
+/// every polyphony-scoped branch for the root on both origin and the
 /// local repo: <c>plan/{N}</c>, nested <c>plan/{N}-*</c>, <c>mg/{N}-*</c>,
 /// <c>impl/{N}-*</c>, <c>evidence/{N}-*</c>, <c>feature/{N}</c>, and
-/// literal <c>sdlc/apex/{id}</c> branches for the apex + descendants.
+/// literal <c>sdlc/apex/{id}</c> branches for the root + descendants.
 ///
 /// <para><b>Ordering</b>: runs AFTER <c>reset worktrees</c> so no local
 /// branch is pinned by a checked-out worktree, and AFTER
@@ -37,26 +39,58 @@ namespace Polyphony.Commands;
 public sealed partial class ResetCommands
 {
     /// <summary>
-    /// Delete every apex-scoped branch on origin and locally.
+    /// Delete every root-scoped branch on origin and locally.
     /// </summary>
-    /// <param name="apex">Apex root work-item ID.</param>
+    /// <param name="root">Root root work-item ID.</param>
     /// <param name="execute">Pass to actually delete branches. Without this flag, the verb is dry-run.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("branches")]
     [VerbResult(typeof(ResetBranchesResult))]
-    public async Task<int> ResetBranches(
-        int apex = RequiredInput.MissingInt,
+    [JournaledAction(Action = "reset_branches")]
+    [MutatesResource(ResourceKind.GitBranch)]
+    public Task<int> ResetBranches(
+        int root = RequiredInput.MissingInt,
         bool execute = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("reset branches",
-            ("--apex", apex == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ResetBranchesResult, ResetBranchesPayload>(
+            _journalDecorator,
+            _runContext,
+            "reset_branches",
+            $"root:{root}",
+            innerCt => ResetBranchesCoreAsync(root, execute, innerCt),
+            PolyphonyJsonContext.Default.ResetBranchesResult,
+            (_, result) => new ResetBranchesPayload
+            {
+                Root = result?.Root ?? root,
+                DryRun = result?.DryRun ?? !execute,
+                Succeeded = result?.Success ?? false,
+                WasMutated = result is not null && !result.DryRun && result.DeletedBranches.Count > 0,
+                DeletedBranches = result?.DeletedBranches ?? [],
+                FailedBranches = result?.FailedBranches ?? [],
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ResetBranchesPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectResetBranchesEffects,
+            ct,
+            rootId: root);
+    }
+
+    private async Task<int> ResetBranchesCoreAsync(
+        int root,
+        bool execute,
+        CancellationToken ct)
+    {
         ResetBranchesResult result;
         try
         {
-            var perBranch = await EnumerateApexBranchesBySideAsync(apex, ct).ConfigureAwait(false);
+            var perBranch = await EnumerateApexBranchesBySideAsync(root, ct).ConfigureAwait(false);
 
             var deleted = new List<ResetDeletedBranch>();
             var failed = new List<ResetFailedBranch>();
@@ -115,7 +149,7 @@ public sealed partial class ResetCommands
 
             result = new ResetBranchesResult
             {
-                Apex = apex,
+                Root = root,
                 Success = true,
                 DryRun = !execute,
                 DeletedBranches = deleted,
@@ -127,12 +161,12 @@ public sealed partial class ResetCommands
         {
             result = new ResetBranchesResult
             {
-                Apex = apex,
+                Root = root,
                 Success = false,
                 DryRun = !execute,
                 DeletedBranches = [],
                 FailedBranches = [],
-                Error = $"Error resetting branches for apex #{apex}: {ex.Message}",
+                Error = $"Error resetting branches for root #{root}: {ex.Message}",
             };
         }
 
@@ -158,22 +192,22 @@ public sealed partial class ResetCommands
     };
 
     /// <summary>
-    /// Enumerate every apex-scoped branch grouped by which side(s) it
+    /// Enumerate every root-scoped branch grouped by which side(s) it
     /// lives on. Order: pattern order; alphabetical within a pattern.
     /// De-dupes across patterns.
     /// </summary>
     private async Task<IReadOnlyList<(string Branch, BranchSide Side)>>
-        EnumerateApexBranchesBySideAsync(int apex, CancellationToken ct)
+        EnumerateApexBranchesBySideAsync(int root, CancellationToken ct)
     {
         var sides = new Dictionary<string, BranchSide>(StringComparer.Ordinal);
         var order = new List<string>();
 
-        foreach (var pattern in ApexBranchPatterns(apex))
+        foreach (var pattern in RootBranchPatterns(root))
         {
             await AccumulateBranchesBySideAsync(pattern, sides, order, ct).ConfigureAwait(false);
         }
 
-        foreach (var branch in await EnumerateApexSdlcBranchesAsync(apex, ct).ConfigureAwait(false))
+        foreach (var branch in await EnumerateApexSdlcBranchesAsync(root, ct).ConfigureAwait(false))
         {
             await AccumulateBranchesBySideAsync(branch, sides, order, ct).ConfigureAwait(false);
         }

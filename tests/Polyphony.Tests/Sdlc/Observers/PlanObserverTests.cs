@@ -406,7 +406,7 @@ public sealed class PlanObserverTests
         // and callers (FetchRunStartedAtAsync in next-ready,
         // DetectState) need to distinguish them to force a Needed
         // disposition rather than silently falling back to no-filter on
-        // a reset apex. TwigClient.ShowAsync itself returns null on
+        // a reset root. TwigClient.ShowAsync itself returns null on
         // process failure; the observer translates that into a thrown
         // InvalidOperationException so the caller's catch fires.
         // See docs/decisions/run-reset.md.

@@ -1,6 +1,9 @@
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
+using Polyphony.Journal.Reset;
 using Polyphony.Sdlc.Observers;
 
 namespace Polyphony.Commands;
@@ -46,17 +49,23 @@ public sealed partial class ResetCommands(
     IGitClient git,
     PullRequestReader pullRequestReader,
     PlanObserver planObserver,
-    Polyphony.Routing.HierarchyWalker walker)
+    Polyphony.Routing.HierarchyWalker walker,
+    RunContext? runContext = null,
+    JournaledActionDecorator? journalDecorator = null,
+    ProjectionResetExecutor? projectionResetExecutor = null)
 {
     private readonly ITwigClient _twig = twig;
     private readonly IGitClient _git = git;
     private readonly PullRequestReader _pullRequestReader = pullRequestReader;
     private readonly PlanObserver _planObserver = planObserver;
     private readonly Polyphony.Routing.HierarchyWalker _walker = walker;
+    private readonly ProjectionResetExecutor? _projectionResetExecutor = projectionResetExecutor;
+    private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
+    private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
 
     /// <summary>
-    /// Canonical apex-scoped branch prefix set for ref classes whose
-    /// apex scope can be expressed as a simple pattern. Used by
+    /// Canonical root-scoped branch prefix set for ref classes whose
+    /// root scope can be expressed as a simple pattern. Used by
     /// <c>reset prs</c> and <c>reset branches</c> alongside the separate
     /// descendant-aware <c>sdlc/apex/{id}</c> literal enumeration.
     ///
@@ -68,22 +77,22 @@ public sealed partial class ResetCommands(
     /// <c>{root}-{item}</c> and <c>{root}-{pgPath}</c> shapes documented
     /// in <c>docs/decisions/branch-model.md</c>.</para>
     /// </summary>
-    internal static IReadOnlyList<string> ApexBranchPatterns(int apex)
+    internal static IReadOnlyList<string> RootBranchPatterns(int root)
     {
-        var apexStr = apex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var rootStr = root.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return [
-            $"plan/{apexStr}",
-            $"plan/{apexStr}-*",
+            $"plan/{rootStr}",
+            $"plan/{rootStr}-*",
             // MG branches use `_` between root_id and mg_path (see
             // docs/decisions/branch-model.md §Branch names: `mg/{root_id}_{mg_path}`).
             // The `_` is unambiguous because mg_id segments match
             // `^[a-z][a-z0-9-]{0,30}$`, which excludes `_`. Earlier
             // revisions used `-` here, which silently failed to match
             // any MG branch and left mg/* refs on origin after reset.
-            $"mg/{apexStr}_*",
-            $"impl/{apexStr}-*",
-            $"evidence/{apexStr}-*",
-            $"feature/{apexStr}",
+            $"mg/{rootStr}_*",
+            $"impl/{rootStr}-*",
+            $"evidence/{rootStr}-*",
+            $"feature/{rootStr}",
         ];
     }
 }

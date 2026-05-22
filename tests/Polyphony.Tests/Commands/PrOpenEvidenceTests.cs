@@ -26,7 +26,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new PrCommands(git, gh, twig, Repository, Config, new Polyphony.Locking.RunLockStore(), new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git)), runner);
+        return (new PrCommands(git, gh, twig, Repository, Config, new Polyphony.Locking.RunLockStore(), new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateRunContext(), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateDecorator()), runner);
     }
 
     private static void StubGitRemoteOrigin(FakeProcessRunner runner, string url)
@@ -83,16 +83,16 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
     public async Task OpenEvidencePr_NegativeApexId_ReturnsConfigError()
     {
         var (cmd, _) = CreateCommand();
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenEvidencePr(workItem: 123, apexId: -1));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenEvidencePr(workItem: 123, rootId: -1));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
-        result.Error!.ShouldContain("apexId");
+        result.Error!.ShouldContain("rootId");
     }
 
     // ─── Branch naming defaults ──────────────────────────────────────────
 
     [Fact]
-    public async Task OpenEvidencePr_HappyPath_ApexProvided_UsesDashedHeadAndFeatureBase()
+    public async Task OpenEvidencePr_HappyPath_RootProvided_UsesDashedHeadAndFeatureBase()
     {
         var (cmd, runner) = CreateCommand();
         StubAllRemoteHeadsExist(runner, "evidence/100-123", "feature/100");
@@ -102,7 +102,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/77");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 100));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 100));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
@@ -112,12 +112,12 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         result.HeadBranch.ShouldBe("evidence/100-123");
         result.BaseBranch.ShouldBe("feature/100");
         result.WorkItemId.ShouldBe(123);
-        result.ApexId.ShouldBe(100);
+        result.RootId.ShouldBe(100);
         result.Title.ShouldBe("Evidence: Talk to security about MFA (#123)");
     }
 
     [Fact]
-    public async Task OpenEvidencePr_HappyPath_NoApex_CollapsesToOrphanFormAgainstMain()
+    public async Task OpenEvidencePr_HappyPath_NoRoot_CollapsesToOrphanFormAgainstMain()
     {
         var (cmd, runner) = CreateCommand();
         StubAllRemoteHeadsExist(runner, "evidence/123", "main");
@@ -126,7 +126,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         StubPrListEmpty(runner);
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/78");
 
-        // No --apex-id supplied — apex should default to workItem (orphan case).
+        // No --root-id supplied — root should default to workItem (orphan case).
         var (exit, output) = await CaptureConsoleAsync(() => cmd.OpenEvidencePr(workItem: 123));
 
         exit.ShouldBe(ExitCodes.Success);
@@ -135,22 +135,22 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         result.HeadBranch.ShouldBe("evidence/123");
         result.BaseBranch.ShouldBe("main");
         result.WorkItemId.ShouldBe(123);
-        result.ApexId.ShouldBe(123); // collapsed: apex == work item
+        result.RootId.ShouldBe(123); // collapsed: root == work item
     }
 
     [Fact]
-    public async Task OpenEvidencePr_ApexEqualsWorkItem_StillCollapsesToOrphanForm()
+    public async Task OpenEvidencePr_RootEqualsWorkItem_StillCollapsesToOrphanForm()
     {
         var (cmd, runner) = CreateCommand();
         StubAllRemoteHeadsExist(runner, "evidence/123", "main");
         StubGitRemoteOrigin(runner, "https://github.com/PolyphonyRequiem/polyphony.git");
-        StubTwigShowTree(runner, 123, "Self-apex item");
+        StubTwigShowTree(runner, 123, "Self-root item");
         StubPrListEmpty(runner);
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/79");
 
-        // Explicit --apex-id 123 with workItem=123 also collapses.
+        // Explicit --root-id 123 with workItem=123 also collapses.
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 123));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 123));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
@@ -173,7 +173,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.OpenEvidencePr(
                 workItem: 123,
-                apexId: 100,
+                rootId: 100,
                 head: "custom/head-branch",
                 baseBranch: "release/v2"));
 
@@ -197,7 +197,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.OpenEvidencePr(
                 workItem: 123,
-                apexId: 100,
+                rootId: 100,
                 title: "Explicit evidence title",
                 body: "Explicit body content"));
 
@@ -223,7 +223,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/82");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 100));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 100));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
@@ -244,7 +244,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         // No StubPrCreate — must NOT be called.
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 100));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 100));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
@@ -267,7 +267,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         StubLsRemoteHas(runner, "refs/heads/evidence/100-123", exists: false);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 100));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 100));
 
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
@@ -283,7 +283,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         StubLsRemoteHas(runner, "refs/heads/feature/100", exists: false);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 100));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 100));
 
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
@@ -298,7 +298,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         runner.WhenExact("git", ["remote", "get-url", "origin"], new ProcessResult(1, "", ""));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 100));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 100));
 
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
@@ -316,7 +316,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         StubPrCreateFailure(runner);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 100));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 100));
 
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
@@ -341,7 +341,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         var cmd = new PrCommands(
             git, gh, twig, Repository, Config,
             new Polyphony.Locking.RunLockStore(),
-            new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git));
+            new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateRunContext(), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateDecorator());
 
         StubAllRemoteHeadsExist(runner, "evidence/100-123", "feature/100");
         StubGitRemoteOrigin(runner, "https://github.com/PolyphonyRequiem/polyphony.git");
@@ -366,7 +366,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
             });
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 100));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 100));
 
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.PrOpenEvidenceResult)!;
@@ -390,7 +390,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/91");
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.OpenEvidencePr(workItem: 123, apexId: 100));
+            () => cmd.OpenEvidencePr(workItem: 123, rootId: 100));
 
         output.ShouldContain("\"pr_number\"", Case.Sensitive);
         output.ShouldContain("\"pr_url\"", Case.Sensitive);
@@ -398,7 +398,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         output.ShouldContain("\"head_branch\"", Case.Sensitive);
         output.ShouldContain("\"base_branch\"", Case.Sensitive);
         output.ShouldContain("\"work_item_id\"", Case.Sensitive);
-        output.ShouldContain("\"apex_id\"", Case.Sensitive);
+        output.ShouldContain("\"root_id\"", Case.Sensitive);
         output.ShouldContain("\"created\"", Case.Sensitive);
         output.ShouldNotContain("\"PrNumber\"", Case.Sensitive);
         output.ShouldNotContain("\"WorkItemId\"", Case.Sensitive);

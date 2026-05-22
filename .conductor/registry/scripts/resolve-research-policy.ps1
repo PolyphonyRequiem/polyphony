@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
     Resolve `policy.research.defaults.{escalation_cap, mode}` for the
-    research_dispatch router in plan-level.yaml (AB#3188).
+    research router in plan-level.yaml (AB#3188).
 .DESCRIPTION
     Invoked by the `research_policy_resolver` step that fronts every path
-    into `research_dispatch`. Calls `polyphony policy resolve --domain
+    into `research`. Calls `polyphony policy resolve --domain
     research --scope <scope>`, extracts `escalation_cap` and `mode`, and
     emits a JSON envelope the workflow can consume.
 
@@ -81,7 +81,7 @@
 .PARAMETER Scope
     Scope to pass to `policy resolve --scope`. Defaults to 'default'.
     Plan-level.yaml passes `type:<type>` when the work item type has
-    been resolved (type_loader is upstream of research_dispatch).
+    been resolved (type_loader is upstream of research).
 #>
 [CmdletBinding()]
 param(

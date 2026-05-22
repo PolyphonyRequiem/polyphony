@@ -1,7 +1,7 @@
 namespace Polyphony;
 
 /// <summary>
-/// Aggregated dashboard snapshot for a single apex work item. Composed by
+/// Aggregated dashboard snapshot for a single root work item. Composed by
 /// <c>polyphony status</c> from the ADO cache, the run manifest, and a
 /// best-effort gh PR query. Always exit 0 (routing-style); failure modes
 /// are surfaced via the <see cref="Warnings"/> array and per-section
@@ -13,7 +13,7 @@ namespace Polyphony;
 /// </summary>
 public sealed record StatusResult
 {
-    public required int ApexId { get; init; }
+    public required int RootId { get; init; }
     public required StatusAdoSection Ado { get; init; }
     public required StatusManifestSection Manifest { get; init; }
     public required StatusFeaturePrSection FeaturePr { get; init; }
@@ -62,7 +62,7 @@ public sealed record StatusManifestSection
 }
 
 /// <summary>
-/// Feature PR (head <c>feature/{apex_id}</c> → main) summary. The lookup
+/// Feature PR (head <c>feature/{root_id}</c> → main) summary. The lookup
 /// is gh-best-effort: a missing PR yields <see cref="Exists"/> false, a
 /// transient gh failure yields <see cref="Error"/> populated and the rest
 /// of the section empty.
@@ -94,7 +94,7 @@ public sealed record StatusBinarySection
 
 /// <summary>
 /// Cross-signal detection. Codes are stable identifiers safe for routing
-/// (<c>planned_tag_zero_children</c>, <c>apex_not_in_scope</c>, etc.);
+/// (<c>planned_tag_zero_children</c>, <c>root_not_in_scope</c>, etc.);
 /// <see cref="Message"/> is human-readable and may be surfaced verbatim
 /// in dashboards.
 /// </summary>

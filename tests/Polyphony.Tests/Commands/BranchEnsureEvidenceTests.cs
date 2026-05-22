@@ -14,7 +14,7 @@ namespace Polyphony.Tests.Commands;
 
 /// <summary>
 /// Tests for <c>polyphony branch ensure-evidence-branch</c>. Idempotent
-/// evidence-branch materialization with base = <c>feature/{apex_id}</c>
+/// evidence-branch materialization with base = <c>feature/{root_id}</c>
 /// (or a custom <c>--from-ref</c>). Mirrors
 /// <see cref="BranchCommandsEnsureImplTests"/> with the orphan-form
 /// collapse and from-ref override layered on top.
@@ -34,7 +34,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         var validator = new TransitionValidator(config);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new BranchCommands(twig, walker, repo, validator, git, config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null)), runner);
+        return (new BranchCommands(twig, walker, repo, validator, git, config, new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), new Polyphony.Sdlc.Observers.PullRequestReader(gh, null), JournalTestSupport.CreateRunContext(), JournalTestSupport.CreateDecorator()), runner);
     }
 
     private static void StubLsRemote(FakeProcessRunner runner, string branch, bool exists)
@@ -75,14 +75,14 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
     [Fact]
     public async Task EnsureEvidence_NegativeApexId_ReturnsConfigError()
     {
-        // Negative apex is rejected so callers don't get a silent collapse
+        // Negative root is rejected so callers don't get a silent collapse
         // to orphan when they fat-finger a sign.
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: -5));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: -5));
         exit.ShouldBe(ExitCodes.ConfigError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
-        result.Error!.ShouldContain("apexId");
+        result.Error!.ShouldContain("rootId");
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         StubPush(runner, "evidence/100-200");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 100));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 100));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.Branch.ShouldBe("evidence/100-200");
@@ -105,7 +105,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         result.Action.ShouldBe("created");
         result.Pushed.ShouldBeTrue();
         result.CreatedFrom.ShouldBe("feature/100");
-        result.ApexId.ShouldBe(100);
+        result.RootId.ShouldBe(100);
         result.ItemId.ShouldBe(200);
         result.Orphan.ShouldBeFalse();
         result.FromRef.ShouldBe("");
@@ -114,7 +114,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
     [Fact]
     public async Task EnsureEvidence_AllMissing_OrphanForm_CreatesEvidenceSlashItem()
     {
-        // No --apex-id supplied → resolved apex == workItemId → orphan
+        // No --root-id supplied → resolved root == workItemId → orphan
         // branch name evidence/{item}, base feature/{item}.
         var (cmd, runner) = CreateCommand();
         StubLsRemote(runner, "evidence/200", exists: false);
@@ -131,14 +131,14 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         result.Branch.ShouldBe("evidence/200");
         result.BaseBranch.ShouldBe("feature/200");
         result.Orphan.ShouldBeTrue();
-        result.ApexId.ShouldBe(200);
+        result.RootId.ShouldBe(200);
         result.ItemId.ShouldBe(200);
     }
 
     [Fact]
-    public async Task EnsureEvidence_ApexEqualsWorkItem_CollapsesToOrphanForm()
+    public async Task EnsureEvidence_RootEqualsWorkItem_CollapsesToOrphanForm()
     {
-        // Explicit --apex-id matching workItemId → still orphan form. The
+        // Explicit --root-id matching workItemId → still orphan form. The
         // collapse is by id-equality not by argument absence, so users
         // can't accidentally create both forms for the same item.
         var (cmd, runner) = CreateCommand();
@@ -150,7 +150,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         StubPush(runner, "evidence/200");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 200));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 200));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.Branch.ShouldBe("evidence/200");
@@ -160,7 +160,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
     [Fact]
     public async Task EnsureEvidence_BaseFeatureMissing_ReturnsRoutingFailure()
     {
-        // The apex feature branch must exist on remote before evidence
+        // The root feature branch must exist on remote before evidence
         // can be created — without it we have nothing to base off.
         var (cmd, runner) = CreateCommand();
         StubLsRemote(runner, "evidence/100-200", exists: false);
@@ -168,7 +168,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         StubLsRemote(runner, "feature/100", exists: false);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 100));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 100));
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.Action.ShouldBe("error");
@@ -188,7 +188,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         StubLsRemote(runner, "feature/100", exists: true);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 100));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 100));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.Action.ShouldBe("checked_out");
@@ -206,7 +206,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         StubLsRemote(runner, "feature/100", exists: true);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 100));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 100));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.Action.ShouldBe("checked_out");
@@ -225,7 +225,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         StubLsRemote(runner, "feature/100", exists: true);
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 100));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 100));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.Action.ShouldBe("checked_out");
@@ -236,7 +236,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
     [Fact]
     public async Task EnsureEvidence_BaseFeatureRemoteOnly_FetchesBeforeCreate()
     {
-        // Apex feature exists only on remote → must fetch before
+        // Root feature exists only on remote → must fetch before
         // creating the evidence branch off it.
         var (cmd, runner) = CreateCommand();
         StubLsRemote(runner, "evidence/100-200", exists: false);
@@ -249,7 +249,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         StubPush(runner, "evidence/100-200");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 100));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 100));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.BaseFetched.ShouldBeTrue();
@@ -271,7 +271,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         StubPush(runner, "evidence/100-200");
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 100, fromRef: "mg/100_core"));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 100, fromRef: "mg/100_core"));
         exit.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.BaseBranch.ShouldBe("mg/100_core");
@@ -292,7 +292,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
 
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.EnsureEvidenceBranch(
-                workItemId: 200, apexId: 100, fromRef: "mg/100_does-not-exist"));
+                workItemId: 200, rootId: 100, fromRef: "mg/100_does-not-exist"));
         exit.ShouldBe(ExitCodes.RoutingFailure);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.Error!.ShouldContain("--from-ref");
@@ -313,7 +313,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
             new ProcessResult(1, "", "fatal: remote rejected push"));
 
         var (exit, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 100));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 100));
         exit.ShouldBe(ExitCodes.CacheError);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.Action.ShouldBe("error");
@@ -332,7 +332,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         StubLsRemote(runner, "feature/100", exists: true);
 
         var (_, output) = await CaptureConsoleAsync(
-            () => cmd.EnsureEvidenceBranch(workItemId: 200, apexId: 100));
+            () => cmd.EnsureEvidenceBranch(workItemId: 200, rootId: 100));
 
         output.ShouldContain("\"branch\"");
         output.ShouldContain("\"base_branch\"");
@@ -341,7 +341,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         output.ShouldContain("\"pushed\"");
         output.ShouldContain("\"base_remote_existed\"");
         output.ShouldContain("\"base_fetched\"");
-        output.ShouldContain("\"apex_id\"");
+        output.ShouldContain("\"root_id\"");
         output.ShouldContain("\"item_id\"");
         output.ShouldContain("\"orphan\"");
         output.ShouldContain("\"from_ref\"");
@@ -351,8 +351,8 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
     public async Task EnsureEvidence_ErrorEnvelope_PreservesFieldsAndApexResolution()
     {
         // Error path still produces a well-formed envelope; importantly,
-        // omitted apex resolves to workItemId in the error output too,
-        // so callers can inspect ApexId without checking Action first.
+        // omitted root resolves to workItemId in the error output too,
+        // so callers can inspect RootId without checking Action first.
         var (cmd, _) = CreateCommand();
         var (exit, output) = await CaptureConsoleAsync(
             () => cmd.EnsureEvidenceBranch(workItemId: 0));
@@ -360,7 +360,7 @@ public sealed class BranchEnsureEvidenceTests : CommandTestBase
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.BranchEnsureEvidenceResult)!;
         result.Action.ShouldBe("error");
         result.ItemId.ShouldBe(0);
-        result.ApexId.ShouldBe(0);
+        result.RootId.ShouldBe(0);
         result.Branch.ShouldBe("");
         result.BaseBranch.ShouldBe("");
         result.Error!.ShouldNotBeEmpty();

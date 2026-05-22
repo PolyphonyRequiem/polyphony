@@ -1,6 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Journal;
+using Polyphony.Journal.Drift;
+using Polyphony.Journal.Observers;
+using Polyphony.Journal.Reset;
+using Polyphony.Journal.Reset.Deleters;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Infrastructure.Research;
 using Polyphony.Postconditions;
@@ -44,6 +49,32 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<PhaseDetector>();
         services.AddSingleton<HierarchyWalker>();
         services.AddSingleton<TransitionValidator>();
+        services.AddSingleton<RunContext>();
+        services.AddSingleton<IJournalLocator, JournalLocator>();
+        services.AddSingleton<IJournalStore, JournalStore>();
+        services.AddSingleton<JournaledActionDecorator>();
+        services.AddSingleton<JournalDriftAnalyzer>();
+        services.AddSingleton<ProjectionResetCoverageAnalyzer>();
+        services.AddSingleton<ProjectionResetPlanner>();
+        services.AddSingleton<ProjectionResetExecutor>();
+
+        // Journal drift observers. Every ResourceKind is explicitly accounted for here:
+        // implemented kinds register a concrete observer; deferred kinds register a
+        // DeferredResourceObserver so the omission is an intentional, reviewable choice.
+        services.AddSingleton<IResourceObserver, GitBranchObserver>();
+        services.AddSingleton<IResourceObserver, GitHubPrObserver>();
+        services.AddSingleton<IResourceObserver, AdoPrObserver>();
+        services.AddSingleton<IResourceObserver, AdoWorkItemObserver>();
+        services.AddSingleton<IResourceObserver, AdoWorkItemStateObserver>();
+        services.AddSingleton<IResourceObserver, AdoWorkItemTagObserver>();
+        services.AddSingleton<IResourceObserver, GitWorktreeObserver>();
+        services.AddSingleton<IResourceObserver, ManifestFileObserver>();
+        services.AddSingleton<IResourceObserver, PlanFileObserver>();
+        services.AddSingleton<IResourceObserver, LockFileObserver>();
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.GitTag, "Deferred in Phase 4: no journaled git-tag mutators currently require drift coverage."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.GitHubPrComment, "Deferred in Phase 4: PR comment drift is informational and not needed for the initial root drift fold."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.AdoPrComment, "Deferred in Phase 4: ADO PR comment drift is informational and not needed for the initial root drift fold."));
+        services.AddSingleton<IResourceObserver>(_ => new DeferredResourceObserver(ResourceKind.AdoPrVote, "Deferred in Phase 4: reviewer-vote drift is a follow-up once root drift is proven on branch and PR lifecycles."));
 
         // Sdlc observers — singleton services that wrap IGitClient/IGhClient/IAdoClient/ITwigClient
         // to produce per-RequirementKind observations. Shared by routing-style verbs
@@ -80,6 +111,14 @@ public static class PolyphonyServiceRegistration
             Polyphony.Infrastructure.AzureDevOps.Auth.PolyphonyAdoAuthFactory.CreateForAdo(
                 sp.GetRequiredService<AdoTokenResolver>()));
         services.AddSingleton<IAdoClient, AdoClient>();
+        services.AddSingleton<IResourceDeleter, GitBranchDeleter>();
+        services.AddSingleton<IResourceDeleter, GitWorktreeDeleter>();
+        services.AddSingleton<IResourceDeleter, GitHubPrDeleter>();
+        services.AddSingleton<IResourceDeleter, AdoPrDeleter>();
+        services.AddSingleton<IResourceDeleter, AdoWorkItemTagDeleter>();
+        services.AddSingleton<IResourceDeleter, ManifestFileDeleter>();
+        services.AddSingleton<IResourceDeleter, PlanFileDeleter>();
+        services.AddSingleton<IResourceDeleter, LockFileDeleter>();
 
         // Run lock infrastructure (Phase 4b PR D1b).
         services.AddSingleton<Polyphony.Locking.RunLockStore>();

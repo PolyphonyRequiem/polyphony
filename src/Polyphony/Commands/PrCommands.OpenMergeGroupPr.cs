@@ -3,6 +3,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -15,12 +17,14 @@ public sealed partial class PrCommands
     /// top-level. Reuses an existing open PR for the same head/base pair
     /// instead of creating a duplicate.
     /// </summary>
-    /// <param name="rootId">ADO work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path.</param>
     /// <param name="title">Optional PR title; deterministic fallback used when empty.</param>
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-mg-pr")]
+    [JournaledAction(Action = "pr_open_mg_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
     [VerbResult(typeof(PrOpenMergeGroupResult))]
     public async Task<int> OpenMergeGroupPr(
         int rootId = RequiredInput.MissingInt,
@@ -53,88 +57,189 @@ public sealed partial class PrCommands
         var baseBranch = path.IsTopLevel
             ? BranchNameBuilder.Feature(root).Value
             : BranchNameBuilder.MergeGroup(root, MergeGroupPath.Of(path.Segments.Take(path.Depth - 1))).Value;
+        PrOpenMergeGroupPrPayload? payload = null;
 
-        try
-        {
-            // Validate both head and base exist on the remote — gh pr create
-            // would otherwise fail late with a less actionable error.
-            var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", ct).ConfigureAwait(false);
-            if (headRefs.Count == 0)
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_open_mg_pr", BranchPairJournalTarget(headBranch, baseBranch), rootId, rootId),
+            async innerCt =>
             {
-                EmitMgError(rootId, mgPath, $"head branch '{headBranch}' does not exist on remote", headBranch: headBranch, baseBranch: baseBranch);
-                return ExitCodes.RoutingFailure;
-            }
-
-            var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{baseBranch}", ct).ConfigureAwait(false);
-            if (baseRefs.Count == 0)
-            {
-                EmitMgError(rootId, mgPath, $"base branch '{baseBranch}' does not exist on remote", headBranch: headBranch, baseBranch: baseBranch);
-                return ExitCodes.RoutingFailure;
-            }
-
-            var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(slug))
-            {
-                EmitMgError(rootId, mgPath, "Could not resolve repo slug from origin remote", headBranch: headBranch, baseBranch: baseBranch);
-                return ExitCodes.RoutingFailure;
-            }
-
-            var prTitle = string.IsNullOrWhiteSpace(title)
-                ? $"merge group {path.Canonical} for root #{rootId}"
-                : title;
-            var prBody = string.IsNullOrWhiteSpace(body)
-                ? BuildDefaultMgBody(rootId, path.Canonical, headBranch, baseBranch)
-                : body;
-
-            // Reuse an existing open PR for the same head/base pair.
-            var existing = await gh.ListPullRequestsAsync(
-                slug,
-                new PrListFilters(Head: headBranch, Base: baseBranch, State: "open", Limit: 1),
-                ct).ConfigureAwait(false);
-            if (existing.Count > 0)
-            {
-                var found = existing[0];
-                EmitMergeGroup(new PrOpenMergeGroupResult
+                try
                 {
-                    PrNumber = found.Number,
-                    PrUrl = found.Url ?? "",
-                    Title = prTitle,
-                    HeadBranch = headBranch,
-                    BaseBranch = baseBranch,
-                    RootId = rootId,
-                    MgPath = path.Canonical,
-                    Created = false,
-                });
-                return ExitCodes.Success;
-            }
+                    var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", innerCt).ConfigureAwait(false);
+                    if (headRefs.Count == 0)
+                    {
+                        var error = $"head branch '{headBranch}' does not exist on remote";
+                        payload = new PrOpenMergeGroupPrPayload
+                        {
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitMgError(rootId, mgPath, error, headBranch: headBranch, baseBranch: baseBranch);
+                        return ExitCodes.RoutingFailure;
+                    }
 
-            var url = await gh.CreatePullRequestAsync(slug, baseBranch, headBranch, prTitle, prBody, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(url))
-            {
-                EmitMgError(rootId, mgPath, "gh pr create failed — no URL returned", headBranch: headBranch, baseBranch: baseBranch);
-                return ExitCodes.RoutingFailure;
-            }
+                    var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{baseBranch}", innerCt).ConfigureAwait(false);
+                    if (baseRefs.Count == 0)
+                    {
+                        var error = $"base branch '{baseBranch}' does not exist on remote";
+                        payload = new PrOpenMergeGroupPrPayload
+                        {
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitMgError(rootId, mgPath, error, headBranch: headBranch, baseBranch: baseBranch);
+                        return ExitCodes.RoutingFailure;
+                    }
 
-            var trimmedUrl = url.Trim();
-            EmitMergeGroup(new PrOpenMergeGroupResult
-            {
-                PrNumber = ExtractPrNumber(trimmedUrl),
-                PrUrl = trimmedUrl,
-                Title = prTitle,
-                HeadBranch = headBranch,
-                BaseBranch = baseBranch,
-                RootId = rootId,
-                MgPath = path.Canonical,
-                Created = true,
-            });
-            return ExitCodes.Success;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            EmitMgError(rootId, mgPath, ex.Message, headBranch: headBranch, baseBranch: baseBranch);
-            return ExitCodes.RoutingFailure;
-        }
+                    var slug = await TryResolveSlugAsync(innerCt).ConfigureAwait(false);
+                    if (string.IsNullOrEmpty(slug))
+                    {
+                        const string error = "Could not resolve repo slug from origin remote";
+                        payload = new PrOpenMergeGroupPrPayload
+                        {
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitMgError(rootId, mgPath, error, headBranch: headBranch, baseBranch: baseBranch);
+                        return ExitCodes.RoutingFailure;
+                    }
+
+                    var prTitle = string.IsNullOrWhiteSpace(title)
+                        ? $"merge group {path.Canonical} for root #{rootId}"
+                        : title;
+                    var prBody = string.IsNullOrWhiteSpace(body)
+                        ? BuildDefaultMgBody(rootId, path.Canonical, headBranch, baseBranch)
+                        : body;
+
+                    var existing = await gh.ListPullRequestsAsync(
+                        slug,
+                        new PrListFilters(Head: headBranch, Base: baseBranch, State: "open", Limit: 1),
+                        innerCt).ConfigureAwait(false);
+                    if (existing.Count > 0)
+                    {
+                        var found = existing[0];
+                        var result = new PrOpenMergeGroupResult
+                        {
+                            PrNumber = found.Number,
+                            PrUrl = found.Url ?? "",
+                            Title = prTitle,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RootId = rootId,
+                            MgPath = path.Canonical,
+                            Created = false,
+                        };
+                        payload = new PrOpenMergeGroupPrPayload
+                        {
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            PrNumber = result.PrNumber,
+                            PrUrl = result.PrUrl,
+                            Title = result.Title,
+                            ResultAction = "reused_existing_pr",
+                            Succeeded = true,
+                            WasMutated = false,
+                        };
+                        EmitMergeGroup(result);
+                        return ExitCodes.Success;
+                    }
+
+                    var url = await gh.CreatePullRequestAsync(slug, baseBranch, headBranch, prTitle, prBody, innerCt).ConfigureAwait(false);
+                    if (string.IsNullOrWhiteSpace(url))
+                    {
+                        const string error = "gh pr create failed — no URL returned";
+                        payload = new PrOpenMergeGroupPrPayload
+                        {
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            Title = prTitle,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitMgError(rootId, mgPath, error, headBranch: headBranch, baseBranch: baseBranch);
+                        return ExitCodes.RoutingFailure;
+                    }
+
+                    var trimmedUrl = url.Trim();
+                    var createdResult = new PrOpenMergeGroupResult
+                    {
+                        PrNumber = ExtractPrNumber(trimmedUrl),
+                        PrUrl = trimmedUrl,
+                        Title = prTitle,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RootId = rootId,
+                        MgPath = path.Canonical,
+                        Created = true,
+                    };
+                    payload = new PrOpenMergeGroupPrPayload
+                    {
+                        RootId = rootId,
+                        MergeGroupPath = path.Canonical,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        PrNumber = createdResult.PrNumber,
+                        PrUrl = createdResult.PrUrl,
+                        Title = createdResult.Title,
+                        ResultAction = "created",
+                        Succeeded = true,
+                        WasMutated = true,
+                    };
+                    EmitMergeGroup(createdResult);
+                    return ExitCodes.Success;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    payload = new PrOpenMergeGroupPrPayload
+                    {
+                        RootId = rootId,
+                        MergeGroupPath = path.Canonical,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        Error = ex.Message,
+                    };
+                    EmitMgError(rootId, mgPath, ex.Message, headBranch: headBranch, baseBranch: baseBranch);
+                    return ExitCodes.RoutingFailure;
+                }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenMergeGroupPrPayload),
+            effectsSelector: _ => SelectOpenMergeGroupPrEffects(payload),
+            ct: ct).ConfigureAwait(false);
     }
 
     private static string BuildDefaultMgBody(int rootId, string mgPath, string headBranch, string baseBranch)

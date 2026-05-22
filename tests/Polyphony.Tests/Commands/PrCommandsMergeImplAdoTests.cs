@@ -33,7 +33,7 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
             new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
-            new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
+            new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateRunContext(), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateDecorator(),
             ado);
         return (cmd, runner, ado);
     }
@@ -127,7 +127,7 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
             new Polyphony.Locking.RunLockStore(),
             new Polyphony.Locking.RunLockPathResolver(git),
             new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
-            new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
+            new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateRunContext(), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateDecorator(),
             ado: null);
         var (_, output) = await CaptureConsoleAsync(
             () => cmd.MergeImplAdo(Org, Project, Repo, rootId: 100, itemId: 200, mgPath: "core"));
@@ -219,7 +219,7 @@ public sealed class PrCommandsMergeImplAdoTests : CommandTestBase
     }
 
     // AB#3211 clause 2 negative: head was deleted AND merge commit isn't
-    // on origin/{base}. The most damaging case from apex 62286666: the
+    // on origin/{base}. The most damaging case from root 62286666: the
     // PR was for a different run, the branch was recycled, and the
     // recorded merge commit no longer lives on today's base branch.
     [Fact]

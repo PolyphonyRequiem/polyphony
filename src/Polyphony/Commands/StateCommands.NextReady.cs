@@ -112,9 +112,9 @@ public sealed partial class StateCommands
 
         var children = await repository.GetChildrenAsync(workItem, ct).ConfigureAwait(false);
 
-        // PR #5 (apex_facets threading, closes #215): honour the
+        // PR #5 (root_facets threading, closes #215): honour the
         // polyphony:facets=... tag stamped by `plan seed-children` on
-        // an architect-declared indivisible apex (closed-loop §3.4 +
+        // an architect-declared indivisible root (closed-loop §3.4 +
         // PR #214). Mirrors the helper used by EdgesCommands.Check and
         // WorklistCommands.Build so the three consumers stay on a
         // single facet-resolution path. Malformed-tag failure surfaces
@@ -319,7 +319,7 @@ public sealed partial class StateCommands
         // the canonical write-once signal that the seeder ran, regardless
         // of whether it produced children (the indivisible case from
         // closed-loop §3.4). Replaces the pre-PR-#3 "any non-Done child"
-        // heuristic which mis-labeled apex items with no children seeded
+        // heuristic which mis-labeled root items with no children seeded
         // yet (e.g. #3043) as Needed despite the seeder also not having
         // run — silently equating "never planned" with "ready to plan".
         var (childrenSeededDisp, childrenSeededReason) = ComposeChildrenSeeded(scope);
@@ -375,7 +375,7 @@ public sealed partial class StateCommands
         await FetchPlannedTagAsync(scope, ct).ConfigureAwait(false);
 
         // Run-reset watermark: the polyphony:run-started-at tag on the
-        // apex root (resolved above as RootId) bounds which merged PRs
+        // root root (resolved above as RootId) bounds which merged PRs
         // count for current-run satisfaction. Fetched alongside the
         // planned-tag so it's available regardless of which early-return
         // path we take below. Absent tag → null → no filter (legacy
@@ -493,7 +493,7 @@ public sealed partial class StateCommands
 
     /// <summary>
     /// Fetch the run-watermark signal: the <c>polyphony:run-started-at</c>
-    /// tag value from the apex root (<see cref="NextReadyObservationScope.RootId"/>).
+    /// tag value from the root root (<see cref="NextReadyObservationScope.RootId"/>).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -512,7 +512,7 @@ public sealed partial class StateCommands
     ///     captures the error. PR-state composers force a Needed
     ///     disposition with the error in the reason — falling back to
     ///     no-filter here would re-introduce the stuck-state bug on a
-    ///     reset apex whose tag we momentarily couldn't read.</description></item>
+    ///     reset root whose tag we momentarily couldn't read.</description></item>
     /// </list>
     /// <para>
     /// See <c>docs/decisions/run-reset.md</c> for the watermark
@@ -908,7 +908,7 @@ public sealed partial class StateCommands
     /// <see cref="BuildChildRollupSnapshotsAsync"/>. Overridable via the
     /// <c>POLYPHONY_NEXTREADY_ROLLUP_DEPTH</c> environment variable.
     /// Five levels is enough for every tree shape the dogfood corpus has
-    /// produced (apex → MG → leaves is depth 3; the cap leaves headroom
+    /// produced (root → MG → leaves is depth 3; the cap leaves headroom
     /// for nested MGs without exposing the verb to runaway gh calls on
     /// adversarial fixtures). When the cap is reached at a parent that
     /// still has children, the parent's
@@ -1250,11 +1250,11 @@ public sealed partial class StateCommands
     /// <see cref="EdgesCommands"/> and <see cref="WorklistCommands"/>:
     /// pulls the per-item facet override from the
     /// <c>polyphony:facets=...</c> tag stamped by
-    /// <c>plan seed-children</c> for an indivisible apex
+    /// <c>plan seed-children</c> for an indivisible root
     /// (closed-loop §3.4 + PR #214). Returns <c>null</c> when no
     /// override tag is present (the resolver then falls back to the
     /// type-config default). Throws <see cref="InvalidOperationException"/>
-    /// on a malformed override — silent fallback would route the apex
+    /// on a malformed override — silent fallback would route the root
     /// to the wrong facet set, the exact failure mode this PR set is
     /// fixing.
     /// </summary>

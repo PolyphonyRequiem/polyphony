@@ -6,7 +6,7 @@ namespace Polyphony.Infrastructure.Processes;
 /// different failure modes (clean / merge conflict / hard failure)
 /// without sniffing exception messages.
 ///
-/// <para>The cascade-remedy verb consumes this directly:
+/// <para>The restack-remedy verb consumes this directly:
 /// <list type="bullet">
 ///   <item><see cref="Clean"/> → push the new HEAD, update PR body, record
 ///     the rebase in the manifest, post the comment.</item>

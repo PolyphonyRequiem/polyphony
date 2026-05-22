@@ -1,6 +1,6 @@
 # Pester tests for .conductor/registry/scripts/resolve-research-policy.ps1
 # (AB#3188 — wire policy.research.defaults.{escalation_cap, mode} through
-# research_dispatch in plan-level.yaml).
+# research in plan-level.yaml).
 #
 # Strategy mirrors resolve-unattended-cap-mode.Tests.ps1 (AB#3186): a
 # temp-dir stub polyphony.ps1 is passed via -PolyphonyExe; the stub

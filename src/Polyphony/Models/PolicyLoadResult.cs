@@ -35,7 +35,7 @@ public sealed record PolicyLoadResult
     /// <summary>Resolved root-fallback policy (Phase 1 root-fallback-gate).</summary>
     public required PolicyRootFallbackSnapshot RootFallback { get; init; }
 
-    /// <summary>Resolved renegotiation bubble-up policy (Phase 7 apex-driver).</summary>
+    /// <summary>Resolved renegotiation bubble-up policy (Phase 7 polyphony).</summary>
     public required PolicyRenegotiationSnapshot Renegotiation { get; init; }
 
     /// <summary>Resolved unattended-run policy (AB#3104). Three-mode bypass for
@@ -107,7 +107,7 @@ public sealed record PolicyRootFallbackSnapshot
 /// <summary>
 /// Renegotiation bubble-up snapshot exposed via <c>policy load</c>.
 /// Captures the resolved <c>auto_decide</c> value the
-/// <c>apex-driver</c> workflow consumes when a child <c>plan-level</c>
+/// <c>polyphony</c> workflow consumes when a child <c>plan-level</c>
 /// run returns <c>renegotiation_pending=true</c>.
 /// </summary>
 public sealed record PolicyRenegotiationSnapshot

@@ -4,6 +4,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Locking;
 using Polyphony.Manifest;
@@ -13,7 +15,7 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// <c>polyphony plan rebase-stale-descendant</c> — the heart of the
-/// Phase 3 P9 cascade-remedy. Auto-rebases an open descendant plan PR
+/// Phase 3 P9 restack-remedy. Auto-rebases an open descendant plan PR
 /// whose <c>ancestor_plan_generations</c> snapshot is behind the current
 /// manifest, pushes the new head with a strict lease, rewrites the PR
 /// body's snapshot front-matter, records the rebase in the manifest's
@@ -21,12 +23,12 @@ namespace Polyphony.Commands;
 /// best-effort comment.
 ///
 /// <para>Implementation follows the 18-step compound transactional
-/// sequence in the design doc (P9 cascade remedy, Rev 2 post rubber-duck).
+/// sequence in the design doc (P9 restack remedy, Rev 2 post rubber-duck).
 /// All sequence-relevant invariants are preserved:</para>
 /// <list type="bullet">
 ///   <item><b>Lock-before-read</b>: same-root run lock at <c>.polyphony/locks/run-{rootId}.lock</c> acquired before any read of the manifest, so concurrent rebases against the same root cannot race.</item>
 ///   <item><b>Poll-then-fetch-then-verify</b>: PR poll captures <c>headRefOid</c> first, then <c>git fetch</c>, then <c>rev-parse origin/{head}</c> must match — guards against the head moving between fetch and poll.</item>
-///   <item><b>Cascade-precondition</b>: refuses with <c>parent_stale</c> if the parent plan PR's snapshot is itself behind the manifest — rebasing a descendant onto a stale parent would just re-stage the staleness.</item>
+///   <item><b>Restack-precondition</b>: refuses with <c>parent_stale</c> if the parent plan PR's snapshot is itself behind the manifest — rebasing a descendant onto a stale parent would just re-stage the staleness.</item>
 ///   <item><b>Three-fact noop</b>: <c>noop</c> outcome only when (a) <c>origin/{parent}</c> is already an ancestor of <c>origin/{head}</c>, (b) the body snapshot matches the manifest, and (c) the rebase ledger has a matching <c>(branch, commit, child_plan_drift)</c> entry.</item>
 ///   <item><b>Strict body update</b>: body uses <see cref="PlanPrFrontMatter.ParseStrict"/> + <see cref="PlanPrFrontMatter.ReplaceSnapshotPreservingTail"/> so a malformed body never gets silently overwritten and the existing <c>requests_parent_change</c> + body tail are preserved byte-for-byte.</item>
 ///   <item><b>Partial-success replay</b>: <c>body_update_failed</c> and <c>manifest_push_rejected</c> leave the manifest unchanged, so a re-run completes the recovery via the three-fact missing-piece path.</item>
@@ -58,7 +60,12 @@ public sealed partial class PlanCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("rebase-stale-descendant")]
     [VerbResult(typeof(PlanRebaseStaleDescendantResult))]
-    public async Task<int> RebaseStaleDescendant(
+    [JournaledAction(Action = "plan_rebase_stale_descendant")]
+    [MutatesResource(ResourceKind.GitBranch)]
+    [MutatesResource(ResourceKind.GitHubPr)]
+    [MutatesResource(ResourceKind.AdoPr)]
+    [MutatesResource(ResourceKind.ManifestFile)]
+    public Task<int> RebaseStaleDescendant(
         int rootId = RequiredInput.MissingInt,
         int itemId = RequiredInput.MissingInt,
         int parentItemId = RequiredInput.MissingInt,
@@ -78,8 +85,62 @@ public sealed partial class PlanCommands
             ("--item-id", itemId == RequiredInput.MissingInt),
             ("--parent-item-id", parentItemId == RequiredInput.MissingInt),
             ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<PlanRebaseStaleDescendantResult, PlanRebaseStaleDescendantPayload>(
+            _journalDecorator,
+            _runContext,
+            "plan_rebase_stale_descendant",
+            $"plan-pr:{prNumber}",
+            innerCt => RebaseStaleDescendantCoreAsync(rootId, itemId, parentItemId, prNumber, ancestorIds, manifestPath, by, lockTtlHours, platform, organization, project, repositoryOverride, innerCt),
+            PolyphonyJsonContext.Default.PlanRebaseStaleDescendantResult,
+            (_, result) => new PlanRebaseStaleDescendantPayload
+            {
+                RootId = result?.RootId ?? rootId,
+                ItemId = result?.ItemId ?? itemId,
+                ParentItemId = result?.ParentItemId ?? parentItemId,
+                PrNumber = result?.PrNumber ?? prNumber,
+                PrUrl = result?.PrUrl ?? string.Empty,
+                HeadBranch = result?.HeadBranch ?? string.Empty,
+                ParentPlanBranch = result?.ParentPlanBranch ?? string.Empty,
+                Outcome = result?.Outcome ?? string.Empty,
+                OldHeadSha = result?.OldHeadSha,
+                NewHeadSha = result?.NewHeadSha,
+                BodyUpdated = result?.BodyUpdated ?? false,
+                ManifestRecorded = result?.ManifestRecorded ?? false,
+                ManifestPushed = result?.ManifestPushed ?? false,
+                CommentPosted = result?.CommentPosted ?? false,
+                ConflictFiles = result?.ConflictFiles ?? [],
+                Warnings = result?.Warnings ?? [],
+                Succeeded = result is not null && string.IsNullOrEmpty(result.ErrorCode) && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && (result.Outcome == "rebased" || result.BodyUpdated || result.ManifestRecorded || !string.IsNullOrEmpty(result.NewHeadSha)),
+                ErrorCode = result?.ErrorCode,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.PlanRebaseStaleDescendantPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectPlanRebaseStaleDescendantEffects,
+            ct,
+            rootId: rootId,
+            workItemId: itemId);
+    }
+
+    private async Task<int> RebaseStaleDescendantCoreAsync(
+        int rootId,
+        int itemId,
+        int parentItemId,
+        int prNumber,
+        string ancestorIds,
+        string manifestPath,
+        string by,
+        int lockTtlHours,
+        string platform,
+        string organization,
+        string project,
+        string repositoryOverride,
+        CancellationToken ct)
+    {
         // ── 1. Validate inputs + derive head/parent branches. ──────────────
         if (!Polyphony.Branching.RootId.TryParse(rootId, out var root))
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "invalid_argument",
@@ -302,7 +363,7 @@ public sealed partial class PlanCommands
 
         if (!string.Equals(poll.State, "OPEN", StringComparison.OrdinalIgnoreCase))
             return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "pr_state_invalid",
-                $"PR #{prNumber} is in state '{poll.State}'; only OPEN PRs are eligible for cascade rebase.",
+                $"PR #{prNumber} is in state '{poll.State}'; only OPEN PRs are eligible for restack rebase.",
                 headBranch: headBranch, parentPlanBranch: parentPlanBranch, prUrl: prUrl,
                 oldHeadSha: poll.HeadRefOid);
 
@@ -338,7 +399,7 @@ public sealed partial class PlanCommands
                 prUrl: prUrl, oldHeadSha: polledSha);
         }
 
-        // ── 9. Cascade-precondition: parent plan branch must be fresh. ─────
+        // ── 9. Restack-precondition: parent plan branch must be fresh. ─────
         // The parent is fresh iff (a) it has no open plan PR, OR (b) its
         // open plan PR's snapshot matches the manifest. Rebasing onto a
         // stale parent would just re-stage the staleness.
@@ -506,7 +567,7 @@ public sealed partial class PlanCommands
 
                 case FrontMatterReplacement.Absent:
                     return EmitRebaseError(rootId, itemId, parentItemId, prNumber, "malformed_front_matter",
-                        "PR body has no fenced front-matter at the start; refusing to invent one (a hand-written plan PR is out of scope for the cascade remedy).",
+                        "PR body has no fenced front-matter at the start; refusing to invent one (a hand-written plan PR is out of scope for the restack remedy).",
                         headBranch: headBranch, parentPlanBranch: parentPlanBranch,
                         prUrl: prUrl,
                         oldHeadSha: polledSha, newHeadSha: ranRebase ? newHeadSha : null);
@@ -665,7 +726,7 @@ public sealed partial class PlanCommands
         catch
         {
             // Best-effort: can't list parent PRs → treat as fresh (no signal
-            // beats a false-positive parent_stale that strands the cascade).
+            // beats a false-positive parent_stale that strands the restack).
             return null;
         }
 
@@ -794,7 +855,7 @@ public sealed partial class PlanCommands
             sb.Append(')');
         }
         sb.Append(". `").Append(ShortSha(oldSha)).Append("` → `").Append(ShortSha(newSha)).Append("`.");
-        sb.Append("\n\n_This comment was posted by `polyphony plan rebase-stale-descendant` (P9 cascade remedy)._");
+        sb.Append("\n\n_This comment was posted by `polyphony plan rebase-stale-descendant` (P9 restack remedy)._");
         return sb.ToString();
     }
 

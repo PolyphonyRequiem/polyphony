@@ -7,7 +7,7 @@ namespace Polyphony;
 /// run-root's plan-tree subtree, computed by walking the tree, deriving
 /// each item's <see cref="RequirementSet"/>, and feeding the lot to
 /// <see cref="EdgeGraph.Build"/>. The verb surfaces the resulting
-/// <see cref="EdgeGraph.Conflicts"/> list to a human gate (or the apex
+/// <see cref="EdgeGraph.Conflicts"/> list to a human gate (or the root
 /// driver, in a later PR) so a stuck dispatch can be diagnosed without
 /// re-running the planner.
 ///

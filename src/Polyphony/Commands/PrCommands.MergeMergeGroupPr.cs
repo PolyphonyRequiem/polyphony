@@ -3,6 +3,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -18,7 +20,7 @@ public sealed partial class PrCommands
     /// would break the chain. The head branch is never deleted (sibling
     /// merge groups may still be in flight).
     /// </summary>
-    /// <param name="rootId">ADO work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">ADO work-item id of the run's root (focus) item.</param>
     /// <param name="mgPath">Canonical <c>_</c>-joined merge-group path being merged.</param>
     /// <param name="admin">Pass <c>--admin</c> to bypass branch-protection requirements.</param>
     /// <param name="matchHeadCommit">
@@ -28,6 +30,9 @@ public sealed partial class PrCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-mg-pr")]
+    [JournaledAction(Action = "pr_merge_mg_pr")]
+    [MutatesResource(ResourceKind.GitHubPr)]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(PrMergeMergeGroupResult))]
     public async Task<int> MergeMergeGroupPr(
         int rootId = RequiredInput.MissingInt,
@@ -64,66 +69,155 @@ public sealed partial class PrCommands
             ? BranchNameBuilder.Feature(root).Value
             : BranchNameBuilder.MergeGroup(root, MergeGroupPath.Of(path.Segments.Take(path.Depth - 1))).Value;
 
-        try
-        {
-            var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(slug))
-            {
-                EmitMergeMgError(rootId, mgPath, "Could not resolve repo slug from origin remote", headBranch, baseBranch);
-                return ExitCodes.RoutingFailure;
-            }
+        PrMergeMergeGroupPrPayload? payload = null;
 
-            var resolution = await FindPrForMergeAsync(slug, headBranch, baseBranch, ct).ConfigureAwait(false);
-            if (resolution.Error is not null)
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_merge_mg_pr", BranchPairJournalTarget(headBranch, baseBranch), rootId, rootId),
+            async innerCt =>
             {
-                EmitMergeMgError(rootId, mgPath, resolution.Error, headBranch, baseBranch);
-                return ExitCodes.RoutingFailure;
-            }
-
-            if (resolution.AlreadyMergedPr is { } already)
-            {
-                EmitMergeMg(new PrMergeMergeGroupResult
+                try
                 {
-                    PrNumber = already.Number,
-                    HeadBranch = headBranch,
-                    BaseBranch = baseBranch,
-                    RootId = rootId,
-                    MgPath = path.Canonical,
-                    Method = MgMethod,
-                    Merged = true,
-                    AlreadyMerged = true,
-                    DeleteBranch = MgDeleteBranch,
-                    MergeSha = null,
-                });
-                return ExitCodes.Success;
-            }
+                    var slug = await TryResolveSlugAsync(innerCt).ConfigureAwait(false);
+                    if (string.IsNullOrEmpty(slug))
+                    {
+                        payload = new PrMergeMergeGroupPrPayload
+                        {
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            Method = MgMethod,
+                            DeleteBranch = MgDeleteBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            AlreadyMerged = false,
+                            Error = "Could not resolve repo slug from origin remote",
+                        };
+                        EmitMergeMgError(rootId, mgPath, "Could not resolve repo slug from origin remote", headBranch, baseBranch);
+                        return ExitCodes.RoutingFailure;
+                    }
 
-            var openPr = resolution.OpenPr!;
-            var mergeMatch = string.IsNullOrEmpty(matchHeadCommit) ? null : matchHeadCommit;
-            var result = await gh.MergePullRequestAsync(
-                slug, openPr.Number, GhMergeMethod.Merge, admin, MgDeleteBranch, mergeMatch, ct: ct).ConfigureAwait(false);
+                    var resolution = await FindPrForMergeAsync(slug, headBranch, baseBranch, innerCt).ConfigureAwait(false);
+                    if (resolution.Error is not null)
+                    {
+                        payload = new PrMergeMergeGroupPrPayload
+                        {
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            Method = MgMethod,
+                            DeleteBranch = MgDeleteBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            AlreadyMerged = false,
+                            Error = resolution.Error,
+                        };
+                        EmitMergeMgError(rootId, mgPath, resolution.Error, headBranch, baseBranch);
+                        return ExitCodes.RoutingFailure;
+                    }
 
-            EmitMergeMg(new PrMergeMergeGroupResult
-            {
-                PrNumber = openPr.Number,
-                HeadBranch = headBranch,
-                BaseBranch = baseBranch,
-                RootId = rootId,
-                MgPath = path.Canonical,
-                Method = MgMethod,
-                Merged = result.Succeeded,
-                AlreadyMerged = result.AlreadyMerged,
-                DeleteBranch = MgDeleteBranch,
-                MergeSha = result.MergeSha,
-            });
-            return result.Succeeded ? ExitCodes.Success : ExitCodes.RoutingFailure;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            EmitMergeMgError(rootId, mgPath, ex.Message, headBranch, baseBranch);
-            return ExitCodes.RoutingFailure;
-        }
+                    if (resolution.AlreadyMergedPr is { } already)
+                    {
+                        payload = new PrMergeMergeGroupPrPayload
+                        {
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            PrNumber = already.Number,
+                            Method = MgMethod,
+                            DeleteBranch = MgDeleteBranch,
+                            ResultAction = "already_merged",
+                            Succeeded = true,
+                            WasMutated = false,
+                            AlreadyMerged = true,
+                        };
+                        EmitMergeMg(new PrMergeMergeGroupResult
+                        {
+                            PrNumber = already.Number,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RootId = rootId,
+                            MgPath = path.Canonical,
+                            Method = MgMethod,
+                            Merged = true,
+                            AlreadyMerged = true,
+                            DeleteBranch = MgDeleteBranch,
+                            MergeSha = null,
+                        });
+                        return ExitCodes.Success;
+                    }
+
+                    var openPr = resolution.OpenPr!;
+                    var mergeMatch = string.IsNullOrEmpty(matchHeadCommit) ? null : matchHeadCommit;
+                    var result = await gh.MergePullRequestAsync(
+                        slug, openPr.Number, GhMergeMethod.Merge, admin, MgDeleteBranch, mergeMatch, ct: innerCt).ConfigureAwait(false);
+
+                    payload = new PrMergeMergeGroupPrPayload
+                    {
+                        RootId = rootId,
+                        MergeGroupPath = path.Canonical,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        PrNumber = openPr.Number,
+                        Method = MgMethod,
+                        DeleteBranch = MgDeleteBranch,
+                        MergeCommit = result.MergeSha,
+                        ResultAction = result.AlreadyMerged ? "already_merged" : (result.Succeeded ? "merged" : "error"),
+                        Succeeded = result.Succeeded,
+                        WasMutated = result.Succeeded && !result.AlreadyMerged,
+                        AlreadyMerged = result.AlreadyMerged,
+                        Error = result.Succeeded ? null : "gh merge returned not-succeeded",
+                    };
+                    EmitMergeMg(new PrMergeMergeGroupResult
+                    {
+                        PrNumber = openPr.Number,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RootId = rootId,
+                        MgPath = path.Canonical,
+                        Method = MgMethod,
+                        Merged = result.Succeeded,
+                        AlreadyMerged = result.AlreadyMerged,
+                        DeleteBranch = MgDeleteBranch,
+                        MergeSha = result.MergeSha,
+                    });
+                    return result.Succeeded ? ExitCodes.Success : ExitCodes.RoutingFailure;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    payload = new PrMergeMergeGroupPrPayload
+                    {
+                        RootId = rootId,
+                        MergeGroupPath = path.Canonical,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        Method = MgMethod,
+                        DeleteBranch = MgDeleteBranch,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        AlreadyMerged = false,
+                        Error = ex.Message,
+                    };
+                    EmitMergeMgError(rootId, mgPath, ex.Message, headBranch, baseBranch);
+                    return ExitCodes.RoutingFailure;
+                }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergeMergeGroupPrPayload),
+            effectsSelector: _ => SelectMergeMergeGroupPrEffects(payload),
+            ct: ct).ConfigureAwait(false);
     }
 
     private static void EmitMergeMg(PrMergeMergeGroupResult result)

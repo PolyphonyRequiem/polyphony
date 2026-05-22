@@ -12,7 +12,7 @@
 
         ~/projects/polyphony.git/         bare repo (objects + refs only)
         ~/projects/polyphony/             main worktree, ALWAYS on `main`
-        ~/projects/polyphony-runs/        per-apex worktrees live here
+        ~/projects/polyphony-runs/        per-root worktrees live here
 
     Strategy: fresh-clone (no in-place .git surgery). The script bare-clones
     from the operator's existing remote, adds a fresh main worktree, then

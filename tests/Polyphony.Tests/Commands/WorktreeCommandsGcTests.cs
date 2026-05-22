@@ -109,7 +109,7 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
         result.RemovedCount.ShouldBe(0);
         result.FailedCount.ShouldBe(0);
         result.DryRun.ShouldBeTrue();
-        result.Apex.ShouldBe(0);
+        result.Root.ShouldBe(0);
         result.RunsRoot.ShouldBe(_runsRoot);
     }
 
@@ -137,7 +137,7 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
     {
         var (cmd, runner) = CreateCommand();
         // Path under runs_root that does NOT exist on disk.
-        var prunePath = Path.Combine(_runsRoot, "apex-1", "feature-1");
+        var prunePath = Path.Combine(_runsRoot, "root-1", "feature-1");
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(prunePath, "abc", "feature/1"), ""));
 
@@ -164,7 +164,7 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
     public async Task Gc_DryRun_BranchDeleted_ReportedAsCandidate()
     {
         var (cmd, runner) = CreateCommand();
-        var prunePath = Path.Combine(_runsRoot, "apex-1", "impl-1-99");
+        var prunePath = Path.Combine(_runsRoot, "root-1", "impl-1-99");
         Directory.CreateDirectory(prunePath); // dir exists; branch missing.
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(prunePath, "abc", "impl/1-99"), ""));
@@ -186,7 +186,7 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
     public async Task Gc_DryRun_BranchStillExists_Skipped()
     {
         var (cmd, runner) = CreateCommand();
-        var keepPath = Path.Combine(_runsRoot, "apex-1", "feature-1");
+        var keepPath = Path.Combine(_runsRoot, "root-1", "feature-1");
         Directory.CreateDirectory(keepPath);
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(keepPath, "abc", "feature/1"), ""));
@@ -207,8 +207,8 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
     public async Task Gc_MixedScan_ReportsOnlyPrunable()
     {
         var (cmd, runner) = CreateCommand();
-        var keepPath = Path.Combine(_runsRoot, "apex-1", "feature-1");
-        var prunePath = Path.Combine(_runsRoot, "apex-1", "impl-1-99");
+        var keepPath = Path.Combine(_runsRoot, "root-1", "feature-1");
+        var prunePath = Path.Combine(_runsRoot, "root-1", "impl-1-99");
         var outsidePath = Path.Combine(_tempRoot, "repo");
         Directory.CreateDirectory(keepPath);
         Directory.CreateDirectory(outsidePath);
@@ -233,14 +233,14 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
         result.Candidates[0].Reason.ShouldBe("directory_missing");
     }
 
-    // ─── --apex scope ─────────────────────────────────────────────────────
+    // ─── --root scope ─────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Gc_ApexScope_FiltersOutOtherApexes()
+    public async Task Gc_RootScope_FiltersOutOtherApexes()
     {
         var (cmd, runner) = CreateCommand();
-        var apex1Path = Path.Combine(_runsRoot, "apex-1", "impl-1-99"); // missing → prunable
-        var apex2Path = Path.Combine(_runsRoot, "apex-2", "impl-2-99"); // missing → would be prunable, but out of scope
+        var apex1Path = Path.Combine(_runsRoot, "root-1", "impl-1-99"); // missing → prunable
+        var apex2Path = Path.Combine(_runsRoot, "root-2", "impl-2-99"); // missing → would be prunable, but out of scope
 
         var porcelain =
             PorcelainEntry(apex1Path, "111", "impl/1-99") +
@@ -248,11 +248,11 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, porcelain, ""));
 
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.Gc(apex: 1));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.Gc(root: 1));
 
         exit.ShouldBe(ExitCodes.Success);
         var result = Parse(output);
-        result.Apex.ShouldBe(1);
+        result.Root.ShouldBe(1);
         result.Candidates.Count.ShouldBe(1);
         result.Candidates[0].Path.ShouldBe(apex1Path);
     }
@@ -263,7 +263,7 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
     public async Task Gc_Commit_RemovesPrunable()
     {
         var (cmd, runner) = CreateCommand();
-        var prunePath = Path.Combine(_runsRoot, "apex-1", "feature-1"); // missing
+        var prunePath = Path.Combine(_runsRoot, "root-1", "feature-1"); // missing
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(prunePath, "abc", "feature/1"), ""));
         runner.WhenExact("git", ["worktree", "remove", "--force", prunePath],
@@ -288,7 +288,7 @@ public sealed class WorktreeCommandsGcTests : CommandTestBase
     public async Task Gc_Commit_RemoveFailure_RecordedAsFailed()
     {
         var (cmd, runner) = CreateCommand();
-        var prunePath = Path.Combine(_runsRoot, "apex-1", "feature-1");
+        var prunePath = Path.Combine(_runsRoot, "root-1", "feature-1");
         runner.WhenExact("git", ["worktree", "list", "--porcelain"],
             new ProcessResult(0, PorcelainEntry(prunePath, "abc", "feature/1"), ""));
         runner.WhenExact("git", ["worktree", "remove", "--force", prunePath],

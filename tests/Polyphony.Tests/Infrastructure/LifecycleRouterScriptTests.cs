@@ -8,10 +8,10 @@ namespace Polyphony.Tests.Infrastructure;
 /// <summary>
 /// Pins the JSON envelope shape produced by
 /// <c>.conductor/registry/scripts/lifecycle-router.ps1</c> — the
-/// per-item lifecycle classifier for the apex-driver dispatch loop.
+/// per-item lifecycle classifier for the polyphony dispatch loop.
 /// </summary>
 /// <remarks>
-/// The apex-driver dispatches each work-item into one of five lifecycle
+/// The polyphony dispatches each work-item into one of five lifecycle
 /// workflows (plan-level, actionable, implement-merge-group, feature-pr,
 /// fast-path) plus three non-dispatch outcomes (monitoring, blocked,
 /// error). This script is the deterministic classifier — its envelope
@@ -91,7 +91,7 @@ public sealed class LifecycleRouterScriptTests
         // exit 0 even on hard failures and surface them via error_code
         // so the workflow's catch-all route fires.
         var (exitCode, stdout, _) = await RunScriptAsync(
-            "-WorkItemId 1 -ApexId 1 -PolyphonyExe nonexistent_polyphony_xyz");
+            "-WorkItemId 1 -RootId 1 -PolyphonyExe nonexistent_polyphony_xyz");
 
         exitCode.ShouldBe(0);
 
@@ -105,12 +105,12 @@ public sealed class LifecycleRouterScriptTests
     }
 
     [Fact]
-    public async Task IsRoot_TrueWhenWorkItemEqualsApex()
+    public async Task IsRoot_TrueWhenWorkItemEqualsRoot()
     {
         if (!PwshAvailable) return;
 
         var (_, stdout, _) = await RunScriptAsync(
-            "-WorkItemId 42 -ApexId 42 -PolyphonyExe nonexistent_polyphony_xyz");
+            "-WorkItemId 42 -RootId 42 -PolyphonyExe nonexistent_polyphony_xyz");
 
         using var doc = JsonDocument.Parse(stdout);
         doc.RootElement.GetProperty("is_root").GetBoolean().ShouldBeTrue();
@@ -118,12 +118,12 @@ public sealed class LifecycleRouterScriptTests
     }
 
     [Fact]
-    public async Task IsRoot_FalseWhenWorkItemDiffersFromApex()
+    public async Task IsRoot_FalseWhenWorkItemDiffersFromRoot()
     {
         if (!PwshAvailable) return;
 
         var (_, stdout, _) = await RunScriptAsync(
-            "-WorkItemId 7 -ApexId 42 -PolyphonyExe nonexistent_polyphony_xyz");
+            "-WorkItemId 7 -RootId 42 -PolyphonyExe nonexistent_polyphony_xyz");
 
         using var doc = JsonDocument.Parse(stdout);
         doc.RootElement.GetProperty("is_root").GetBoolean().ShouldBeFalse();
@@ -144,7 +144,7 @@ public sealed class LifecycleRouterScriptTests
         };
 
         var (exitCode, stdout, stderr) = await RunScriptAsync(
-            "-WorkItemId 1 -ApexId 1 -PolyphonyExe nonexistent_polyphony_xyz");
+            "-WorkItemId 1 -RootId 1 -PolyphonyExe nonexistent_polyphony_xyz");
         exitCode.ShouldBe(0, $"stderr: {stderr}");
 
         using var doc = JsonDocument.Parse(stdout);

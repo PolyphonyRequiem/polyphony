@@ -810,7 +810,7 @@ public sealed class PolicyCommandsTests : CommandTestBase
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // renegotiation (Phase 7 apex-driver)
+    // renegotiation (Phase 7 polyphony)
     // ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -987,8 +987,8 @@ public sealed class PolicyCommandsTests : CommandTestBase
         // magic-comment self-approve path that was removed when the
         // sentiment-driven PR-review loop landed (PRs #438 / #440). The
         // loader rejects it now so the misconfiguration surfaces at
-        // validate-config time instead of mid-apex via the workflow
-        // router's terminal_abort_auto_mode_unsupported route.
+        // validate-config time instead of mid-root via the workflow
+        // router's abort_auto_mode_unsupported route.
         using var fx = new PolicyFileFixture();
         fx.WritePolicy("""
             schema_version: 1

@@ -2,7 +2,7 @@ namespace Polyphony;
 
 /// <summary>
 /// Result emitted by <c>polyphony plan recreate-stale-descendant</c> — the
-/// second remedy policy outcome of the Phase 3 P9 cascade-remedy. When
+/// second remedy policy outcome of the Phase 3 P9 restack-remedy. When
 /// auto-rebase is not policy-applicable (or has been overridden), this verb
 /// closes the stale descendant plan PR, deletes its head branch (best-effort),
 /// re-creates the plan branch from the current parent-plan tip, opens a
@@ -21,7 +21,7 @@ namespace Polyphony;
 /// <list type="bullet">
 ///   <item><c>recreated</c> — Old PR closed, fresh PR opened, manifest recorded — all OK. Branch deletion may have failed (warning).</item>
 ///   <item><c>noop</c> — The "old" PR was already closed AND a fresh PR exists with current snapshot AND manifest has a ledger entry — replay safe.</item>
-///   <item><c>parent_stale</c> — Cascade precondition violation (parent plan PR is itself stale).</item>
+///   <item><c>parent_stale</c> — Restack precondition violation (parent plan PR is itself stale).</item>
 ///   <item><c>pr_state_invalid</c> / <c>pr_identity_mismatch</c> / <c>pr_not_found</c> — Old PR doesn't match expectations.</item>
 ///   <item><c>lock_held</c> — Run lock held by someone else.</item>
 ///   <item><c>worktree_dirty</c> — Local worktree has uncommitted changes.</item>

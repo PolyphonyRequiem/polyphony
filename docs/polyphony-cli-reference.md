@@ -44,7 +44,7 @@ Polyphony exists in two layers that share a name:
 | Layer | What it is | Where it lives | Who consumes it |
 |---|---|---|---|
 | **Polyphony CLI** | C# binary; ~24 verbs returning JSON. Pure decisions over twig cache + config. | `src/Polyphony/`, ships as `polyphony.exe` | Workflow YAMLs (via `pwsh -Command "polyphony …"`); humans at the terminal |
-| **Polyphony workflow suite** | Conductor YAML files (apex-driver tree-walker, planning core, implementation entry, PR sub-workflows, close-out). Multi-agent orchestration. The canonical SDLC entry point is `apex-driver@polyphony`, which dispatches sub-workflows per item per wave from observable state. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run apex-driver@polyphony --input apex_id=<ID>` for a full pass; `conductor run <sub-workflow>@polyphony …` for targeted replays); humans at human-gates |
+| **Polyphony workflow suite** | Conductor YAML files (polyphony driver, planning core, implementation entry, PR sub-workflows, close-out). Multi-agent orchestration. The canonical SDLC entry point is `polyphony@polyphony`, which dispatches sub-workflows per item per batch from observable state. | `.conductor/registry/workflows/` | Conductor runtime (`conductor run polyphony@polyphony --input root_id=<ID>` for a full pass; `conductor run <sub-workflow>@polyphony …` for targeted replays); humans at human-gates |
 
 They ship from the same repo since the in-repo workflow co-location migration,
 but they are independent artifacts:
@@ -104,19 +104,19 @@ CLI.
 
 The CLI itself does not run a pass — it reports state and decides routing.
 The pass is run by the conductor workflow suite. The canonical entry point
-is `apex-driver@polyphony`:
+is `polyphony@polyphony`:
 
 ```powershell
-conductor run apex-driver@polyphony --input apex_id=<ID> --web
+conductor run polyphony@polyphony --input root_id=<ID> --web
 ```
 
-`apex_id` is the only required input. `intent` (`new` / `resume` / `replan`,
+`root_id` is the only required input. `intent` (`new` / `resume` / `replan`,
 default `new`), `platform` (default `ado`), and `organization` / `project` /
 `repository` are optional and threaded through to lifecycle sub-workflows.
 For the full invocation contract (with the `-m` metadata block, prerequisites,
 and per-leg replay) see [`workflows/README.md`](../workflows/README.md), the
 `polyphony-sdlc` skill, and the ADR
-[`docs/decisions/apex-driver.md`](decisions/apex-driver.md).
+[`docs/decisions/polyphony.md`](decisions/polyphony.md).
 
 ---
 
@@ -205,7 +205,7 @@ take** for a given work item. The current model is:
 - **Requirement-set routing** (`polyphony state next-ready`): Given a work
   item ID, derive its requirement set from the type's facets, reduce against
   observable state (plan / seeds / implementation), and return the
-  dispatchable requirements. The apex driver routes on these.
+  dispatchable requirements. The root driver routes on these.
 
 - **PR-group routing** (`polyphony branch route`): Given a hierarchy of work
   items already partitioned into PR groups (PGs) via `PG-N` tags, which PG
@@ -446,7 +446,7 @@ The `state` group covers two related concerns:
 2. **Next-ready dispatch** — *which requirements are dispatchable right now?*
    `state next-ready` derives the requirement set from the item's facets,
    reduces against observable plan/seed/implementation signals, and returns
-   the per-disposition arrays the apex driver routes on.
+   the per-disposition arrays the root driver routes on.
 
 Both follow the **routing-style exit convention**: always exit 0; route on the
 JSON payload's `ready` (preflight) or per-requirement disposition (next-ready)
@@ -531,13 +531,13 @@ The launcher exposes the same override as `-PolicyPath` and exports
 `POLYPHONY_POLICY_PATH` to the conductor child:
 
 ```powershell
-./scripts/Invoke-PolyphonySdlc.ps1 -ApexId 3085 `
+./scripts/Invoke-PolyphonySdlc.ps1 -RootId 3085 `
     -PolicyPath .polyphony-config/policy-fasttrack.yaml
 ```
 
 > **Caveat — fast-track is necessary but not sufficient for fully
 > unattended runs.** A large set of human gates in the workflow YAMLs
-> (e.g. `user_acceptance`, `pending_review_gate`, `apex_completion_gate`,
+> (e.g. `user_acceptance`, `pending_review_gate`, `root_completion_gate`,
 > `pr_fix_exhausted_gate`, `stuck_review_gate`) are *deterministic* — they
 > are not policy-governed, so they still fire on the happy path. Making
 > them policy-controllable is tracked separately.
@@ -742,7 +742,7 @@ Idempotent: if the branch exists locally, checks it out; if it exists on
 remote but not locally, fetches and checks out; if it exists nowhere, creates
 from `--base-branch` (default `main`) and pushes. Default remote is `origin`.
 
-The apex driver calls `branch ensure-feature` once after state detection.
+The root driver calls `branch ensure-feature` once after state detection.
 Sub-workflows trust the branch name as an input rather than re-running the check.
 
 ### `polyphony branch next-impl`
@@ -859,9 +859,9 @@ A standalone diagnostic, not part of any workflow. Checks:
 
 Plus environment metadata: OS, architecture, dotnet version, polyphony version,
 and the canonical SDLC entry-point reference (`canonical_workflow`, currently
-`apex-driver@polyphony`). The same reference is also written to STDERR as a
+`polyphony@polyphony`). The same reference is also written to STDERR as a
 one-line breadcrumb (`Canonical SDLC entry point: conductor run
-apex-driver@polyphony --input apex_id=<ID>`) so first-time users see the entry
+polyphony@polyphony --input root_id=<ID>`) so first-time users see the entry
 without parsing the JSON.
 
 Exits `0` if all critical checks pass, `4` (`HealthCheckFailed`) otherwise.

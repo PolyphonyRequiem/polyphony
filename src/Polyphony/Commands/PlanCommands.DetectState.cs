@@ -188,12 +188,12 @@ public sealed partial class PlanCommands
         var prState = pollData.State.ToUpperInvariant();
         var prUrl = latestPr.Url ?? string.Empty;
 
-        // ── 6b. Run-watermark filter (apex-root tag). ─────────────────────
+        // ── 6b. Run-watermark filter (root-root tag). ─────────────────────
         // Stamped by `polyphony reset state`; when present, merged PRs
         // whose MergedAt <= watermark are artifacts of a prior run and
         // must NOT count as "complete" — otherwise the redo dispatch
         // sees the stale merged plan PR, declares the plan complete,
-        // and the apex driver flips next-ready back to Needed → infinite
+        // and the root driver flips next-ready back to Needed → infinite
         // loop. Fail-closed posture: fetch errors force "not_started"
         // with the error reason so the dispatch retries rather than
         // silently falling back to the legacy lying-merged state.
@@ -282,7 +282,7 @@ public sealed partial class PlanCommands
             // remediation the closed_unmerged_gate prompt asks for; honor
             // that here so the next dispatch can proceed instead of looping
             // back to the same gate. ADO can't delete PRs (only abandon
-            // them), so without this short-circuit any apex whose first
+            // them), so without this short-circuit any root whose first
             // plan PR was abandoned is poisoned forever — see the
             // closed_unmerged_gate text in plan-level.yaml.
             if (!branchExists)

@@ -6,7 +6,7 @@ namespace Polyphony.Tests.Infrastructure.Processes;
 
 /// <summary>
 /// Unit tests for <see cref="GhClient.ClosePullRequestAsync"/>. The
-/// cascade-remedy contract is identical to
+/// restack-remedy contract is identical to
 /// <see cref="GhClient.EditPullRequestBodyAsync"/> — never throw on tool
 /// failure, surface a routable bool. These tests pin both that contract
 /// and the argv shape (with and without the optional --comment).

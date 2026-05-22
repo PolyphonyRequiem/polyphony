@@ -191,7 +191,7 @@ public sealed class HealthCommand
         // Breadcrumb to STDERR so a first-time user sees the SDLC entry point
         // without polluting the STDOUT JSON contract that `JsonOutputContractTests`
         // and any caller-script parsing relies on.
-        Console.Error.WriteLine($"Canonical SDLC entry point: conductor run {CanonicalWorkflowRef} --input apex_id=<ID>");
+        Console.Error.WriteLine($"Canonical SDLC entry point: conductor run {CanonicalWorkflowRef} --input root_id=<ID>");
 
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.HealthResult));
         return result.AllCriticalPassed ? ExitCodes.Success : ExitCodes.HealthCheckFailed;
@@ -201,7 +201,7 @@ public sealed class HealthCommand
     // both in the JSON `canonical_workflow` field and the STDERR breadcrumb. Hardcoded
     // — the truth lives in .conductor/registry/index.yaml, but parsing the registry
     // from a diagnostic verb would couple HealthCommand to the registry loader.
-    private const string CanonicalWorkflowRef = "apex-driver@polyphony";
+    private const string CanonicalWorkflowRef = "polyphony@polyphony";
 
     // Read AssemblyInformationalVersion (where MinVer writes the real SemVer,
     // including pre-release/build-metadata). Falls back to the numeric

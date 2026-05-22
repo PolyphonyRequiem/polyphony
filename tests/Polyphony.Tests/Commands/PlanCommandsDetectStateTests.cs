@@ -105,7 +105,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
             new ProcessResult(0, $$"""{"id":{{itemId}},"title":"Item","tags":"{{tags}}"}""", ""));
 
     /// <summary>
-    /// Stub the apex-root <c>twig show</c> with no run-started-at tag so
+    /// Stub the root-root <c>twig show</c> with no run-started-at tag so
     /// DetectState's run-watermark fetch (PR 1 of the run-reset family)
     /// returns null → "no filter" → legacy MERGED-handling behavior.
     /// Required in every test that exercises the <c>MERGED</c> PR-state
@@ -116,7 +116,7 @@ public sealed class PlanCommandsDetectStateTests : CommandTestBase, IDisposable
     /// </summary>
     private static void StubRootWatermarkAbsent(FakeProcessRunner runner)
         => runner.WhenExact("twig", ["show", RootId.ToString(), "--output", "json"],
-            new ProcessResult(0, $$"""{"id":{{RootId}},"title":"Apex","tags":"polyphony"}""", ""));
+            new ProcessResult(0, $$"""{"id":{{RootId}},"title":"Root","tags":"polyphony"}""", ""));
 
     private void StubGitShowManifest(FakeProcessRunner runner, string yaml)
     {

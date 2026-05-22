@@ -4,6 +4,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -37,7 +39,7 @@ public sealed partial class PrCommands
     /// <param name="organization">ADO organization name (e.g. <c>contoso</c>).</param>
     /// <param name="project">ADO project name.</param>
     /// <param name="repository">ADO repository identifier — GUID or name; both accepted.</param>
-    /// <param name="rootId">Root work-item id of the run's apex (focus) item.</param>
+    /// <param name="rootId">Root work-item id of the run's root (focus) item.</param>
     /// <param name="targetBranch">Target branch (typically <c>main</c>); defaults to <c>main</c>.</param>
     /// <param name="matchHeadCommit">
     /// When set, the verb refuses to merge if the polled feature-branch SHA
@@ -49,6 +51,9 @@ public sealed partial class PrCommands
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-feature-ado")]
+    [JournaledAction(Action = "pr_merge_feature_ado")]
+    [MutatesResource(ResourceKind.AdoPr)]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(PrMergeFeatureAdoResult))]
     public async Task<int> MergeFeatureAdo(
         string organization = "",
@@ -66,6 +71,82 @@ public sealed partial class PrCommands
             ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
+        var slug = BuildAdoSlug(organization, project, repository);
+
+        // Compute journal target from inputs (best-effort).
+        var journalTarget = slug;
+        if (Branching.RootId.TryParse(rootId, out var rootForJournal) && !string.IsNullOrEmpty(targetBranch))
+        {
+            var hb = BranchNameBuilder.Feature(rootForJournal).Value;
+            journalTarget = BranchPairJournalTarget(hb, targetBranch);
+        }
+
+        PrMergeFeatureAdoPayload? payload = null;
+
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_merge_feature_ado", journalTarget, rootId, rootId),
+            async innerCt =>
+            {
+                var sw = new StringWriter();
+                var originalOut = Console.Out;
+                int exitCode;
+                try
+                {
+                    Console.SetOut(sw);
+                    exitCode = await MergeFeatureAdoBodyAsync(organization, project, repository, rootId, targetBranch, matchHeadCommit, innerCt).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                }
+                var output = sw.ToString();
+                Console.Write(output);
+                PrMergeFeatureAdoResult? result = null;
+                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrMergeFeatureAdoResult); }
+                catch (JsonException) { }
+                payload = result is null
+                    ? new PrMergeFeatureAdoPayload { RootId = rootId, Organization = organization, Project = project, Repository = repository, HeadBranch = "", BaseBranch = targetBranch, ResultAction = "error", Succeeded = false, WasMutated = false, AlreadyMerged = false, Error = output.Trim() }
+                    : new PrMergeFeatureAdoPayload
+                    {
+                        RootId = result.RootId,
+                        Organization = result.Organization,
+                        Project = result.Project,
+                        Repository = result.Repository,
+                        HeadBranch = result.HeadBranch,
+                        BaseBranch = result.BaseBranch,
+                        RepoSlug = result.RepoSlug,
+                        PrNumber = result.PrNumber,
+                        PrUrl = result.PrUrl,
+                        Method = result.Method,
+                        DeleteBranch = result.DeleteBranch,
+                        MergeCommit = string.IsNullOrEmpty(result.MergeCommit) ? null : result.MergeCommit,
+                        ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.AlreadyMerged ? "already_merged" : "merged"),
+                        Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                        WasMutated = result.Merged && !result.AlreadyMerged,
+                        AlreadyMerged = result.AlreadyMerged,
+                        ErrorCode = result.ErrorCode?.Length > 0 ? result.ErrorCode : null,
+                        Error = result.Error,
+                    };
+                return exitCode;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergeFeatureAdoPayload),
+            effectsSelector: _ => SelectMergeFeatureAdoEffects(payload),
+            ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task<int> MergeFeatureAdoBodyAsync(
+        string organization,
+        string project,
+        string repository,
+        int rootId,
+        string targetBranch,
+        string matchHeadCommit,
+        CancellationToken ct)
+    {
         const string FeatureMethod = "merge";
         const bool FeatureDeleteBranch = false;
 

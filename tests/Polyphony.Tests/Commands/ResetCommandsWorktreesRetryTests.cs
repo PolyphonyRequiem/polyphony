@@ -15,15 +15,15 @@ public sealed class ResetCommandsWorktreesRetryTests : CommandTestBase, IDisposa
 {
     private readonly string _tempRoot;
     private readonly string _commonDir;
-    private readonly string _apexRunsRoot;
+    private readonly string _rootRunsRoot;
     private readonly string _worktreePath;
 
     public ResetCommandsWorktreesRetryTests()
     {
         _tempRoot = Path.Combine(Path.GetTempPath(), $"polyphony-reset-worktrees-{Guid.NewGuid():N}");
         _commonDir = Path.Combine(_tempRoot, "repo", ".git");
-        _apexRunsRoot = Path.Combine(_tempRoot, "repo-runs", "apex-100");
-        _worktreePath = Path.Combine(_apexRunsRoot, "feature-100");
+        _rootRunsRoot = Path.Combine(_tempRoot, "repo-runs", "root-100");
+        _worktreePath = Path.Combine(_rootRunsRoot, "feature-100");
 
         Directory.CreateDirectory(_commonDir);
         Directory.CreateDirectory(_worktreePath);
@@ -86,7 +86,7 @@ public sealed class ResetCommandsWorktreesRetryTests : CommandTestBase, IDisposa
             new ProcessResult(1, string.Empty, "Permission denied"),
             new ProcessResult(0, string.Empty, string.Empty));
 
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ResetWorktrees(apex: 100, execute: true));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ResetWorktrees(root: 100, execute: true));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetWorktreesResult);
@@ -132,7 +132,7 @@ public sealed class ResetCommandsWorktreesRetryTests : CommandTestBase, IDisposa
                 return Task.FromResult(new ProcessResult(1, string.Empty, "Permission denied"));
             });
 
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ResetWorktrees(apex: 100, execute: true));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ResetWorktrees(root: 100, execute: true));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetWorktreesResult);
@@ -160,7 +160,7 @@ public sealed class ResetCommandsWorktreesRetryTests : CommandTestBase, IDisposa
             new ProcessResult(1, string.Empty, "Permission denied"),
             new ProcessResult(1, string.Empty, "Permission denied"));
 
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ResetWorktrees(apex: 100, execute: true));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ResetWorktrees(root: 100, execute: true));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetWorktreesResult);

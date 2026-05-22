@@ -67,7 +67,7 @@ if ($verb -eq 'read') {
         'read_root_mismatch' {
             EmitJson @{
                 error_code = 'manifest_root_mismatch'
-                error = "manifest root_id $rootId does not match apex"
+                error = "manifest root_id $rootId does not match root"
                 manifest_root_id = $rootId
             }
             exit 1
@@ -113,7 +113,7 @@ exit 99
 
     function script:Invoke-Bootstrap {
         param(
-            [int]$ApexId,
+            [int]$RootId,
             [string]$Organization = '',
             [string]$Project = '',
             [string]$PolyphonyExe,
@@ -126,7 +126,7 @@ exit 99
         $env:POLYPHONY_STUB_STORED_PLATFORM_PROJECT = $StoredPlatformProject
         $env:POLYPHONY_STUB_ROOT_ID = "$StubRootId"
         try {
-            $argList = @('-NoProfile', '-File', $script:Script, '-ApexId', "$ApexId", '-PolyphonyExe', $PolyphonyExe)
+            $argList = @('-NoProfile', '-File', $script:Script, '-RootId', "$RootId", '-PolyphonyExe', $PolyphonyExe)
             if ($Organization) { $argList += @('-Organization', $Organization) }
             if ($Project)      { $argList += @('-Project', $Project) }
             $out = pwsh @argList 2>&1
@@ -147,7 +147,7 @@ Describe 'manifest-bootstrap.ps1 (GH #166: platform_project drift validation)' {
         It 'Emits action=reused and validation=checked when platform_project matches' {
             $stub = New-PolyphonyStub
             try {
-                $env = Invoke-Bootstrap -ApexId 42 -Organization 'StoredOrg' -Project 'StoredProj' `
+                $env = Invoke-Bootstrap -RootId 42 -Organization 'StoredOrg' -Project 'StoredProj' `
                     -PolyphonyExe $stub -Mode 'read_ok' `
                     -StoredPlatformProject 'dev.azure.com/StoredOrg/StoredProj' -StubRootId 42
 
@@ -164,7 +164,7 @@ Describe 'manifest-bootstrap.ps1 (GH #166: platform_project drift validation)' {
             $stub = New-PolyphonyStub
             try {
                 # Stored as one case, invoked as another — must still match.
-                $env = Invoke-Bootstrap -ApexId 42 -Organization 'storedorg' -Project 'STOREDPROJ' `
+                $env = Invoke-Bootstrap -RootId 42 -Organization 'storedorg' -Project 'STOREDPROJ' `
                     -PolyphonyExe $stub -Mode 'read_ok' `
                     -StoredPlatformProject 'dev.azure.com/StoredOrg/StoredProj' -StubRootId 42
 
@@ -178,7 +178,7 @@ Describe 'manifest-bootstrap.ps1 (GH #166: platform_project drift validation)' {
         It 'Rejects with manifest_platform_project_mismatch when invocation differs from stored' {
             $stub = New-PolyphonyStub
             try {
-                $env = Invoke-Bootstrap -ApexId 42 -Organization 'OtherOrg' -Project 'OtherProj' `
+                $env = Invoke-Bootstrap -RootId 42 -Organization 'OtherOrg' -Project 'OtherProj' `
                     -PolyphonyExe $stub -Mode 'read_ok' `
                     -StoredPlatformProject 'dev.azure.com/StoredOrg/StoredProj' -StubRootId 42
 
@@ -186,7 +186,7 @@ Describe 'manifest-bootstrap.ps1 (GH #166: platform_project drift validation)' {
                 $env.error_code | Should -Be 'manifest_platform_project_mismatch'
                 $env.manifest_platform_project | Should -Be 'dev.azure.com/StoredOrg/StoredProj'
                 $env.invocation_platform_project | Should -Be 'dev.azure.com/OtherOrg/OtherProj'
-                $env.apex_id | Should -Be 42
+                $env.root_id | Should -Be 42
                 $env.error | Should -Match 'does not match invocation'
             }
             finally { Remove-Item (Split-Path $stub -Parent) -Recurse -Force -ErrorAction SilentlyContinue }
@@ -201,7 +201,7 @@ Describe 'manifest-bootstrap.ps1 (GH #166: platform_project drift validation)' {
                 # Note: even though the stored platform_project would NOT match an
                 # invocation against OtherOrg/OtherProj, the absence of args means
                 # validation is intentionally skipped.
-                $env = Invoke-Bootstrap -ApexId 42 -PolyphonyExe $stub -Mode 'read_ok' `
+                $env = Invoke-Bootstrap -RootId 42 -PolyphonyExe $stub -Mode 'read_ok' `
                     -StoredPlatformProject 'dev.azure.com/StoredOrg/StoredProj' -StubRootId 42
 
                 $env.success | Should -BeTrue
@@ -217,13 +217,13 @@ Describe 'manifest-bootstrap.ps1 (GH #166: platform_project drift validation)' {
         It 'Rejects with invalid_inputs when Organization is supplied without Project' {
             $stub = New-PolyphonyStub
             try {
-                $env = Invoke-Bootstrap -ApexId 42 -Organization 'OnlyOrg' `
+                $env = Invoke-Bootstrap -RootId 42 -Organization 'OnlyOrg' `
                     -PolyphonyExe $stub -Mode 'read_ok' -StubRootId 42
 
                 $env.success | Should -BeFalse
                 $env.error_code | Should -Be 'invalid_inputs'
                 $env.error | Should -Match 'organization and project'
-                $env.apex_id | Should -Be 42
+                $env.root_id | Should -Be 42
             }
             finally { Remove-Item (Split-Path $stub -Parent) -Recurse -Force -ErrorAction SilentlyContinue }
         }
@@ -231,7 +231,7 @@ Describe 'manifest-bootstrap.ps1 (GH #166: platform_project drift validation)' {
         It 'Rejects with invalid_inputs when Project is supplied without Organization' {
             $stub = New-PolyphonyStub
             try {
-                $env = Invoke-Bootstrap -ApexId 42 -Project 'OnlyProj' `
+                $env = Invoke-Bootstrap -RootId 42 -Project 'OnlyProj' `
                     -PolyphonyExe $stub -Mode 'read_ok' -StubRootId 42
 
                 $env.success | Should -BeFalse
@@ -247,7 +247,7 @@ Describe 'manifest-bootstrap.ps1 (GH #166: platform_project drift validation)' {
         It 'Fresh init path still emits action=created when manifest absent' {
             $stub = New-PolyphonyStub
             try {
-                $env = Invoke-Bootstrap -ApexId 42 -Organization 'FreshOrg' -Project 'FreshProj' `
+                $env = Invoke-Bootstrap -RootId 42 -Organization 'FreshOrg' -Project 'FreshProj' `
                     -PolyphonyExe $stub -Mode 'read_not_found' -StubRootId 42
 
                 $env.success | Should -BeTrue
@@ -261,13 +261,13 @@ Describe 'manifest-bootstrap.ps1 (GH #166: platform_project drift validation)' {
         It 'manifest_root_mismatch error envelope still surfaces verbatim (AB#3067 guard)' {
             $stub = New-PolyphonyStub
             try {
-                $env = Invoke-Bootstrap -ApexId 42 -Organization 'StoredOrg' -Project 'StoredProj' `
+                $env = Invoke-Bootstrap -RootId 42 -Organization 'StoredOrg' -Project 'StoredProj' `
                     -PolyphonyExe $stub -Mode 'read_root_mismatch' -StubRootId 99
 
                 $env.success | Should -BeFalse
                 $env.error_code | Should -Be 'manifest_root_mismatch'
                 $env.manifest_root_id | Should -Be 99
-                $env.apex_id | Should -Be 42
+                $env.root_id | Should -Be 42
             }
             finally { Remove-Item (Split-Path $stub -Parent) -Recurse -Force -ErrorAction SilentlyContinue }
         }

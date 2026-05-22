@@ -7,7 +7,7 @@ namespace Polyphony.Tests.Commands;
 
 /// <summary>
 /// Unit tests for <see cref="PlanPrFrontMatter.ReplaceSnapshotPreservingTail"/>.
-/// The cascade-remedy verb (Phase 3 P9 step 2) calls this after a clean
+/// The restack-remedy verb (Phase 3 P9 step 2) calls this after a clean
 /// rebase to refresh the PR's <c>ancestor_plan_generations</c> snapshot.
 /// The tail-preservation contract is the heart of the feature: we must
 /// never lose body content beneath the front-matter, regardless of line

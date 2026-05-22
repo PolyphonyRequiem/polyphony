@@ -51,12 +51,12 @@ The model has to satisfy:
    can attribute changes to a specific work item.
 4. **Cross-platform** — the same branch model on GitHub and ADO. Different PR
    APIs, identical branch tree.
-5. **Resume safety** — re-running the apex driver against the same root must
+5. **Resume safety** — re-running the root driver against the same root must
    re-derive identical branch names so existing PRs are continued, not
    duplicated.
 6. **Phase 7 cross-item edges** — the branch model must not block the
-   tree-walker's edge graph from expressing item-to-item dependencies across
-   the tree.
+   worklist driver's edge graph from expressing item-to-item dependencies
+   across the tree.
 7. **Trunk flow as default** — plans and implementations interleave; the
    branch model must support partial-tree promotion (some MGs done, others
    in flight).
@@ -97,7 +97,7 @@ main
 
 | Branch kind | Format | Notes |
 |---|---|---|
-| Feature | `feature/{root_id}` | One per apex-driver run. Base for everything else. Requires a same-root run lock — see § Concurrent-run lock. |
+| Feature | `feature/{root_id}` | One per polyphony run. Base for everything else. Requires a same-root run lock — see § Concurrent-run lock. |
 | Plan (root) | `plan/{root_id}` | Branches from `feature/{root_id}`. |
 | Plan (descendant) | `plan/{root_id}-{item_id}` | `item_id` is the **leaf** work-item id only (the item this plan covers). The hierarchy is captured by the base branch — a descendant plan branches from its parent's plan branch. Work-item IDs are project-unique so leaf-only naming is collision-free. |
 | Merge group (top) | `mg/{root_id}_{mg_id}` | `mg_id` is a **stable planner-declared id** (see § MG identity). Branches from `feature/{root_id}`. |
@@ -370,7 +370,7 @@ Rules:
 - **Depth 5 (`mg-a-b-c-d-e`)**: hard stop. Driver refuses with a clear
   error pointing to this ADR.
 - Override beyond depth 5 requires an explicit `--allow-deep-nesting` flag
-  to the apex driver and a recorded human approval in the run manifest.
+  to the root driver and a recorded human approval in the run manifest.
 
 If a planner regularly hits depth 3+, the work hierarchy is the smell —
 restructure with sibling MGs at a shallower level instead.
@@ -479,11 +479,11 @@ When multiple child plan branches each carry parent edits:
 
 Pure non-parent-affecting child plan PRs are unaffected by the lock.
 
-#### Ancestor-cascade staleness
+#### Ancestor-restack staleness
 
 A child plan PR may appear fresh against its **immediate** parent yet be
 stale against an **ancestor** further up the chain. The driver enforces
-ancestor cascade:
+ancestor restack:
 
 1. Whenever any ancestor's `plan_generation` is bumped (root, grandparent,
    great-grandparent…), the driver walks the descendant tree of in-flight
@@ -705,7 +705,7 @@ Without this ledger, `plan_generations[item_key] += 1` arithmetic alone
 cannot distinguish "this PR was already recorded" from "another plan PR
 for the same item correctly bumped the generation," and partial-failure
 retries can silently over-bump the counter — which would corrupt the
-ancestor-staleness math (§ Plan-PR ancestor-cascade staleness).
+ancestor-staleness math (§ Plan-PR ancestor-restack staleness).
 
 Legacy callers that omit `pr_number` skip the ledger and bump
 unconditionally; this preserves the original behavior for callers that
@@ -716,7 +716,7 @@ pass `pr_number` and `merge_commit`.
 #### Resume rules
 
 The manifest is the **source of truth for resume**. On any
-apex-driver invocation against `<root>`:
+polyphony invocation against `<root>`:
 
 1. Driver acquires a lock keyed on `(repo, platform_project, root_id)`.
 2. If `feature/{root_id}` exists and the run manifest is present:
@@ -781,12 +781,12 @@ across linked worktrees: `--git-dir` would resolve to the per-worktree
 tracked in git on the feature branch (so downstream verbs could read
 it from `origin/feature/{root}:.polyphony/run.yaml`). Daniel's AB#3067
 dogfood found the failure mode this baked in: `git worktree add -b
-sdlc/apex/<new_root> ../polyphony-<new_root> main` checks out main's
+sdlc/root/<new_root> ../polyphony-<new_root> main` checks out main's
 tree, which carries the *previous* run's `run.yaml` with a stale
 `root_id`. The new run's `init_manifest` step then tripped a
 `manifest_root_mismatch` preflight error (`manifest root_id=3066 does
-not match requested apex_id=3067`), bricking every fresh-from-main
-synthetic apex. Removing the file from git eliminates the bleed at
+not match requested root_id=3067`), bricking every fresh-from-main
+synthetic root. Removing the file from git eliminates the bleed at
 the source; the per-root subdirectory under the common dir prevents
 collisions between concurrent root runs of the same clone.
 
@@ -825,7 +825,7 @@ common-dir path through a `PolyphonyStatePaths` helper:
   `ManifestPlanLedger.Apply` → save common-dir manifest → release
   lock*. The PR-side `gh pr merge` (or ADO equivalent) is unchanged;
   only the manifest half of the transaction is re-homed.
-- *Workflow* — `apex-driver.yaml` drops the `commit_and_push_manifest`
+- *Workflow* — `polyphony.yaml` drops the `commit_and_push_manifest`
   step (PR #179, originally added to make `feature/{root}:.polyphony/run.yaml`
   the canonical readable manifest). The corresponding
   `commit_and_push_manifest_error` arm of the preflight failure
@@ -981,7 +981,7 @@ unique under the root.
 - ✗ Topology becomes legible only via the manifest, which raises the
   human cost of debugging mid-run failures (which MG owns this branch?
   what's its parent?).
-- ✗ Retirement and ancestor-cascade reasoning shifts from
+- ✗ Retirement and ancestor-restack reasoning shifts from
   prefix-based to manifest-graph-based, requiring tooling that doesn't
   yet exist.
 
@@ -1167,7 +1167,7 @@ not *which branches exist*.
   (`mg_path`/`parent_mg_path`/`isolation`/`nesting_override` per MG,
   `rebases[]`, `human_approvals[]`, `retired_merge_group_ids[]`);
   promote-and-rebase materialization gate (auto only before downstream
-  branches exist; otherwise stale + policy-driven remedy); ancestor-cascade
+  branches exist; otherwise stale + policy-driven remedy); ancestor-restack
   staleness for grandparent renegotiation (`ancestor_plan_generations`
   recorded per child plan branch); operator UX language for run lock
   distinguishes attach vs start.
@@ -1198,12 +1198,12 @@ not *which branches exist*.
   schema is unchanged; the *placement* changes. Rationale: AB#3067
   dogfood found that tracking `.polyphony/run.yaml` in git made
   `git worktree add` from main carry the previous run's stale
-  `root_id` into every fresh apex, tripping `manifest_root_mismatch`
+  `root_id` into every fresh root, tripping `manifest_root_mismatch`
   at preflight. Five PR/plan verbs (`pr open-plan-pr/ado`,
   `pr merge-plan-pr/ado`, `plan classify-stale-descendants`) that
   read the manifest from `origin/feature/{root}:.polyphony/run.yaml`
   are rewired to read from the common-dir path. The
-  `apex-driver.yaml` `commit_and_push_manifest` step is dropped
+  `polyphony.yaml` `commit_and_push_manifest` step is dropped
   entirely. The `pr merge-plan-*` verbs lose their git-side manifest
   transaction (checkout/reset/stage/commit/push) and run *load
   → apply → save* under the same-root run lock instead. State is

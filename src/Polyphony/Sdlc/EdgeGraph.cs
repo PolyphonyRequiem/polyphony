@@ -307,21 +307,21 @@ public sealed class EdgeGraph
     }
 
     /// <summary>
-    /// Computes the topological wave grouping over the union graph
+    /// Computes the topological batch grouping over the union graph
     /// (within-item edges ∪ cross-item edges). An item is "ready for
     /// dispatch" when every prerequisite of every entry requirement
     /// (the within-item requirements with no incoming within-item edges,
     /// excluding <see cref="RequirementKind.ItemSatisfied"/>) has been
     /// satisfied.
     /// </summary>
-    /// <returns>Ordered waves. Wave 0 contains items with no inbound
-    /// cross-item edges into their entry requirements. Wave N contains
+    /// <returns>Ordered waves. Batch 0 contains items with no inbound
+    /// cross-item edges into their entry requirements. Batch N contains
     /// items first becoming dispatchable in this round. Items within a
-    /// wave are sorted by id ascending.</returns>
+    /// batch are sorted by id ascending.</returns>
     /// <exception cref="InvalidOperationException">Thrown when
     /// <see cref="Conflicts"/> is non-empty. The conflict gate must
     /// resolve all conflicts before a topological ordering exists.</exception>
-    public IReadOnlyList<EdgeGraphWave> ToWaves()
+    public IReadOnlyList<EdgeGraphBatch> ToWaves()
     {
         if (Conflicts.Count > 0)
         {
@@ -338,7 +338,7 @@ public sealed class EdgeGraph
         }
 
         // Per-item, count cross-item edges that target the item's entry
-        // requirements. An item is dispatchable in wave N when every such
+        // requirements. An item is dispatchable in batch N when every such
         // prerequisite is in waves 0..N-1.
         var pendingPrereqs = new Dictionary<int, HashSet<int>>(ItemRequirements.Count);
         foreach (var itemId in ItemRequirements.Keys)
@@ -359,9 +359,9 @@ public sealed class EdgeGraph
         }
 
         // Kahn's algorithm at the item granularity.
-        var waves = new List<EdgeGraphWave>();
+        var waves = new List<EdgeGraphBatch>();
         var dispatched = new HashSet<int>();
-        var waveIndex = 0;
+        var batchIndex = 0;
 
         while (dispatched.Count < ItemRequirements.Count)
         {
@@ -382,7 +382,7 @@ public sealed class EdgeGraph
             }
 
             ready.Sort();
-            waves.Add(new EdgeGraphWave(waveIndex, ready));
+            waves.Add(new EdgeGraphBatch(batchIndex, ready));
 
             foreach (var itemId in ready)
             {
@@ -399,7 +399,7 @@ public sealed class EdgeGraph
                 }
             }
 
-            waveIndex++;
+            batchIndex++;
         }
 
         return waves;

@@ -1,8 +1,14 @@
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure;
+using Polyphony.Journal;
+using Polyphony.Journal.Observers;
+using Polyphony.Journal.Reset;
 using Polyphony.Tests.Configuration;
 using Shouldly;
+using Twig.Domain.Interfaces;
 using Xunit;
 
 namespace Polyphony.Tests.Infrastructure;
@@ -109,6 +115,61 @@ public sealed class PolyphonyServiceRegistrationTests
         typeNames.ShouldContain("TwigPaths");
     }
 
+    [Fact]
+    public void AddPolyphonyServices_RegistersDriftObserversForEveryResourceKind()
+    {
+        var services = new ServiceCollection();
+        services.AddPolyphonyServices("nonexistent-config.yaml", twigDir: null);
+        services.AddSingleton(Substitute.For<IWorkItemRepository>());
+        using var provider = services.BuildServiceProvider();
+
+        var observers = provider.GetServices<IResourceObserver>().ToArray();
+        observers.ShouldNotBeEmpty();
+
+        var expectedKinds = typeof(ResourceKind)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(field => field.IsLiteral && !field.IsInitOnly && field.FieldType == typeof(string))
+            .Select(field => (string)field.GetRawConstantValue()!)
+            .OrderBy(kind => kind, StringComparer.Ordinal)
+            .ToArray();
+        var actualKinds = observers
+            .Select(observer => observer.Kind)
+            .OrderBy(kind => kind, StringComparer.Ordinal)
+            .ToArray();
+
+        actualKinds.ShouldBe(expectedKinds);
+        foreach (var observer in observers.Where(observer => !observer.CanObserve))
+        {
+            observer.DeferredReason.ShouldNotBeNullOrWhiteSpace();
+        }
+    }
+
+    [Fact]
+    public void AddPolyphonyServices_RegistersProjectionResetDeletersForEveryResettableKind()
+    {
+        var services = new ServiceCollection();
+        services.AddPolyphonyServices("nonexistent-config.yaml", twigDir: null);
+        services.AddSingleton(Substitute.For<IWorkItemRepository>());
+        using var provider = services.BuildServiceProvider();
+
+        var deleterKinds = provider.GetServices<IResourceDeleter>()
+            .Select(deleter => deleter.Kind)
+            .OrderBy(kind => kind, StringComparer.Ordinal)
+            .ToArray();
+
+        deleterKinds.ShouldBe(
+        [
+            ResourceKind.AdoPr,
+            ResourceKind.AdoWorkItemTag,
+            ResourceKind.GitBranch,
+            ResourceKind.GitWorktree,
+            ResourceKind.GitHubPr,
+            ResourceKind.LockFile,
+            ResourceKind.ManifestFile,
+            ResourceKind.PlanFile,
+        ]);
+    }
+
     /// <summary>
     /// Asserts every CLI command class registered in <c>Program.cs</c> has all
     /// of its constructor dependencies registered in
@@ -128,6 +189,8 @@ public sealed class PolyphonyServiceRegistrationTests
     [InlineData(typeof(Polyphony.Commands.ValidateCommand))]
     [InlineData(typeof(Polyphony.Commands.ValidateConfigCommand))]
     [InlineData(typeof(Polyphony.Commands.HierarchyCommand))]
+    [InlineData(typeof(Polyphony.Commands.JournalCommands))]
+    [InlineData(typeof(Polyphony.Commands.JournalDriftCommand))]
     [InlineData(typeof(Polyphony.Commands.HealthCommand))]
     [InlineData(typeof(Polyphony.Commands.PlanCommands))]
     [InlineData(typeof(Polyphony.Commands.PolicyCommands))]

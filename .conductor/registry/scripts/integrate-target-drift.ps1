@@ -87,7 +87,7 @@
     The feature branch being prepared for PR. Required.
 
 .PARAMETER TargetBranch
-    The target branch (typically `main` for apex feature PRs, or the
+    The target branch (typically `main` for root feature PRs, or the
     parent feature branch for child item feature PRs). Required.
 
 .NOTES
@@ -96,8 +96,8 @@
     integrated regardless of which platform leg (github / ado) we
     take next.
 
-    Scope: covers both apex-driver.yaml's apex→main promotion and
-    apex-item-dispatch.yaml's child→feature/<apex> promotion (both
+    Scope: covers both polyphony.yaml's root→main promotion and
+    root-item-dispatch.yaml's child→feature/<root> promotion (both
     flow through feature-pr.yaml).
 
     Local cwd is the feature-branch worktree spawned by the launcher.
@@ -217,7 +217,7 @@ try {
     $fetchFeature = Invoke-Git 'fetch' 'origin' $FeatureBranch
     if ($fetchFeature.ExitCode -ne 0) {
         # Feature branch may not exist on origin yet (very first push from
-        # a fresh apex). Treat as non-fatal and proceed; the divergence
+        # a fresh root). Treat as non-fatal and proceed; the divergence
         # check below will handle the "no origin/<feature>" case.
         $envelope.error_message = "non-fatal: git fetch origin $FeatureBranch failed: $($fetchFeature.Stderr)"
     }

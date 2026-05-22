@@ -63,8 +63,8 @@ public sealed class PlanObserver(
     /// <remarks>
     /// These <c>Observe*Async</c> wrappers do <b>not</b> apply the
     /// run-watermark filter introduced in PR 1 of the run-reset family —
-    /// they predate the per-item scope plumbing and have no apex-root
-    /// context to read the <c>polyphony:run-started-at</c> tag from. The
+    /// they predate the per-item scope plumbing and have no root context
+    /// to read the <c>polyphony:run-started-at</c> tag from. The
     /// production verbs (<c>state next-ready</c>, <c>plan detect-state</c>)
     /// call the static <c>Map*</c> helpers directly with the watermark
     /// passed in via their own scope, so the filter is in effect on the
@@ -905,13 +905,13 @@ public sealed class PlanObserver(
     /// → null JSON OR explicit exception) is rethrown as an
     /// <see cref="ExternalToolException"/> so the caller can distinguish
     /// "tag absent" (= no filter, legacy behavior, safe for fresh
-    /// apexes) from "could not read tags" (= unsafe to fall back to
-    /// no-filter on a reset apex — the caller MUST force observations
+    /// roots) from "could not read tags" (= unsafe to fall back to
+    /// no-filter on a reset root — the caller MUST force observations
     /// to Needed). See <c>docs/decisions/run-reset.md</c> for the
     /// rationale.
     /// </para>
     /// <para>
-    /// The tag lives on the apex root (the only writer is
+    /// The tag lives on the root work item (the only writer is
     /// <c>polyphony reset state</c>). Reading via the same
     /// <c>twig show</c> primitive that <see cref="IsParentSeededAsync"/>
     /// uses keeps the two tag reads on a single twig surface.
@@ -926,7 +926,7 @@ public sealed class PlanObserver(
             // null. We need to distinguish that from a successful read
             // of a work item with no run-started-at tag — translate null
             // back into an exception so the caller's catch block fires.
-            // The apex root must exist (next-ready already validated it
+            // The root work item must exist (next-ready already validated it
             // via the local repository), so null here is operationally
             // "twig is broken", not "no such item".
             throw new InvalidOperationException(

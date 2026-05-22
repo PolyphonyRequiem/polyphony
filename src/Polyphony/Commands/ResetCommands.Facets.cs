@@ -1,15 +1,17 @@
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Tagging;
 
 namespace Polyphony.Commands;
 
 /// <summary>
-/// <c>polyphony reset facets --apex N [--execute]</c> — strips the two
+/// <c>polyphony reset facets --root N [--execute]</c> — strips the two
 /// persisted "planning is already done" tags
 /// (<c>polyphony:facets=&lt;csv&gt;</c> and <c>polyphony:planned</c>)
-/// from the apex root and every descendant in scope.
+/// from the root root and every descendant in scope.
 ///
 /// <para><b>Why this exists.</b> The watermark mechanism
 /// (<see cref="ResetState"/>) can only filter merged-PR observations by
@@ -18,12 +20,12 @@ namespace Polyphony.Commands;
 /// and will silently steer the next <c>state classify-lifecycle</c> call
 /// to <c>implement-merge-group</c> for a work item whose plan branch
 /// has just been thrown away. See <c>docs/decisions/run-reset.md</c>
-/// §"Why facets cleanup is separate from watermark" for the apex
+/// §"Why facets cleanup is separate from watermark" for the root
 /// 62286666 incident write-up.</para>
 ///
-/// <para><b>Scope.</b> Walks the apex subtree via <see cref="Routing.HierarchyWalker"/>
+/// <para><b>Scope.</b> Walks the root subtree via <see cref="Routing.HierarchyWalker"/>
 /// (the planner can stamp facets/planned tags on any plannable parent,
-/// not just the apex root). Items with no targeted tags are silently
+/// not just the root root). Items with no targeted tags are silently
 /// skipped — only items that actually had a tag to remove appear in
 /// <see cref="ResetFacetsResult.Items"/>.</para>
 ///
@@ -50,23 +52,58 @@ namespace Polyphony.Commands;
 public sealed partial class ResetCommands
 {
     /// <summary>
-    /// Strip the persisted planning-completion tags from the apex
+    /// Strip the persisted planning-completion tags from the root
     /// subtree.
     /// </summary>
-    /// <param name="apex">Apex root work-item ID — the head of the subtree to walk.</param>
+    /// <param name="root">Root root work-item ID — the head of the subtree to walk.</param>
     /// <param name="execute">Pass to actually patch tags. Without this flag, the verb runs in dry-run mode and emits the would-be removals without mutating ADO.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("facets")]
     [VerbResult(typeof(ResetFacetsResult))]
-    public async Task<int> ResetFacets(
-        int apex = RequiredInput.MissingInt,
+    [JournaledAction(Action = "reset_facets")]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
+    public Task<int> ResetFacets(
+        int root = RequiredInput.MissingInt,
         bool execute = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("reset facets",
-            ("--apex", apex == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            ("--root", root == RequiredInput.MissingInt)) is { } halt)
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ResetFacetsResult, ResetFacetsPayload>(
+            _journalDecorator,
+            _runContext,
+            "reset_facets",
+            $"root:{root}",
+            innerCt => ResetFacetsCoreAsync(root, execute, innerCt),
+            PolyphonyJsonContext.Default.ResetFacetsResult,
+            (_, result) => new ResetFacetsPayload
+            {
+                Root = result?.Root ?? root,
+                DryRun = result?.DryRun ?? !execute,
+                Succeeded = result?.Success ?? false,
+                WasMutated = result is not null && !result.DryRun && result.Items.Any(item => item.Verified == true),
+                ItemsScanned = result?.ItemsScanned ?? 0,
+                ItemsModified = result?.ItemsModified ?? 0,
+                TotalFacetTagsRemoved = result?.TotalFacetTagsRemoved ?? 0,
+                TotalPlannedTagsRemoved = result?.TotalPlannedTagsRemoved ?? 0,
+                Items = result?.Items ?? [],
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ResetFacetsPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectResetFacetsEffects,
+            ct,
+            rootId: root);
+    }
+
+    private async Task<int> ResetFacetsCoreAsync(
+        int root,
+        bool execute,
+        CancellationToken ct)
+    {
         ResetFacetsResult result;
         try
         {
@@ -79,15 +116,15 @@ public sealed partial class ResetCommands
             // maxDepth 16 is generous for CMMI work-item trees (Epic →
             // Scenario → Deliverable → Task Group → Task is 5 levels;
             // 16 covers any reasonable nesting + future type additions).
-            var hierarchy = await _walker.WalkAsync(apex, maxDepth: 16, ct).ConfigureAwait(false);
+            var hierarchy = await _walker.WalkAsync(root, maxDepth: 16, ct).ConfigureAwait(false);
             if (hierarchy is null)
             {
                 result = new ResetFacetsResult
                 {
-                    Apex = apex,
+                    Root = root,
                     Success = false,
                     DryRun = !execute,
-                    Error = $"Apex work item {apex} not found in twig cache after sync.",
+                    Error = $"Root work item {root} not found in twig cache after sync.",
                 };
                 Emit(result);
                 return ExitCodes.Success;
@@ -204,7 +241,7 @@ public sealed partial class ResetCommands
 
             result = new ResetFacetsResult
             {
-                Apex = apex,
+                Root = root,
                 Success = true,
                 DryRun = !execute,
                 ItemsScanned = allItems.Count,
@@ -219,10 +256,10 @@ public sealed partial class ResetCommands
         {
             result = new ResetFacetsResult
             {
-                Apex = apex,
+                Root = root,
                 Success = false,
                 DryRun = !execute,
-                Error = $"Error walking hierarchy for apex #{apex}: {ex.Message}",
+                Error = $"Error walking hierarchy for root #{root}: {ex.Message}",
             };
         }
 
@@ -232,7 +269,7 @@ public sealed partial class ResetCommands
 
     /// <summary>
     /// Depth-first flatten of a <see cref="HierarchyResult"/> tree into a
-    /// list. Order is parent-then-children so the apex root is always
+    /// list. Order is parent-then-children so the root root is always
     /// at index 0 — useful for operators reading the dry-run output.
     /// </summary>
     private static void FlattenHierarchy(HierarchyResult node, List<HierarchyResult> sink)

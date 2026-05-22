@@ -6,6 +6,8 @@ using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Locking;
 using Polyphony.Manifest;
 
@@ -59,6 +61,9 @@ public sealed partial class PrCommands
     /// <param name="by">Lock acquirer name; defaults to <c>USERNAME</c>/<c>USER</c> env.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-plan-ado")]
+    [JournaledAction(Action = "pr_merge_plan_ado")]
+    [MutatesResource(ResourceKind.AdoPr)]
+    [MutatesResource(ResourceKind.GitBranch)]
     [VerbResult(typeof(PrMergePlanAdoResult))]
     public async Task<int> MergePlanAdo(
         string organization = "",
@@ -81,6 +86,86 @@ public sealed partial class PrCommands
             ("--item-id", itemId == RequiredInput.MissingInt),
             ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
             return halt;
+
+        var slug = BuildAdoSlug(organization, project, repository);
+        var prUrl = BuildAdoPrUrl(organization, project, repository, prNumber);
+
+        PrMergePlanAdoPayload? payload = null;
+
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_merge_plan_ado", PullRequestJournalTarget(prUrl, prNumber), rootId, itemId),
+            async innerCt =>
+            {
+                var sw = new StringWriter();
+                var originalOut = Console.Out;
+                int exitCode;
+                try
+                {
+                    Console.SetOut(sw);
+                    exitCode = await MergePlanAdoBodyAsync(organization, project, repository, rootId, itemId, prNumber, parentItemId, manifestPath, lockTtlHours, by, innerCt).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                }
+                var output = sw.ToString();
+                Console.Write(output);
+                PrMergePlanAdoResult? result = null;
+                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrMergePlanAdoResult); }
+                catch (JsonException) { }
+                payload = result is null
+                    ? new PrMergePlanAdoPayload { RootId = rootId, ItemId = itemId, ParentItemId = parentItemId, PrNumber = prNumber, ItemKey = itemId == rootId ? "root" : (itemId > 0 ? itemId.ToString(CultureInfo.InvariantCulture) : ""), IsRootPlan = itemId == rootId, Organization = organization, Project = project, Repository = repository, HeadBranch = "", BaseBranch = "", ManifestBranch = "", ResultAction = "error", Succeeded = false, WasMutated = false, AlreadyMerged = false, Error = output.Trim() }
+                    : new PrMergePlanAdoPayload
+                    {
+                        RootId = result.RootId,
+                        ItemId = result.ItemId,
+                        ParentItemId = result.ParentItemId,
+                        PrNumber = result.PrNumber,
+                        ItemKey = result.ItemKey,
+                        IsRootPlan = result.IsRootPlan,
+                        Organization = result.Organization,
+                        Project = result.Project,
+                        Repository = result.Repository,
+                        HeadBranch = result.HeadBranch,
+                        BaseBranch = result.BaseBranch,
+                        ManifestBranch = result.ManifestBranch,
+                        RepoSlug = result.RepoSlug,
+                        PrUrl = result.PrUrl,
+                        LockToken = result.LockToken,
+                        MergeCommit = result.MergeCommit,
+                        ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.AlreadyMerged ? "already_merged" : "merged"),
+                        Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                        WasMutated = result.Merged && !result.AlreadyMerged,
+                        AlreadyMerged = result.AlreadyMerged,
+                        ManifestRecorded = result.ManifestRecorded,
+                        ManifestPushed = result.ManifestPushed,
+                        ErrorCode = result.ErrorCode?.Length > 0 ? result.ErrorCode : null,
+                        Error = result.Error,
+                    };
+                return exitCode;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergePlanAdoPayload),
+            effectsSelector: _ => SelectMergePlanAdoEffects(payload),
+            ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task<int> MergePlanAdoBodyAsync(
+        string organization,
+        string project,
+        string repository,
+        int rootId,
+        int itemId,
+        int prNumber,
+        int parentItemId,
+        string manifestPath,
+        int lockTtlHours,
+        string by,
+        CancellationToken ct)
+    {
         var slug = BuildAdoSlug(organization, project, repository);
         var prUrl = BuildAdoPrUrl(organization, project, repository, prNumber);
 
@@ -251,6 +336,7 @@ public sealed partial class PrCommands
             }
         }
     }
+
 
     private async Task<int> MergePlanAdoUnderLockAsync(
         int rootId,

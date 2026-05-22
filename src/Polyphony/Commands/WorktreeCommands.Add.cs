@@ -1,6 +1,8 @@
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -20,7 +22,9 @@ public sealed partial class WorktreeCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("add")]
     [VerbResult(typeof(WorktreeAddResult))]
-    public async Task<int> Add(
+    [JournaledAction(Action = "worktree_add")]
+    [MutatesResource(ResourceKind.GitWorktree)]
+    public Task<int> Add(
         string branch = "",
         string path = "",
         string? gitRef = null,
@@ -29,8 +33,37 @@ public sealed partial class WorktreeCommands
         if (RequiredInput.HaltIfMissing("worktree add",
             ("--branch", string.IsNullOrEmpty(branch)),
             ("--path", string.IsNullOrEmpty(path))) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<WorktreeAddResult, WorktreeAddPayload>(
+            _journalDecorator,
+            _runContext,
+            "worktree_add",
+            path,
+            innerCt => AddCoreAsync(branch, path, gitRef, innerCt),
+            PolyphonyJsonContext.Default.WorktreeAddResult,
+            (_, result) => new WorktreeAddPayload
+            {
+                Branch = result?.Branch ?? branch,
+                Path = result?.Path ?? path,
+                GitRef = result?.GitRef ?? gitRef,
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && string.IsNullOrEmpty(result.Error),
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.WorktreeAddPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectWorktreeAddEffects,
+            ct);
+    }
+
+    private async Task<int> AddCoreAsync(
+        string branch,
+        string path,
+        string? gitRef,
+        CancellationToken ct)
+    {
         try
         {
             if (string.IsNullOrWhiteSpace(branch))

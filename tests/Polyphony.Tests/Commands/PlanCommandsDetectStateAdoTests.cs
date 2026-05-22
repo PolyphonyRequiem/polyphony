@@ -211,7 +211,7 @@ public sealed class PlanCommandsDetectStateAdoTests : CommandTestBase, IDisposab
     public async Task DetectState_AdoAbandonedPrBranchDeleted_NotStarted()
     {
         // Reproduces the abandoned-PR dead-end on ADO (cloudvault-service-api
-        // apex 62286666, polyphony-findings-2026-05-17.md §1). ADO has no
+        // root 62286666, polyphony-findings-2026-05-17.md §1). ADO has no
         // delete-PR operation, so an abandoned PR sticks in PR history
         // forever. Once the operator deletes the plan branch on origin (the
         // remediation that closed_unmerged_gate's prompt asks for), the next

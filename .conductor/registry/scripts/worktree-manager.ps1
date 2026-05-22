@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Spawn or tear down a per-item git worktree for the apex-driver dispatch loop.
+    Spawn or tear down a per-item git worktree for the polyphony dispatch loop.
 
 .DESCRIPTION
-    Companion to .conductor/registry/workflows/apex-driver.yaml.
+    Companion to .conductor/registry/workflows/polyphony.yaml.
 
-    The apex-driver fans work-items out across waves and dispatches
+    The polyphony fans work-items out across waves and dispatches
     each item into a per-item git worktree so multiple lifecycle
     sub-workflows (plan-level, actionable, implement-merge-group, feature-pr)
     can run in parallel without racing branch checkouts in the
@@ -14,7 +14,7 @@
     Operations:
       spawn    — Creates a new worktree at <root>-item-<work_item_id>
                  (relative to the current repo root), checked out on a
-                 fresh branch sdlc/apex/<work_item_id> branched from
+                 fresh branch sdlc/root/<work_item_id> branched from
                  the supplied -BaseBranch (default 'origin/main').
                  The branch is created with `git worktree add -b`.
                  If the worktree directory already exists, the
@@ -30,14 +30,14 @@
 
       teardown — Removes the worktree directory and prunes the entry
                  from the parent repo. Forced (--force) so a
-                 partial/dirty checkout still gets cleaned up — apex
+                 partial/dirty checkout still gets cleaned up — root
                  owns the worktree lifecycle and a leftover dirty tree
                  would block the next dispatch.
 
     Per the polyphony-workflow-author skill conventions:
       * ALWAYS exits 0 (routing-style envelope).
       * Failures populate `success=false` and `error_code` so the
-        workflow's wave_failed_gate can surface them via the human
+        workflow's batch_failed_gate can surface them via the human
         gate without halting the conductor run.
 
     Output JSON envelope:
@@ -72,7 +72,7 @@
     Used to derive the worktree directory name and branch name.
 
 .PARAMETER BaseBranch
-    For spawn only: the branch the new sdlc/apex/<id> branch is forked
+    For spawn only: the branch the new sdlc/root/<id> branch is forked
     from. Defaults to `origin/main`.
 
 .PARAMETER WorktreeRoot
@@ -82,7 +82,7 @@
     C:\repos\polyphony-item-<id>).
 
 .NOTES
-    Companion to .conductor/registry/workflows/apex-driver.yaml.
+    Companion to .conductor/registry/workflows/polyphony.yaml.
     The output schema is the workflow's input schema for the
     `worktree_router` step; tests pin both shapes.
 #>
@@ -192,7 +192,7 @@ try {
     }
 
     $worktreePath = Get-WorktreePath $repoRoot $WorktreeRoot $WorkItemId
-    $branchName = "sdlc/apex/$WorkItemId"
+    $branchName = "sdlc/root/$WorkItemId"
     $envelope.worktree_path = $worktreePath
     $envelope.branch = $branchName
 

@@ -19,7 +19,7 @@ public sealed class RunManifest
     /// <summary>Manifest schema version. Always 1 for current builds.</summary>
     public int Schema { get; set; } = 1;
 
-    /// <summary>The run's apex (focus) work-item id.</summary>
+    /// <summary>The run's root (focus) work-item id.</summary>
     public int RootId { get; set; }
 
     /// <summary>

@@ -3,6 +3,8 @@ using System.Reflection;
 using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Locking;
 using Polyphony.Models;
 
@@ -30,10 +32,14 @@ namespace Polyphony.Commands;
 /// invoke <c>polyphony lock force-release</c> to clear them per ADR Rev 4.</para>
 /// </summary>
 [VerbGroup("lock")]
-public sealed class LockCommands(
+public sealed partial class LockCommands(
     RunLockStore store,
-    RunLockPathResolver pathResolver)
+    RunLockPathResolver pathResolver,
+    RunContext? runContext = null,
+    JournaledActionDecorator? journalDecorator = null)
 {
+    private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
+    private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
     /// <summary>
     /// Try to atomically acquire the run lock for <paramref name="rootId"/>.
     /// On success emits a UUID <c>lock_token</c> the holder must present
@@ -46,7 +52,9 @@ public sealed class LockCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("acquire")]
     [VerbResult(typeof(AcquireLockResult))]
-    public async Task<int> Acquire(
+    [JournaledAction(Action = "lock_acquire")]
+    [MutatesResource(ResourceKind.LockFile)]
+    public Task<int> Acquire(
         int rootId = RequiredInput.MissingInt,
         int ttlHours = 24,
         string by = "",
@@ -55,8 +63,41 @@ public sealed class LockCommands(
     {
         if (RequiredInput.HaltIfMissing("lock acquire",
             ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<AcquireLockResult, LockMutationPayload>(
+            _journalDecorator,
+            _runContext,
+            "lock_acquire",
+            rootId > 0 ? $"lock:{rootId}" : path,
+            innerCt => AcquireCoreAsync(rootId, ttlHours, by, path, innerCt),
+            PolyphonyJsonContext.Default.AcquireLockResult,
+            (_, result) => new LockMutationPayload
+            {
+                RootId = rootId,
+                Path = result?.Path ?? path,
+                ResultAction = result?.Acquired == true ? "acquired" : "already_held",
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result?.Acquired == true,
+                Reason = result?.Reason,
+                WasHeld = result?.Acquired == false,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.LockMutationPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectLockAcquireEffects,
+            ct,
+            rootId: rootId);
+    }
+
+    private async Task<int> AcquireCoreAsync(
+        int rootId,
+        int ttlHours,
+        string by,
+        string path,
+        CancellationToken ct)
+    {
         if (rootId <= 0)
         {
             Emit(new AcquireLockResult
@@ -138,7 +179,9 @@ public sealed class LockCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("release")]
     [VerbResult(typeof(ReleaseLockResult))]
-    public async Task<int> Release(
+    [JournaledAction(Action = "lock_release")]
+    [MutatesResource(ResourceKind.LockFile)]
+    public Task<int> Release(
         int rootId = RequiredInput.MissingInt,
         string lockToken = "",
         string path = "",
@@ -147,8 +190,40 @@ public sealed class LockCommands(
         if (RequiredInput.HaltIfMissing("lock release",
             ("--root-id", rootId == RequiredInput.MissingInt),
             ("--lock-token", string.IsNullOrEmpty(lockToken))) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ReleaseLockResult, LockMutationPayload>(
+            _journalDecorator,
+            _runContext,
+            "lock_release",
+            rootId > 0 ? $"lock:{rootId}" : path,
+            innerCt => ReleaseCoreAsync(rootId, lockToken, path, innerCt),
+            PolyphonyJsonContext.Default.ReleaseLockResult,
+            (_, result) => new LockMutationPayload
+            {
+                RootId = rootId,
+                Path = result?.Path ?? path,
+                ResultAction = result?.Released == true ? "released" : "not_released",
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error) && result.Reason != "token_mismatch" && result.Reason != "unreadable",
+                WasMutated = result?.Released == true,
+                Reason = result?.Reason,
+                WasHeld = result?.ExistingLock is not null,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.LockMutationPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectLockReleaseEffects,
+            ct,
+            rootId: rootId);
+    }
+
+    private async Task<int> ReleaseCoreAsync(
+        int rootId,
+        string lockToken,
+        string path,
+        CancellationToken ct)
+    {
         if (rootId <= 0)
         {
             Emit(new ReleaseLockResult { Path = path, Released = false, Error = "rootId must be positive" });
@@ -207,15 +282,47 @@ public sealed class LockCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("force-release")]
     [VerbResult(typeof(ForceReleaseLockResult))]
-    public async Task<int> ForceRelease(
+    [JournaledAction(Action = "lock_force_release")]
+    [MutatesResource(ResourceKind.LockFile)]
+    public Task<int> ForceRelease(
         int rootId = RequiredInput.MissingInt,
         string path = "",
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("lock force-release",
             ("--root-id", rootId == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ForceReleaseLockResult, LockMutationPayload>(
+            _journalDecorator,
+            _runContext,
+            "lock_force_release",
+            rootId > 0 ? $"lock:{rootId}" : path,
+            innerCt => ForceReleaseCoreAsync(rootId, path, innerCt),
+            PolyphonyJsonContext.Default.ForceReleaseLockResult,
+            (_, result) => new LockMutationPayload
+            {
+                RootId = rootId,
+                Path = result?.Path ?? path,
+                ResultAction = result?.Released == true ? "force_released" : "already_absent",
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result?.Released == true,
+                WasHeld = result?.WasHeld,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.LockMutationPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectLockForceReleaseEffects,
+            ct,
+            rootId: rootId);
+    }
+
+    private async Task<int> ForceReleaseCoreAsync(
+        int rootId,
+        string path,
+        CancellationToken ct)
+    {
         if (rootId <= 0)
         {
             Emit(new ForceReleaseLockResult

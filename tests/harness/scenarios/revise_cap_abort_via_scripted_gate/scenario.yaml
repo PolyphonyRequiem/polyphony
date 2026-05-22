@@ -5,7 +5,7 @@
 # revise_cap_gate response to "abort" — the FOURTH option in the gate's
 # `options:` block. Under --skip-gates alone the harness would auto-pick
 # the first option (Re-poll) and loop back to poll_status; the scripted
-# handler instead routes to `terminal_abort_run` → $end.
+# handler instead routes to `abort_run` → $end.
 #
 # This is the proof scenario for the harness's scripted-gate infrastructure
 # (`gates:` block + `gates_resolved` trace assertion + strict-by-default
@@ -15,7 +15,7 @@
 #   iter 1: count=1, sha=X, shaPrev='',  no_commit=0,   cap=false → fixer
 #   iter 2: count=2, sha=X, shaPrev=X,   no_commit=1,   cap=false → fixer
 #   iter 3: count=3, sha=X, shaPrev=X,   no_commit=2,   cap=true (no_commit_stuck) → revise_cap_gate
-#   gate (scripted=abort) → terminal_abort_run → $end
+#   gate (scripted=abort) → abort_run → $end
 #
 # `merged` evaluates to `false` because neither pr_merger nor
 # closed_unmerged_emitter ran; the workflow `output:` block's `{%- else
@@ -116,7 +116,7 @@ cli_scripts:
     exit_code: 0
 
   # Three identical-SHA poll responses to fire the no_commit_stuck cap.
-  # No fourth poll: the scripted gate response routes to terminal_abort_run,
+  # No fourth poll: the scripted gate response routes to abort_run,
   # not back to poll_status.
   - command: polyphony
     args: [pr, poll-status]
@@ -184,7 +184,7 @@ expected_trace:
     - pr_feedback_analyzer
     - revise_counter
     - revise_cap_gate
-    - terminal_abort_run
+    - abort_run
   scripts_executed:
     - guidance_loader
     - pr_initial_reviewer_poster
@@ -192,7 +192,7 @@ expected_trace:
     - revise_counter
     - revise_counter
     - revise_counter
-    - terminal_abort_run
+    - abort_run
   gates_presented:
     - revise_cap_gate
   gates_resolved:

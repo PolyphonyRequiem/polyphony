@@ -26,10 +26,10 @@ public sealed record WorktreeGcResult
     public required string RunsRoot { get; init; }
 
     /// <summary>
-    /// Optional apex subtree the scan was scoped to (the <c>N</c> from
-    /// <c>--apex N</c>). Zero when unscoped (whole runs root scanned).
+    /// Optional root subtree the scan was scoped to (the <c>N</c> from
+    /// <c>--root N</c>). Zero when unscoped (whole runs root scanned).
     /// </summary>
-    public required int Apex { get; init; }
+    public required int Root { get; init; }
 
     /// <summary>
     /// All candidates discovered under the scope. Each entry includes

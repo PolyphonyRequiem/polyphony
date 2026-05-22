@@ -14,7 +14,7 @@
 
         <ParentDir>/<RepoName>.git/     bare repo (objects + refs only)
         <ParentDir>/<RepoName>/         main worktree, ALWAYS on the default branch
-        <ParentDir>/<RepoName>-runs/    per-apex run worktrees live here (empty at bootstrap)
+        <ParentDir>/<RepoName>-runs/    per-root run worktrees live here (empty at bootstrap)
 
     Strategy: bare-clone the remote, query its HEAD (or use -MainBranch),
     add a worktree at <ParentDir>/<RepoName>/ on that branch, and create
@@ -620,7 +620,7 @@ Bootstrap complete.
 
   Bare repo     : $($Paths.BarePath)
   Main worktree : $($Paths.MainPath)  (on $Branch)
-  Runs root     : $($Paths.RunsRoot)  (empty; per-apex worktrees land here)
+  Runs root     : $($Paths.RunsRoot)  (empty; per-root worktrees land here)
 
 Next steps:
   1. cd "$($Paths.MainPath)"

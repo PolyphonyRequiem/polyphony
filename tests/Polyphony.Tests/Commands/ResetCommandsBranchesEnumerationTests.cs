@@ -96,7 +96,7 @@ public sealed class ResetCommandsBranchesEnumerationTests : CommandTestBase
         var (cmd, runner) = CreateCommand();
         StubBranchEnumeration(runner);
 
-        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ResetBranches(apex: 100, execute: false));
+        var (exitCode, output) = await CaptureConsoleAsync(() => cmd.ResetBranches(root: 100, execute: false));
 
         exitCode.ShouldBe(ExitCodes.Success);
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.ResetBranchesResult);

@@ -39,7 +39,7 @@ namespace Polyphony.Tests.Commands;
 /// </remarks>
 public sealed class StateNextReadyImplementationTests : CommandTestBase
 {
-    private const int ApexId = 3043;
+    private const int RootId = 3043;
     private const string PlanBranch = "plan/3043";
     private const string ImplBranch = "impl/3043-3043";
     private const string OriginUrl = "https://github.com/acme/repo.git";
@@ -69,7 +69,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         // Twig show: no planned tag (children_seeded → Needed). Tests that
         // care about the planned tag stub explicitly above this baseline.
         runner.WhenStartsWith("twig", ["show"], new ProcessResult(0,
-            $$"""{"id":{{ApexId}},"title":"Apex","tags":""}""", ""));
+            $$"""{"id":{{RootId}},"title":"Root","tags":""}""", ""));
         // Catch-all gh pr list — last responder so impl/plan-specific
         // matchers registered earlier (via StubImplPr*) can win.
         runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(0, "[]", ""));
@@ -136,20 +136,20 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
     private async Task SeedApexAsync(string state = "Doing")
     {
         var item = new WorkItemBuilder()
-            .WithId(ApexId).WithType("Issue").WithTitle("Apex 3043").WithState(state).Build();
+            .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState(state).Build();
         await SeedAsync(item);
     }
 
     private async Task SeedApexWithChildrenAsync(int childCount, string childState = "To Do")
     {
-        var apex = new WorkItemBuilder()
-            .WithId(ApexId).WithType("Issue").WithTitle("Apex 3043").WithState("Doing").Build();
-        var children = new List<Twig.Domain.Aggregates.WorkItem> { apex };
+        var root = new WorkItemBuilder()
+            .WithId(RootId).WithType("Issue").WithTitle("Root 3043").WithState("Doing").Build();
+        var children = new List<Twig.Domain.Aggregates.WorkItem> { root };
         for (var i = 0; i < childCount; i++)
         {
             children.Add(new WorkItemBuilder()
-                .WithId(ApexId + 100 + i).WithType("Task").WithTitle($"Child {i}").WithState(childState)
-                .WithParentId(ApexId).Build());
+                .WithId(RootId + 100 + i).WithType("Task").WithTitle($"Child {i}").WithState(childState)
+                .WithParentId(RootId).Build());
         }
         await SeedAsync(children.ToArray());
     }
@@ -159,7 +159,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
     [Fact]
     public async Task NextReady_NoImplPr_ImplementationMergedNeeded_WithReason()
     {
-        // Apex 3043 reproduction: the impl branch has not been opened yet
+        // Root 3043 reproduction: the impl branch has not been opened yet
         // (no PR exists for impl/3043-3043). Pre-PR-#4 the verb returned
         // Needed via the (item.State="Doing", childCount=0) fall-through
         // arm of the legacy switch — same answer for the wrong reason
@@ -168,7 +168,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         var runner = NewRunnerWithBaseline();
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -198,7 +198,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         BindBaselineAfterImpl(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -223,7 +223,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         BindBaselineAfterImpl(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -252,7 +252,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         BindBaselineAfterImpl(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -281,7 +281,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         BindBaselineAfterImpl(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -298,7 +298,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
     [Fact]
     public async Task NextReady_MgItemSelfPrMerged_ChildrenUnmerged_DemotedByChildren()
     {
-        // PR #5 cross-item rollup: an MG-style item (apex with
+        // PR #5 cross-item rollup: an MG-style item (root with
         // implementable children) whose own impl PR (impl/3043-3043)
         // is merged is NOT Satisfied for implementation_merged when
         // any child impl PR is unmerged or absent. The composer takes
@@ -314,7 +314,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         BindBaselineAfterImpl(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -333,7 +333,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
     [Fact]
     public async Task NextReady_MgWithTwoChildren_AllImplMerged_ImplementationMergedSatisfied()
     {
-        // Closed-loop §3.1 row 5 happy path: MG-style apex with two
+        // Closed-loop §3.1 row 5 happy path: MG-style root with two
         // implementable children, all three impl PRs merged → parent's
         // worst-of stays at Satisfied → observed flows through the
         // reducer untouched and result.Satisfied carries
@@ -344,12 +344,12 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         var runner = new FakeProcessRunner();
         StubImplPrList(runner, prNumber: 412);
         StubImplPrPoll(runner, prNumber: 412, state: "MERGED");
-        StubChildImplPrMerged(runner, childId: ApexId + 100, prNumber: 510);
-        StubChildImplPrMerged(runner, childId: ApexId + 101, prNumber: 511);
+        StubChildImplPrMerged(runner, childId: RootId + 100, prNumber: 510);
+        StubChildImplPrMerged(runner, childId: RootId + 101, prNumber: 511);
         BindBaselineAfterImpl(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -375,7 +375,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         // is implementation detail — what callers depend on is "not
         // Satisfied" + a structured pointer to the offending child.
         await SeedApexWithChildrenAsync(childCount: 2);
-        var (mergedChildId, openChildId) = (ApexId + 100, ApexId + 101);
+        var (mergedChildId, openChildId) = (RootId + 100, RootId + 101);
         var runner = new FakeProcessRunner();
         StubImplPrList(runner, prNumber: 412);
         StubImplPrPoll(runner, prNumber: 412, state: "MERGED");
@@ -384,7 +384,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         BindBaselineAfterImpl(runner);
 
         var cmd = CreateCommand(runner);
-        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: ApexId));
+        var (exit, output) = await CaptureConsoleAsync(() => cmd.NextReady(workItem: RootId));
         exit.ShouldBe(ExitCodes.Success);
 
         var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.StateNextReadyResult)!;
@@ -397,12 +397,12 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
 
     /// <summary>Stub a merged impl PR for one specific child id. The
     /// canonical impl branch for a child whose root is
-    /// <see cref="ApexId"/> is <c>impl/{ApexId}-{childId}</c>; the head
-    /// filter disambiguates from the apex's own
-    /// <c>impl/{ApexId}-{ApexId}</c> matcher and from the catch-all.</summary>
+    /// <see cref="RootId"/> is <c>impl/{RootId}-{childId}</c>; the head
+    /// filter disambiguates from the root's own
+    /// <c>impl/{RootId}-{RootId}</c> matcher and from the catch-all.</summary>
     private static void StubChildImplPrMerged(FakeProcessRunner runner, int childId, int prNumber)
     {
-        var branch = $"impl/{ApexId}-{childId}";
+        var branch = $"impl/{RootId}-{childId}";
         runner.When(
             (e, a) => e == "gh"
                 && a.Count >= 4 && a[0] == "pr" && a[1] == "list"
@@ -418,7 +418,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
     /// helper to <see cref="StubChildImplPrMerged"/>.</summary>
     private static void StubChildImplPrOpen(FakeProcessRunner runner, int childId, int prNumber)
     {
-        var branch = $"impl/{ApexId}-{childId}";
+        var branch = $"impl/{RootId}-{childId}";
         runner.When(
             (e, a) => e == "gh"
                 && a.Count >= 4 && a[0] == "pr" && a[1] == "list"
@@ -438,7 +438,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
           "mergeable": "MERGEABLE",
           "headRefName": "{{branch}}",
           "headRefOid": "abc123",
-          "baseRefName": "mg/{{ApexId}}_root",
+          "baseRefName": "mg/{{RootId}}_root",
           "mergedAt": null,
           "mergeCommit": null,
           "body": "",
@@ -457,7 +457,7 @@ public sealed class StateNextReadyImplementationTests : CommandTestBase
         runner.WhenExact("git", ["ls-remote", "--heads", "origin", $"refs/heads/{PlanBranch}"],
             new ProcessResult(0, "", ""));
         runner.WhenStartsWith("twig", ["show"], new ProcessResult(0,
-            $$"""{"id":{{ApexId}},"title":"Apex","tags":""}""", ""));
+            $$"""{"id":{{RootId}},"title":"Root","tags":""}""", ""));
         runner.WhenStartsWith("gh", ["pr", "list"], new ProcessResult(0, "[]", ""));
     }
 }
