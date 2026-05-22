@@ -3,6 +3,8 @@ using System.Text.RegularExpressions;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -30,6 +32,7 @@ public sealed partial class BranchCommands
     /// <param name="remote">Git remote name.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-feature")]
+    [JournaledAction(Action = "branch_ensure_feature")]
     [VerbResult(typeof(BranchEnsureFeatureResult))]
     public async Task<int> EnsureFeature(
         string branch = "",
@@ -41,95 +44,149 @@ public sealed partial class BranchCommands
             ("--branch", string.IsNullOrEmpty(branch))) is { } halt)
             return halt;
 
-        try
-        {
-            // 1. Check if the branch exists on the remote.
-            var remoteRefs = await git.LsRemoteHeadsAsync(remote, branch, ct).ConfigureAwait(false);
-            var remoteExisted = remoteRefs.Count > 0;
+        var parsedRootId = TryParseFeatureRootId(branch);
+        BranchEnsureFeaturePayload? payload = null;
 
-            // 2. Check if it exists locally.
-            var localSha = await git.RevParseLocalBranchAsync(branch, ct).ConfigureAwait(false);
-            var localExisted = localSha is not null;
-
-            string action;
-            bool pushed = false;
-            string? createdFrom = null;
-            string? worktreePath = null;
-
-            if (localExisted)
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("branch_ensure_feature", branch, parsedRootId, parsedRootId),
+            async innerCt =>
             {
-                // Local branch exists — try to check it out in the current
-                // worktree. Under the parallel-fleet root convention the
-                // branch may already be checked out in a sibling worktree;
-                // git refuses with exit 128 + "is already used by worktree
-                // at '...'". That is NOT a failure of this verb's purpose
-                // (the branch DOES exist locally); treat it as a success
-                // and surface the sibling worktree path so the workflow
-                // can route to it (AB#211).
                 try
                 {
-                    await git.CheckoutAsync(branch, ct).ConfigureAwait(false);
-                    action = "checked_out";
-                }
-                catch (ExternalToolException ex)
-                    when (BranchInOtherWorktreeRegex().Match(ex.Stderr) is { Success: true } worktreeMatch)
-                {
-                    worktreePath = worktreeMatch.Groups[1].Value;
-                    action = "exists_in_other_worktree";
-                }
+                    // 1. Check if the branch exists on the remote.
+                    var remoteRefs = await git.LsRemoteHeadsAsync(remote, branch, innerCt).ConfigureAwait(false);
+                    var remoteExisted = remoteRefs.Count > 0;
 
-                if (!remoteExisted)
-                {
-                    // Push to remote so downstream steps can branch from
-                    // it. Push works regardless of which worktree owns
-                    // the checkout — git resolves refs/heads/{branch} by
-                    // ref, not by working tree.
-                    await git.PushAsync(branch, remote, ct).ConfigureAwait(false);
-                    pushed = true;
-                }
-            }
-            else if (remoteExisted)
-            {
-                // Remote exists but not local — fetch and create tracking branch.
-                await git.FetchAsync(remote, branch, ct).ConfigureAwait(false);
-                await git.CheckoutTrackingAsync(branch, remote, ct).ConfigureAwait(false);
-                action = "checked_out";
-            }
-            else
-            {
-                // Neither local nor remote — create from base branch.
-                await git.CreateBranchAsync(branch, baseBranch, ct).ConfigureAwait(false);
-                await git.PushAsync(branch, remote, ct).ConfigureAwait(false);
-                action = "created";
-                pushed = true;
-                createdFrom = baseBranch;
-            }
+                    // 2. Check if it exists locally.
+                    var localSha = await git.RevParseLocalBranchAsync(branch, innerCt).ConfigureAwait(false);
+                    var localExisted = localSha is not null;
+                    var currentBranch = localExisted
+                        ? await TryGetCurrentBranchAsync(innerCt).ConfigureAwait(false)
+                        : null;
 
-            var result = new BranchEnsureFeatureResult
-            {
-                Branch = branch,
-                Action = action,
-                RemoteExisted = remoteExisted,
-                Pushed = pushed,
-                CreatedFrom = createdFrom,
-                WorktreePath = worktreePath,
-            };
-            Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.BranchEnsureFeatureResult));
-            return ExitCodes.Success;
-        }
-        catch (Exception ex)
-        {
-            var result = new BranchEnsureFeatureResult
-            {
-                Branch = branch,
-                Action = "error",
-                RemoteExisted = false,
-                Pushed = false,
-                Error = ex.Message,
-            };
-            Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.BranchEnsureFeatureResult));
-            return ExitCodes.CacheError;
-        }
+                    string action;
+                    bool pushed = false;
+                    string? createdFrom = null;
+                    string? worktreePath = null;
+                    bool wasMutated;
+
+                    if (localExisted)
+                    {
+                        // Local branch exists — try to check it out in the current
+                        // worktree. Under the parallel-fleet root convention the
+                        // branch may already be checked out in a sibling worktree;
+                        // git refuses with exit 128 + "is already used by worktree
+                        // at '...'". That is NOT a failure of this verb's purpose
+                        // (the branch DOES exist locally); treat it as a success
+                        // and surface the sibling worktree path so the workflow
+                        // can route to it (AB#211).
+                        try
+                        {
+                            await git.CheckoutAsync(branch, innerCt).ConfigureAwait(false);
+                            action = "checked_out";
+                            wasMutated = currentBranch is null || !string.Equals(currentBranch, branch, StringComparison.Ordinal);
+                        }
+                        catch (ExternalToolException ex)
+                            when (BranchInOtherWorktreeRegex().Match(ex.Stderr) is { Success: true } worktreeMatch)
+                        {
+                            worktreePath = worktreeMatch.Groups[1].Value;
+                            action = "exists_in_other_worktree";
+                            wasMutated = false;
+                        }
+
+                        if (!remoteExisted)
+                        {
+                            // Push to remote so downstream steps can branch from
+                            // it. Push works regardless of which worktree owns
+                            // the checkout — git resolves refs/heads/{branch} by
+                            // ref, not by working tree.
+                            await git.PushAsync(branch, remote, innerCt).ConfigureAwait(false);
+                            pushed = true;
+                            wasMutated = true;
+                        }
+                    }
+                    else if (remoteExisted)
+                    {
+                        // Remote exists but not local — fetch and create tracking branch.
+                        await git.FetchAsync(remote, branch, innerCt).ConfigureAwait(false);
+                        await git.CheckoutTrackingAsync(branch, remote, innerCt).ConfigureAwait(false);
+                        action = "checked_out";
+                        wasMutated = true;
+                    }
+                    else
+                    {
+                        // Neither local nor remote — create from base branch.
+                        await git.CreateBranchAsync(branch, baseBranch, innerCt).ConfigureAwait(false);
+                        await git.PushAsync(branch, remote, innerCt).ConfigureAwait(false);
+                        action = "created";
+                        pushed = true;
+                        createdFrom = baseBranch;
+                        wasMutated = true;
+                    }
+
+                    var result = new BranchEnsureFeatureResult
+                    {
+                        Branch = branch,
+                        Action = action,
+                        RemoteExisted = remoteExisted,
+                        Pushed = pushed,
+                        CreatedFrom = createdFrom,
+                        WorktreePath = worktreePath,
+                    };
+                    payload = new BranchEnsureFeaturePayload
+                    {
+                        RootId = parsedRootId,
+                        WorkItemId = parsedRootId,
+                        BranchName = branch,
+                        BaseBranch = baseBranch,
+                        ResultAction = action,
+                        Succeeded = true,
+                        WasMutated = wasMutated,
+                        WasCreated = string.Equals(action, "created", StringComparison.Ordinal),
+                        WasPushed = pushed,
+                        WorktreePath = worktreePath,
+                        Sha = await TryGetBranchShaAsync(branch, innerCt).ConfigureAwait(false),
+                    };
+                    Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.BranchEnsureFeatureResult));
+                    return ExitCodes.Success;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    payload = new BranchEnsureFeaturePayload
+                    {
+                        RootId = parsedRootId,
+                        WorkItemId = parsedRootId,
+                        BranchName = branch,
+                        BaseBranch = baseBranch,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        WasCreated = false,
+                        WasPushed = false,
+                        Error = ex.Message,
+                    };
+                    var result = new BranchEnsureFeatureResult
+                    {
+                        Branch = branch,
+                        Action = "error",
+                        RemoteExisted = false,
+                        Pushed = false,
+                        Error = ex.Message,
+                    };
+                    Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.BranchEnsureFeatureResult));
+                    return ExitCodes.CacheError;
+                }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.BranchEnsureFeaturePayload),
+            ct: ct).ConfigureAwait(false);
     }
 }
 

@@ -3,6 +3,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -27,6 +29,7 @@ public sealed partial class BranchCommands
     /// <param name="remote">Git remote name.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("ensure-evidence-branch")]
+    [JournaledAction(Action = "branch_ensure_evidence_branch")]
     [VerbResult(typeof(BranchEnsureEvidenceResult))]
     public async Task<int> EnsureEvidenceBranch(
         int workItemId = RequiredInput.MissingInt,
@@ -72,113 +75,185 @@ public sealed partial class BranchCommands
             ? BranchNameBuilder.Feature(root).Value
             : fromRef;
 
-        try
-        {
-            // ── 3. Inspect current state. ────────────────────────────────
-            var remoteRefs = await git.LsRemoteHeadsAsync(remote, branch, ct).ConfigureAwait(false);
-            var remoteExisted = remoteRefs.Count > 0;
+        BranchEnsureEvidenceBranchPayload? payload = null;
 
-            var localSha = await git.RevParseLocalBranchAsync(branch, ct).ConfigureAwait(false);
-            var localExisted = localSha is not null;
-
-            string action;
-            bool pushed = false;
-            string? createdFrom = null;
-            bool baseRemoteExisted;
-            bool baseFetched = false;
-
-            if (localExisted)
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("branch_ensure_evidence_branch", branch, resolvedApexId, workItemId),
+            async innerCt =>
             {
-                await git.CheckoutAsync(branch, ct).ConfigureAwait(false);
-                action = "checked_out";
-
-                if (!remoteExisted)
+                try
                 {
-                    await git.PushAsync(branch, remote, ct).ConfigureAwait(false);
-                    pushed = true;
+                    // ── 3. Inspect current state. ────────────────────────────────
+                    var remoteRefs = await git.LsRemoteHeadsAsync(remote, branch, innerCt).ConfigureAwait(false);
+                    var remoteExisted = remoteRefs.Count > 0;
+
+                    var localSha = await git.RevParseLocalBranchAsync(branch, innerCt).ConfigureAwait(false);
+                    var localExisted = localSha is not null;
+                    var currentBranch = localExisted
+                        ? await TryGetCurrentBranchAsync(innerCt).ConfigureAwait(false)
+                        : null;
+
+                    string action;
+                    bool pushed = false;
+                    string? createdFrom = null;
+                    bool baseRemoteExisted;
+                    bool baseFetched = false;
+                    bool wasMutated;
+
+                    if (localExisted)
+                    {
+                        await git.CheckoutAsync(branch, innerCt).ConfigureAwait(false);
+                        action = "checked_out";
+                        wasMutated = currentBranch is null || !string.Equals(currentBranch, branch, StringComparison.Ordinal);
+
+                        if (!remoteExisted)
+                        {
+                            await git.PushAsync(branch, remote, innerCt).ConfigureAwait(false);
+                            pushed = true;
+                            wasMutated = true;
+                        }
+
+                        // Base is irrelevant when the target already exists locally,
+                        // but we still report whether it's on the remote so the
+                        // workflow can distinguish "evidence exists, but the root
+                        // feature has been deleted" from a fully wired state.
+                        baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
+                    }
+                    else if (remoteExisted)
+                    {
+                        await git.FetchAsync(remote, branch, innerCt).ConfigureAwait(false);
+                        await git.CheckoutTrackingAsync(branch, remote, innerCt).ConfigureAwait(false);
+                        action = "checked_out";
+                        baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
+                        wasMutated = true;
+                    }
+                    else
+                    {
+                        // Need to materialize from base. Confirm it exists on remote first.
+                        baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
+                        if (!baseRemoteExisted)
+                        {
+                            payload = new BranchEnsureEvidenceBranchPayload
+                            {
+                                RootId = resolvedApexId,
+                                WorkItemId = workItemId,
+                                BranchName = branch,
+                                BaseBranch = baseBranch,
+                                ResultAction = "error",
+                                Succeeded = false,
+                                WasMutated = false,
+                                WasCreated = false,
+                                WasPushed = false,
+                                BaseFetched = false,
+                                Orphan = orphan,
+                                FromRef = fromRef,
+                                Error = $"base branch '{baseBranch}' does not exist on remote '{remote}'. " +
+                                    (string.IsNullOrEmpty(fromRef)
+                                        ? $"Run 'polyphony branch ensure-feature' for root {resolvedApexId} first, or pass --from-ref to base evidence on a different branch."
+                                        : "Verify the --from-ref value points at a branch that exists on the remote."),
+                            };
+                            EmitEvidenceError(
+                                workItemId,
+                                rootId,
+                                fromRef,
+                                payload.Error,
+                                branch: branch,
+                                baseBranch: baseBranch,
+                                orphan: orphan);
+                            return ExitCodes.RoutingFailure;
+                        }
+
+                        // If the base isn't local, fetch and check it out so the
+                        // create-from-base step has a known local start point.
+                        var baseLocalSha = await git.RevParseLocalBranchAsync(baseBranch, innerCt).ConfigureAwait(false);
+                        if (baseLocalSha is null)
+                        {
+                            await git.FetchAsync(remote, baseBranch, innerCt).ConfigureAwait(false);
+                            await git.CheckoutTrackingAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
+                            baseFetched = true;
+                        }
+
+                        await git.CreateBranchAsync(branch, baseBranch, innerCt).ConfigureAwait(false);
+                        await git.PushAsync(branch, remote, innerCt).ConfigureAwait(false);
+                        action = "created";
+                        pushed = true;
+                        createdFrom = baseBranch;
+                        wasMutated = true;
+                    }
+
+                    var result = new BranchEnsureEvidenceResult
+                    {
+                        Branch = branch,
+                        BaseBranch = baseBranch,
+                        Action = action,
+                        RemoteExisted = remoteExisted,
+                        Pushed = pushed,
+                        BaseRemoteExisted = baseRemoteExisted,
+                        BaseFetched = baseFetched,
+                        CreatedFrom = createdFrom,
+                        RootId = resolvedApexId,
+                        ItemId = workItemId,
+                        Orphan = orphan,
+                        FromRef = fromRef,
+                    };
+                    payload = new BranchEnsureEvidenceBranchPayload
+                    {
+                        RootId = resolvedApexId,
+                        WorkItemId = workItemId,
+                        BranchName = branch,
+                        BaseBranch = baseBranch,
+                        ResultAction = action,
+                        Succeeded = true,
+                        WasMutated = wasMutated,
+                        WasCreated = string.Equals(action, "created", StringComparison.Ordinal),
+                        WasPushed = pushed,
+                        BaseFetched = baseFetched,
+                        Orphan = orphan,
+                        FromRef = fromRef,
+                        Sha = await TryGetBranchShaAsync(branch, innerCt).ConfigureAwait(false),
+                    };
+                    EmitEvidence(result);
+                    return ExitCodes.Success;
                 }
-
-                // Base is irrelevant when the target already exists locally,
-                // but we still report whether it's on the remote so the
-                // workflow can distinguish "evidence exists, but the root
-                // feature has been deleted" from a fully wired state.
-                baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, ct).ConfigureAwait(false);
-            }
-            else if (remoteExisted)
-            {
-                await git.FetchAsync(remote, branch, ct).ConfigureAwait(false);
-                await git.CheckoutTrackingAsync(branch, remote, ct).ConfigureAwait(false);
-                action = "checked_out";
-                baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, ct).ConfigureAwait(false);
-            }
-            else
-            {
-                // Need to materialize from base. Confirm it exists on remote first.
-                baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, ct).ConfigureAwait(false);
-                if (!baseRemoteExisted)
+                catch (OperationCanceledException)
                 {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    payload = new BranchEnsureEvidenceBranchPayload
+                    {
+                        RootId = resolvedApexId,
+                        WorkItemId = workItemId,
+                        BranchName = branch,
+                        BaseBranch = baseBranch,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        WasCreated = false,
+                        WasPushed = false,
+                        BaseFetched = false,
+                        Orphan = orphan,
+                        FromRef = fromRef,
+                        Error = ex.Message,
+                    };
                     EmitEvidenceError(
                         workItemId,
                         rootId,
                         fromRef,
-                        $"base branch '{baseBranch}' does not exist on remote '{remote}'. " +
-                        (string.IsNullOrEmpty(fromRef)
-                            ? $"Run 'polyphony branch ensure-feature' for root {resolvedApexId} first, or pass --from-ref to base evidence on a different branch."
-                            : "Verify the --from-ref value points at a branch that exists on the remote."),
+                        ex.Message,
                         branch: branch,
                         baseBranch: baseBranch,
                         orphan: orphan);
-                    return ExitCodes.RoutingFailure;
+                    return ExitCodes.CacheError;
                 }
-
-                // If the base isn't local, fetch and check it out so the
-                // create-from-base step has a known local start point.
-                var baseLocalSha = await git.RevParseLocalBranchAsync(baseBranch, ct).ConfigureAwait(false);
-                if (baseLocalSha is null)
-                {
-                    await git.FetchAsync(remote, baseBranch, ct).ConfigureAwait(false);
-                    await git.CheckoutTrackingAsync(baseBranch, remote, ct).ConfigureAwait(false);
-                    baseFetched = true;
-                }
-
-                await git.CreateBranchAsync(branch, baseBranch, ct).ConfigureAwait(false);
-                await git.PushAsync(branch, remote, ct).ConfigureAwait(false);
-                action = "created";
-                pushed = true;
-                createdFrom = baseBranch;
-            }
-
-            var result = new BranchEnsureEvidenceResult
-            {
-                Branch = branch,
-                BaseBranch = baseBranch,
-                Action = action,
-                RemoteExisted = remoteExisted,
-                Pushed = pushed,
-                BaseRemoteExisted = baseRemoteExisted,
-                BaseFetched = baseFetched,
-                CreatedFrom = createdFrom,
-                RootId = resolvedApexId,
-                ItemId = workItemId,
-                Orphan = orphan,
-                FromRef = fromRef,
-            };
-            EmitEvidence(result);
-            return ExitCodes.Success;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            EmitEvidenceError(
-                workItemId,
-                rootId,
-                fromRef,
-                ex.Message,
-                branch: branch,
-                baseBranch: baseBranch,
-                orphan: orphan);
-            return ExitCodes.CacheError;
-        }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.BranchEnsureEvidenceBranchPayload),
+            ct: ct).ConfigureAwait(false);
     }
 
     private static void EmitEvidence(BranchEnsureEvidenceResult result)

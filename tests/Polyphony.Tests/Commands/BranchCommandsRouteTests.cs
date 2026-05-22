@@ -24,7 +24,7 @@ public sealed class BranchCommandsRouteTests : CommandTestBase
         var validator = new TransitionValidator(c);
         var resolver = new Polyphony.Sdlc.Observers.RepoIdentityResolver(git);
         var reader = new Polyphony.Sdlc.Observers.PullRequestReader(gh, null);
-        return (new BranchCommands(twig, walker, Repository, validator, git, c, resolver, reader), runner);
+        return (new BranchCommands(twig, walker, Repository, validator, git, c, resolver, reader, JournalTestSupport.CreateRunContext(), JournalTestSupport.CreateDecorator()), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)

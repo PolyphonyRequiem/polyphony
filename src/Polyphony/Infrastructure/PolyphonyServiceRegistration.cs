@@ -45,8 +45,10 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<PhaseDetector>();
         services.AddSingleton<HierarchyWalker>();
         services.AddSingleton<TransitionValidator>();
+        services.AddSingleton<RunContext>();
         services.AddSingleton<IJournalLocator, JournalLocator>();
         services.AddSingleton<IJournalStore, JournalStore>();
+        services.AddSingleton<JournaledActionDecorator>();
 
         // Sdlc observers — singleton services that wrap IGitClient/IGhClient/IAdoClient/ITwigClient
         // to produce per-RequirementKind observations. Shared by routing-style verbs
