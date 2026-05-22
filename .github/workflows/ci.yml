@@ -225,6 +225,23 @@ jobs:
           $result = Invoke-Pester -Path .conductor/registry/tests/lint-strict-undefined.Tests.ps1 -Output Detailed -PassThru
           if ($result.FailedCount -gt 0) { exit 1 }
 
+      - name: CI discovery sentinel (orphan .Tests.ps1 under .conductor/registry/tests/)
+        # Asserts that every `*.Tests.ps1` file under
+        # `.conductor/registry/tests/` is either invoked by a named CI
+        # step here in ci.yml, or formally deferred via the
+        # `$DeferredTests` map in `lint-ci-discovery.Tests.ps1` (with an
+        # ADO reference, tracked under AB#3269). Without this sentinel,
+        # a new `*.Tests.ps1` file under that directory rots silently
+        # because the main Pester run only scans `tests/`. PR #475
+        # fixed four lint test files that had been broken without
+        # anyone noticing for exactly this reason.
+        if: always()
+        shell: pwsh
+        working-directory: polyphony
+        run: |
+          $result = Invoke-Pester -Path .conductor/registry/tests/lint-ci-discovery.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
+
       - name: Lint workflow YAMLs (sentiment-loop consistency)
         # Asserts that the sentiment-driven PR review loop is structurally
         # aligned across plan-level.yaml, github-pr.yaml, and ado-pr.yaml.
