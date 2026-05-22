@@ -2,6 +2,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -29,6 +31,7 @@ public sealed partial class PrCommands
     /// <param name="repository">For ADO: repository name/GUID. For GitHub: <c>owner/name</c> slug. Required when <paramref name="platform"/> is non-empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-evidence-pr")]
+    [JournaledAction(Action = "pr_merge_evidence_pr")]
     [VerbResult(typeof(PrMergeEvidenceResult))]
     public async Task<int> MergeEvidencePr(
         int prNumber = RequiredInput.MissingInt,
@@ -49,54 +52,121 @@ public sealed partial class PrCommands
             return ExitCodes.RoutingFailure;
         }
 
-        var resolved = await repoIdentityResolver
-            .ResolveAsync(platform, organization, project, repository, ct)
-            .ConfigureAwait(false);
+        PrMergeEvidencePrPayload? payload = null;
 
-        if (resolved.Identity is Polyphony.Sdlc.Observers.RepoIdentity.AdoRepo adoRepo)
-        {
-            return await DispatchMergeEvidenceAdoAsync(adoRepo, prNumber, prUrl, ct).ConfigureAwait(false);
-        }
-
-        if (resolved.Identity is not Polyphony.Sdlc.Observers.RepoIdentity.GitHubRepo ghRepo)
-        {
-            EmitMergeEvidenceError(prNumber, prUrl,
-                $"Could not resolve repo identity from origin remote{(string.IsNullOrEmpty(resolved.Error) ? "" : $": {resolved.Error}")}");
-            return ExitCodes.RoutingFailure;
-        }
-
-        var slug = $"{ghRepo.Owner}/{ghRepo.Name}";
-
-        try
-        {
-            var result = await gh.MergePullRequestAsync(
-                slug,
-                prNumber,
-                GhMergeMethod.Squash,
-                admin: false,
-                deleteBranch: true,
-                matchHeadCommit: null,
-                auto: true,
-                ct: ct).ConfigureAwait(false);
-
-            EmitMergeEvidence(new PrMergeEvidenceResult
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_merge_evidence_pr", PullRequestJournalTarget(prUrl, prNumber), null, null),
+            async innerCt =>
             {
-                PrNumber = prNumber,
-                PrUrl = prUrl,
-                Merged = result.Succeeded,
-                AlreadyMerged = result.AlreadyMerged,
-                MergeCommit = result.MergeSha ?? "",
-                Repository = slug,
-                RepoSlug = slug,
-            });
-            return result.Succeeded ? ExitCodes.Success : ExitCodes.RoutingFailure;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            EmitMergeEvidenceError(prNumber, prUrl, ex.Message, slug);
-            return ExitCodes.RoutingFailure;
-        }
+                var resolved = await repoIdentityResolver
+                    .ResolveAsync(platform, organization, project, repository, innerCt)
+                    .ConfigureAwait(false);
+
+                if (resolved.Identity is Polyphony.Sdlc.Observers.RepoIdentity.AdoRepo adoRepo)
+                {
+                    var (exitCode, result) = await DispatchMergeEvidenceAdoAsync(adoRepo, prNumber, prUrl, innerCt).ConfigureAwait(false);
+                    payload = new PrMergeEvidencePrPayload
+                    {
+                        PrNumber = result.PrNumber,
+                        PrUrl = result.PrUrl,
+                        RepoSlug = result.RepoSlug,
+                        Organization = result.Organization,
+                        Project = result.Project,
+                        Repository = result.Repository,
+                        MergeCommit = result.MergeCommit,
+                        ResultAction = result.Error is null
+                            ? (result.AlreadyMerged ? "already_merged" : (result.Merged ? "merged" : "delegated"))
+                            : "error",
+                        Succeeded = result.Error is null,
+                        WasMutated = result.Merged && !result.AlreadyMerged,
+                        AlreadyMerged = result.AlreadyMerged,
+                        Error = result.Error,
+                    };
+                    EmitMergeEvidence(result);
+                    return exitCode;
+                }
+
+                if (resolved.Identity is not Polyphony.Sdlc.Observers.RepoIdentity.GitHubRepo ghRepo)
+                {
+                    var error = $"Could not resolve repo identity from origin remote{(string.IsNullOrEmpty(resolved.Error) ? "" : $": {resolved.Error}")}";
+                    payload = new PrMergeEvidencePrPayload
+                    {
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        AlreadyMerged = false,
+                        Error = error,
+                    };
+                    EmitMergeEvidenceError(prNumber, prUrl, error);
+                    return ExitCodes.RoutingFailure;
+                }
+
+                var slug = $"{ghRepo.Owner}/{ghRepo.Name}";
+
+                try
+                {
+                    var result = await gh.MergePullRequestAsync(
+                        slug,
+                        prNumber,
+                        GhMergeMethod.Squash,
+                        admin: false,
+                        deleteBranch: true,
+                        matchHeadCommit: null,
+                        auto: true,
+                        ct: innerCt).ConfigureAwait(false);
+
+                    var envelope = new PrMergeEvidenceResult
+                    {
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        Merged = result.Succeeded,
+                        AlreadyMerged = result.AlreadyMerged,
+                        MergeCommit = result.MergeSha ?? "",
+                        Repository = slug,
+                        RepoSlug = slug,
+                    };
+                    payload = new PrMergeEvidencePrPayload
+                    {
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        RepoSlug = slug,
+                        Repository = slug,
+                        MergeCommit = envelope.MergeCommit,
+                        ResultAction = result.AlreadyMerged ? "already_merged" : (result.Succeeded ? "merged" : "error"),
+                        Succeeded = result.Succeeded,
+                        WasMutated = result.Succeeded && !result.AlreadyMerged,
+                        AlreadyMerged = result.AlreadyMerged,
+                    };
+                    EmitMergeEvidence(envelope);
+                    return result.Succeeded ? ExitCodes.Success : ExitCodes.RoutingFailure;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    payload = new PrMergeEvidencePrPayload
+                    {
+                        PrNumber = prNumber,
+                        PrUrl = prUrl,
+                        RepoSlug = slug,
+                        Repository = slug,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        AlreadyMerged = false,
+                        Error = ex.Message,
+                    };
+                    EmitMergeEvidenceError(prNumber, prUrl, ex.Message, slug);
+                    return ExitCodes.RoutingFailure;
+                }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergeEvidencePrPayload),
+            ct: ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -106,7 +176,7 @@ public sealed partial class PrCommands
     /// a <see cref="PrMergeEvidenceResult"/> populated with both the
     /// platform-neutral fields and the ADO echo fields.
     /// </summary>
-    private async Task<int> DispatchMergeEvidenceAdoAsync(
+    private async Task<(int ExitCode, PrMergeEvidenceResult Result)> DispatchMergeEvidenceAdoAsync(
         Polyphony.Sdlc.Observers.RepoIdentity.AdoRepo adoRepo,
         int prNumber,
         string prUrl,
@@ -135,11 +205,11 @@ public sealed partial class PrCommands
                 json.Trim(),
                 PolyphonyJsonContext.Default.PrMergeEvidenceAdoResult);
         }
-        catch (JsonException) { /* malformed — fall through */ }
+        catch (JsonException) { }
 
         if (adoResult is null)
         {
-            EmitMergeEvidence(new PrMergeEvidenceResult
+            return (ExitCodes.RoutingFailure, new PrMergeEvidenceResult
             {
                 PrNumber = prNumber,
                 PrUrl = prUrl,
@@ -152,10 +222,9 @@ public sealed partial class PrCommands
                 RepoSlug = BuildAdoSlug(adoRepo.Organization, adoRepo.Project, adoRepo.Repository),
                 Error = $"merge-evidence-ado bridge: failed to parse output (exit {exitCode}): {json.Trim()}",
             });
-            return ExitCodes.RoutingFailure;
         }
 
-        EmitMergeEvidence(new PrMergeEvidenceResult
+        return (ExitCodes.Success, new PrMergeEvidenceResult
         {
             PrNumber = adoResult.PrNumber,
             PrUrl = !string.IsNullOrEmpty(adoResult.PrUrl) ? adoResult.PrUrl : prUrl,
@@ -168,9 +237,6 @@ public sealed partial class PrCommands
             RepoSlug = adoResult.RepoSlug,
             Error = string.IsNullOrEmpty(adoResult.Error) ? null : adoResult.Error,
         });
-        // Routing-style verb: always exit 0. See PrCommands.MergeImplPr.cs
-        // counterpart and the polyphony-workflow-author skill for rationale.
-        return ExitCodes.Success;
     }
 
     private static void EmitMergeEvidence(PrMergeEvidenceResult result)

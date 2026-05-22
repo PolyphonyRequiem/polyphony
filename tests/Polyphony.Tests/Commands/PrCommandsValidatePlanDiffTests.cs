@@ -30,7 +30,7 @@ public sealed class PrCommandsValidatePlanDiffTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new PrCommands(git, gh, twig, Repository, Config, new RunLockStore(), new RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git)), runner);
+        return (new PrCommands(git, gh, twig, Repository, Config, new RunLockStore(), new RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateRunContext(), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateDecorator()), runner);
     }
 
     private static PrValidatePlanDiffResult Parse(string output)

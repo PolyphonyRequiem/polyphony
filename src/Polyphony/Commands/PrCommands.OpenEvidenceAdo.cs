@@ -3,6 +3,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -33,6 +35,7 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-evidence-ado")]
+    [JournaledAction(Action = "pr_open_evidence_ado")]
     [VerbResult(typeof(PrOpenEvidenceAdoResult))]
     public async Task<int> OpenEvidenceAdo(
         string organization = "",
@@ -80,31 +83,63 @@ public sealed partial class PrCommands
         var resolvedBase = string.IsNullOrWhiteSpace(baseBranch)
             ? (isOrphan ? "main" : $"feature/{effectiveRoot}")
             : baseBranch;
+        PrOpenEvidenceAdoPayload? payload = null;
 
-        var outcome = await OpenEvidenceAdoCoreAsync(
-            organization, project, repository, slug,
-            workItem, effectiveRoot,
-            headBranch, resolvedBase,
-            title, body, ct).ConfigureAwait(false);
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_open_evidence_ado", BranchPairJournalTarget(headBranch, resolvedBase), effectiveRoot, workItem),
+            async innerCt =>
+            {
+                var outcome = await OpenEvidenceAdoCoreAsync(
+                    organization, project, repository, slug,
+                    workItem, effectiveRoot,
+                    headBranch, resolvedBase,
+                    title, body, innerCt).ConfigureAwait(false);
 
-        EmitOpenEvidenceAdo(new PrOpenEvidenceAdoResult
-        {
-            WorkItemId = workItem,
-            RootId = effectiveRoot,
-            HeadBranch = outcome.HeadBranch,
-            BaseBranch = outcome.BaseBranch,
-            Organization = organization,
-            Project = project,
-            Repository = repository,
-            RepoSlug = slug,
-            PrNumber = outcome.PrNumber,
-            PrUrl = outcome.PrUrl,
-            Title = outcome.Title,
-            Created = outcome.Created,
-            ErrorCode = outcome.ErrorCode,
-            Error = outcome.Error,
-        });
-        return ExitCodes.Success;
+                var result = new PrOpenEvidenceAdoResult
+                {
+                    WorkItemId = workItem,
+                    RootId = effectiveRoot,
+                    HeadBranch = outcome.HeadBranch,
+                    BaseBranch = outcome.BaseBranch,
+                    Organization = organization,
+                    Project = project,
+                    Repository = repository,
+                    RepoSlug = slug,
+                    PrNumber = outcome.PrNumber,
+                    PrUrl = outcome.PrUrl,
+                    Title = outcome.Title,
+                    Created = outcome.Created,
+                    ErrorCode = outcome.ErrorCode,
+                    Error = outcome.Error,
+                };
+                payload = new PrOpenEvidenceAdoPayload
+                {
+                    WorkItemId = workItem,
+                    RootId = effectiveRoot,
+                    Organization = organization,
+                    Project = project,
+                    Repository = repository,
+                    HeadBranch = result.HeadBranch,
+                    BaseBranch = result.BaseBranch,
+                    RepoSlug = slug,
+                    PrNumber = result.PrNumber,
+                    PrUrl = result.PrUrl,
+                    Title = result.Title,
+                    ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.Created ? "created" : "reused_existing_pr"),
+                    Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                    WasMutated = result.Created,
+                    ErrorCode = result.ErrorCode,
+                    Error = result.Error,
+                };
+                EmitOpenEvidenceAdo(result);
+                return ExitCodes.Success;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenEvidenceAdoPayload),
+            ct: ct).ConfigureAwait(false);
     }
 
     /// <summary>

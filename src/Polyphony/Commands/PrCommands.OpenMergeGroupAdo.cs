@@ -6,6 +6,8 @@ using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.AzureDevOps;
 using Polyphony.Infrastructure.AzureDevOps.Auth;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -34,6 +36,7 @@ public sealed partial class PrCommands
     /// <param name="body">Optional PR body; minimal deterministic fallback used when empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-mg-ado")]
+    [JournaledAction(Action = "pr_open_mg_ado")]
     [VerbResult(typeof(PrOpenMergeGroupAdoResult))]
     public async Task<int> OpenMergeGroupAdo(
         string organization = "",
@@ -55,7 +58,6 @@ public sealed partial class PrCommands
 
         var slug = BuildAdoSlug(organization, project, repository);
 
-        // ── 1. Validate inputs. ────────────────────────────────────────────
         if (string.IsNullOrWhiteSpace(organization)
             || string.IsNullOrWhiteSpace(project)
             || string.IsNullOrWhiteSpace(repository))
@@ -82,116 +84,138 @@ public sealed partial class PrCommands
         var baseBranch = path.IsTopLevel
             ? BranchNameBuilder.Feature(root).Value
             : BranchNameBuilder.MergeGroup(root, MergeGroupPath.Of(path.Segments.Take(path.Depth - 1))).Value;
+        PrOpenMergeGroupAdoPayload? payload = null;
 
-        if (ado is null)
+        async Task<int> ExecuteAsync(CancellationToken innerCt)
         {
-            EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                "ado_failed", "IAdoClient is not configured", headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-
-        // ── 2. Validate head + base exist on the remote — gives a clean
-        //      categorical error instead of letting ADO fail late with a less
-        //      actionable message. Mirrors the GitHub-side open-mg-pr verb.
-        try
-        {
-            var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", ct).ConfigureAwait(false);
-            if (headRefs.Count == 0)
+            if (ado is null)
             {
                 EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                    "missing_head_branch", $"head branch '{headBranch}' does not exist on remote",
-                    headBranch, baseBranch);
+                    "ado_failed", "IAdoClient is not configured", headBranch, baseBranch);
                 return ExitCodes.Success;
             }
 
-            var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{baseBranch}", ct).ConfigureAwait(false);
-            if (baseRefs.Count == 0)
+            try
             {
-                EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                    "missing_base_branch", $"base branch '{baseBranch}' does not exist on remote",
-                    headBranch, baseBranch);
-                return ExitCodes.Success;
+                var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", innerCt).ConfigureAwait(false);
+                if (headRefs.Count == 0)
+                {
+                    EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
+                        "missing_head_branch", $"head branch '{headBranch}' does not exist on remote",
+                        headBranch, baseBranch);
+                    return ExitCodes.Success;
+                }
+
+                var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{baseBranch}", innerCt).ConfigureAwait(false);
+                if (baseRefs.Count == 0)
+                {
+                    EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
+                        "missing_base_branch", $"base branch '{baseBranch}' does not exist on remote",
+                        headBranch, baseBranch);
+                    return ExitCodes.Success;
+                }
             }
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                "ado_failed", $"git ls-remote failed: {ex.Message}", headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-
-        var prTitle = string.IsNullOrWhiteSpace(title)
-            ? $"merge group {path.Canonical} for root #{rootId}"
-            : title;
-        var prBody = string.IsNullOrWhiteSpace(body)
-            ? BuildDefaultMgAdoBody(rootId, path.Canonical, headBranch, baseBranch)
-            : body;
-
-        try
-        {
-            // ── 3. Reuse check: scan PRs for a matching source/target.
-            //      Includes Completed PRs so a retry after a successful merge
-            //      reuses the real merged PR rather than opening a degenerate
-            //      no-op duplicate (AB#3228). Active PRs win over Completed
-            //      when both exist for the same source/target.
-            var allPrs = await ado.ListPullRequestsAsync(
-                organization, project, repository,
-                AdoPullRequestStatus.All, null, ct).ConfigureAwait(false);
-
-            if (allPrs is null)
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
             {
                 EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                    "pr_not_found",
-                    $"Repository '{repository}' not found in {organization}/{project}.",
-                    headBranch, baseBranch);
+                    "ado_failed", $"git ls-remote failed: {ex.Message}", headBranch, baseBranch);
                 return ExitCodes.Success;
             }
 
-            var expectedSourceRef = "refs/heads/" + headBranch;
-            var expectedTargetRef = "refs/heads/" + baseBranch;
-            AdoPullRequest? activeMatch = null;
-            AdoPullRequest? completedMatch = null;
-            foreach (var pr in allPrs)
-            {
-                if (!string.Equals(pr.SourceRefName, expectedSourceRef, StringComparison.Ordinal)
-                    || !string.Equals(pr.TargetRefName, expectedTargetRef, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                if (string.Equals(pr.Status, "active", StringComparison.OrdinalIgnoreCase))
-                {
-                    activeMatch = pr;
-                    break;
-                }
-                if (string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase)
-                    && (completedMatch is null || pr.CreationDate < completedMatch.CreationDate))
-                {
-                    // Prefer the OLDEST completed match: when a previous run
-                    // produced a real merge and a subsequent retry opened a
-                    // no-op duplicate (AB#3228 symptom), the older PR is the
-                    // one with the populated merge commit. The newer phantom
-                    // would re-trip `missing_merge_commit` on the merge verb.
-                    completedMatch = pr;
-                }
-            }
+            var prTitle = string.IsNullOrWhiteSpace(title)
+                ? $"merge group {path.Canonical} for root #{rootId}"
+                : title;
+            var prBody = string.IsNullOrWhiteSpace(body)
+                ? BuildDefaultMgAdoBody(rootId, path.Canonical, headBranch, baseBranch)
+                : body;
 
-            // Branch-recycle staleness check (AB#3211 root cause): if the
-            // branch names were reused by a later run, the completed PR's
-            // recorded source SHA no longer matches origin/{head}. Drop the
-            // stale match so we create a fresh active PR.
-            if (activeMatch is null && completedMatch is not null)
+            try
             {
-                var validity = await ValidateCompletedAdoPrAsync(
+                var allPrs = await ado.ListPullRequestsAsync(
                     organization, project, repository,
-                    completedMatch.PullRequestId, headBranch, baseBranch, ct).ConfigureAwait(false);
-                if (!validity.IsValid) completedMatch = null;
-            }
+                    AdoPullRequestStatus.All, null, innerCt).ConfigureAwait(false);
 
-            var existing = activeMatch ?? completedMatch;
+                if (allPrs is null)
+                {
+                    EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
+                        "pr_not_found",
+                        $"Repository '{repository}' not found in {organization}/{project}.",
+                        headBranch, baseBranch);
+                    return ExitCodes.Success;
+                }
 
-            if (existing is not null)
-            {
+                var expectedSourceRef = "refs/heads/" + headBranch;
+                var expectedTargetRef = "refs/heads/" + baseBranch;
+                AdoPullRequest? activeMatch = null;
+                AdoPullRequest? completedMatch = null;
+                foreach (var pr in allPrs)
+                {
+                    if (!string.Equals(pr.SourceRefName, expectedSourceRef, StringComparison.Ordinal)
+                        || !string.Equals(pr.TargetRefName, expectedTargetRef, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    if (string.Equals(pr.Status, "active", StringComparison.OrdinalIgnoreCase))
+                    {
+                        activeMatch = pr;
+                        break;
+                    }
+                    if (string.Equals(pr.Status, "completed", StringComparison.OrdinalIgnoreCase)
+                        && (completedMatch is null || pr.CreationDate < completedMatch.CreationDate))
+                    {
+                        completedMatch = pr;
+                    }
+                }
+
+                if (activeMatch is null && completedMatch is not null)
+                {
+                    var validity = await ValidateCompletedAdoPrAsync(
+                        organization, project, repository,
+                        completedMatch.PullRequestId, headBranch, baseBranch, innerCt).ConfigureAwait(false);
+                    if (!validity.IsValid) completedMatch = null;
+                }
+
+                var existing = activeMatch ?? completedMatch;
+
+                if (existing is not null)
+                {
+                    EmitOpenMgAdo(new PrOpenMergeGroupAdoResult
+                    {
+                        RootId = rootId,
+                        MgPath = path.Canonical,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        RepoSlug = slug,
+                        PrNumber = existing.PullRequestId,
+                        PrUrl = BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
+                        Title = prTitle,
+                        Created = false,
+                        ErrorCode = "",
+                    });
+                    return ExitCodes.Success;
+                }
+
+                var created = await ado.CreatePullRequestAsync(
+                    organization, project, repository,
+                    sourceBranch: headBranch,
+                    targetBranch: baseBranch,
+                    title: prTitle,
+                    description: prBody,
+                    innerCt).ConfigureAwait(false);
+
+                if (created is null)
+                {
+                    EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
+                        "pr_not_found",
+                        $"Repository '{repository}' not found in {organization}/{project}.",
+                        headBranch, baseBranch);
+                    return ExitCodes.Success;
+                }
+
                 EmitOpenMgAdo(new PrOpenMergeGroupAdoResult
                 {
                     RootId = rootId,
@@ -202,81 +226,118 @@ public sealed partial class PrCommands
                     Project = project,
                     Repository = repository,
                     RepoSlug = slug,
-                    PrNumber = existing.PullRequestId,
-                    PrUrl = BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
+                    PrNumber = created.PullRequestId,
+                    PrUrl = BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
                     Title = prTitle,
-                    Created = false,
+                    Created = true,
                     ErrorCode = "",
                 });
                 return ExitCodes.Success;
             }
-
-            // ── 4. Create the PR. ──────────────────────────────────────────
-            var created = await ado.CreatePullRequestAsync(
-                organization, project, repository,
-                sourceBranch: headBranch,
-                targetBranch: baseBranch,
-                title: prTitle,
-                description: prBody,
-                ct).ConfigureAwait(false);
-
-            if (created is null)
+            catch (OperationCanceledException) { throw; }
+            catch (AdoAuthenticationException ex)
             {
                 EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                    "pr_not_found",
-                    $"Repository '{repository}' not found in {organization}/{project}.",
-                    headBranch, baseBranch);
+                    "no_pat", ex.Message, headBranch, baseBranch);
                 return ExitCodes.Success;
             }
-
-            EmitOpenMgAdo(new PrOpenMergeGroupAdoResult
+            catch (TimeoutException ex)
             {
-                RootId = rootId,
-                MgPath = path.Canonical,
-                HeadBranch = headBranch,
-                BaseBranch = baseBranch,
-                Organization = organization,
-                Project = project,
-                Repository = repository,
-                RepoSlug = slug,
-                PrNumber = created.PullRequestId,
-                PrUrl = BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
-                Title = prTitle,
-                Created = true,
-                ErrorCode = "",
-            });
-            return ExitCodes.Success;
+                EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
+                    "ado_timeout", ex.Message, headBranch, baseBranch);
+                return ExitCodes.Success;
+            }
+            catch (HttpRequestException ex)
+            {
+                var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                    ? "no_pat"
+                    : "ado_failed";
+                EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
+                    code, ex.Message, headBranch, baseBranch);
+                return ExitCodes.Success;
+            }
+            catch (Exception ex)
+            {
+                EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
+                    "ado_failed", ex.Message, headBranch, baseBranch);
+                return ExitCodes.Success;
+            }
         }
-        catch (OperationCanceledException) { throw; }
-        catch (AdoAuthenticationException ex)
-        {
-            // Raised by IPolyphonyAuthProvider when no ADO credential chain succeeds (PAT env or AAD).
-            EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                "no_pat", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-        catch (TimeoutException ex)
-        {
-            EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                "ado_timeout", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-        catch (HttpRequestException ex)
-        {
-            // 401/403 → no_pat (PAT is missing or rejected); everything else → ado_failed.
-            var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-                ? "no_pat"
-                : "ado_failed";
-            EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                code, ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
-        catch (Exception ex)
-        {
-            EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
-                "ado_failed", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
-        }
+
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_open_mg_ado", BranchPairJournalTarget(headBranch, baseBranch), rootId, rootId),
+            async innerCt =>
+            {
+                var sw = new StringWriter();
+                var originalOut = Console.Out;
+                int exitCode;
+                try
+                {
+                    Console.SetOut(sw);
+                    exitCode = await ExecuteAsync(innerCt).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                }
+
+                var output = sw.ToString();
+                Console.Write(output);
+
+                PrOpenMergeGroupAdoResult? result = null;
+                try
+                {
+                    result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrOpenMergeGroupAdoResult);
+                }
+                catch (JsonException)
+                {
+                }
+
+                payload = result is null
+                    ? new PrOpenMergeGroupAdoPayload
+                    {
+                        RootId = rootId,
+                        MergeGroupPath = path.Canonical,
+                        Organization = organization,
+                        Project = project,
+                        Repository = repository,
+                        HeadBranch = headBranch,
+                        BaseBranch = baseBranch,
+                        RepoSlug = slug,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        ErrorCode = "journal_parse_failed",
+                        Error = output.Trim(),
+                    }
+                    : new PrOpenMergeGroupAdoPayload
+                    {
+                        RootId = result.RootId,
+                        MergeGroupPath = result.MgPath,
+                        Organization = result.Organization,
+                        Project = result.Project,
+                        Repository = result.Repository,
+                        HeadBranch = result.HeadBranch,
+                        BaseBranch = result.BaseBranch,
+                        RepoSlug = result.RepoSlug,
+                        PrNumber = result.PrNumber,
+                        PrUrl = result.PrUrl,
+                        Title = result.Title,
+                        ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.Created ? "created" : "reused_existing_pr"),
+                        Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                        WasMutated = result.Created,
+                        ErrorCode = result.ErrorCode,
+                        Error = result.Error,
+                    };
+
+                return exitCode;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenMergeGroupAdoPayload),
+            ct: ct).ConfigureAwait(false);
     }
 
     private static string BuildDefaultMgAdoBody(int rootId, string mgPath, string headBranch, string baseBranch)

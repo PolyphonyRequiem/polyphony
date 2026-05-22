@@ -3,6 +3,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.AzureDevOps;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -25,6 +27,7 @@ public sealed partial class PrCommands
     /// <param name="prNumber">Evidence PR number to merge.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-evidence-ado")]
+    [JournaledAction(Action = "pr_merge_evidence_ado")]
     [VerbResult(typeof(PrMergeEvidenceAdoResult))]
     public async Task<int> MergeEvidenceAdo(
         string organization = "",
@@ -40,6 +43,67 @@ public sealed partial class PrCommands
             ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
+        var slug = BuildAdoSlug(organization, project, repository);
+        var prUrl = prNumber > 0 ? BuildAdoPrUrl(organization, project, repository, prNumber) : "";
+
+        PrMergeEvidenceAdoPayload? payload = null;
+
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_merge_evidence_ado", PullRequestJournalTarget(prUrl, prNumber), null, null),
+            async innerCt =>
+            {
+                var sw = new StringWriter();
+                var originalOut = Console.Out;
+                int exitCode;
+                try
+                {
+                    Console.SetOut(sw);
+                    exitCode = await MergeEvidenceAdoBodyAsync(organization, project, repository, prNumber, innerCt).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                }
+                var output = sw.ToString();
+                Console.Write(output);
+                PrMergeEvidenceAdoResult? result = null;
+                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrMergeEvidenceAdoResult); }
+                catch (JsonException) { }
+                payload = result is null
+                    ? new PrMergeEvidenceAdoPayload { Organization = organization, Project = project, Repository = repository, RepoSlug = slug, PrNumber = prNumber, PrUrl = prUrl, ResultAction = "error", Succeeded = false, WasMutated = false, AlreadyMerged = false, Error = output.Trim() }
+                    : new PrMergeEvidenceAdoPayload
+                    {
+                        Organization = result.Organization,
+                        Project = result.Project,
+                        Repository = result.Repository,
+                        RepoSlug = result.RepoSlug,
+                        PrNumber = result.PrNumber,
+                        PrUrl = result.PrUrl,
+                        MergeCommit = string.IsNullOrEmpty(result.MergeCommit) ? null : result.MergeCommit,
+                        ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.AlreadyMerged ? "already_merged" : "merged"),
+                        Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                        WasMutated = result.Merged && !result.AlreadyMerged,
+                        AlreadyMerged = result.AlreadyMerged,
+                        ErrorCode = result.ErrorCode?.Length > 0 ? result.ErrorCode : null,
+                        Error = result.Error,
+                    };
+                return exitCode;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergeEvidenceAdoPayload),
+            ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task<int> MergeEvidenceAdoBodyAsync(
+        string organization,
+        string project,
+        string repository,
+        int prNumber,
+        CancellationToken ct)
+    {
         var slug = BuildAdoSlug(organization, project, repository);
 
         if (prNumber <= 0)

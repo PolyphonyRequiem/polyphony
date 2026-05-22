@@ -36,7 +36,7 @@ public sealed class PrCommandsValidatePlanDiffAdoTests : CommandTestBase
             git, gh, twig, Repository, Config,
             new RunLockStore(), new RunLockPathResolver(git),
             new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git),
-            new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
+            new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateRunContext(), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateDecorator(),
             ado);
         return (cmd, runner, ado);
     }

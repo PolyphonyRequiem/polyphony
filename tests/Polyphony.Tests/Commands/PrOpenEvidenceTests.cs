@@ -26,7 +26,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         var twig = new TwigClient(runner);
         var git = new GitClient(runner);
         var gh = new GhClient(runner);
-        return (new PrCommands(git, gh, twig, Repository, Config, new Polyphony.Locking.RunLockStore(), new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git)), runner);
+        return (new PrCommands(git, gh, twig, Repository, Config, new Polyphony.Locking.RunLockStore(), new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateRunContext(), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateDecorator()), runner);
     }
 
     private static void StubGitRemoteOrigin(FakeProcessRunner runner, string url)
@@ -341,7 +341,7 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         var cmd = new PrCommands(
             git, gh, twig, Repository, Config,
             new Polyphony.Locking.RunLockStore(),
-            new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git));
+            new Polyphony.Locking.RunLockPathResolver(git), new Polyphony.Infrastructure.Paths.PolyphonyStatePaths(git), new Polyphony.Sdlc.Observers.RepoIdentityResolver(git), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateRunContext(), Polyphony.Tests.TestFixtures.JournalTestSupport.CreateDecorator());
 
         StubAllRemoteHeadsExist(runner, "evidence/100-123", "feature/100");
         StubGitRemoteOrigin(runner, "https://github.com/PolyphonyRequiem/polyphony.git");

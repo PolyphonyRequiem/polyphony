@@ -2,6 +2,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -41,6 +43,7 @@ public sealed partial class PrCommands
     /// <param name="repository">For ADO: repository name/GUID. For GitHub: <c>owner/name</c> slug. Required when <paramref name="platform"/> is non-empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("open-evidence-pr")]
+    [JournaledAction(Action = "pr_open_evidence_pr")]
     [VerbResult(typeof(PrOpenEvidenceResult))]
     public async Task<int> OpenEvidencePr(
         int workItem = RequiredInput.MissingInt,
@@ -71,10 +74,6 @@ public sealed partial class PrCommands
             return ExitCodes.ConfigError;
         }
 
-        // rootId omitted (zero) collapses to the orphan-evidence case where
-        // the work item is its own root. This mirrors PR #2's branch verb,
-        // which uses the same convention to pick the simpler `evidence/<id>`
-        // form.
         var effectiveRoot = rootId == 0 ? workItem : rootId;
         var isOrphan = effectiveRoot == workItem;
 
@@ -87,141 +86,239 @@ public sealed partial class PrCommands
         var resolvedBase = string.IsNullOrWhiteSpace(baseBranch)
             ? (isOrphan ? "main" : $"feature/{effectiveRoot}")
             : baseBranch;
+        PrOpenEvidencePrPayload? payload = null;
 
-        // ── Platform-aware identity resolution ───────────────────────────
-        // Resolve once. ADO branch dispatches to the shared *Ado helper;
-        // GitHub branch (or fall-through when resolver returns no identity)
-        // takes the existing gh-CLI path.
-        var resolved = await repoIdentityResolver
-            .ResolveAsync(platform, organization, project, repository, ct)
-            .ConfigureAwait(false);
-
-        if (resolved.Identity is Polyphony.Sdlc.Observers.RepoIdentity.AdoRepo adoRepo)
-        {
-            var slug = BuildAdoSlug(adoRepo.Organization, adoRepo.Project, adoRepo.Repository);
-            var outcome = await OpenEvidenceAdoCoreAsync(
-                adoRepo.Organization, adoRepo.Project, adoRepo.Repository, slug,
-                workItem, effectiveRoot,
-                headBranch, resolvedBase,
-                title, body, ct).ConfigureAwait(false);
-
-            EmitEvidence(new PrOpenEvidenceResult
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_open_evidence_pr", BranchPairJournalTarget(headBranch, resolvedBase), effectiveRoot, workItem),
+            async innerCt =>
             {
-                PrNumber = outcome.PrNumber,
-                PrUrl = outcome.PrUrl,
-                Title = outcome.Title,
-                HeadBranch = outcome.HeadBranch,
-                BaseBranch = outcome.BaseBranch,
-                WorkItemId = workItem,
-                RootId = effectiveRoot,
-                Created = outcome.Created,
-                Organization = adoRepo.Organization,
-                Project = adoRepo.Project,
-                Repository = adoRepo.Repository,
-                RepoSlug = slug,
-                Error = outcome.Error,
-            });
-            return outcome.Error is null ? ExitCodes.Success : ExitCodes.RoutingFailure;
-        }
+                var resolved = await repoIdentityResolver
+                    .ResolveAsync(platform, organization, project, repository, innerCt)
+                    .ConfigureAwait(false);
 
-        try
-        {
-            // Validate both head and base exist on the remote — gh pr create
-            // would otherwise fail late with a less actionable error. Mirrors
-            // the open-mg-pr / open-impl-pr precondition contract.
-            var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", ct).ConfigureAwait(false);
-            if (headRefs.Count == 0)
-            {
-                EmitEvidenceError(
-                    workItem, effectiveRoot,
-                    $"head branch '{headBranch}' does not exist on remote",
-                    headBranch: headBranch, baseBranch: resolvedBase);
-                return ExitCodes.RoutingFailure;
-            }
-
-            var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{resolvedBase}", ct).ConfigureAwait(false);
-            if (baseRefs.Count == 0)
-            {
-                EmitEvidenceError(
-                    workItem, effectiveRoot,
-                    $"base branch '{resolvedBase}' does not exist on remote",
-                    headBranch: headBranch, baseBranch: resolvedBase);
-                return ExitCodes.RoutingFailure;
-            }
-
-            var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(slug))
-            {
-                EmitEvidenceError(
-                    workItem, effectiveRoot,
-                    "Could not resolve repo slug from origin remote",
-                    headBranch: headBranch, baseBranch: resolvedBase);
-                return ExitCodes.RoutingFailure;
-            }
-
-            var prTitle = string.IsNullOrWhiteSpace(title)
-                ? await ResolveEvidencePrTitleAsync(workItem, ct).ConfigureAwait(false)
-                : title;
-            var prBody = string.IsNullOrWhiteSpace(body)
-                ? BuildDefaultEvidenceBody(workItem, effectiveRoot, headBranch, resolvedBase)
-                : body;
-
-            // Reuse an existing open PR for the same head/base pair instead
-            // of creating a duplicate. Mirrors the create-feature-pr /
-            // open-mg-pr / open-impl-pr resume idempotency contract.
-            var existing = await gh.ListPullRequestsAsync(
-                slug,
-                new PrListFilters(Head: headBranch, Base: resolvedBase, State: "open", Limit: 1),
-                ct).ConfigureAwait(false);
-            if (existing.Count > 0)
-            {
-                var found = existing[0];
-                EmitEvidence(new PrOpenEvidenceResult
+                if (resolved.Identity is Polyphony.Sdlc.Observers.RepoIdentity.AdoRepo adoRepo)
                 {
-                    PrNumber = found.Number,
-                    PrUrl = found.Url ?? "",
-                    Title = prTitle,
-                    HeadBranch = headBranch,
-                    BaseBranch = resolvedBase,
-                    WorkItemId = workItem,
-                    RootId = effectiveRoot,
-                    Created = false,
-                });
-                return ExitCodes.Success;
-            }
+                    var slug = BuildAdoSlug(adoRepo.Organization, adoRepo.Project, adoRepo.Repository);
+                    var outcome = await OpenEvidenceAdoCoreAsync(
+                        adoRepo.Organization, adoRepo.Project, adoRepo.Repository, slug,
+                        workItem, effectiveRoot,
+                        headBranch, resolvedBase,
+                        title, body, innerCt).ConfigureAwait(false);
 
-            var url = await gh.CreatePullRequestAsync(slug, resolvedBase, headBranch, prTitle, prBody, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(url))
-            {
-                EmitEvidenceError(
-                    workItem, effectiveRoot,
-                    "gh pr create failed — no URL returned",
-                    headBranch: headBranch, baseBranch: resolvedBase);
-                return ExitCodes.RoutingFailure;
-            }
+                    var result = new PrOpenEvidenceResult
+                    {
+                        PrNumber = outcome.PrNumber,
+                        PrUrl = outcome.PrUrl,
+                        Title = outcome.Title,
+                        HeadBranch = outcome.HeadBranch,
+                        BaseBranch = outcome.BaseBranch,
+                        WorkItemId = workItem,
+                        RootId = effectiveRoot,
+                        Created = outcome.Created,
+                        Organization = adoRepo.Organization,
+                        Project = adoRepo.Project,
+                        Repository = adoRepo.Repository,
+                        RepoSlug = slug,
+                        Error = outcome.Error,
+                    };
+                    payload = new PrOpenEvidencePrPayload
+                    {
+                        WorkItemId = workItem,
+                        RootId = effectiveRoot,
+                        HeadBranch = result.HeadBranch,
+                        BaseBranch = result.BaseBranch,
+                        RepoSlug = slug,
+                        Organization = adoRepo.Organization,
+                        Project = adoRepo.Project,
+                        Repository = adoRepo.Repository,
+                        PrNumber = result.PrNumber,
+                        PrUrl = result.PrUrl,
+                        Title = result.Title,
+                        ResultAction = result.Error is null ? (result.Created ? "created" : "reused_existing_pr") : "error",
+                        Succeeded = result.Error is null,
+                        WasMutated = result.Created,
+                        Error = result.Error,
+                    };
+                    EmitEvidence(result);
+                    return outcome.Error is null ? ExitCodes.Success : ExitCodes.RoutingFailure;
+                }
 
-            var trimmedUrl = url.Trim();
-            EmitEvidence(new PrOpenEvidenceResult
-            {
-                PrNumber = ExtractPrNumber(trimmedUrl),
-                PrUrl = trimmedUrl,
-                Title = prTitle,
-                HeadBranch = headBranch,
-                BaseBranch = resolvedBase,
-                WorkItemId = workItem,
-                RootId = effectiveRoot,
-                Created = true,
-            });
-            return ExitCodes.Success;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            EmitEvidenceError(
-                workItem, effectiveRoot, ex.Message,
-                headBranch: headBranch, baseBranch: resolvedBase);
-            return ExitCodes.RoutingFailure;
-        }
+                try
+                {
+                    var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", innerCt).ConfigureAwait(false);
+                    if (headRefs.Count == 0)
+                    {
+                        var error = $"head branch '{headBranch}' does not exist on remote";
+                        payload = new PrOpenEvidencePrPayload
+                        {
+                            WorkItemId = workItem,
+                            RootId = effectiveRoot,
+                            HeadBranch = headBranch,
+                            BaseBranch = resolvedBase,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitEvidenceError(workItem, effectiveRoot, error, headBranch: headBranch, baseBranch: resolvedBase);
+                        return ExitCodes.RoutingFailure;
+                    }
+
+                    var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{resolvedBase}", innerCt).ConfigureAwait(false);
+                    if (baseRefs.Count == 0)
+                    {
+                        var error = $"base branch '{resolvedBase}' does not exist on remote";
+                        payload = new PrOpenEvidencePrPayload
+                        {
+                            WorkItemId = workItem,
+                            RootId = effectiveRoot,
+                            HeadBranch = headBranch,
+                            BaseBranch = resolvedBase,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitEvidenceError(workItem, effectiveRoot, error, headBranch: headBranch, baseBranch: resolvedBase);
+                        return ExitCodes.RoutingFailure;
+                    }
+
+                    var slug = await TryResolveSlugAsync(innerCt).ConfigureAwait(false);
+                    if (string.IsNullOrEmpty(slug))
+                    {
+                        const string error = "Could not resolve repo slug from origin remote";
+                        payload = new PrOpenEvidencePrPayload
+                        {
+                            WorkItemId = workItem,
+                            RootId = effectiveRoot,
+                            HeadBranch = headBranch,
+                            BaseBranch = resolvedBase,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitEvidenceError(workItem, effectiveRoot, error, headBranch: headBranch, baseBranch: resolvedBase);
+                        return ExitCodes.RoutingFailure;
+                    }
+
+                    var prTitle = string.IsNullOrWhiteSpace(title)
+                        ? await ResolveEvidencePrTitleAsync(workItem, innerCt).ConfigureAwait(false)
+                        : title;
+                    var prBody = string.IsNullOrWhiteSpace(body)
+                        ? BuildDefaultEvidenceBody(workItem, effectiveRoot, headBranch, resolvedBase)
+                        : body;
+
+                    var existing = await gh.ListPullRequestsAsync(
+                        slug,
+                        new PrListFilters(Head: headBranch, Base: resolvedBase, State: "open", Limit: 1),
+                        innerCt).ConfigureAwait(false);
+                    if (existing.Count > 0)
+                    {
+                        var found = existing[0];
+                        var result = new PrOpenEvidenceResult
+                        {
+                            PrNumber = found.Number,
+                            PrUrl = found.Url ?? "",
+                            Title = prTitle,
+                            HeadBranch = headBranch,
+                            BaseBranch = resolvedBase,
+                            WorkItemId = workItem,
+                            RootId = effectiveRoot,
+                            Created = false,
+                        };
+                        payload = new PrOpenEvidencePrPayload
+                        {
+                            WorkItemId = workItem,
+                            RootId = effectiveRoot,
+                            HeadBranch = headBranch,
+                            BaseBranch = resolvedBase,
+                            RepoSlug = slug,
+                            PrNumber = result.PrNumber,
+                            PrUrl = result.PrUrl,
+                            Title = result.Title,
+                            ResultAction = "reused_existing_pr",
+                            Succeeded = true,
+                            WasMutated = false,
+                        };
+                        EmitEvidence(result);
+                        return ExitCodes.Success;
+                    }
+
+                    var url = await gh.CreatePullRequestAsync(slug, resolvedBase, headBranch, prTitle, prBody, innerCt).ConfigureAwait(false);
+                    if (string.IsNullOrWhiteSpace(url))
+                    {
+                        const string error = "gh pr create failed — no URL returned";
+                        payload = new PrOpenEvidencePrPayload
+                        {
+                            WorkItemId = workItem,
+                            RootId = effectiveRoot,
+                            HeadBranch = headBranch,
+                            BaseBranch = resolvedBase,
+                            RepoSlug = slug,
+                            Title = prTitle,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            Error = error,
+                        };
+                        EmitEvidenceError(workItem, effectiveRoot, error, headBranch: headBranch, baseBranch: resolvedBase);
+                        return ExitCodes.RoutingFailure;
+                    }
+
+                    var trimmedUrl = url.Trim();
+                    var createdResult = new PrOpenEvidenceResult
+                    {
+                        PrNumber = ExtractPrNumber(trimmedUrl),
+                        PrUrl = trimmedUrl,
+                        Title = prTitle,
+                        HeadBranch = headBranch,
+                        BaseBranch = resolvedBase,
+                        WorkItemId = workItem,
+                        RootId = effectiveRoot,
+                        Created = true,
+                    };
+                    payload = new PrOpenEvidencePrPayload
+                    {
+                        WorkItemId = workItem,
+                        RootId = effectiveRoot,
+                        HeadBranch = headBranch,
+                        BaseBranch = resolvedBase,
+                        RepoSlug = slug,
+                        PrNumber = createdResult.PrNumber,
+                        PrUrl = createdResult.PrUrl,
+                        Title = createdResult.Title,
+                        ResultAction = "created",
+                        Succeeded = true,
+                        WasMutated = true,
+                    };
+                    EmitEvidence(createdResult);
+                    return ExitCodes.Success;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    payload = new PrOpenEvidencePrPayload
+                    {
+                        WorkItemId = workItem,
+                        RootId = effectiveRoot,
+                        HeadBranch = headBranch,
+                        BaseBranch = resolvedBase,
+                        ResultAction = "error",
+                        Succeeded = false,
+                        WasMutated = false,
+                        Error = ex.Message,
+                    };
+                    EmitEvidenceError(workItem, effectiveRoot, ex.Message, headBranch: headBranch, baseBranch: resolvedBase);
+                    return ExitCodes.RoutingFailure;
+                }
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrOpenEvidencePrPayload),
+            ct: ct).ConfigureAwait(false);
     }
 
     private async Task<string> ResolveEvidencePrTitleAsync(int workItem, CancellationToken ct)

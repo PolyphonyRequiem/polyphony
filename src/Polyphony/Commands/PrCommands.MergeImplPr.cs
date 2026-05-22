@@ -3,6 +3,8 @@ using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -43,6 +45,7 @@ public sealed partial class PrCommands
     /// <param name="repository">For ADO: repository name/GUID. For GitHub: <c>owner/name</c> slug. Required when <paramref name="platform"/> is non-empty.</param>
     /// <param name="ct">Cancellation token.</param>
     [Command("merge-impl-pr")]
+    [JournaledAction(Action = "pr_merge_impl_pr")]
     [VerbResult(typeof(PrMergeImplResult))]
     public async Task<int> MergeImplPr(
         int rootId = RequiredInput.MissingInt,
@@ -68,12 +71,88 @@ public sealed partial class PrCommands
         if (deleteBranchParsed is null) return ExitCodes.RoutingFailure;
         var deleteBranchBool = deleteBranchParsed.Value;
 
+        // Compute journal target from inputs (best-effort).
+        var journalTarget = "";
+        if (Branching.RootId.TryParse(rootId, out var rootForJournal)
+            && WorkItemId.TryParse(itemId, out var itemForJournal)
+            && MergeGroupPath.TryParse(mgPath, out var pathForJournal) && pathForJournal is not null)
+        {
+            var hb = BranchNameBuilder.Impl(rootForJournal, itemForJournal).Value;
+            var bb = BranchNameBuilder.MergeGroup(rootForJournal, pathForJournal).Value;
+            journalTarget = BranchPairJournalTarget(hb, bb);
+        }
+
+        PrMergeImplPrPayload? payload = null;
+
+        return await _journalDecorator.RunWithAsync(
+            CreateJournalInvocation("pr_merge_impl_pr", journalTarget, rootId, itemId),
+            async innerCt =>
+            {
+                var sw = new StringWriter();
+                var originalOut = Console.Out;
+                int exitCode;
+                try
+                {
+                    Console.SetOut(sw);
+                    exitCode = await MergeImplPrBodyAsync(rootId, itemId, mgPath, method, admin, deleteBranchBool, matchHeadCommit, platform, organization, project, repository, innerCt).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                }
+                var output = sw.ToString();
+                Console.Write(output);
+                PrMergeImplResult? result = null;
+                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrMergeImplResult); }
+                catch (JsonException) { }
+                payload = result is null
+                    ? new PrMergeImplPrPayload { RootId = rootId, ItemId = itemId, MergeGroupPath = mgPath, HeadBranch = "", BaseBranch = "", ResultAction = "error", Succeeded = false, WasMutated = false, AlreadyMerged = false, Error = output.Trim() }
+                    : new PrMergeImplPrPayload
+                    {
+                        RootId = result.RootId,
+                        ItemId = result.ItemId,
+                        MergeGroupPath = result.MgPath,
+                        HeadBranch = result.HeadBranch,
+                        BaseBranch = result.BaseBranch,
+                        RepoSlug = string.IsNullOrEmpty(result.RepoSlug) ? null : result.RepoSlug,
+                        Organization = string.IsNullOrEmpty(result.Organization) ? null : result.Organization,
+                        Project = string.IsNullOrEmpty(result.Project) ? null : result.Project,
+                        Repository = string.IsNullOrEmpty(result.Repository) ? null : result.Repository,
+                        PrNumber = result.PrNumber,
+                        Method = result.Method,
+                        DeleteBranch = result.DeleteBranch,
+                        MergeCommit = result.MergeSha,
+                        ResultAction = result.Error is not null ? "error" : (result.AlreadyMerged ? "already_merged" : "merged"),
+                        Succeeded = result.Error is null,
+                        WasMutated = result.Merged && !result.AlreadyMerged,
+                        AlreadyMerged = result.AlreadyMerged,
+                        Error = result.Error,
+                    };
+                return exitCode;
+            },
+            outcomeSelector: exitCode => SelectJournalOutcome(
+                exitCode,
+                payload?.Succeeded ?? (exitCode == ExitCodes.Success),
+                payload?.WasMutated ?? false),
+            payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.PrMergeImplPrPayload),
+            ct: ct).ConfigureAwait(false);
+    }
+
+    private async Task<int> MergeImplPrBodyAsync(
+        int rootId,
+        int itemId,
+        string mgPath,
+        string method,
+        bool admin,
+        bool deleteBranchBool,
+        string matchHeadCommit,
+        string platform,
+        string organization,
+        string project,
+        string repository,
+        CancellationToken ct)
+    {
         // ── Platform-aware identity resolution ───────────────────────────
-        // Resolve early so the ADO branch can dispatch via the existing
-        // MergeImplAdo verb (output captured + remapped to the unified
-        // envelope). Bridge approach (rather than helper extraction) keeps
-        // the ~280-line ADO body untouched at this stage; the *Pr verb
-        // remains the single entry point for workflows.
         var resolved = await repoIdentityResolver
             .ResolveAsync(platform, organization, project, repository, ct)
             .ConfigureAwait(false);
