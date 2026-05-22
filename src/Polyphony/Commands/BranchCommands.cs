@@ -6,6 +6,7 @@ using Polyphony.Annotations;
 using Polyphony.Configuration;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Routing;
 using Twig.Domain.Enums;
 using Twig.Domain.Interfaces;
@@ -254,7 +255,10 @@ public sealed partial class BranchCommands(
     /// <param name="ct">Cancellation token.</param>
     [Command("close-scope")]
     [VerbResult(typeof(BranchCloseScopeResult))]
-    public async Task<int> CloseScope(
+    [JournaledAction(Action = "branch_close_scope")]
+    [MutatesResource(ResourceKind.AdoWorkItemState)]
+    [MayObserveResource(ResourceKind.AdoWorkItem)]
+    public Task<int> CloseScope(
         int workItem = RequiredInput.MissingInt,
         string pgName = "",
         int pgNumber = 0,
@@ -263,12 +267,47 @@ public sealed partial class BranchCommands(
     {
         if (RequiredInput.HaltIfMissing("branch close-scope",
             ("--work-item", workItem == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
         var resolvedMergeGroup = string.IsNullOrEmpty(pgName) && pgNumber > 0
             ? $"PG-{pgNumber}"
             : pgName;
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<BranchCloseScopeResult, BranchCloseScopePayload>(
+            _journalDecorator,
+            _runContext,
+            "branch_close_scope",
+            WorkItemJournalTarget(workItem),
+            innerCt => CloseScopeCoreAsync(workItem, resolvedMergeGroup, prNumber, innerCt),
+            PolyphonyJsonContext.Default.BranchCloseScopeResult,
+            (_, result) => new BranchCloseScopePayload
+            {
+                RootWorkItemId = workItem,
+                MergeGroupName = result?.MergeGroupName ?? resolvedMergeGroup,
+                PrNumber = result?.PrNumber ?? prNumber,
+                ResultAction = (result?.TotalClosed ?? 0) > 0 ? "closed_items" : "no_changes",
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = (result?.TotalClosed ?? 0) > 0,
+                ClosedItems = result?.ClosedItems ?? [],
+                FailedClosures = result?.FailedClosures ?? [],
+                AdoWorkspace = result?.AdoWorkspace,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.BranchCloseScopePayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectCloseScopeEffects,
+            ct,
+            rootId: workItem,
+            workItemId: workItem);
+    }
+
+    private async Task<int> CloseScopeCoreAsync(
+        int workItem,
+        string resolvedMergeGroup,
+        int prNumber,
+        CancellationToken ct)
+    {
         if (string.IsNullOrEmpty(resolvedMergeGroup))
         {
             EmitClose(EmptyClose("", prNumber, "Either --pg-name or --pg-number must be provided.", ""));

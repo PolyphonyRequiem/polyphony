@@ -2,6 +2,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Postconditions;
 
 namespace Polyphony.Commands;
@@ -60,11 +62,49 @@ public sealed partial class PlanCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("commit-and-push")]
     [VerbResult(typeof(PlanCommitAndPushResult))]
-    public async Task<int> CommitAndPush(
+    [JournaledAction(Action = "plan_commit_and_push")]
+    [MutatesResource(ResourceKind.GitBranch)]
+    public Task<int> CommitAndPush(
         string branch = "",
         string message = "",
         string paths = "",
         CancellationToken ct = default)
+    {
+        var pathList = (paths ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return JournalCommandSupport.RunWithCapturedResultAsync<PlanCommitAndPushResult, PlanCommitAndPushPayload>(
+            _journalDecorator,
+            _runContext,
+            "plan_commit_and_push",
+            branch,
+            innerCt => CommitAndPushCoreAsync(branch, message, paths ?? string.Empty, innerCt),
+            PolyphonyJsonContext.Default.PlanCommitAndPushResult,
+            (_, result) => new PlanCommitAndPushPayload
+            {
+                Branch = result?.Branch ?? branch,
+                Paths = pathList,
+                Succeeded = result is not null && string.IsNullOrEmpty(result.ErrorCode) && string.IsNullOrEmpty(result.Error),
+                WasMutated = result?.Pushed ?? false,
+                Pushed = result?.Pushed ?? false,
+                FilesStaged = result?.FilesStaged ?? 0,
+                CommitSha = result?.CommitSha,
+                NoOpReason = result?.NoOpReason,
+                ErrorCode = result?.ErrorCode,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.PlanCommitAndPushPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectPlanCommitAndPushEffects,
+            ct);
+    }
+
+    private async Task<int> CommitAndPushCoreAsync(
+        string branch,
+        string message,
+        string paths,
+        CancellationToken ct)
     {
         // 1. Input validation. Routing-style envelope on missing inputs —
         //    the Move #2 verb-layer convention. Exit 0 throughout so the

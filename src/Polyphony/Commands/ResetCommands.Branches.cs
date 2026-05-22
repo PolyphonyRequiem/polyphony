@@ -2,6 +2,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -43,15 +45,47 @@ public sealed partial class ResetCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("branches")]
     [VerbResult(typeof(ResetBranchesResult))]
-    public async Task<int> ResetBranches(
+    [JournaledAction(Action = "reset_branches")]
+    [MutatesResource(ResourceKind.GitBranch)]
+    public Task<int> ResetBranches(
         int root = RequiredInput.MissingInt,
         bool execute = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("reset branches",
             ("--root", root == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<ResetBranchesResult, ResetBranchesPayload>(
+            _journalDecorator,
+            _runContext,
+            "reset_branches",
+            $"root:{root}",
+            innerCt => ResetBranchesCoreAsync(root, execute, innerCt),
+            PolyphonyJsonContext.Default.ResetBranchesResult,
+            (_, result) => new ResetBranchesPayload
+            {
+                Root = result?.Root ?? root,
+                DryRun = result?.DryRun ?? !execute,
+                Succeeded = result?.Success ?? false,
+                WasMutated = result is not null && !result.DryRun && result.DeletedBranches.Count > 0,
+                DeletedBranches = result?.DeletedBranches ?? [],
+                FailedBranches = result?.FailedBranches ?? [],
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.ResetBranchesPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectResetBranchesEffects,
+            ct,
+            rootId: root);
+    }
+
+    private async Task<int> ResetBranchesCoreAsync(
+        int root,
+        bool execute,
+        CancellationToken ct)
+    {
         ResetBranchesResult result;
         try
         {

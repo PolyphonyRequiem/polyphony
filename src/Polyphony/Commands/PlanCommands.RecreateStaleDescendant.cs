@@ -4,6 +4,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Locking;
 using Polyphony.Manifest;
@@ -66,7 +68,12 @@ public sealed partial class PlanCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("recreate-stale-descendant")]
     [VerbResult(typeof(PlanRecreateStaleDescendantResult))]
-    public async Task<int> RecreateStaleDescendant(
+    [JournaledAction(Action = "plan_recreate_stale_descendant")]
+    [MutatesResource(ResourceKind.GitBranch)]
+    [MutatesResource(ResourceKind.GitHubPr)]
+    [MutatesResource(ResourceKind.AdoPr)]
+    [MutatesResource(ResourceKind.ManifestFile)]
+    public Task<int> RecreateStaleDescendant(
         int rootId = RequiredInput.MissingInt,
         int itemId = RequiredInput.MissingInt,
         int parentItemId = RequiredInput.MissingInt,
@@ -86,8 +93,64 @@ public sealed partial class PlanCommands
             ("--item-id", itemId == RequiredInput.MissingInt),
             ("--parent-item-id", parentItemId == RequiredInput.MissingInt),
             ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<PlanRecreateStaleDescendantResult, PlanRecreateStaleDescendantPayload>(
+            _journalDecorator,
+            _runContext,
+            "plan_recreate_stale_descendant",
+            $"plan-pr:{prNumber}",
+            innerCt => RecreateStaleDescendantCoreAsync(rootId, itemId, parentItemId, prNumber, ancestorIds, manifestPath, by, lockTtlHours, platform, organization, project, repositoryOverride, innerCt),
+            PolyphonyJsonContext.Default.PlanRecreateStaleDescendantResult,
+            (_, result) => new PlanRecreateStaleDescendantPayload
+            {
+                RootId = result?.RootId ?? rootId,
+                ItemId = result?.ItemId ?? itemId,
+                ParentItemId = result?.ParentItemId ?? parentItemId,
+                OldPrNumber = result?.OldPrNumber ?? prNumber,
+                OldPrUrl = result?.OldPrUrl ?? string.Empty,
+                OldHeadBranch = result?.OldHeadBranch ?? string.Empty,
+                ParentPlanBranch = result?.ParentPlanBranch ?? string.Empty,
+                Outcome = result?.Outcome ?? string.Empty,
+                NewPrNumber = result?.NewPrNumber,
+                NewPrUrl = result?.NewPrUrl,
+                NewHeadBranch = result?.NewHeadBranch,
+                OldPrClosed = result?.OldPrClosed ?? false,
+                OldBranchDeleted = result?.OldBranchDeleted ?? false,
+                NewBranchCreated = result?.NewBranchCreated ?? false,
+                NewPrOpened = result?.NewPrOpened ?? false,
+                ManifestRecorded = result?.ManifestRecorded ?? false,
+                ManifestPushed = result?.ManifestPushed ?? false,
+                Warnings = result?.Warnings ?? [],
+                Succeeded = result is not null && string.IsNullOrEmpty(result.ErrorCode) && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && (result.Outcome == "recreated" || result.OldPrClosed || result.NewBranchCreated || result.NewPrOpened || result.ManifestRecorded),
+                ErrorCode = result?.ErrorCode,
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.PlanRecreateStaleDescendantPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectPlanRecreateStaleDescendantEffects,
+            ct,
+            rootId: rootId,
+            workItemId: itemId);
+    }
+
+    private async Task<int> RecreateStaleDescendantCoreAsync(
+        int rootId,
+        int itemId,
+        int parentItemId,
+        int prNumber,
+        string ancestorIds,
+        string manifestPath,
+        string by,
+        int lockTtlHours,
+        string platform,
+        string organization,
+        string project,
+        string repositoryOverride,
+        CancellationToken ct)
+    {
         // ── 1. Validate inputs + derive head/parent branches. ──────────────
         if (!Polyphony.Branching.RootId.TryParse(rootId, out var root))
             return EmitRecreateError(rootId, itemId, parentItemId, prNumber, "invalid_argument",

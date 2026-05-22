@@ -1,5 +1,7 @@
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -25,7 +27,12 @@ namespace Polyphony.Commands;
 /// </list>
 /// </summary>
 [VerbGroup("worktree")]
-public sealed partial class WorktreeCommands(IGitClient git)
+public sealed partial class WorktreeCommands(
+    IGitClient git,
+    RunContext? runContext = null,
+    JournaledActionDecorator? journalDecorator = null)
 {
     private readonly IGitClient _git = git;
+    private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
+    private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
 }

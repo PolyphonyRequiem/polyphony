@@ -4,6 +4,8 @@ using System.Text.RegularExpressions;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Processes;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Sdlc;
 using Polyphony.Tagging;
 
@@ -172,7 +174,10 @@ public sealed partial class PlanCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("seed-children")]
     [VerbResult(typeof(PlanSeedChildrenResult))]
-    public async Task<int> SeedChildren(
+    [JournaledAction(Action = "plan_seed_children")]
+    [MutatesResource(ResourceKind.AdoWorkItem)]
+    [MutatesResource(ResourceKind.AdoWorkItemTag)]
+    public Task<int> SeedChildren(
         int workItem = RequiredInput.MissingInt,
         string childrenJson = "",
         string plannedTag = "polyphony:planned",
@@ -181,6 +186,47 @@ public sealed partial class PlanCommands
         string childrenFile = "",
         string childrenFromRef = "",
         CancellationToken ct = default)
+    {
+        return JournalCommandSupport.RunWithCapturedResultAsync<PlanSeedChildrenResult, PlanSeedChildrenPayload>(
+            _journalDecorator,
+            _runContext,
+            "plan_seed_children",
+            JournalCommandSupport.WorkItemTarget(workItem),
+            innerCt => SeedChildrenCoreAsync(workItem, childrenJson, plannedTag, planFile, configDir, childrenFile, childrenFromRef, innerCt),
+            PolyphonyJsonContext.Default.PlanSeedChildrenResult,
+            (exitCode, result) => new PlanSeedChildrenPayload
+            {
+                WorkItemId = result?.WorkItemId ?? workItem,
+                ChildCount = result?.ChildCount ?? 0,
+                SeededItems = result?.SeededItems ?? [],
+                ReusedItems = result?.ReusedItems ?? [],
+                Errors = result?.Errors ?? [],
+                Warnings = result?.Warnings ?? [],
+                PlannedTagMutated = result?.PlannedTagSet ?? false,
+                PlannedTagAlreadyPresent = result?.PlannedTagAlready ?? false,
+                RootFacets = result?.RootFacets ?? [],
+                FacetsTagMutated = result?.FacetsTagSet ?? false,
+                Succeeded = exitCode == ExitCodes.Success && result is not null && result.ErrorCount == 0,
+                WasMutated = result is not null && (result.SeededCount > 0 || result.PlannedTagSet || result.FacetsTagSet),
+            },
+            PolyphonyJsonContext.Default.PlanSeedChildrenPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectPlanSeedChildrenEffects,
+            ct,
+            rootId: workItem,
+            workItemId: workItem);
+    }
+
+    private async Task<int> SeedChildrenCoreAsync(
+        int workItem,
+        string childrenJson,
+        string plannedTag,
+        string planFile,
+        string configDir,
+        string childrenFile,
+        string childrenFromRef,
+        CancellationToken ct)
     {
         // --children-json is intentionally NOT in the required-input check:
         // when omitted, the verb falls back to the sidecar (or — for

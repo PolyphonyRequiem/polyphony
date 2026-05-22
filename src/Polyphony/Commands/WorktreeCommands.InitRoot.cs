@@ -2,6 +2,8 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Infrastructure.Worktrees;
+using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 
 namespace Polyphony.Commands;
 
@@ -57,15 +59,52 @@ public sealed partial class WorktreeCommands
     /// <param name="ct">Cancellation token.</param>
     [Command("init-root")]
     [VerbResult(typeof(WorktreeInitApexResult))]
-    public async Task<int> InitRoot(
+    [JournaledAction(Action = "worktree_init_root")]
+    [MutatesResource(ResourceKind.GitWorktree)]
+    public Task<int> InitRoot(
         int root = RequiredInput.MissingInt,
         bool dryRun = false,
         CancellationToken ct = default)
     {
         if (RequiredInput.HaltIfMissing("worktree init-root",
             ("--root", root == RequiredInput.MissingInt)) is { } halt)
-            return halt;
+            return Task.FromResult(halt);
 
+        return JournalCommandSupport.RunWithCapturedResultAsync<WorktreeInitApexResult, WorktreeInitRootPayload>(
+            _journalDecorator,
+            _runContext,
+            "worktree_init_root",
+            $"root:{root}",
+            innerCt => InitRootCoreAsync(root, dryRun, innerCt),
+            PolyphonyJsonContext.Default.WorktreeInitApexResult,
+            (_, result) => new WorktreeInitRootPayload
+            {
+                RootId = result?.RootId ?? root,
+                RootRoot = result?.RootRoot,
+                RunsRoot = result?.RunsRoot,
+                MainWorktreePath = result?.MainWorktreePath,
+                WorktreePath = result?.WorktreePath,
+                Branch = result?.Branch,
+                Outcome = result?.Outcome ?? "failed",
+                DryRun = result?.DryRun ?? dryRun,
+                Reason = result?.Reason,
+                Succeeded = result is not null && string.IsNullOrEmpty(result.Error),
+                WasMutated = result is not null && (result.Outcome == "created" || result.Outcome == "attached"),
+                Error = result?.Error,
+            },
+            PolyphonyJsonContext.Default.WorktreeInitRootPayload,
+            payload => payload.Succeeded,
+            payload => payload.WasMutated,
+            SelectWorktreeInitRootEffects,
+            ct,
+            rootId: root);
+    }
+
+    private async Task<int> InitRootCoreAsync(
+        int root,
+        bool dryRun,
+        CancellationToken ct)
+    {
         if (root <= 0)
         {
             EmitInitRoot(
