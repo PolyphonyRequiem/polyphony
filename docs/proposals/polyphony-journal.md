@@ -1,6 +1,6 @@
 # Polyphony Action Journal — Spec & Options
 
-**Status:** Proposal — D1, D2, D6, D7, D12, naming decided; Phase 1A vs 1B open
+**Status:** Proposal — D1, D2, D6, D7, D12, naming, Phase 1A/1B order decided. Ready to implement.
 **Owner:** polyphony-internal architecture
 **Work item:** AB#3254 (parent epic: AB#3253)
 **Companion:** none (does not depend on the conductor `on_error` brief; tracks
@@ -15,6 +15,7 @@ in parallel)
 | D6 — Backfill | Greenfield only. No backfill verb. In-flight runs at cutover are breakable. | 2026-05-21 | See revised D6 below |
 | D7 — Retention | No retention management. Journal lives + dies with the root worktree. | 2026-05-21 | No `journal vacuum` verb |
 | D12 — Artifacts / trust boundary | Journal is a pointer log (git/platform are content stores). Agent-direct mutations are NOT journaled; drift detector surfaces them honestly. | 2026-05-21 | See D12 below |
+| Phase 1A / 1B order | **Phase 1A first** (infra-only slice: schema + store + decorator + show/export); 1B (branch-ops journaled) follows in a separate landing | 2026-05-21 | Smaller blast radius; foundation lands clean before any verb gains the attribute |
 | Naming | `journal` | 2026-05-21 | "ledger", "actions log", "audit" all rejected |
 
 ## TL;DR
@@ -483,24 +484,10 @@ section above.
 
 ## Open questions for you
 
-1. **Phase 1 scope.** Two shapes for Phase 1, pick one:
-   - **(A) Infra-only slice.** Schema + `JournalStore` +
-     `[JournaledAction]` decorator + `polyphony journal show` +
-     `polyphony journal export`. Zero verbs carry the attribute yet, so
-     the journal is empty until Phase 2 lights up branch ops. Risk: low.
-     Payoff: foundation present, no data yet.
-   - **(B) Slice + one action class.** Everything in (A), plus
-     `[JournaledAction]` on every branch verb (`branch
-     ensure-evidence-branch`, `branch ensure-feature-branch`, `branch
-     ensure-impl-branch`, etc.). Phase 1 ships with **real journal
-     entries on a real run**, so we can actually look at it. Risk:
-     slightly higher (decorator + verbs land together). Payoff: usable
-     end-to-end on day one.
-   - My recommendation: **(B)**. Phase 1 should be inspectable on a real
-     run, not theoretical.
-
-That's the only open question. D1, D2, D6, D7, and naming are
-decided. Everything else is implementation detail.
+All design dimensions decided. Phase 1A is in flight; the remaining
+phases (1B, 2-6) will be re-spec'd briefly before each lands. Open this
+section again only if Phase 1A surfaces something the design didn't
+anticipate.
 
 ---
 
