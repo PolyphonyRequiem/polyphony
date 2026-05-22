@@ -1,14 +1,16 @@
 namespace Polyphony.Manifest;
 
 /// <summary>
-/// The on-disk run manifest at <c>.polyphony/run.yaml</c>. Schema 1 per
-/// the Rev 4 branch-model ADR (<c>docs/decisions/branch-model.md</c> §
-/// Run manifest). DTO uses primitive types; domain-typed conversions
-/// happen at the validator / consumer boundary.
+/// The on-disk run manifest at <c>.polyphony/run.yaml</c>. Schema 2 per
+/// the post-AB#3275 lineage primitive (W2): same shape as schema 1 with
+/// one additive field, <see cref="RunId"/>, carrying the ULID that
+/// stamps every lineage-scoped action emitted under this run. The Rev 4
+/// branch-model ADR (<c>docs/decisions/branch-model.md</c> § Run
+/// manifest) still governs structure; only the schema version moves.
 ///
 /// Field grouping (normative shape):
 /// <list type="bullet">
-///   <item><description>Identity: <see cref="Schema"/>, <see cref="RootId"/>, <see cref="PlatformProject"/>, <see cref="CreatedAt"/>, <see cref="CreatedBy"/>, <see cref="BranchModelVersion"/>.</description></item>
+///   <item><description>Identity: <see cref="Schema"/>, <see cref="RootId"/>, <see cref="RunId"/>, <see cref="PlatformProject"/>, <see cref="CreatedAt"/>, <see cref="CreatedBy"/>, <see cref="BranchModelVersion"/>.</description></item>
 ///   <item><description>Topology (hashed): <see cref="MergeGroups"/>. <see cref="TopologyHash"/> is the SHA-256 over the canonicalized form.</description></item>
 ///   <item><description>Plan generations (cross-cutting bookkeeping): <see cref="PlanGenerations"/>.</description></item>
 ///   <item><description>Operational/audit (NOT hashed): <see cref="Rebases"/>, <see cref="HumanApprovals"/>, <see cref="RetiredMergeGroupIds"/>, <see cref="MergedPlanPrs"/>.</description></item>
@@ -16,11 +18,22 @@ namespace Polyphony.Manifest;
 /// </summary>
 public sealed class RunManifest
 {
-    /// <summary>Manifest schema version. Always 1 for current builds.</summary>
-    public int Schema { get; set; } = 1;
+    /// <summary>Manifest schema version. 2 for newly written manifests; legacy on-disk files may still be 1 (loader tolerates).</summary>
+    public int Schema { get; set; } = RunManifestValidator.CurrentSchema;
 
     /// <summary>The run's root (focus) work-item id.</summary>
     public int RootId { get; set; }
+
+    /// <summary>
+    /// Stable lineage identifier (ULID, 26 Crockford-base32 chars) that
+    /// stamps every action and effect emitted under this run. Required
+    /// for schema 2; legacy schema 1 manifests may load with this value
+    /// unset, in which case <see cref="RunManifestValidator"/> records a
+    /// non-fatal warning. The launcher exports the same value as
+    /// <c>POLYPHONY_RUN_ID</c> so every nested <c>polyphony</c>
+    /// subprocess sees the same lineage. See AB#3275 / AB#3276 / W1-W2.
+    /// </summary>
+    public string? RunId { get; set; }
 
     /// <summary>
     /// Platform-qualified project identifier (e.g.

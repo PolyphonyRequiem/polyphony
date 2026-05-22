@@ -252,10 +252,27 @@ public sealed partial class ManifestCommands(
             return ExitCodes.ConfigError;
         }
 
+        // Resolve the lineage stamp. Honour the launcher's POLYPHONY_RUN_ID
+        // when set; mint a fresh ULID rather than persist the ephemeral
+        // manual_* fallback into a durable manifest.
+        string resolvedRunId;
+        string resolvedRunIdSource;
+        if (_runContext.HasManualLineage)
+        {
+            resolvedRunId = RunIdMint.NewRunId();
+            resolvedRunIdSource = "minted";
+        }
+        else
+        {
+            resolvedRunId = _runContext.RunId;
+            resolvedRunIdSource = _runContext.RunIdSource;
+        }
+
         var manifest = new RunManifest
         {
-            Schema = RunManifestValidator.SupportedSchema,
+            Schema = RunManifestValidator.CurrentSchema,
             RootId = rootId,
+            RunId = resolvedRunId,
             PlatformProject = platformProject,
             CreatedAt = DateTime.UtcNow,
             CreatedBy = resolvedCreatedBy,
@@ -272,6 +289,8 @@ public sealed partial class ManifestCommands(
             PlatformProject = platformProject,
             Created = !existed,
             CreatedBy = resolvedCreatedBy,
+            RunId = resolvedRunId,
+            RunIdSource = resolvedRunIdSource,
             TopologyHash = manifest.TopologyHash,
             Message = existed ? $"overwrote existing manifest (--force)" : null,
             PathSource = resolution.Source,
