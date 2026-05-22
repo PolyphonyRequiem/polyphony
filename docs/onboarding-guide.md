@@ -88,9 +88,9 @@ After installing Polyphony, run `polyphony health` to verify your environment an
 
 ---
 
-## 2. Repository Layout (Bare Repo + Per-Run Worktrees)
+## 2. Repository Layout (Vanilla or Bare Repo + Per-Run Worktrees)
 
-> **Status:** the bare-repo + per-run-worktree layout is required by the SDLC orchestrator (epic AB#3085). The legacy "single non-bare clone" layout is unsupported as of the launcher rework — see [`docs/per-run-worktree-layout.md`](per-run-worktree-layout.md) for the full rationale.
+> **Status:** as of the bare-requirement drop, polyphony supports **both** a plain `git clone` (vanilla) layout and the bare-repo + per-run-worktree layout. The launcher and preflight no longer gate on bare-repo. A vanilla clone is the recommended default for new operators; the bare-repo layout remains supported for operators who prefer it. See [`docs/per-run-worktree-layout.md`](per-run-worktree-layout.md) for the per-apex worktree contract (which applies to both layouts).
 
 ### Why this layout
 
@@ -122,7 +122,7 @@ Properties:
 
 - All worktrees share the bare's `objects` and `refs` directories — the on-disk cost of an extra worktree is just the working tree itself.
 - Branch invariants from the **polyphony-branch-model** skill are unchanged. The model changes *where* worktrees live, not how branches relate.
-- The SDLC launcher (`scripts/Invoke-PolyphonySdlc.ps1`) refuses to dispatch into the operator's main worktree; the bare-repo guard plus per-apex-run path derivation makes the hijack bug structurally impossible.
+- The SDLC launcher (`scripts/Invoke-PolyphonySdlc.ps1`) refuses to dispatch into the operator's main worktree; per-apex-run path derivation makes the hijack bug structurally impossible regardless of whether the underlying source repo is bare or vanilla.
 
 ### One-time migration
 
@@ -174,7 +174,7 @@ Two preflight probes confirm the layout is wired correctly:
 polyphony state preflight --work-item <ID>
 ```
 
-Look for the `bare_repo` advisory check — `PASSED` means the common-dir resolved to `~/projects/<repo>.git/` and `git rev-parse --is-bare-repository` returned `true`.
+Look for the `bare_repo` advisory check — `PASSED` means the common-dir resolved to `~/projects/<repo>.git/` and `git rev-parse --is-bare-repository` returned `true`. (As of the bare-requirement drop this check no longer appears in preflight output — vanilla clones are first-class. If you opted into the bare-repo layout, `git --git-dir <repo>.git rev-parse --is-bare-repository` is the manual equivalent.)
 
 ```powershell
 # Quick scan of stale per-run worktrees (default is dry-run):
