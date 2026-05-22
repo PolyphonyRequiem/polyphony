@@ -2,14 +2,14 @@
 Tests for scripts/Invoke-PolyphonySdlc.ps1 — the AB#3085 launcher rework.
 
 Strategy: real bare repo + real worktree fixture per test. No conductor or
-init-apex mocking — we run the actual polyphony binary published locally
+init-root mocking — we run the actual polyphony binary published locally
 (~/.polyphony/bin/polyphony.exe). All tests use -DryRun so no conductor process
 is ever spawned.
 
 The fixture creates:
   <tmp>/polyphony.git/             bare repo (cloned from a seed remote)
   <tmp>/polyphony/                  main worktree on `main`, with .twig/
-  <tmp>/polyphony-runs/             empty per-run root (init-apex creates apex-N/)
+  <tmp>/polyphony-runs/             empty per-run root (init-root creates root-N/)
 
 The launcher's cwd contract is satisfied by Push-Location $main before each
 test and Pop-Location after. This mirrors how an operator actually invokes
@@ -19,7 +19,7 @@ the launcher.
 BeforeAll {
     $script:ScriptPath = Join-Path $PSScriptRoot 'Invoke-PolyphonySdlc.ps1'
 
-    # Verify polyphony is installed locally — required for init-apex/assert-clean.
+    # Verify polyphony is installed locally — required for init-root/assert-clean.
     $script:PolyphonyExe = (Get-Command polyphony -ErrorAction SilentlyContinue)
     if (-not $script:PolyphonyExe) {
         throw "polyphony is not on PATH. Run ./publish-local.ps1 before running these tests."
@@ -71,7 +71,7 @@ BeforeAll {
         New-Item -ItemType Directory -Path $runs -Force | Out-Null
 
         # 7. Twig shim (AB#3165 Item 2). The launcher's Phase 2.5 calls
-        #    `twig show $ApexId --output json` and refuses on terminal state.
+        #    `twig show $RootId --output json` and refuses on terminal state.
         #    Real twig requires ADO connectivity that the test fixture has
         #    no business needing, so we shim it here. Default state is
         #    "To Do" (non-terminal) so existing tests pass transparently;
@@ -124,7 +124,7 @@ Describe 'Invoke-PolyphonySdlc — repo-layout preflight' {
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         Push-Location $tmp
         try {
-            { & $script:ScriptPath -ApexId 1234 -DryRun } |
+            { & $script:ScriptPath -RootId 1234 -DryRun } |
                 Should -Throw -ExpectedMessage '*Cwd is not inside a git repository*'
         } finally {
             Pop-Location
@@ -137,7 +137,7 @@ Describe 'Invoke-PolyphonySdlc — repo-layout preflight' {
         # `git init` produces the same shape as `git clone <url>`: cwd has
         # a `.git/` directory, common-dir is non-bare. The launcher must
         # NOT throw a layout-preflight error in that case (it'll fail
-        # later when init-apex tries to do real work in DryRun mode, but
+        # later when init-root tries to do real work in DryRun mode, but
         # the layout gate itself is gone).
         $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "vanilla-$([System.Guid]::NewGuid().ToString('N').Substring(0, 8))"
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
@@ -145,9 +145,9 @@ Describe 'Invoke-PolyphonySdlc — repo-layout preflight' {
         Push-Location $tmp
         try {
             $err = $null
-            try { & $script:ScriptPath -ApexId 1234 -DryRun } catch { $err = $_.Exception.Message }
+            try { & $script:ScriptPath -RootId 1234 -DryRun } catch { $err = $_.Exception.Message }
             # Pre-drop the launcher would have thrown "Repo-layout preflight
-            # FAILED" here. After the drop it must reach init-apex and fail
+            # FAILED" here. After the drop it must reach init-root and fail
             # there (or any other downstream failure), never with a
             # layout-preflight error.
             $err | Should -Not -Match 'Repo-layout preflight FAILED'
@@ -160,21 +160,21 @@ Describe 'Invoke-PolyphonySdlc — repo-layout preflight' {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
-# Phase 3-5: init-apex integration + WorktreeRoot derivation
+# Phase 3-5: init-root integration + WorktreeRoot derivation
 # ════════════════════════════════════════════════════════════════════════════
 
-Describe 'Invoke-PolyphonySdlc — init-apex + WorktreeRoot derivation' {
+Describe 'Invoke-PolyphonySdlc — init-root + WorktreeRoot derivation' {
 
     BeforeEach { $script:fx = New-BareRepoFixture }
     AfterEach  { Remove-BareRepoFixture $script:fx }
 
-    It 'Self-derives WorktreeRoot from init-apex (no -WorktreeRoot supplied)' {
+    It 'Self-derives WorktreeRoot from init-root (no -WorktreeRoot supplied)' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
             $r.success | Should -BeTrue
             $r.dry_run | Should -BeTrue
-            $expected = [System.IO.Path]::GetFullPath((Join-Path $script:fx.Runs 'apex-9999/feature-9999')).TrimEnd('\','/')
+            $expected = [System.IO.Path]::GetFullPath((Join-Path $script:fx.Runs 'root-9999/feature-9999')).TrimEnd('\','/')
             [System.IO.Path]::GetFullPath($r.worktree_root).TrimEnd('\','/') | Should -Be $expected
         } finally { Pop-Location }
     }
@@ -182,7 +182,7 @@ Describe 'Invoke-PolyphonySdlc — init-apex + WorktreeRoot derivation' {
     It 'Surfaces main_worktree_path, runs_root, branch in the resolved envelope' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 7777 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 7777 -DryRun | ConvertFrom-Json
             [System.IO.Path]::GetFullPath($r.main_worktree_path).TrimEnd('\','/') |
                 Should -Be ([System.IO.Path]::GetFullPath($script:fx.Main).TrimEnd('\','/'))
             [System.IO.Path]::GetFullPath($r.runs_root).TrimEnd('\','/') |
@@ -191,37 +191,37 @@ Describe 'Invoke-PolyphonySdlc — init-apex + WorktreeRoot derivation' {
         } finally { Pop-Location }
     }
 
-    It 'Reports init_apex_outcome=dry_run on -DryRun' {
+    It 'Reports init_root_outcome=dry_run on -DryRun' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 5555 -DryRun | ConvertFrom-Json
-            $r.init_apex_outcome | Should -Be 'dry_run'
+            $r = & $script:ScriptPath -RootId 5555 -DryRun | ConvertFrom-Json
+            $r.init_root_outcome | Should -Be 'dry_run'
         } finally { Pop-Location }
     }
 
-    It 'Does not create the apex worktree on -DryRun' {
+    It 'Does not create the root worktree on -DryRun' {
         Push-Location $script:fx.Main
         try {
-            & $script:ScriptPath -ApexId 4444 -DryRun | Out-Null
-            (Test-Path (Join-Path $script:fx.Runs 'apex-4444')) | Should -BeFalse
+            & $script:ScriptPath -RootId 4444 -DryRun | Out-Null
+            (Test-Path (Join-Path $script:fx.Runs 'root-4444')) | Should -BeFalse
         } finally { Pop-Location }
     }
 
-    It 'Accepts -WorktreeRoot override that matches the canonical apex path' {
+    It 'Accepts -WorktreeRoot override that matches the canonical root path' {
         Push-Location $script:fx.Main
         try {
-            $expected = Join-Path $script:fx.Runs 'apex-3333/feature-3333'
-            $r = & $script:ScriptPath -ApexId 3333 -WorktreeRoot $expected -DryRun | ConvertFrom-Json
+            $expected = Join-Path $script:fx.Runs 'root-3333/feature-3333'
+            $r = & $script:ScriptPath -RootId 3333 -WorktreeRoot $expected -DryRun | ConvertFrom-Json
             $r.success | Should -BeTrue
         } finally { Pop-Location }
     }
 
-    It 'Refuses -WorktreeRoot override that does not match the canonical apex path' {
+    It 'Refuses -WorktreeRoot override that does not match the canonical root path' {
         Push-Location $script:fx.Main
         try {
-            $bogus = Join-Path $script:fx.Runs 'apex-9999/feature-9999'
-            { & $script:ScriptPath -ApexId 3333 -WorktreeRoot $bogus -DryRun } |
-                Should -Throw -ExpectedMessage '*does not match the canonical apex worktree*'
+            $bogus = Join-Path $script:fx.Runs 'root-9999/feature-9999'
+            { & $script:ScriptPath -RootId 3333 -WorktreeRoot $bogus -DryRun } |
+                Should -Throw -ExpectedMessage '*does not match the canonical root worktree*'
         } finally { Pop-Location }
     }
 }
@@ -238,8 +238,8 @@ Describe 'Invoke-PolyphonySdlc — hijack-refusal' {
     It 'Refuses -WorktreeRoot pointing at the main worktree (would hijack)' {
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 1111 -WorktreeRoot $script:fx.Main -DryRun } |
-                Should -Throw -ExpectedMessage '*does not match the canonical apex worktree*'
+            { & $script:ScriptPath -RootId 1111 -WorktreeRoot $script:fx.Main -DryRun } |
+                Should -Throw -ExpectedMessage '*does not match the canonical root worktree*'
         } finally { Pop-Location }
     }
 
@@ -247,8 +247,8 @@ Describe 'Invoke-PolyphonySdlc — hijack-refusal' {
         Push-Location $script:fx.Main
         try {
             $insideMain = Join-Path $script:fx.Main 'subdir'
-            { & $script:ScriptPath -ApexId 1111 -WorktreeRoot $insideMain -DryRun } |
-                Should -Throw -ExpectedMessage '*does not match the canonical apex worktree*'
+            { & $script:ScriptPath -RootId 1111 -WorktreeRoot $insideMain -DryRun } |
+                Should -Throw -ExpectedMessage '*does not match the canonical root worktree*'
         } finally { Pop-Location }
     }
 }
@@ -265,7 +265,7 @@ Describe 'Invoke-PolyphonySdlc — intent semantics' {
     It 'Rejects invalid intent values via ValidateSet' {
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -Intent garbage -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -Intent garbage -DryRun } |
                 Should -Throw
         } finally { Pop-Location }
     }
@@ -273,7 +273,7 @@ Describe 'Invoke-PolyphonySdlc — intent semantics' {
     It 'Defaults intent to "new"' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
             $r.intent | Should -Be 'new'
             $r.args | Should -Contain 'intent=new'
         } finally { Pop-Location }
@@ -282,7 +282,7 @@ Describe 'Invoke-PolyphonySdlc — intent semantics' {
     It 'Honors -Intent replan' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -Intent replan -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -Intent replan -DryRun | ConvertFrom-Json
             $r.intent | Should -Be 'replan'
             $r.args | Should -Contain 'intent=replan'
         } finally { Pop-Location }
@@ -290,7 +290,7 @@ Describe 'Invoke-PolyphonySdlc — intent semantics' {
 
     # Note: -Intent resume + outcome=created refusal is not testable in dry-run
     # because dry-run reports outcome=dry_run, not 'created'. The refusal logic
-    # is unit-tested by a wet test (live init-apex creating the worktree, then
+    # is unit-tested by a wet test (live init-root creating the worktree, then
     # a follow-up resume that would fail). Skipped here to keep the suite fast
     # and side-effect-free; covered manually during dogfood.
 }
@@ -304,20 +304,20 @@ Describe 'Invoke-PolyphonySdlc — reset intent' {
     BeforeEach { $script:fx = New-BareRepoFixture }
     AfterEach  { Remove-BareRepoFixture $script:fx }
 
-    It 'Diverts to reset-apex@polyphony workflow' {
+    It 'Diverts to reset-root@polyphony workflow' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -Intent reset -DryRun | ConvertFrom-Json
-            $r.workflow | Should -Be 'reset-apex@polyphony'
+            $r = & $script:ScriptPath -RootId 9999 -Intent reset -DryRun | ConvertFrom-Json
+            $r.workflow | Should -Be 'reset-root@polyphony'
             $r.intent | Should -Be 'reset'
-            $r.args | Should -Contain 'reset-apex@polyphony'
-            # Reset-apex inputs (not apex-driver inputs).
-            $r.args | Should -Contain 'apex_id=9999'
+            $r.args | Should -Contain 'reset-root@polyphony'
+            # Reset-root inputs (not entry-workflow inputs).
+            $r.args | Should -Contain 'root_id=9999'
             $r.args | Should -Contain 'execute=false'
             $r.args | Should -Contain 'auto_confirm=false'
             $r.args | Should -Contain 'skip_state=false'
             $r.args | Should -Contain 'comment='
-            # Apex-driver inputs should NOT be present.
+            # Entry-workflow inputs should NOT be present.
             ($r.args -join ' ') | Should -Not -Match '\bintent=reset\b'
         } finally { Pop-Location }
     }
@@ -325,7 +325,7 @@ Describe 'Invoke-PolyphonySdlc — reset intent' {
     It '-Execute toggles execute=true' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -Intent reset -Execute -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -Intent reset -Execute -DryRun | ConvertFrom-Json
             $r.execute | Should -BeTrue
             $r.args | Should -Contain 'execute=true'
         } finally { Pop-Location }
@@ -334,7 +334,7 @@ Describe 'Invoke-PolyphonySdlc — reset intent' {
     It '-AutoConfirm + -SkipState + -Comment forward as inputs' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -Intent reset -Execute -AutoConfirm `
+            $r = & $script:ScriptPath -RootId 9999 -Intent reset -Execute -AutoConfirm `
                 -SkipState -Comment 'hand-curated reset' -DryRun | ConvertFrom-Json
             $r.auto_confirm | Should -BeTrue
             $r.skip_state | Should -BeTrue
@@ -348,25 +348,25 @@ Describe 'Invoke-PolyphonySdlc — reset intent' {
     It 'Reset-only params throw with non-reset intent' {
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -Execute -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -Execute -DryRun } |
                 Should -Throw -ExpectedMessage '*only valid with -Intent reset*'
-            { & $script:ScriptPath -ApexId 9999 -SkipState -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -SkipState -DryRun } |
                 Should -Throw -ExpectedMessage '*only valid with -Intent reset*'
-            { & $script:ScriptPath -ApexId 9999 -AutoConfirm -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -AutoConfirm -DryRun } |
                 Should -Throw -ExpectedMessage '*only valid with -Intent reset*'
-            { & $script:ScriptPath -ApexId 9999 -Comment 'x' -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -Comment 'x' -DryRun } |
                 Should -Throw -ExpectedMessage '*only valid with -Intent reset*'
         } finally { Pop-Location }
     }
 
-    It 'Apex-driver-only params throw with reset intent' {
+    It 'Entry-workflow-only params throw with reset intent' {
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -Intent reset -WorktreeRoot 'foo' -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -Intent reset -WorktreeRoot 'foo' -DryRun } |
                 Should -Throw -ExpectedMessage '*not valid with -Intent reset*'
-            { & $script:ScriptPath -ApexId 9999 -Intent reset -GitRepo 'foo' -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -Intent reset -GitRepo 'foo' -DryRun } |
                 Should -Throw -ExpectedMessage '*not valid with -Intent reset*'
-            { & $script:ScriptPath -ApexId 9999 -Intent reset -Repository 'a/b' -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -Intent reset -Repository 'a/b' -DryRun } |
                 Should -Throw -ExpectedMessage '*not valid with -Intent reset*'
         } finally { Pop-Location }
     }
@@ -381,36 +381,36 @@ Describe 'Invoke-PolyphonySdlc — command construction' {
     BeforeEach { $script:fx = New-BareRepoFixture }
     AfterEach  { Remove-BareRepoFixture $script:fx }
 
-    It 'Targets the apex-driver workflow' {
+    It 'Targets the polyphony entry-point workflow' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
-            $r.workflow | Should -Be 'apex-driver@polyphony'
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
+            $r.workflow | Should -Be 'polyphony@polyphony'
             $r.args[0] | Should -Be 'run'
-            $r.args[1] | Should -Be 'apex-driver@polyphony'
+            $r.args[1] | Should -Be 'polyphony@polyphony'
         } finally { Pop-Location }
     }
 
     It 'Always includes --web' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
             $r.args | Should -Contain '--web'
         } finally { Pop-Location }
     }
 
-    It 'Passes apex_id input' {
+    It 'Passes root_id input' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
-            $r.args | Should -Contain 'apex_id=9999'
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
+            $r.args | Should -Contain 'root_id=9999'
         } finally { Pop-Location }
     }
 
     It 'Resolves organization + project from .twig/config in main worktree' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
             $r.args | Should -Contain 'organization=test-org'
             $r.args | Should -Contain 'project=TestProj'
             $r.project_url | Should -Be 'https://dev.azure.com/test-org/TestProj'
@@ -420,7 +420,7 @@ Describe 'Invoke-PolyphonySdlc — command construction' {
     It 'Includes all six -m metadata flags' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
             $mFlags = @()
             for ($i = 0; $i -lt $r.args.Count; $i++) {
                 if ($r.args[$i] -eq '-m') { $mFlags += $r.args[$i + 1] }
@@ -438,7 +438,7 @@ Describe 'Invoke-PolyphonySdlc — command construction' {
     It 'Defaults git_repo to the canonical main worktree (NOT old sibling-name heuristic)' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
             [System.IO.Path]::GetFullPath($r.git_repo).TrimEnd('\','/') |
                 Should -Be ([System.IO.Path]::GetFullPath($script:fx.Main).TrimEnd('\','/'))
         } finally { Pop-Location }
@@ -447,7 +447,7 @@ Describe 'Invoke-PolyphonySdlc — command construction' {
     It '-GitRepo override beats default' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -GitRepo 'C:\custom\path' -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -GitRepo 'C:\custom\path' -DryRun | ConvertFrom-Json
             $r.git_repo | Should -Be 'C:\custom\path'
         } finally { Pop-Location }
     }
@@ -455,7 +455,7 @@ Describe 'Invoke-PolyphonySdlc — command construction' {
     It 'Returns dry_run=true and does not attempt to launch' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
             $r.dry_run | Should -BeTrue
             $r.PSObject.Properties.Name | Should -Not -Contain 'pid'
         } finally { Pop-Location }
@@ -464,9 +464,9 @@ Describe 'Invoke-PolyphonySdlc — command construction' {
     It 'Renders an executable command string' {
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
-            $r.command | Should -Match '^conductor run apex-driver@polyphony --web '
-            $r.command | Should -Match 'apex_id=9999'
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
+            $r.command | Should -Match '^conductor run polyphony@polyphony --web '
+            $r.command | Should -Match 'root_id=9999'
             $r.command | Should -Match 'workitem_id=9999'
         } finally { Pop-Location }
     }
@@ -486,7 +486,7 @@ Describe 'Invoke-PolyphonySdlc — git remote detection (from main worktree)' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://github.com/PolyphonyRequiem/polyphony.git'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -DryRun | ConvertFrom-Json
             $r.platform | Should -Be 'github'
             $r.repository | Should -Be 'PolyphonyRequiem/polyphony'
         } finally { Pop-Location }
@@ -496,7 +496,7 @@ Describe 'Invoke-PolyphonySdlc — git remote detection (from main worktree)' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://dev.azure.com/dangreen-msft/Polyphony/_git/polyphony'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -DryRun | ConvertFrom-Json
             $r.platform | Should -Be 'ado'
             $r.repository | Should -Be 'polyphony'
         } finally { Pop-Location }
@@ -506,7 +506,7 @@ Describe 'Invoke-PolyphonySdlc — git remote detection (from main worktree)' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://contoso.visualstudio.com/MyProject/_git/MyRepo'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -DryRun | ConvertFrom-Json
             $r.platform | Should -Be 'ado'
             $r.repository | Should -Be 'MyRepo'
         } finally { Pop-Location }
@@ -516,7 +516,7 @@ Describe 'Invoke-PolyphonySdlc — git remote detection (from main worktree)' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://github.com/owner/name'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -Platform ado -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -Platform ado -DryRun | ConvertFrom-Json
             $r.platform | Should -Be 'ado'
             $r.repository | Should -Be 'owner/name'
         } finally { Pop-Location }
@@ -526,7 +526,7 @@ Describe 'Invoke-PolyphonySdlc — git remote detection (from main worktree)' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://github.com/owner/name'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -Repository 'override/repo' -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -Repository 'override/repo' -DryRun | ConvertFrom-Json
             $r.platform | Should -Be 'github'
             $r.repository | Should -Be 'override/repo'
         } finally { Pop-Location }
@@ -557,7 +557,7 @@ Describe 'Invoke-PolyphonySdlc — repo vs tracker project split' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://dev.azure.com/test-org/TestProj/_git/myrepo'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -DryRun | ConvertFrom-Json
             $r.platform | Should -Be 'ado'
             $r.args | Should -Contain 'organization=test-org'
             $r.args | Should -Contain 'project=TestProj'
@@ -580,7 +580,7 @@ Describe 'Invoke-PolyphonySdlc — repo vs tracker project split' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://dev.azure.com/test-org/CloudVault/_git/cloudvault-service-api'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -DryRun | ConvertFrom-Json
             $r.platform | Should -Be 'ado'
             # Workflow inputs reflect the REPO project (CloudVault), NOT
             # the tracker project (TestProj). Pre-fix this was 'TestProj'
@@ -605,7 +605,7 @@ Describe 'Invoke-PolyphonySdlc — repo vs tracker project split' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://contoso.visualstudio.com/RepoProj/_git/MyRepo'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -DryRun | ConvertFrom-Json
             $r.platform | Should -Be 'ado'
             $r.args | Should -Contain 'organization=contoso'
             $r.args | Should -Contain 'project=RepoProj'
@@ -617,7 +617,7 @@ Describe 'Invoke-PolyphonySdlc — repo vs tracker project split' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://dev.azure.com/test-org/CloudVault/_git/cloudvault-service-api'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -RepoOrganization 'override-org' -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -RepoOrganization 'override-org' -DryRun | ConvertFrom-Json
             $r.repo_organization | Should -Be 'override-org'
             $r.args | Should -Contain 'organization=override-org'
             # RepoProject still auto-detected.
@@ -629,7 +629,7 @@ Describe 'Invoke-PolyphonySdlc — repo vs tracker project split' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://dev.azure.com/test-org/CloudVault/_git/cloudvault-service-api'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -RepoProject 'override-proj' -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -RepoProject 'override-proj' -DryRun | ConvertFrom-Json
             $r.repo_project | Should -Be 'override-proj'
             $r.args | Should -Contain 'project=override-proj'
             $r.repo_organization | Should -Be 'test-org'
@@ -644,7 +644,7 @@ Describe 'Invoke-PolyphonySdlc — repo vs tracker project split' {
         $script:fx = New-BareRepoFixture -RemoteUrl 'https://github.com/owner/name'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 1 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 1 -DryRun | ConvertFrom-Json
             $r.platform | Should -Be 'github'
             $r.repo_organization | Should -Be 'test-org'
             $r.repo_project | Should -Be 'TestProj'
@@ -666,7 +666,7 @@ Describe 'Invoke-PolyphonySdlc — .twig/ propagation from main' {
         Remove-Item -Path (Join-Path $script:fx.Main '.twig') -Recurse -Force
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage '*No .twig/ directory found in main worktree*'
         } finally { Pop-Location }
     }
@@ -675,7 +675,7 @@ Describe 'Invoke-PolyphonySdlc — .twig/ propagation from main' {
         Remove-Item -Path (Join-Path $script:fx.Main '.twig/config') -Force
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage '*config file is missing*'
         } finally { Pop-Location }
     }
@@ -685,7 +685,7 @@ Describe 'Invoke-PolyphonySdlc — .twig/ propagation from main' {
         Set-Content -Path (Join-Path $script:fx.Main '.twig/config') -Value $bad
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage "*missing 'organization'*"
         } finally { Pop-Location }
     }
@@ -710,7 +710,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Done'
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage "*terminal state 'Done'*"
         } finally { Pop-Location }
     }
@@ -719,7 +719,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Closed'
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage "*terminal state 'Closed'*"
         } finally { Pop-Location }
     }
@@ -728,7 +728,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Removed'
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage "*terminal state 'Removed'*"
         } finally { Pop-Location }
     }
@@ -737,7 +737,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Resolved'
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage "*terminal state 'Resolved'*"
         } finally { Pop-Location }
     }
@@ -746,7 +746,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'To Do'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
             $r.dry_run | Should -BeTrue
         } finally { Pop-Location }
     }
@@ -755,7 +755,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Active'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
             $r.dry_run | Should -BeTrue
         } finally { Pop-Location }
     }
@@ -764,7 +764,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Done'
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage "*twig state 9999 'To Do'*"
         } finally { Pop-Location }
     }
@@ -773,7 +773,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Done'
         Push-Location $script:fx.Main
         try {
-            { & $script:ScriptPath -ApexId 9999 -DryRun } |
+            { & $script:ScriptPath -RootId 9999 -DryRun } |
                 Should -Throw -ExpectedMessage '*AB#3165*'
         } finally { Pop-Location }
     }
@@ -782,7 +782,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Done'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -Intent resume -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -Intent resume -DryRun | ConvertFrom-Json
             $r.dry_run | Should -BeTrue
         } finally { Pop-Location }
     }
@@ -791,7 +791,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Done'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -Intent replan -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -Intent replan -DryRun | ConvertFrom-Json
             $r.dry_run | Should -BeTrue
         } finally { Pop-Location }
     }
@@ -800,7 +800,7 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         $env:TWIG_FAKE_STATE = 'Done'
         Push-Location $script:fx.Main
         try {
-            $r = & $script:ScriptPath -ApexId 9999 -SkipStateCheck -DryRun | ConvertFrom-Json
+            $r = & $script:ScriptPath -RootId 9999 -SkipStateCheck -DryRun | ConvertFrom-Json
             $r.dry_run | Should -BeTrue
         } finally { Pop-Location }
     }

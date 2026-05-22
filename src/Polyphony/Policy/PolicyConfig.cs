@@ -386,7 +386,7 @@ public sealed class ScopeRule
 
     /// <summary>
     /// Research domain only: maximum number of plan-level architect ↔
-    /// research_dispatch round-trips before the workflow surfaces
+    /// research round-trips before the workflow surfaces
     /// <c>research_cap_gate</c> for operator intervention. Distinct from
     /// <see cref="EscalationCap"/> (which is per-topic within
     /// <c>research.yaml</c>); this cap governs how many DIFFERENT research

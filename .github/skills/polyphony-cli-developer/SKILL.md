@@ -328,7 +328,7 @@ if (closed.Count > 0)
 PowerShell `script` nodes in workflow YAML that call `twig state` or
 `twig note` and then read fresh state in the same script (or hand off to
 another step that reads fresh state) need an explicit `twig sync;` between
-the mutation and the next reader. The `primary_completer` script in
+the mutation and the next reader. The `root_completer` script in
 `implement-merge-group.yaml` is the canonical pattern: pre-validate sync,
 mutate, post-mutate sync, with `$ErrorActionPreference = 'Stop'` and
 `$PSNativeCommandUseErrorActionPreference = $true` so a failed sync halts

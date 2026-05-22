@@ -712,7 +712,7 @@ agents:
   # dynamic cap to compare iteration against.
   #
   # Separate from `research_policy_resolver` (which resolves
-  # escalation_cap + mode for the research_dispatch leg, downstream of
+  # escalation_cap + mode for the research leg, downstream of
   # the counter): splitting them keeps a malformed max_research_loops
   # from poisoning escalation behavior and preserves the cap-gate
   # `force` route's existing topology (force → resolver → dispatch
