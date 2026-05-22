@@ -1,6 +1,6 @@
 # Polyphony Action Journal — Spec & Options
 
-**Status:** Proposal — D1, D2, D6, naming decided; Phase 1 scope open
+**Status:** Proposal — D1, D2, D6, D7, D12, naming decided; Phase 1A vs 1B open
 **Owner:** polyphony-internal architecture
 **Work item:** AB#3254 (parent epic: AB#3253)
 **Companion:** none (does not depend on the conductor `on_error` brief; tracks
@@ -13,6 +13,8 @@ in parallel)
 | D1 — Scope | Every state-mutating verb, **including polyphony-internal**, journals | 2026-05-21 | See revised D1 below |
 | D2 — Storage | **Per-root** (lives in the root worktree; sub-worktrees write through to it) | 2026-05-21 | See revised D2 below |
 | D6 — Backfill | Greenfield only. No backfill verb. In-flight runs at cutover are breakable. | 2026-05-21 | See revised D6 below |
+| D7 — Retention | No retention management. Journal lives + dies with the root worktree. | 2026-05-21 | No `journal vacuum` verb |
+| D12 — Artifacts / trust boundary | Journal is a pointer log (git/platform are content stores). Agent-direct mutations are NOT journaled; drift detector surfaces them honestly. | 2026-05-21 | See D12 below |
 | Naming | `journal` | 2026-05-21 | "ledger", "actions log", "audit" all rejected |
 
 ## TL;DR
@@ -370,6 +372,77 @@ Should workflow YAML query the journal directly?
 **Defer.** Tempting but expands scope. V1 ships the journal as a
 polyphony-internal substrate; workflow integration comes later when we
 know what queries actually matter.
+
+### D12 — Artifact handling and the trust boundary
+
+How do agent-produced artifacts (plan markdowns, code patches, draft PR
+bodies, review comments) show up in the journal? **They don't — directly.
+They show up indirectly via the polyphony verb that handles them.**
+
+Three artifact patterns, three answers:
+
+**1. File-shaped artifacts committed to git** (plan.md, code patches,
+draft PR bodies that live in the repo).
+
+Covered automatically by the existing `commit-and-push` journal entry.
+The entry's `payload_json` records `[{path, sha, bytes}, ...]` for each
+committed file. The *content* is recoverable from git by sha. The
+journal is a pointer log, not a content store; git is the durable
+content store and we don't duplicate.
+
+**2. External-system artifacts** (PR comments, ADO attachments, review
+votes, labels).
+
+Covered by the posting verb carrying `[JournaledAction]`. e.g.,
+`polyphony pr post-comment-ado` journals `{pr_id, comment_id_returned,
+body_sha}`. The platform is the durable store; the journal records the
+handle (comment_id) that lets you fetch the content.
+
+**3. In-memory agent outputs that only inform routing** (planner returns
+`{decision: split}` which drives a fan-out).
+
+**Not in scope.** That's conductor's per-run event log territory;
+polyphony never sees it. The journal carries a `run_id` field that
+lets the two logs be joined offline.
+
+**Agent-direct mutations (the trust-boundary case).**
+
+Some agents shell out to `git` (or `gh`, `az`, `twig`) directly,
+inside their own turn, without invoking a polyphony verb. The coder
+agent in `implement-merge-group.yaml` commits code patches this way;
+the fixer agent does the same in PR-review loops. **Polyphony does
+not see these calls and the journal does not record them.**
+
+This is intentional. Three observers exist:
+
+| Observer | Knows |
+|---|---|
+| Conductor event log | Agent X ran from T1 to T2 |
+| Git history | Commit Y landed on branch B at T1.5 |
+| Polyphony journal | Silent during T1..T2 (no polyphony verb invoked) |
+
+The full causal story is the *join* of all three — done offline by an
+operator or a future tool. Polyphony's job is to be accurate about its
+own slice, not to fabricate a complete picture by intercepting agent
+git calls.
+
+**Where the journal earns its keep here: drift.** The
+`polyphony journal drift --root N` verb walks every branch under the
+root and compares "last journal-touched sha on this branch" to "actual
+HEAD on this branch." Agent-direct commits land in the diff as
+*external commits ahead of last journaled state*, with the commit
+author/committer surfacing who probably did it (agent, human, CI).
+Invisible side-effects become visible classification without coupling
+the agent's tooling to polyphony's CLI.
+
+**Rejected alternative: `polyphony git commit` wrapper.** We considered
+forcing agents to commit through polyphony so the journal sees them.
+Rejected because it would require every agent prompt to use a
+non-standard git verb (drift hazard), reinvent git's CLI inside
+polyphony, and break the trust-boundary cleanliness ("polyphony is the
+executor of polyphony's actions; the agent is the executor of the
+agent's actions"). The drift detector solves the visibility problem
+without the coupling.
 
 ---
 
