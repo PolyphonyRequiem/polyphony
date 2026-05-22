@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Workflow Compiler — Synthesis Briefing</title>
+<style>
+  :root {
+    --ink: #1a1a1f;
+    --ink-soft: #3a3a44;
+    --ink-mute: #6b6b78;
+    --bg: #fafaf7;
+    --bg-panel: #ffffff;
+    --bg-soft: #f3f1ec;
+    --line: #e4e1d8;
+    --line-strong: #c6c2b6;
+    --accent: #b54a2a;       /* warm terracotta */
+    --accent-soft: #f4e6df;
+    --good: #2f6e3e;
+    --good-soft: #e3efe5;
+    --warn: #8a6d1e;
+    --warn-soft: #f6efd9;
+    --bad: #8a2a2a;
+    --bad-soft: #f4dede;
+    --code-bg: #1f1d24;
+    --code-fg: #e7e3da;
+    --code-key: #c98bdc;
+    --code-type: #82c4ff;
+    --code-str: #d8b86f;
+    --code-com: #7c8a9a;
+    --code-id: #f0e9da;
+    --serif: "Iowan Old Style", "Source Serif Pro", Charter, "Hoefler Text", Georgia, serif;
+    --sans: "Inter", "Helvetica Neue", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--ink); }
+  body {
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 56px 32px 120px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 32px;
+    margin-bottom: 48px;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 44px;
+    line-height: 1.15;
+    margin: 8px 0 14px;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 28px;
+    line-height: 1.25;
+    margin: 56px 0 16px;
+    letter-spacing: -0.005em;
+  }
+  h3 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 17px;
+    margin: 32px 0 10px;
+    letter-spacing: 0.005em;
+  }
+  h4 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-mute);
+    margin: 24px 0 8px;
+  }
+  p { margin: 0 0 14px; color: var(--ink-soft); }
+  .lede {
+    font-family: var(--serif);
+    font-size: 20px;
+    line-height: 1.55;
+    color: var(--ink);
+    margin: 0 0 8px;
+  }
+  .meta {
+    font-size: 13px;
+    color: var(--ink-mute);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 18px;
+  }
+  .meta span strong { color: var(--ink); font-weight: 600; }
+
+  section { margin-top: 8px; }
+  section.panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 28px 32px;
+    margin-top: 32px;
+  }
+
+  ul, ol { padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; color: var(--ink-soft); }
+  li > strong { color: var(--ink); }
+
+  blockquote {
+    margin: 18px 0;
+    padding: 14px 22px;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    font-family: var(--serif);
+    font-size: 18px;
+    line-height: 1.5;
+    color: var(--ink);
+    border-radius: 0 4px 4px 0;
+  }
+  blockquote cite {
+    display: block;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-style: normal;
+    color: var(--ink-mute);
+    margin-top: 8px;
+  }
+
+  aside.callout {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    background: var(--bg-soft);
+    padding: 14px 18px;
+    margin: 18px 0;
+    border-radius: 4px;
+    font-size: 15px;
+  }
+  aside.callout.good { border-left-color: var(--good); background: var(--good-soft); }
+  aside.callout.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  aside.callout.bad  { border-left-color: var(--bad);  background: var(--bad-soft); }
+  aside.callout .tag {
+    display: inline-block;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 3px;
+    margin-right: 8px;
+    vertical-align: 2px;
+    background: var(--accent);
+    color: white;
+  }
+  aside.callout.good .tag { background: var(--good); }
+  aside.callout.warn .tag { background: var(--warn); }
+  aside.callout.bad  .tag { background: var(--bad); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0 20px;
+    font-size: 14px;
+  }
+  thead th {
+    text-align: left;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-mute);
+    border-bottom: 1px solid var(--line-strong);
+    padding: 8px 10px;
+  }
+  tbody td {
+    border-bottom: 1px solid var(--line);
+    padding: 10px;
+    vertical-align: top;
+    color: var(--ink-soft);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.center, th.center { text-align: center; }
+  td.num { font-variant-numeric: tabular-nums; }
+
+  pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 18px 20px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 14px 0 22px;
+  }
+  code { font-family: var(--mono); font-size: 0.92em; }
+  p code, li code, td code {
+    background: var(--bg-soft);
+    color: var(--ink);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.88em;
+    border: 1px solid var(--line);
+  }
+  pre code { background: none; color: inherit; padding: 0; border: 0; font-size: inherit; }
+
+  /* light hand-rolled syntax tinting */
+  .k { color: var(--code-key); }
+  .t { color: var(--code-type); }
+  .s { color: var(--code-str); }
+  .c { color: var(--code-com); font-style: italic; }
+  .id { color: var(--code-id); }
+
+  details {
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    margin: 10px 0;
+    background: var(--bg-panel);
+  }
+  details > summary {
+    cursor: pointer;
+    padding: 12px 18px;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--ink);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    user-select: none;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before {
+    content: "▸";
+    color: var(--ink-mute);
+    font-size: 12px;
+    transition: transform 0.15s ease;
+    display: inline-block;
+  }
+  details[open] > summary::before { transform: rotate(90deg); }
+  details > .body {
+    padding: 4px 22px 18px;
+    border-top: 1px solid var(--line);
+  }
+
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: var(--bg-soft);
+    color: var(--ink-mute);
+    margin-right: 6px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: 1px solid var(--line);
+  }
+  .pill.good { background: var(--good-soft); color: var(--good); border-color: var(--good-soft); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn-soft); }
+  .pill.bad  { background: var(--bad-soft);  color: var(--bad);  border-color: var(--bad-soft); }
+  .pill.accent { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-soft); }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+  }
+  @media (max-width: 760px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .wrap { padding: 36px 20px 80px; }
+    h1 { font-size: 34px; }
+    h2 { font-size: 24px; }
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 16px 18px;
+    background: var(--bg-panel);
+  }
+  .card h4 { margin-top: 0; color: var(--accent); }
+
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 18px 24px;
+    margin: 24px 0 48px;
+    font-size: 14px;
+  }
+  .toc h4 { margin: 0 0 10px; color: var(--ink); }
+  .toc ol { margin: 0; padding-left: 22px; columns: 2; column-gap: 32px; }
+  .toc li { margin-bottom: 4px; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+  @media (max-width: 760px) { .toc ol { columns: 1; } }
+
+  .source-tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-mute);
+    background: var(--bg-soft);
+    padding: 0 6px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    margin: 0 2px;
+  }
+  .source-tag.inv { color: var(--accent); }
+  .source-tag.rev { color: #4a5db0; }
+
+  .verdict {
+    border: 2px solid var(--accent);
+    background: var(--bg-panel);
+    border-radius: 8px;
+    padding: 24px 28px;
+    margin: 24px 0 32px;
+  }
+  .verdict h3 { margin-top: 0; color: var(--accent); }
+  .verdict p:last-child { margin-bottom: 0; }
+
+  footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-mute);
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .phase-strip {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0;
+    margin: 18px 0 24px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+  }
+  .phase-cell {
+    padding: 14px;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--line);
+    position: relative;
+  }
+  .phase-cell:last-child { border-right: 0; }
+  .phase-cell .num {
+    font-family: var(--serif);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .phase-cell .title {
+    font-weight: 600;
+    font-size: 14px;
+    margin: 4px 0 6px;
+  }
+  .phase-cell .desc { font-size: 12px; color: var(--ink-mute); line-height: 1.4; }
+  @media (max-width: 760px) {
+    .phase-strip { grid-template-columns: 1fr; }
+    .phase-cell { border-right: 0; border-bottom: 1px solid var(--line); }
+    .phase-cell:last-child { border-bottom: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Polyphony · Architecture synthesis · Workflow-as-C# investigation</div>
+  <h1>Should we declare workflows in C# and compile them to YAML?</h1>
+  <p class="lede">Five investigations, three adversarial reviews, one verdict: <strong>yes &mdash; narrowly, build-time only, and compiler-lite first.</strong> Treat <span class="source-tag">conductor</span> as a runtime backend, not a target to replace. Ride <span class="source-tag">AB#3255 / #3256 / #3258</span>. Stop at the smallest version that pays for itself.</p>
+  <div class="meta">
+    <span><strong>Inputs:</strong> 5 investigations (~18k words) · 3 reviews (~9k words)</span>
+    <span><strong>Reviewer verdicts:</strong> 3&times; <em>qualify, not endorse</em></span>
+    <span><strong>Proposed:</strong> D14 &mdash; compiler-lite scope</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h4>Contents</h4>
+  <ol>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#question">The question Daniel asked</a></li>
+    <li><a href="#convergent">Where everyone agreed</a></li>
+    <li><a href="#divergent">Where they disagreed</a></li>
+    <li><a href="#path">The recommended path</a></li>
+    <li><a href="#concrete">What compiler-lite looks like</a></li>
+    <li><a href="#dsl-shape">What the full DSL would look like (if we ever got there)</a></li>
+    <li><a href="#donot">What we must <em>not</em> do</a></li>
+    <li><a href="#risks">Risks &amp; tripwires</a></li>
+    <li><a href="#cost">Cost model</a></li>
+    <li><a href="#decisions">Decision rights &amp; next steps</a></li>
+    <li><a href="#d14">Proposed D14 (decision draft)</a></li>
+    <li><a href="#appendix-inv">Appendix · Investigator summaries</a></li>
+    <li><a href="#appendix-rev">Appendix · Reviewer summaries</a></li>
+    <li><a href="#appendix-open">Appendix · Open questions</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================================ -->
+<section id="tldr">
+<h2>1 · TL;DR</h2>
+
+<div class="verdict">
+<h3>Verdict</h3>
+<p><strong>Direction: yes, but compress it.</strong> The instinct &mdash; C# as the authoring surface for workflow structure and contracts, with workflow YAML as the emitted artifact &mdash; is supported by every prior-art family worth copying (CDK, Flyte, Dagger) and by all three reviewers. But every reviewer also said: <em>not as the full vision, not now, and not as a vehicle to replace conductor.</em></p>
+<p><strong>Action:</strong> ship <em>compiler-lite</em> first &mdash; a typed C# contract registry (verb signatures, agent outputs, workflow I/O) consumed by schema-driven YAML lint and route validation. Stop and measure before promoting it to a full authoring DSL.</p>
+</div>
+
+<ul>
+  <li><strong>Build-time, not JIT.</strong> Every report and every reviewer rejected runtime YAML generation as the default. Build-time emission keeps the artifact reviewable, the harness in the loop, and AOT realistic.</li>
+  <li><strong>Conductor stays the runtime.</strong> Option A in <span class="source-tag inv">Inv 3</span>. The dashboard, human-gate UI, <code>/api/stop</code>, event log, and <code>for_each</code> engine are too valuable to rebuild for a typing win.</li>
+  <li><strong>The agent contract boundary is the highest-value target.</strong> The <code>architect &rarr; write-plan &rarr; seed-children</code> trace in <span class="source-tag inv">Inv 4</span> is the worst stringly drift in the repo; one named <code>PlannerOutput</code>/<code>PlannedChild</code> contract collapses prompt schema, route vocab, CLI bindings, and sidecar parsers into one declaration.</li>
+  <li><strong>Ride the sibling tracks.</strong> <span class="source-tag">AB#3255</span> typed-contract-surface <em>is</em> compiler-lite Phase 0/1. <span class="source-tag">AB#3256</span> matrix-collapse must land before any authoring DSL is frozen. <span class="source-tag">AB#3258</span> shrinks the opaque-script surface. <span class="source-tag">AB#3257</span> is independent &mdash; do not absorb it.</li>
+  <li><strong>Compiler-lite may be the finish line.</strong> <span class="source-tag rev">R3</span> explicitly: governance must bless stopping there if 60-80% of the pain is gone. Path-dependence is the enemy.</li>
+  <li><strong>What C# can prove.</strong> Field existence, producer/consumer compatibility, child-input completeness, route reads, enum exhaustiveness (with analyzer), null/omit discipline, kind-level resource subsetting.</li>
+  <li><strong>What C# cannot prove.</strong> Prompt truthfulness, agent honesty, tool obedience, remote ADO legality, runtime set membership, concrete resource identity closure, human gate decisions.</li>
+  <li><strong>The 6-month win is not "everything in C#."</strong> It is: AB#3255 landed, AB#3256 stabilized, compiler-lite in CI, 1&ndash;3 small workflows pilot-generated side-by-side, and enough data to know whether the full DSL is worth a second 6 months.</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="question">
+<h2>2 · The question Daniel asked</h2>
+<blockquote>
+"Should we find a way to declare everything in C# and use that to generate the workflow just in time? If we do that, we can eventually basically make a workflow compiler for handling specific shapes of work."
+<cite>&mdash; Daniel, framing the investigation</cite>
+</blockquote>
+<p>Three things are bundled in that question, and the synthesis pulls them apart:</p>
+<div class="grid-3">
+  <div class="card">
+    <h4>Declare in C#</h4>
+    <p>Move workflow structure and contracts into a typed host language. <strong>Verdict:</strong> supported, but narrowly &mdash; the structural seams (verbs, agents, routes, child workflows, counters, resources), not the soul (prompt prose, gate rubrics, eval heuristics).</p>
+  </div>
+  <div class="card">
+    <h4>Generate just-in-time</h4>
+    <p>Emit YAML at the moment of dispatch. <strong>Verdict:</strong> unanimously deprecated. Build-time emission wins on inspectability, harness compatibility, AOT posture, and on-call debuggability. JIT is opt-in, narrow, cached, and rare.</p>
+  </div>
+  <div class="card">
+    <h4>Eventually a compiler for shapes of work</h4>
+    <p>An L3-style work-shape library: "implement MG", "open PR", "actionable evidence loop". <strong>Verdict:</strong> plausible long-term, but only after compiler-lite proves its keep and the L2 layer has at least one season of use. Do not skip ahead.</p>
+  </div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="convergent">
+<h2>3 · Where everyone agreed</h2>
+
+<h3>All 5 investigators converged on:</h3>
+<ul>
+  <li><strong>The closest industry analogs are CDK (structural), Flyte (operational), and Dagger (ergonomic)</strong> &mdash; not Temporal/DBOS (durable-execution-as-code). <span class="source-tag inv">Inv 1</span></li>
+  <li><strong>Build-time emission + Roslyn analyzers, seeded by the existing <code>PolyphonyJsonContext</code> / <code>VerbOutputSchemaCatalog</code> pattern.</strong> Source-generator first; no runtime reflection registry. <span class="source-tag inv">Inv 2</span></li>
+  <li><strong>Option A &mdash; keep conductor as runtime, emit YAML at build.</strong> Options B (JIT), C (replace conductor), and D (shared plan protocol) are not the first move. <span class="source-tag inv">Inv 3</span></li>
+  <li><strong>The highest-leverage target is the agent contract boundary,</strong> where one named DTO must replace today's prompt&times;YAML&times;CLI&times;sidecar quadruplication. <span class="source-tag inv">Inv 4</span></li>
+  <li><strong>Ship <em>compiler-lite</em>, not a full compiler.</strong> Use AB#3255 as substrate. Land AB#3256 before freezing any authoring DSL. Treat AB#3257 as independent. Migration discipline, not code generation, is the long pole. <span class="source-tag inv">Inv 5</span></li>
+</ul>
+
+<h3>All 3 reviewers converged on:</h3>
+<ul>
+  <li><strong>"Qualify, not endorse."</strong> Every reviewer signed off on compiler-lite / build-time emission, and every reviewer drew a hard line at scope creep.</li>
+  <li><strong>The compiler cannot prove agent truthfulness.</strong> Schemas, route vocabularies, and capability declarations are <em>descriptions</em> &mdash; not enforcement. <span class="source-tag rev">R1</span> <span class="source-tag rev">R2</span></li>
+  <li><strong>Conductor must not be replaced.</strong> Becoming a multi-agent orchestration platform is a different program. <span class="source-tag rev">R2</span> <span class="source-tag rev">R3</span></li>
+  <li><strong>Generated artifacts must stay first-class.</strong> Hidden execution plans wreck the on-call story. <span class="source-tag rev">R1</span> <span class="source-tag rev">R3</span></li>
+  <li><strong>The harness remains authoritative.</strong> Real conductor against real YAML &mdash; compiler tests are <em>added</em>, not substituted. <span class="source-tag rev">R1</span></li>
+  <li><strong>Prompt prose stays human-authored.</strong> The compiler owns only the load-bearing contract fragments inside prompts. <span class="source-tag rev">R2</span> <span class="source-tag rev">R3</span></li>
+</ul>
+
+<aside class="callout good">
+  <span class="tag">Convergence</span>
+  <strong>The collective answer is unusually consistent.</strong> Eight independent reads, one shape: <em>typed authority + emitted artifact + conductor runtime + agent contract focus + compiler-lite first</em>. Where consensus is this tight, the synthesis question becomes how aggressively to <em>shrink</em> the proposal, not whether to do it.
+</aside>
+</section>
+
+<!-- ============================================================ -->
+<section id="divergent">
+<h2>4 · Where they disagreed</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Tension</th>
+      <th>Bullish side</th>
+      <th>Skeptical side</th>
+      <th>Resolution</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>How big the v1 surface should be</strong></td>
+      <td><span class="source-tag inv">Inv 2</span> sketches a fluent builder covering scripts, agents, gates, counters, sub-workflows, resources, and exports &mdash; all in one go.</td>
+      <td><span class="source-tag rev">R3</span> flags this as "four systems under one name" (contracts, builder, generators, artifacts) and warns against accidental compiler engineering.</td>
+      <td><strong>Compiler-lite first.</strong> Builder is the long-term goal, not v1. v1 is descriptors + lints over existing YAML.</td>
+    </tr>
+    <tr>
+      <td><strong>What the first pilot proves</strong></td>
+      <td><span class="source-tag inv">Inv 5</span> recommends a leaf workflow (e.g. <code>root-fallback-gate</code>) &mdash; smallest surface for emitter ergonomics.</td>
+      <td><span class="source-tag rev">R2</span> counters: a non-agent pilot under-tests the boundary where agentic systems actually break. Demands a parallel "small but real agent contract" pilot.</td>
+      <td><strong>Two pilots in parallel:</strong> one leaf for emitter ergonomics, one agent-bearing for contract drift &mdash; both side-by-side with handwritten canon.</td>
+    </tr>
+    <tr>
+      <td><strong>Where to land long-term</strong></td>
+      <td><span class="source-tag inv">Inv 3</span> sees Option D (shared typed plan protocol) as the only credible upgrade past A.</td>
+      <td><span class="source-tag rev">R3</span> insists "stop at A or compiler-lite" is also a credible end state. Path-dependence is not destiny.</td>
+      <td><strong>Stop is an option.</strong> Bless it explicitly in the brief so compiler-lite is a real off-ramp.</td>
+    </tr>
+    <tr>
+      <td><strong>Enum overlay vs. discriminated unions</strong></td>
+      <td><span class="source-tag inv">Inv 2</span> casually mentions "generated unions" as a natural refinement.</td>
+      <td><span class="source-tag rev">R1</span>: C# 12/.NET 9 has no native sum types. Going from enum overlay to sealed-record union is a real complexity step, requires a Roslyn exhaustiveness analyzer, and is not a free refinement.</td>
+      <td><strong>v1 = enum overlays + analyzer.</strong> Sealed unions only when payload-bearing variants justify them. Honest about the language ceiling.</td>
+    </tr>
+    <tr>
+      <td><strong>How much resource modeling to promise</strong></td>
+      <td><span class="source-tag inv">Inv 2</span>: D13 attributes + journal effects let the compiler enforce "workflow can only own these resources."</td>
+      <td><span class="source-tag rev">R1</span>: kind subset, yes. Pattern compatibility, sometimes. Concrete ownership closure, <em>no</em> &mdash; resource ids derive from runtime values, scripts are opaque, agents mutate directly.</td>
+      <td><strong>Promise kind-subset only in v1.</strong> Pattern checks as analyzer warnings. Ownership closure stays a runtime/drift concern.</td>
+    </tr>
+    <tr>
+      <td><strong>Schema strictness at the agent boundary</strong></td>
+      <td><span class="source-tag rev">R1</span> instinct: strict schemas, fail hard, prove more.</td>
+      <td><span class="source-tag rev">R2</span>: required-field pressure causes models to fabricate. Need strict-core / soft-perimeter / explicit refusal variants.</td>
+      <td><strong>Strict required core, optional advisory periphery, mandatory refusal/abstain variant on every agent contract.</strong></td>
+    </tr>
+    <tr>
+      <td><strong>Whether non-C# authorship matters</strong></td>
+      <td><span class="source-tag inv">Inv 2</span>: non-C# authorship is "probably a non-goal."</td>
+      <td><span class="source-tag rev">R3</span>: ❌ overstated. Operators, incident responders, onboarding contributors, and future AI assistants still need a legible compiled surface.</td>
+      <td><strong>Emitted YAML stays first-class, checked-in during migration, with stable node names and source maps.</strong></td>
+    </tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<section id="path">
+<h2>5 · The recommended path</h2>
+
+<p>This is the phase shape that comes out of stacking all eight documents. It mirrors the journal track's ADR-narrow-phase-payoff cadence rather than promising a 6-month rewrite.</p>
+
+<div class="phase-strip">
+  <div class="phase-cell">
+    <div class="num">Phase 0</div>
+    <div class="title">Brief + kill criteria</div>
+    <div class="desc">Define success as <em>fewer runtime contract errors</em>, not "all workflows in C#." Bless compiler-lite as an acceptable finish line.</div>
+  </div>
+  <div class="phase-cell">
+    <div class="num">Phase 1</div>
+    <div class="title">Compiler-lite substrate</div>
+    <div class="desc">Extend AB#3255: typed verb/agent/workflow descriptors + envelope lint + route-field validation against handwritten YAML.</div>
+  </div>
+  <div class="phase-cell">
+    <div class="num">Phase 1.5</div>
+    <div class="title">Two pilot leafs</div>
+    <div class="desc">One leaf workflow (emitter ergonomics, diff stability). One small agent-bearing flow (contract drift, malformed-output fixtures).</div>
+  </div>
+  <div class="phase-cell">
+    <div class="num">Phase 2</div>
+    <div class="title">Stop/go checkpoint</div>
+    <div class="desc">If ergonomics or diff noise are bad, <em>stop</em>. Keep compiler-lite, delete pilot DSL layer. AB#3255/#3256/#3258 wins still stand.</div>
+  </div>
+  <div class="phase-cell">
+    <div class="num">Phase 3+</div>
+    <div class="title">Medium pilot, then maybe broader</div>
+    <div class="desc">One medium workflow after AB#3256 stabilizes. Only then consider migrating the six giant workflows.</div>
+  </div>
+</div>
+
+<h3>Sequencing against the in-flight tracks</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Track</th>
+      <th>Posture</th>
+      <th>Why</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="source-tag">AB#3253 / #3254</span> journal</td>
+      <td><span class="pill good">Do not block</span> run alongside</td>
+      <td>Journal proposal says it is not a conductor replacement. Phase 2.5 effect model is a future compiler hook, not a prerequisite. Drift/reset payoff is independent.</td>
+    </tr>
+    <tr>
+      <td><span class="source-tag">AB#3255</span> typed contracts</td>
+      <td><span class="pill accent">Real prerequisite</span></td>
+      <td>This <em>is</em> compiler-lite Phase 0/1. Extend it; don't invent a second metadata system.</td>
+    </tr>
+    <tr>
+      <td><span class="source-tag">AB#3256</span> matrix collapse</td>
+      <td><span class="pill accent">Land phases 1&ndash;2 first</span></td>
+      <td>26 matrix-expanded verbs &rarr; 5 canonical. A DSL frozen before this would bake obsolete surface into its API.</td>
+    </tr>
+    <tr>
+      <td><span class="source-tag">AB#3257</span> on_error</td>
+      <td><span class="pill warn">Independent</span> do not absorb</td>
+      <td>19 trivial gates pending upstream conductor work. Smuggling error semantics into the compiler entangles two architectural bets.</td>
+    </tr>
+    <tr>
+      <td><span class="source-tag">AB#3258</span> script&rarr;verb</td>
+      <td><span class="pill good">Partial parallel prerequisite</span></td>
+      <td>Shrinks opaque shell-out surface. Not all-or-nothing &mdash; pilot can start with the low-risk migrations done.</td>
+    </tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<section id="concrete">
+<h2>6 · What compiler-lite means concretely</h2>
+
+<p>Compiler-lite is <strong>not</strong> "write workflows in C#." It is a typed C# registry of every cross-boundary contract the existing handwritten workflows depend on, plus a Roslyn-driven lint that holds the YAML to it.</p>
+
+<h3>Inputs (you already have these or are building them)</h3>
+<ul>
+  <li><code>[Command]</code> + <code>[VerbResult]</code> annotated verb methods (already authoritative in <code>src/Polyphony/Commands/</code>)</li>
+  <li><code>PolyphonyJsonContext</code> source-generated JSON contracts</li>
+  <li><code>VerbOutputSchemaCatalog</code> (already shipped)</li>
+  <li>AB#3255 envelope lint + typed contract surface (in flight)</li>
+</ul>
+
+<h3>Outputs the compiler-lite slice adds</h3>
+<ul>
+  <li><strong>Typed agent contracts</strong> &mdash; one named DTO per agent (e.g. <code>PlannerOutput</code>, <code>PlanReviewerOutput</code>, <code>ScopeReviewOutput</code>) carrying route-critical core + optional periphery + mandatory refusal variant.</li>
+  <li><strong>Typed workflow I/O records</strong> &mdash; one record each for <code>FeaturePrInput</code>/<code>FeaturePrOutput</code> and the rest, generated into a contract catalog.</li>
+  <li><strong>Generic envelope lint</strong> &mdash; YAML <code>{{ node.output.x }}</code> references resolve against the declared producer contract; route conditions resolve against declared enums; child-workflow call sites must satisfy declared <code>WorkflowDescriptor&lt;TIn,TOut&gt;</code>.</li>
+  <li><strong>Generated enum overlays</strong> for the existing string discriminants: <code>BranchNextImplAction</code>, <code>ReviewVerdict</code>, <code>ResearchRequestKind</code>, <code>PrPlatform</code>.</li>
+  <li><strong>Roslyn exhaustiveness analyzer</strong> &mdash; route tables over enums must cover every variant or include an explicit catch-all marked as such.</li>
+</ul>
+
+<h3>Pseudo-C# &mdash; the surface a compiler-lite consumer sees</h3>
+
+<pre><code><span class="c">// 1. Generated from existing [Command] + [VerbResult] methods.</span>
+<span class="c">//    No hand-maintained second source of truth.</span>
+<span class="k">public static partial class</span> <span class="t">PolyphonyVerbs</span>
+{
+    <span class="k">public static class</span> <span class="t">Branch</span>
+    {
+        <span class="k">public static</span> <span class="t">VerbDescriptor</span>&lt;<span class="t">BranchNextImplArgs</span>, <span class="t">BranchNextImplResult</span>&gt; <span class="id">NextImpl</span> { <span class="k">get</span>; }
+            = <span class="t">GeneratedVerbs</span>.<span class="id">Branch_NextImpl</span>;
+    }
+}
+
+<span class="c">// 2. Generated enum overlay over the existing string discriminant.</span>
+<span class="c">//    The string field stays for wire compatibility; the enum is the typed view.</span>
+<span class="k">public enum</span> <span class="t">BranchNextImplAction</span>
+{
+    <span class="id">ImplementItem</span>,
+    <span class="id">AllItemsDone</span>,
+    <span class="id">Error</span>
+}
+
+<span class="k">public sealed partial record</span> <span class="t">BranchNextImplResult</span>
+{
+    <span class="k">public</span> <span class="t">BranchNextImplAction</span> <span class="id">ActionKind</span> =&gt; <span class="t">BranchNextImplActionCodec</span>.<span class="id">Parse</span>(<span class="id">Action</span>);
+}
+
+<span class="c">// 3. One agent contract DTO &mdash; route-critical core, optional periphery,</span>
+<span class="c">//    mandatory refusal/abstain variant. Used by prompt fragment generation,</span>
+<span class="c">//    YAML output schema lint, route validator, CLI binding lint, and sidecar parser.</span>
+<span class="k">public sealed record</span> <span class="t">PlannerOutput</span>
+{
+    <span class="k">public required</span> <span class="t">string</span> <span class="id">Plan</span> { <span class="k">get</span>; <span class="k">init</span>; }
+    <span class="k">public required</span> <span class="t">IReadOnlyList</span>&lt;<span class="t">PlannedChild</span>&gt; <span class="id">Children</span> { <span class="k">get</span>; <span class="k">init</span>; }
+    <span class="k">public required</span> <span class="t">ResearchRequestKind</span> <span class="id">ResearchRequestKind</span> { <span class="k">get</span>; <span class="k">init</span>; }
+    <span class="k">public</span> <span class="t">IReadOnlyList</span>&lt;<span class="t">OpenQuestion</span>&gt; <span class="id">OpenQuestions</span> { <span class="k">get</span>; <span class="k">init</span>; } = [];
+    <span class="k">public</span> <span class="t">AgentRefusal</span>? <span class="id">Refusal</span> { <span class="k">get</span>; <span class="k">init</span>; }   <span class="c">// explicit insufficient-context</span>
+}
+
+<span class="k">public sealed record</span> <span class="t">PlannedChild</span>
+{
+    <span class="k">public required</span> <span class="t">string</span> <span class="id">ChildId</span> { <span class="k">get</span>; <span class="k">init</span>; }      <span class="c">// stable across replans</span>
+    <span class="k">public required</span> <span class="t">string</span> <span class="id">Title</span> { <span class="k">get</span>; <span class="k">init</span>; }
+    <span class="k">public required</span> <span class="t">WorkItemType</span> <span class="id">Type</span> { <span class="k">get</span>; <span class="k">init</span>; }
+    <span class="k">public required</span> <span class="t">IReadOnlyList</span>&lt;<span class="t">string</span>&gt; <span class="id">AcceptanceCriteria</span> { <span class="k">get</span>; <span class="k">init</span>; }
+    <span class="k">public</span> <span class="t">string</span>? <span class="id">Pg</span> { <span class="k">get</span>; <span class="k">init</span>; }
+    <span class="k">public</span> <span class="t">IReadOnlyList</span>&lt;<span class="t">string</span>&gt; <span class="id">DependsOn</span> { <span class="k">get</span>; <span class="k">init</span>; } = [];
+}</code></pre>
+
+<aside class="callout">
+  <span class="tag">What this buys</span>
+  Once <code>PlannerOutput</code> is the one declaration, the YAML <code>output:</code> schema, the route table on <code>research_request_kind</code>, the <code>--children-json</code> CLI binding, <code>PlanCommands.WritePlan</code>'s parser, and <code>plan-{id}.children.json</code>'s sidecar all collapse into projections of one C# record. <em>The compiler-lite slice is delivering this for every agent.</em>
+</aside>
+
+<h3>What the lint catches at build time</h3>
+<pre><code><span class="c">// In the still-handwritten implement-merge-group.yaml:</span>
+- to: <span class="s">impl_branch_ensure</span>
+  when: <span class="s">"{{ root_router.output.actoin == 'implement_item' }}"</span>
+                                       <span class="c">^</span>
+<span class="c">// WF0012: route reads field 'actoin' but producer BranchNextImplResult</span>
+<span class="c">//         declares no such field. Did you mean 'action'?</span>
+
+- name: write_plan
+  args:
+    - <span class="s">"--children-json"</span>
+    - <span class="s">"{{ architect.output.kids | tojson }}"</span>
+                              <span class="c">^</span>
+<span class="c">// WF0014: 'architect.output.kids' is undefined; PlannerOutput declares</span>
+<span class="c">//         { plan, children, research_request_kind, open_questions, refusal }.</span>
+
+- workflow: github-pr.yaml
+  inputs:
+    pr_number: <span class="s">"{{ feature_pr_creator_github.output.pr_number }}"</span>
+    <span class="c">// WF0021: GithubPrInput requires { pr_number, branch_name, target_branch,</span>
+    <span class="c">//         work_item_id, review_policy } &mdash; call site missing 4 of 5.</span></code></pre>
+
+<p>These are exactly the runtime-discovery defect classes that today require a fresh harness run or a production dispatch to surface.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="dsl-shape">
+<h2>7 · What the full DSL would look like (if Phase 3+ ever happens)</h2>
+
+<p>This is included so the shape is concrete enough to argue about &mdash; <strong>not</strong> as a v1 commitment. <span class="source-tag inv">Inv 2</span> sketched representative workflows in detail; this is the boiled-down ergonomic posture.</p>
+
+<pre><code><span class="k">public sealed record</span> <span class="t">RootFallbackGateInput</span>
+{
+    <span class="k">public required</span> <span class="t">int</span> <span class="id">ActiveWorkItemId</span> { <span class="k">get</span>; <span class="k">init</span>; }
+}
+
+<span class="k">public enum</span> <span class="t">RootFallbackDecision</span> { <span class="id">UseActiveItem</span>, <span class="id">Abort</span>, <span class="id">AutoResolved</span> }
+
+<span class="k">public sealed record</span> <span class="t">RootFallbackGateOutput</span>
+{
+    <span class="k">public required</span> <span class="t">int</span> <span class="id">RootId</span> { <span class="k">get</span>; <span class="k">init</span>; }
+    <span class="k">public required</span> <span class="t">RootFallbackDecision</span> <span class="id">Decision</span> { <span class="k">get</span>; <span class="k">init</span>; }
+    <span class="k">public required</span> <span class="t">bool</span> <span class="id">AutoPolicyApplied</span> { <span class="k">get</span>; <span class="k">init</span>; }
+}
+
+<span class="k">public sealed class</span> <span class="t">RootFallbackGateWorkflow</span>(<span class="t">IPolicyLoader</span> policy)
+{
+    <span class="k">public</span> <span class="t">WorkflowDefinition</span>&lt;<span class="t">RootFallbackGateInput</span>, <span class="t">RootFallbackGateOutput</span>&gt; <span class="id">Build</span>()
+    {
+        <span class="k">var</span> wf = <span class="t">Workflow</span>.<span class="id">Define</span>&lt;<span class="t">RootFallbackGateInput</span>, <span class="t">RootFallbackGateOutput</span>&gt;(
+            name: <span class="s">"root-fallback-gate"</span>,
+            version: <span class="s">"2.4.8"</span>,
+            tools: [ <span class="t">Tool</span>.<span class="id">Twig</span> ]);
+
+        <span class="k">var</span> loadPolicy = wf.<span class="id">Script</span>(<span class="s">"load_policy"</span>)
+            .<span class="id">Invoke</span>(<span class="t">PolyphonyVerbs</span>.<span class="t">Policy</span>.<span class="id">Load</span>)
+            .<span class="id">Route</span>(r =&gt; r
+                .<span class="id">When</span>(x =&gt; x.<span class="id">RootFallback</span>.<span class="id">AutoDecide</span> == <span class="t">RootFallbackMode</span>.<span class="id">UseActiveItem</span>, <span class="s">"use_active_item_auto"</span>)
+                .<span class="id">When</span>(x =&gt; x.<span class="id">RootFallback</span>.<span class="id">AutoDecide</span> == <span class="t">RootFallbackMode</span>.<span class="id">Abort</span>,         <span class="s">"abort_auto"</span>)
+                .<span class="id">Otherwise</span>(<span class="s">"prompt_user"</span>));
+
+        wf.<span class="id">Gate</span>&lt;<span class="t">RootFallbackDecision</span>&gt;(<span class="s">"prompt_user"</span>)
+            .<span class="id">Prompt</span>(<span class="t">PromptTemplate</span>.<span class="id">FromMarkdown</span>(<span class="s">"prompts/root-fallback-gate.md"</span>))
+            .<span class="id">Option</span>(<span class="s">"✅ Use active item"</span>, <span class="t">RootFallbackDecision</span>.<span class="id">UseActiveItem</span>, <span class="s">"use_active_item_prompted"</span>)
+            .<span class="id">Option</span>(<span class="s">"🛑 Abort"</span>,            <span class="t">RootFallbackDecision</span>.<span class="id">Abort</span>,         <span class="s">"abort_prompted"</span>);
+
+        <span class="c">// terminals + Export elided</span>
+        <span class="k">return</span> wf.<span class="id">Export</span>(/* &hellip; */);
+    }
+}</code></pre>
+
+<p>Three things to notice:</p>
+<ol>
+  <li><strong>Routes are lambdas over typed outputs.</strong> No more <code>{{ load_policy.output.root_fallback.auto_decide == 'prompt' }}</code> &mdash; the compiler proves the field exists and the comparison is well-typed.</li>
+  <li><strong>Gate options bind a typed enum to a route.</strong> Exhaustiveness checkable; gate selection persisted as the enum.</li>
+  <li><strong>The prompt template stays external markdown.</strong> Only the contract fragment (output fields, route values, tool restrictions, marker rules) is compiler-owned and injected.</li>
+</ol>
+</section>
+
+<!-- ============================================================ -->
+<section id="donot">
+<h2>8 · What we must <em>not</em> do</h2>
+
+<div class="grid-2">
+  <aside class="callout bad">
+    <span class="tag">Anti-pattern</span>
+    <strong>Pretend the compiler can prove agent honesty.</strong> Schema conformance is not truth. Required-field pressure causes models to fabricate. The compiler proves <em>shape</em>; the harness, postcondition verifiers, and journal prove <em>effect</em>. <span class="source-tag rev">R1</span> <span class="source-tag rev">R2</span>
+  </aside>
+  <aside class="callout bad">
+    <span class="tag">Anti-pattern</span>
+    <strong>Replace conductor.</strong> Option C is a platform program, not a compiler follow-on. Polyphony would have to rebuild: route engine, gate UI, web dashboard, <code>/api/stop</code>, parallel/for_each, transcript storage, model/provider adapters, retry/repair, sandboxing. <span class="source-tag inv">Inv 3</span> <span class="source-tag rev">R2</span>
+  </aside>
+  <aside class="callout bad">
+    <span class="tag">Anti-pattern</span>
+    <strong>JIT/runtime YAML generation as the default.</strong> Hides the executed artifact. Wrecks postmortems. Breaks the harness's "real conductor against real YAML" contract. Breaks AOT posture. JIT is opt-in, narrow, cached. <span class="source-tag inv">Inv 2</span> <span class="source-tag rev">R1</span>
+  </aside>
+  <aside class="callout bad">
+    <span class="tag">Anti-pattern</span>
+    <strong>Big-bang migration.</strong> The six giant workflows (<code>plan-level</code>, <code>implement-merge-group</code>, <code>polyphony</code>, <code>ado-pr</code>, <code>github-pr</code>, <code>feature-pr</code>) are ~80% of workflow LOC. Side-by-side pilots only; handwritten YAML stays canonical until ergonomics are proven. <span class="source-tag inv">Inv 5</span>
+  </aside>
+  <aside class="callout bad">
+    <span class="tag">Anti-pattern</span>
+    <strong>Hide the YAML from operators.</strong> Non-C# readability is not a non-goal &mdash; it is an operational invariant. Incident response, onboarding, future AI assistants, and adjacent contributors all read the artifact. <span class="source-tag rev">R3</span>
+  </aside>
+  <aside class="callout bad">
+    <span class="tag">Anti-pattern</span>
+    <strong>Smuggle a second runtime into the IR.</strong> Designing the compiler IR around a hypothetical future polyphony-native executor turns compiler-lite into a shadow architecture project. Build for the conductor backend; let the IR evolve only when D-shape pressure actually arrives. <span class="source-tag rev">R3</span>
+  </aside>
+  <aside class="callout bad">
+    <span class="tag">Anti-pattern</span>
+    <strong>Generate prompt prose.</strong> Mission, rubric, examples, anti-patterns, tone &mdash; these are the parts that change when models change. Hiding them in the type system slows the iteration loop where it matters most. Compiler owns contract <em>fragments</em>, not bodies. <span class="source-tag rev">R2</span>
+  </aside>
+  <aside class="callout bad">
+    <span class="tag">Anti-pattern</span>
+    <strong>Auto-expose all ~80 verbs as agent tools.</strong> Explodes the action surface, blurs safety boundaries, makes prompt/tool selection harder. Verbs are tool-<em>describable</em>; expose only a curated workflow-specific subset. <span class="source-tag inv">Inv 4</span>
+  </aside>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="risks">
+<h2>9 · Risks &amp; tripwires</h2>
+<p>Each risk has a <em>measurable signal</em> that should fire before scope is expanded.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Risk</th>
+      <th>Severity</th>
+      <th>Tripwire signal</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>CDKTF wrapper-tax.</strong> Compiler-lite ships, but adds no new guarantees over conductor's existing YAML — becomes permanent catch-up cost.</td>
+      <td><span class="pill bad">High</span></td>
+      <td>After Phase 1, fewer than 3 distinct lint classes ever fire on the live corpus. Each lint must catch real defects, not just exist.</td>
+    </tr>
+    <tr>
+      <td><strong>Two-system tax.</strong> Generated and handwritten workflows coexist indefinitely.</td>
+      <td><span class="pill bad">High</span></td>
+      <td>If &gt; 90 days after a workflow is "migrated", the handwritten version still exists, treat as a failure of the migration discipline &mdash; not a feature.</td>
+    </tr>
+    <tr>
+      <td><strong>Framework accretion.</strong> Every new workflow shape adds a new contract abstraction; reviewers must learn the framework before reading the workflow.</td>
+      <td><span class="pill bad">High</span></td>
+      <td>v1 authoring surface > 15 public primitives, or "add primitive" PRs outnumber "use primitive" PRs for any month.</td>
+    </tr>
+    <tr>
+      <td><strong>Pilot proves emitter, not contract drift.</strong> Leaf-only pilot creates a false sense of progress.</td>
+      <td><span class="pill warn">Medium</span></td>
+      <td>Phase 1.5 ships with only a non-agent pilot. <span class="source-tag rev">R2</span> requirement: at least one pilot must include a real agent with malformed-output fixtures.</td>
+    </tr>
+    <tr>
+      <td><strong>Diff-noisy generated YAML.</strong> Even if semantically correct, reviewers cannot eyeball changes.</td>
+      <td><span class="pill warn">Medium</span></td>
+      <td>Any pilot PR where reviewers spend more time reading YAML diff than C# source. Require golden-file diff stability with deterministic formatter.</td>
+    </tr>
+    <tr>
+      <td><strong>Source-generator AOT regression.</strong> A generator stack break blocks shipping.</td>
+      <td><span class="pill warn">Medium</span></td>
+      <td>CI green-streak for AOT publish drops below 90% for any 2-week window. Polyphony.csproj currently has AOT disabled (YamlDotNet); track when this loosens.</td>
+    </tr>
+    <tr>
+      <td><strong>Compiler-lite as Trojan horse.</strong> Team treats compiler-lite as a station, not a finish line; full DSL pressure becomes irresistible because the metadata exists.</td>
+      <td><span class="pill warn">Medium</span></td>
+      <td>"We should just author this one in C#" appears in 3+ PRs before Phase 2 stop/go is run.</td>
+    </tr>
+    <tr>
+      <td><strong>Conductor protocol drift.</strong> Polyphony silently programs to undocumented conductor quirks faster than conductor can rationalize them.</td>
+      <td><span class="pill warn">Medium</span></td>
+      <td>Compatibility tests between repos fail without a cross-repo coordination commit. No quirks-encoded-as-features.</td>
+    </tr>
+    <tr>
+      <td><strong>Schema fabrication.</strong> Strict required-field pressure causes agents to invent values rather than refuse.</td>
+      <td><span class="pill warn">Medium</span></td>
+      <td>Refusal/abstain variants present on &lt; 100% of agent contracts. Or: malformed-output rate in eval suite ticks up after schema tightening.</td>
+    </tr>
+    <tr>
+      <td><strong>Conductor on_error lands mid-pilot.</strong> Forces route-model churn in the compiler.</td>
+      <td><span class="pill">Low</span></td>
+      <td>If on_error lands before Phase 3, route error model must be deferred until the new conductor surface is stable.</td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="callout warn">
+  <span class="tag">Three pilot gates &mdash; mandatory</span>
+  <span class="source-tag rev">R1</span> insists: any generated workflow pilot must pass <strong>three</strong> gates, not one. (1) C# unit tests on builder/analyzers, (2) golden-diff tests on emitted YAML, (3) <em>harness execution against the emitted YAML using the real conductor engine</em>. Without (3), the pilot only proves the compiler likes itself.
+</aside>
+</section>
+
+<!-- ============================================================ -->
+<section id="cost">
+<h2>10 · Cost model</h2>
+
+<p>Calibrated against the journal track's recent cadence (PRs #501&ndash;#503 in the AB#3253 series):</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Scope</th>
+      <th class="center">PR-equivalents</th>
+      <th class="center">Review sessions</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Compiler-lite</strong> (Phase 1)</td>
+      <td class="center num">2&ndash;4</td>
+      <td class="center num">2&ndash;3</td>
+      <td>One AB#3255-extension slice + one lint/CI slice. Substrate already exists.</td>
+    </tr>
+    <tr>
+      <td><strong>Leaf + agent pilots</strong> (Phase 1.5)</td>
+      <td class="center num">3&ndash;5</td>
+      <td class="center num">3&ndash;4</td>
+      <td>Two parallel pilots, golden diff infra, harness wiring. Per R2 split.</td>
+    </tr>
+    <tr>
+      <td><strong>Medium workflow pilot</strong> (Phase 3)</td>
+      <td class="center num">3&ndash;5</td>
+      <td class="center num">3&ndash;4</td>
+      <td>First real semantic-parity cost. Only after AB#3256 phases 1&ndash;2 land.</td>
+    </tr>
+    <tr>
+      <td><strong>Full migration (giant 6)</strong></td>
+      <td class="center num">12&ndash;18</td>
+      <td class="center num">10&ndash;15</td>
+      <td>Migration tax dominates. Not in scope for this decision.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Opportunity cost vs. sibling tracks</h3>
+<p>The honest framing: <strong>compiler-lite is not "instead of" sibling tracks &mdash; it is a consumer of them</strong>. AB#3255 lands either way. AB#3256 lands either way. AB#3258 lands either way. The journal lands either way. Compiler-lite extends AB#3255 by 2&ndash;4 PRs of additional surface. The pilots in Phase 1.5 are the first true <em>net-new</em> investment, and they are deliberately small and reversible.</p>
+
+<p>If compiler-lite is the finish line, total program cost is <strong>~5&ndash;9 PR-equivalents</strong>. The full DSL endgame is <strong>~20&ndash;30+</strong> — a different category of commitment.</p>
+
+<aside class="callout">
+  <span class="tag">ROI estimate (qualified)</span>
+  <span class="source-tag inv">Inv 5</span> claims compiler-lite captures ~60&ndash;80% of the value for ~10&ndash;20% of the cost. <span class="source-tag rev">R1</span> and <span class="source-tag rev">R3</span> both qualify: <em>directionally believable, numerically aspirational</em>. The more honest framing &mdash; compiler-lite captures most of the <strong>provable</strong> wins; whether it captures most of the <strong>ergonomic or architectural</strong> value is a separate question that pilots are designed to answer.
+</aside>
+</section>
+
+<!-- ============================================================ -->
+<section id="decisions">
+<h2>11 · Decision rights &amp; next steps</h2>
+
+<div class="grid-2">
+  <div class="card">
+    <h4>Daniel decides now</h4>
+    <ul>
+      <li>Bless or reject the compiler-lite scope as the v1 commitment.</li>
+      <li>Bless the explicit off-ramp: <em>compiler-lite may be the finish line</em>.</li>
+      <li>Approve the two-pilot Phase 1.5 (leaf + agent-bearing), not one.</li>
+      <li>Approve the three-gate pilot test bar (unit + golden + harness).</li>
+      <li>Decide on emitted YAML disposition: <strong>checked in</strong> during migration (recommended) vs build-artifact-only.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>Daniel can defer</h4>
+    <ul>
+      <li>Full DSL ergonomics (counter primitives, resource budgets, ForEach typing, OptionalRef semantics) &mdash; only after Phase 2 stop/go.</li>
+      <li>Enum overlay vs. sealed-union strategy for payload-bearing variants &mdash; v1 ships enum overlays only.</li>
+      <li>Whether to expose the compiler as a public authoring surface for downstream repos &mdash; first-party only for now.</li>
+      <li>Whether to commit to Option D (shared typed plan protocol with conductor) &mdash; depends on whether YAML boundary itself ever becomes the dominant pain.</li>
+      <li>Function-calling / tool-exposure model for agents &mdash; curated only, no auto-derivation.</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Next actions if compiler-lite is approved</h3>
+<ol>
+  <li><strong>Author the brief.</strong> Phase shape, success criteria as <em>fewer runtime contract errors</em>, explicit kill criteria, explicit off-ramps at each phase boundary.</li>
+  <li><strong>Pair it with the AB#3255 phase plan.</strong> Compiler-lite slices ride that train; do not invent a second metadata system.</li>
+  <li><strong>Lock the three-gate test bar</strong> as a precondition for the pilots before Phase 1.5 starts.</li>
+  <li><strong>Pre-select pilot candidates.</strong> Leaf: <code>root-fallback-gate</code> or <code>close-out</code>. Agent-bearing: probably <code>plan_reviewer</code> + dual-poster flow, because it exercises marker conventions, structured output, route domains, and downstream consumer bindings without the giant-workflow tax.</li>
+  <li><strong>Schedule the Phase 2 checkpoint</strong> with named go/stop signals before any code is written.</li>
+</ol>
+</section>
+
+<!-- ============================================================ -->
+<section id="d14">
+<h2>12 · Proposed D14 (decision draft)</h2>
+
+<div class="verdict">
+<h3>D14 &mdash; Compiler-lite scope</h3>
+<p><strong>Decision:</strong> Polyphony will extend the AB#3255 typed-contract-surface with (a) one named C# DTO per agent output, (b) generated enum overlays for the existing string route discriminants, (c) a generic Roslyn-driven envelope lint resolving every YAML <code>{{ node.output.* }}</code> reference against the declared producer contract, (d) a child-workflow-call lint requiring all declared inputs to be satisfied, and (e) a route-exhaustiveness analyzer over enum routes.</p>
+
+<p><strong>Out of scope (D14):</strong> any C# authoring DSL, any runtime/JIT YAML generation, any change to conductor's runtime contract, any resource-ownership-closure claim beyond kind-subset checking, any prompt-prose generation, any auto-derivation of agent tool surfaces from the verb catalog, any replacement of the harness's authoritative role.</p>
+
+<p><strong>Off-ramp clause:</strong> D14 may be the finish line. A subsequent decision to promote compiler-lite into a full C# authoring DSL requires a separate ADR informed by (i) at least one leaf pilot and one agent-bearing pilot, each passing the three-gate test bar, and (ii) AB#3256 phases 1&ndash;2 landed.</p>
+
+<p><strong>Forward-compat clause:</strong> D14 does not commit to Option D (typed plan protocol shared with conductor). The IR is designed to lower to conductor YAML; Option D remains an explicit later decision, not an implicit eventuality.</p>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="appendix-inv">
+<h2>Appendix · Investigator summaries</h2>
+
+<details open>
+<summary>Inv 1 &mdash; Prior art / industry survey <span class="pill accent">~3100 words</span></summary>
+<div class="body">
+<p>Surveys CDK, cdk8s, CDKTF, Pulumi, Airflow TaskFlow, Dagster, Prefect, Flyte, Temporal, DBOS, Argo/Hera/Tekton, GitHub Actions, CircleCI orbs, Dagger, Durable Functions, Restate. Identifies two stable industry patterns: <em>typed authoring surface + separate runtime artifact</em> (CDK/Flyte/Dagger) vs. <em>code-is-the-runtime durable execution</em> (Temporal/DBOS). Polyphony's proposal fits the first family. <strong>Closest analogs:</strong> AWS CDK (structurally), Flyte (operationally), Dagger (ergonomically). <strong>Sharpest warning:</strong> CDKTF reached deprecation in 2025-12 because it was a thin wrapper without new runtime value &mdash; a permanent catch-up tax. <strong>Five design choices Polyphony should steal:</strong> (1) explicit compile/register phase, (2) L1/L2/L3 construct layering, (3) distinct runtime-known vs. compile-known value types (<code>Output&lt;T&gt;</code>/tokens), (4) artifact/effect-first composition over string envelopes, (5) narrow escape hatches.</p>
+</div>
+</details>
+
+<details>
+<summary>Inv 2 &mdash; Type-system mechanics in C# <span class="pill accent">~4900 words</span></summary>
+<div class="body">
+<p>The mechanically deepest report. Sketches representative workflows (<code>root-fallback-gate</code>, <code>feature-pr</code>, <code>implement-merge-group</code>) rendered in a proposed fluent C# DSL backed by source generators and Roslyn analyzers. <strong>Surface area:</strong> records for contracts, generated descriptors for verbs/workflows, fluent builder for authors. <strong>Compile-time wins listed honestly:</strong> field existence, type compatibility, route field reads, exhaustiveness, child input completeness, kind-level resource subsetting. <strong>Limits called out:</strong> prompt truthfulness, raw script bodies, runtime set membership, remote ADO legality, human gate decisions, concrete resource identity. <strong>Recommends:</strong> build-time YAML emission as the default, JIT only as opt-in narrow specialization, never reflection-first runtime registries. Honest about the gap between enum overlays (cheap, v1) and sealed-record discriminated unions (more invasive).</p>
+</div>
+</details>
+
+<details>
+<summary>Inv 3 &mdash; Conductor relationship <span class="pill accent">~3600 words</span></summary>
+<div class="body">
+<p>Maps four options for the conductor boundary. <strong>Option A</strong> (build-time YAML, conductor stays runtime) &mdash; recommended. Captures the workflow-compiler upside with minimal disruption; keeps dashboard, gates, <code>/api/stop</code>, event log, registry, and operator launcher intact. <strong>Option B</strong> (JIT YAML) &mdash; "A but less inspectable", only justified if eliminating source-tree YAML is itself a primary requirement. <strong>Option C</strong> (polyphony becomes the runtime) &mdash; massive scope expansion, would require rebuilding the route engine, gates, web UI, parallel/for_each, cancellation; explicitly not justified by current evidence. <strong>Option D</strong> (typed execution-plan protocol shared with conductor) &mdash; best long-term collaborative architecture, but not the first move. Verdict: <strong>A now, D only as a later upgrade path</strong>. Three risks to mitigate: dual-source ambiguity, debugging split-brain, generator lock-in to current conductor quirks.</p>
+</div>
+</details>
+
+<details>
+<summary>Inv 4 &mdash; Agent contracts integration <span class="pill accent">~3200 words</span></summary>
+<div class="body">
+<p>Argues the highest-value compiler target is the <strong>agent contract boundary</strong>, not the whole agent. Walks through the <code>architect &rarr; write-plan &rarr; seed-children</code> trace step by step: rich structured output &rarr; Jinja interpolation &rarr; CLI string args &rarr; verb reparses into <code>JsonDocument</code> &rarr; sidecar persistence &rarr; next verb reparses again. <strong>One named <code>PlannerOutput</code>/<code>PlannedChild</code> DTO would collapse the entire chain.</strong> Prompts should remain human-authored prose with compiler-owned contract fragments (output fields, route vocab, marker rules, tool restrictions). Route domains are contracts too &mdash; <code>verdict</code>, <code>action</code>, <code>research_request_kind</code> should be enums, not strings. Verb declarations should be tool-<em>describable</em> but only curated subsets are tool-exposed. Bottom line: "declare agent contracts once, then project them into YAML, prompts, scripts, tests, and docs."</p>
+</div>
+</details>
+
+<details>
+<summary>Inv 5 &mdash; Roadmap / cost / sequencing <span class="pill accent">~3600 words</span></summary>
+<div class="body">
+<p>Branch-local inventory: 15 workflow YAMLs (14,125 LOC), 295 named nodes, 186 script nodes, 70 human gates, 23 explicit agents, 12 registry PowerShell scripts (2,338 LOC), 111 <code>[Command]</code> methods. Six workflows account for ~80% of LOC. <strong>Recommended MVP: compiler-lite</strong> &mdash; typed C# registry consumed by schema-driven YAML lint and route validation, keeping handwritten YAML as the workflow source. <strong>Sequencing:</strong> ride AB#3254 (journal), AB#3255 is the substrate, land AB#3256 phases 1&ndash;2 before any authoring DSL, AB#3258 lowers cost in parallel, AB#3257 is independent. <strong>Long pole:</strong> semantic parity and migration discipline, <em>not</em> code generation. <strong>Off-ramps:</strong> after compiler-lite, after leaf pilot, after medium pilot, before any handwritten YAML is deleted. <strong>Cost estimate:</strong> compiler-lite ~2&ndash;4 PR-equivalents; full migration 12&ndash;18+. Strong stop-or-stay-here posture; explicit kill-switch design.</p>
+</div>
+</details>
+</section>
+
+<!-- ============================================================ -->
+<section id="appendix-rev">
+<h2>Appendix · Reviewer summaries</h2>
+
+<details open>
+<summary>R1 &mdash; Type-correctness lens <span class="pill warn">~2700 words · Verdict: qualify</span></summary>
+<div class="body">
+<p><strong>Endorses</strong> compiler-lite / build-time C# authority for contracts and limited workflow emission. <strong>Rejects</strong> any claim that C# can prove end-to-end workflow correctness, agent honesty, or concrete resource ownership closure.</p>
+
+<p><strong>Specific objections:</strong></p>
+<ul>
+<li>Enum overlays are not discriminated unions. C# 12/.NET 9 has no native sum types &mdash; the gap requires Roslyn analyzers, sealed hierarchies, and switch-expression discipline. Investigator 2's casual jump from enum overlays to "generated unions" is a real complexity step, not a free refinement.</li>
+<li>D13 effect modeling can prove kind subset and sometimes pattern compatibility &mdash; <strong>not</strong> ownership closure. Resource ids derive from runtime values, scripts are opaque, agents mutate directly. Great hook, not ownership proof.</li>
+<li>Source-generator + AOT is plausible but not proven for full workflow lowering. Polyphony.csproj currently has AOT disabled (YamlDotNet). "AOT-friendly posture" is true; "AOT-proven workflow compiler" is not.</li>
+<li>Hard <code>for_each</code> cases (nested fan-out, manual aggregation, branch-exclusive joins) cannot be statically proven correct &mdash; only modeled.</li>
+<li><strong>Mandatory:</strong> any pilot must pass three gates &mdash; unit tests on builder/analyzers, <em>golden-diff on emitted YAML</em>, and <em>harness execution against real YAML with the real conductor engine</em>. Without (3), pilot proves only that the compiler likes itself.</li>
+<li>Compiler-lite ROI estimate ("60-80% for 10-20% cost") is plausible but speculative. More honest: captures most of the <em>provable</em> wins; ergonomic/architectural value is a separate empirical question.</li>
+</ul>
+<p><strong>Minimum honest stack:</strong> (1) typed descriptors + expression-based refs, (2) closed route domains + exhaustiveness analyzer, (3) explicit boundary metadata (codecs, null/omit, branch-exclusive refs).</p>
+</div>
+</details>
+
+<details>
+<summary>R2 &mdash; Agentic engineering lens <span class="pill warn">~3400 words · Verdict: qualify</span></summary>
+<div class="body">
+<p><strong>Use</strong> C# to declare workflow structure and the smallest reliable agent-contract surface. <strong>Do not</strong> let the compiler pretend prompts, schemas, or capability declarations are more deterministic than production LLM systems are.</p>
+
+<p><strong>Specific objections:</strong></p>
+<ul>
+<li>Inv 1's prior-art is mostly infra/data orchestration, not LLM-centric systems. Agent workflows fail not because edges are mis-declared but because prompts drift, schema pressure causes fabrication, tool surfaces are too wide, retries make outputs worse, models upgrade.</li>
+<li><code>Agent&lt;TPromptContext, TOutput&gt;</code> is too small. Real agent nodes need execution mode, curated tool bundle, retry/repair policy, refusal/insufficient-context mode, transcript retention, postcondition checks, model selection.</li>
+<li><strong>Required-field pressure causes fabrication.</strong> Need strict route-critical core, optional advisory periphery, explicit refusal/abstain/error variants on every agent contract. "Hard-fail-everything" is too brittle; silent coercion is dangerous.</li>
+<li>Capability profiles are <em>descriptive unless enforced</em>. Prompt instructions do not secure tools. Without sandboxing/allowlists, it is documentation plus a basis for audit/postconditions &mdash; not enforcement.</li>
+<li><strong>Pilot strategy is incomplete.</strong> A non-agent leaf workflow validates the emitter, not the agentic question. Demand a parallel pilot with at least one real agent contract: typed output, downstream consumer, malformed-output fixtures.</li>
+<li><strong>Eval infrastructure should be a first-class milestone</strong> &mdash; prompt snapshotting, malformed-output fixtures, route-regression tests, model-upgrade rebaseline loop &mdash; before any serious DSL pilot.</li>
+<li>Order of effectiveness for trust: sandbox/allowlist &gt; postconditions+audit &gt; prompt restrictions. Be honest about that.</li>
+</ul>
+<p><strong>If only three things at the agent boundary:</strong> (1) output contract with route-critical core + explicit refusal variant, (2) capability/tool surface with scope + postconditions, (3) consumer binding map with codecs and marker/invariant rules.</p>
+</div>
+</details>
+
+<details>
+<summary>R3 &mdash; Long-term architecture lens <span class="pill warn">~2900 words · Verdict: qualify</span></summary>
+<div class="body">
+<p><strong>Pursue</strong> compiler-lite and possibly build-time compilation to conductor artifacts. <strong>A full C#-first authoring model</strong> is defensible long-term only if it stays narrow, operationally transparent, and reversible.</p>
+
+<p><strong>Specific objections:</strong></p>
+<ul>
+<li>The CDK/Pulumi analogs are products with platform teams. Polyphony is one human plus AI assistants moving fast &mdash; same architecture becomes a year-2 burden in a smaller repo. The maintenance math is different.</li>
+<li>L1/L2/L3 layering is valuable only if 90% of new workflows can be authored without touching the layer definitions themselves. Otherwise it is how internal DSLs become frameworks only their author can extend.</li>
+<li>Source-generator + analyzer + DSL is really <em>four systems</em> (contracts, builder, generators, artifacts). Not free infrastructure. .NET ecosystem (Native AOT, trimming, <code>System.Text.Json</code> source-gen) repeatedly shows the tax.</li>
+<li><strong>"Non-C# authors are a non-goal" is dangerous.</strong> Over 3-5 years the audience is operators, incident responders, onboarding contributors, adjacent contributors, and future AI assistants &mdash; all of whom benefit from a legible compiled surface.</li>
+<li>Counter and resource-budget modeling are exactly where pragmatic compilers turn into bespoke orchestration languages. Restrain aggressively.</li>
+<li>Conductor relationship is healthy only with <strong>boundary governance</strong>: versioned compatibility, source-map guarantees, node-identity stability, no programming to undocumented quirks.</li>
+<li><strong>Compiler-lite must be a real off-ramp, not a station.</strong> Bless the possibility that it is the finish line. Teams often say "we'll just add a thin typed layer" and then the pressure to author code-first becomes irresistible &mdash; CDKTF trajectory.</li>
+<li>Day-1 fine, year-2 wound callouts: "checked-in generated YAML for now" tends to become permanent; "runtime fallback JIT" becomes the hidden execution path; "non-C# authors not a goal" hurts on-call; enum overlays become a constant tax as DTOs evolve; prompt fragments expand into prompt frameworks.</li>
+</ul>
+<p><strong>Three sustaining-engineering invariants:</strong> (1) operational truth must be inspectable without compiler expertise, (2) most workflow changes must not require compiler changes, (3) migration must stay reversible and single-source-per-workflow.</p>
+</div>
+</details>
+</section>
+
+<!-- ============================================================ -->
+<section id="appendix-open">
+<h2>Appendix · Open questions no investigator or reviewer settled</h2>
+
+<ol>
+  <li><strong>Where is the authoritative conductor workflow schema?</strong> No <code>workflow-schema.json</code> exists; today the practical schema is "what the engine accepts." A compiler effort wants an explicit runtime contract from conductor.</li>
+  <li><strong>Generated YAML disposition</strong> &mdash; checked in during migration (operational legibility, review culture, recommended) or build-artifact-only (less drift surface). The choice has cultural and CI implications.</li>
+  <li><strong>Refusal/abstain variant shape.</strong> Should every agent contract carry a standard <code>AgentRefusal</code> variant, or per-agent custom shapes? <span class="source-tag rev">R2</span> argues for mandatory; v1 mechanism not yet specified.</li>
+  <li><strong>Source-map fidelity</strong> &mdash; how deep should runtime-failure-to-C#-line mapping go? Comments in emitted YAML? Sidecar map file? Both?</li>
+  <li><strong>Boundary governance with conductor</strong> &mdash; do we need a shared test corpus, a versioned compatibility policy, source-map guarantees, node-identity guarantees? <span class="source-tag rev">R3</span> insists this is a precondition for Option A's long-term health.</li>
+  <li><strong>Pilot agent candidate</strong> &mdash; <code>plan_reviewer</code> (dual-poster, marker conventions, blocking-concerns semantics) or <code>scope_reviewer</code> (verdict enum, revise-loop counter)? Each tests a different edge.</li>
+  <li><strong>Maximum acceptable v1 authoring surface size.</strong> How many primitives before the DSL is clearly becoming a framework? <span class="source-tag rev">R3</span> raises but does not answer.</li>
+  <li><strong>Compiler audience</strong> &mdash; first-party only, or eventually a public authoring surface for downstream repos? Materially changes the API discipline.</li>
+  <li><strong>Whether Phase 2.5 journal effect metadata is enough for v1 resource checks</strong>, or whether the compiler should ignore journal semantics entirely at first.</li>
+  <li><strong>Counter primitive scope</strong> &mdash; first-class <code>Counter&lt;TState&gt;</code> node on day one, or initially a generated script wrapper? Strongly affects how many guarantees we win.</li>
+</ol>
+</section>
+
+<footer>
+  Synthesis assembled from 5 investigation reports + 3 adversarial reviews.<br>
+  Workflow-compiler-investigation · for D's review on return.
+</footer>
+
+</div>
+</body>
+</html>
