@@ -6,6 +6,7 @@ using Polyphony.Annotations;
 using Polyphony.Branching;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Journal;
+using Polyphony.Journal.Payloads;
 using Polyphony.Manifest;
 using Polyphony.Sdlc.Observers;
 
@@ -104,41 +105,35 @@ public sealed partial class PlanCommands
         }
         var localManifestPath = resolvedPath.Path;
 
-        // ── 1b. Journal-grounding short-circuit (W3, AB#3277). ────────────
-        // When the launcher (W1) has stamped a real POLYPHONY_RUN_ID and
-        // the journal carries ZERO plan-action rows for (rootId, itemId)
-        // under that lineage, the prior PR/branch/tag artifacts are by
-        // definition from a previous run and must not be allowed to drive
-        // the current state. Emit `not_started` with `lineage_anchor`
-        // = `journal` so the workflow re-enters at the architect.
+        // ── 1b. Journal-grounding (W3 + W4, AB#3277/AB#3278). ─────────────
+        // When the launcher (W1) has stamped a real POLYPHONY_RUN_ID and a
+        // real journal is wired, the journal — NOT PR archaeology — is the
+        // anchor for which artifacts belong to this run. The journal
+        // answers "did THIS lineage open / merge / finish planning for
+        // this item?"; git/ADO answer "what is the live status of those
+        // journal-grounded objects?". See B1 walk-through (team-design).
         //
-        // Skipped silently when the journal is a NullJournalStore or
-        // RunContext fell back to a manual_* lineage — neither case can
-        // be sure the "no rows" signal isn't just "we never wrote any".
+        // Skipped silently when the journal is a NullJournalStore or the
+        // RunContext fell back to a `manual_*` lineage — neither case can
+        // distinguish "we never wrote any" from "no rows".
         if (!_runContext.HasManualLineage && _journalStore is not NullJournalStore)
         {
-            IReadOnlyList<JournalEntry> currentLineagePlanActions;
+            JournalGrounding grounding;
             try
             {
-                currentLineagePlanActions = await _journalStore.QueryAsync(
-                    new JournalQuery
-                    {
-                        RunId = _runContext.RunId,
-                        RootId = rootId,
-                        WorkItemId = itemId,
-                    }, ct).ConfigureAwait(false);
+                grounding = await GroundFromJournalAsync(rootId, itemId, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 // Fail open: a journal read error must not block the
-                // legacy PR-archaeology path. Note the reason for
-                // observability, but continue.
+                // legacy PR-archaeology path. Note for observability.
                 Console.Error.WriteLine($"[plan detect-state] journal grounding skipped: {ex.Message}");
-                currentLineagePlanActions = [];
                 goto SkipJournalShortCircuit;
             }
 
-            if (currentLineagePlanActions.Count == 0)
+            // Case W3 (B1 cases 1, 7): no journal rows for current
+            // lineage → ignore any PR/branch/tag residue, emit not_started.
+            if (grounding.NoRows)
             {
                 EmitDetectState(new PlanDetectStateResult
                 {
@@ -151,6 +146,215 @@ public sealed partial class PlanCommands
                 });
                 return ExitCodes.Success;
             }
+
+            // Case W4 (B1 case 5): journal says planning completed →
+            // candidate `complete`. Run the existing child-overlay so an
+            // approved child PR with `requests_parent_change: true` flips
+            // us to `parent_change_pending`. We still need an identity
+            // for the child PR enumeration.
+            if (grounding.PlanningCompleted)
+            {
+                var identityForChildren = await observer
+                    .TryResolveRepoIdentityAsync(platform, organization, project, repositoryOverride, ct)
+                    .ConfigureAwait(false);
+                if (identityForChildren is null)
+                {
+                    EmitDetectStateError(rootId, itemId, planBranch,
+                        "Could not resolve repo identity from origin remote (or supplied overrides)");
+                    return ExitCodes.Success;
+                }
+
+                var journalPendingChildren = await CheckChildrenForParentChangeRequestsAsync(
+                    rootId, itemId, identityForChildren, localManifestPath, ct).ConfigureAwait(false);
+
+                EmitDetectState(new PlanDetectStateResult
+                {
+                    RootId = rootId,
+                    ItemId = itemId,
+                    PlanBranch = planBranch,
+                    State = journalPendingChildren.Count > 0 ? "parent_change_pending" : "complete",
+                    BranchExistsOnOrigin = true,
+                    PrNumber = grounding.PrNumber,
+                    PrUrl = grounding.PrUrl,
+                    PrState = "MERGED",
+                    ParentChangePendingChildren = journalPendingChildren,
+                    LineageAnchor = "journal",
+                });
+                return ExitCodes.Success;
+            }
+
+            // Case W4 (B1 cases 3, 4): journal says merged but planning
+            // NOT completed → merged_unseeded. ADO/git corroborate, they
+            // don't create this state from nothing.
+            if (grounding.PrMerged)
+            {
+                EmitDetectState(new PlanDetectStateResult
+                {
+                    RootId = rootId,
+                    ItemId = itemId,
+                    PlanBranch = planBranch,
+                    State = "merged_unseeded",
+                    BranchExistsOnOrigin = true,
+                    PrNumber = grounding.PrNumber,
+                    PrUrl = grounding.PrUrl,
+                    PrState = "MERGED",
+                    LineageAnchor = "journal",
+                });
+                return ExitCodes.Success;
+            }
+
+            // Case W4 (B1 cases 2, 6, 8): journal says PR opened, no
+            // merge fact yet → poll THAT PR (not "latest PR for branch")
+            // and route on its live state.
+            if (grounding.PrNumber is { } journalPrNumber)
+            {
+                var identityForPoll = await observer
+                    .TryResolveRepoIdentityAsync(platform, organization, project, repositoryOverride, ct)
+                    .ConfigureAwait(false);
+                if (identityForPoll is null)
+                {
+                    EmitDetectStateError(rootId, itemId, planBranch,
+                        "Could not resolve repo identity from origin remote (or supplied overrides)");
+                    return ExitCodes.Success;
+                }
+
+                bool journalBranchExists;
+                try
+                {
+                    journalBranchExists = await observer
+                        .CheckPlanBranchExistsOrThrowAsync(planBranch, ct).ConfigureAwait(false);
+                }
+                catch (ExternalToolException ex)
+                {
+                    EmitDetectStateError(rootId, itemId, planBranch, $"ls-remote failed: {ex.Message}");
+                    return ExitCodes.Success;
+                }
+
+                GhPullRequestPollData? journalPoll;
+                try
+                {
+                    journalPoll = await observer.GetPlanPrPollAsync(identityForPoll, journalPrNumber, ct)
+                        .ConfigureAwait(false);
+                }
+                catch (ExternalToolTimeoutException ex)
+                {
+                    EmitDetectStateError(rootId, itemId, planBranch, ex.FormatErrorMessage("pr view"));
+                    return ExitCodes.Success;
+                }
+                catch (ExternalToolException ex)
+                {
+                    EmitDetectStateError(rootId, itemId, planBranch, $"pr view failed: {ex.Message}");
+                    return ExitCodes.Success;
+                }
+
+                // PR disappeared from platform — journal still wins for
+                // identity; surface as closed_unmerged so the operator
+                // sees the divergence rather than silently rolling back.
+                if (journalPoll is null)
+                {
+                    EmitDetectState(new PlanDetectStateResult
+                    {
+                        RootId = rootId,
+                        ItemId = itemId,
+                        PlanBranch = planBranch,
+                        State = journalBranchExists ? "closed_unmerged" : "not_started",
+                        BranchExistsOnOrigin = journalBranchExists,
+                        PrNumber = journalPrNumber,
+                        PrUrl = grounding.PrUrl,
+                        LineageAnchor = "journal",
+                    });
+                    return ExitCodes.Success;
+                }
+
+                var journalPrState = journalPoll.State.ToUpperInvariant();
+
+                if (journalPrState == "OPEN")
+                {
+                    // Stale-generation check: compare PR's snapshot
+                    // against the current manifest.
+                    var stale = await ComputeStaleAncestorsAsync(
+                        localManifestPath, journalPoll.Body, ct).ConfigureAwait(false);
+                    if (stale.Count > 0)
+                    {
+                        EmitDetectState(new PlanDetectStateResult
+                        {
+                            RootId = rootId,
+                            ItemId = itemId,
+                            PlanBranch = planBranch,
+                            State = "stale_generation",
+                            BranchExistsOnOrigin = journalBranchExists,
+                            PrNumber = journalPrNumber,
+                            PrUrl = grounding.PrUrl,
+                            PrState = journalPrState,
+                            StaleAncestors = stale,
+                            LineageAnchor = "journal",
+                        });
+                        return ExitCodes.Success;
+                    }
+
+                    EmitDetectState(new PlanDetectStateResult
+                    {
+                        RootId = rootId,
+                        ItemId = itemId,
+                        PlanBranch = planBranch,
+                        State = "awaiting_review",
+                        BranchExistsOnOrigin = journalBranchExists,
+                        PrNumber = journalPrNumber,
+                        PrUrl = grounding.PrUrl,
+                        PrState = journalPrState,
+                        LineageAnchor = "journal",
+                    });
+                    return ExitCodes.Success;
+                }
+
+                if (journalPrState == "MERGED")
+                {
+                    // Crash-recovery / manual-merge: journal recorded the
+                    // open but no merge row was ever written.
+                    EmitDetectState(new PlanDetectStateResult
+                    {
+                        RootId = rootId,
+                        ItemId = itemId,
+                        PlanBranch = planBranch,
+                        State = "merged_unseeded",
+                        BranchExistsOnOrigin = journalBranchExists,
+                        PrNumber = journalPrNumber,
+                        PrUrl = grounding.PrUrl,
+                        PrState = journalPrState,
+                        LineageAnchor = "journal",
+                    });
+                    return ExitCodes.Success;
+                }
+
+                // CLOSED / ABANDONED.
+                EmitDetectState(new PlanDetectStateResult
+                {
+                    RootId = rootId,
+                    ItemId = itemId,
+                    PlanBranch = planBranch,
+                    State = journalBranchExists ? "closed_unmerged" : "not_started",
+                    BranchExistsOnOrigin = journalBranchExists,
+                    PrNumber = journalPrNumber,
+                    PrUrl = grounding.PrUrl,
+                    PrState = journalPrState,
+                    LineageAnchor = "journal",
+                });
+                return ExitCodes.Success;
+            }
+
+            // Journal rows exist but none recorded a PR open yet (only
+            // plan_write_plan / plan_commit_and_push). Workflow will
+            // re-enter the architect; idempotent.
+            EmitDetectState(new PlanDetectStateResult
+            {
+                RootId = rootId,
+                ItemId = itemId,
+                PlanBranch = planBranch,
+                State = "not_started",
+                BranchExistsOnOrigin = false,
+                LineageAnchor = "journal",
+            });
+            return ExitCodes.Success;
         }
         SkipJournalShortCircuit:
 
@@ -627,6 +831,137 @@ public sealed partial class PlanCommands
             Error = error,
             LineageAnchor = "none",
         });
+
+    /// <summary>
+    /// W4 (AB#3278): collapse the journal rows for the current
+    /// (run-lineage, root, item) into the four facts <c>DetectState</c>
+    /// needs: NoRows, PrNumber/PrUrl (from <c>pr_open_plan_*</c>),
+    /// PrMerged (from <c>pr_merge_plan_*</c>), and PlanningCompleted
+    /// (from <c>plan_seed_children</c>'s new <c>PlanningCompleted</c>
+    /// flag). Only successful entries contribute. The most recent
+    /// successful PR-open row wins for identity (in case of re-opens).
+    /// </summary>
+    private async Task<JournalGrounding> GroundFromJournalAsync(
+        int rootId, int itemId, CancellationToken ct)
+    {
+        var rows = await _journalStore.QueryAsync(
+            new JournalQuery
+            {
+                RunId = _runContext.RunId,
+                RootId = rootId,
+                WorkItemId = itemId,
+            }, ct).ConfigureAwait(false);
+
+        if (rows.Count == 0)
+        {
+            return new JournalGrounding { NoRows = true };
+        }
+
+        int? prNumber = null;
+        string? prUrl = null;
+        long? prOpenStartedAt = null;
+        bool prMerged = false;
+        bool planningCompleted = false;
+
+        foreach (var row in rows)
+        {
+            if (row.Outcome != JournalOutcome.Success) continue;
+
+            switch (row.Action)
+            {
+                case "pr_open_plan_pr":
+                {
+                    if (row.PayloadJson is null) break;
+                    PrOpenPlanPrPayload? p;
+                    try { p = JsonSerializer.Deserialize(row.PayloadJson,
+                        PolyphonyJsonContext.Default.PrOpenPlanPrPayload); }
+                    catch { p = null; }
+                    if (p is null || !p.Succeeded || p.PrNumber <= 0) break;
+                    if (prOpenStartedAt is null || row.StartedAt >= prOpenStartedAt)
+                    {
+                        prNumber = p.PrNumber;
+                        prUrl = p.PrUrl;
+                        prOpenStartedAt = row.StartedAt;
+                    }
+                    break;
+                }
+                case "pr_open_plan_ado":
+                {
+                    if (row.PayloadJson is null) break;
+                    PrOpenPlanAdoPayload? p;
+                    try { p = JsonSerializer.Deserialize(row.PayloadJson,
+                        PolyphonyJsonContext.Default.PrOpenPlanAdoPayload); }
+                    catch { p = null; }
+                    if (p is null || !p.Succeeded || p.PrNumber <= 0) break;
+                    if (prOpenStartedAt is null || row.StartedAt >= prOpenStartedAt)
+                    {
+                        prNumber = p.PrNumber;
+                        prUrl = p.PrUrl;
+                        prOpenStartedAt = row.StartedAt;
+                    }
+                    break;
+                }
+                case "pr_merge_plan_pr":
+                {
+                    if (row.PayloadJson is null) { prMerged = true; break; }
+                    PrMergePlanPrPayload? p;
+                    try { p = JsonSerializer.Deserialize(row.PayloadJson,
+                        PolyphonyJsonContext.Default.PrMergePlanPrPayload); }
+                    catch { p = null; }
+                    if (p is null || p.Succeeded) prMerged = true;
+                    if (p is not null && p.PrNumber > 0 && prNumber is null)
+                    {
+                        prNumber = p.PrNumber;
+                        prUrl = p.PrUrl;
+                    }
+                    break;
+                }
+                case "pr_merge_plan_ado":
+                {
+                    if (row.PayloadJson is null) { prMerged = true; break; }
+                    PrMergePlanAdoPayload? p;
+                    try { p = JsonSerializer.Deserialize(row.PayloadJson,
+                        PolyphonyJsonContext.Default.PrMergePlanAdoPayload); }
+                    catch { p = null; }
+                    if (p is null || p.Succeeded) prMerged = true;
+                    if (p is not null && p.PrNumber > 0 && prNumber is null)
+                    {
+                        prNumber = p.PrNumber;
+                        prUrl = p.PrUrl;
+                    }
+                    break;
+                }
+                case "plan_seed_children":
+                {
+                    if (row.PayloadJson is null) break;
+                    PlanSeedChildrenPayload? p;
+                    try { p = JsonSerializer.Deserialize(row.PayloadJson,
+                        PolyphonyJsonContext.Default.PlanSeedChildrenPayload); }
+                    catch { p = null; }
+                    if (p is not null && p.PlanningCompleted) planningCompleted = true;
+                    break;
+                }
+            }
+        }
+
+        return new JournalGrounding
+        {
+            NoRows = false,
+            PrNumber = prNumber,
+            PrUrl = prUrl,
+            PrMerged = prMerged,
+            PlanningCompleted = planningCompleted,
+        };
+    }
+
+    private sealed record JournalGrounding
+    {
+        public bool NoRows { get; init; }
+        public int? PrNumber { get; init; }
+        public string? PrUrl { get; init; }
+        public bool PrMerged { get; init; }
+        public bool PlanningCompleted { get; init; }
+    }
 
     /// <summary>
     /// Resolve the GitHub <c>owner/repo</c> slug from
