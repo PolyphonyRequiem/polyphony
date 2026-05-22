@@ -2,6 +2,8 @@ using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.Processes;
 using Polyphony.Journal;
+using Polyphony.Journal.Drift;
+using Polyphony.Journal.Observers;
 using Polyphony.Routing;
 using Polyphony.Tests.Infrastructure.Processes;
 using Polyphony.Tests.Stubs;
@@ -547,6 +549,213 @@ public sealed class JsonOutputContractTests : CommandTestBase
         error.ShouldContain("export failed");
     }
 
+    [Fact]
+    public async Task JournalDrift_SnakeCaseFieldNames_PresentInRawJson()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_260).WithType(EpicType).WithTitle("Drift Root").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalDriftCommand(
+            new StubResourceObserver(
+                new ResourceObservationBatch
+                {
+                    Kind = ResourceKind.GitBranch,
+                    Observations =
+                    [
+                        new ObservedResourceState
+                        {
+                            Kind = ResourceKind.GitBranch,
+                            Id = "feature/3260",
+                            Exists = true,
+                            MatchesExpectedState = false,
+                            ActualState = "def456",
+                        },
+                    ],
+                    DiscoveredResources = [],
+                }));
+        try
+        {
+            await SeedJournalEntryAsync(
+                store,
+                runId: "run-drift-json",
+                rootId: 3260,
+                workItemId: 3260,
+                action: "branch_ensure_feature",
+                target: "feature/3260",
+                startedAt: 1_700_000_000_000,
+                effects:
+                [
+                    new JournalResourceEffect
+                    {
+                        Kind = ResourceKind.GitBranch,
+                        Id = "feature/3260",
+                        Intent = ResourceIntent.EnsurePresent,
+                        Mutation = ResourceMutation.CreatedNow,
+                        PolyphonyOwned = true,
+                    },
+                ]);
+
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Drift(3260));
+
+            exitCode.ShouldBe(ExitCodes.Success);
+            output.ShouldContain("\"status\"");
+            output.ShouldContain("\"root_id\"");
+            output.ShouldContain("\"findings\"");
+            output.ShouldContain("\"summary\"");
+            output.ShouldContain("\"classification\"");
+            output.ShouldContain("\"expected_state\"");
+            output.ShouldContain("\"actual_state\"");
+            output.ShouldContain("\"polyphony_owned\"");
+
+            AssertNoPascalCase(output, "Status");
+            AssertNoPascalCase(output, "RootId");
+            AssertNoPascalCase(output, "Findings");
+            AssertNoPascalCase(output, "Summary");
+            AssertNoPascalCase(output, "ExpectedState");
+            AssertNoPascalCase(output, "ActualState");
+            AssertNoPascalCase(output, "PolyphonyOwned");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalDrift_NullFieldsOmitted_WhenWritingNull()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_261).WithType(EpicType).WithTitle("Drift Nulls").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalDriftCommand(
+            new StubResourceObserver(
+                new ResourceObservationBatch
+                {
+                    Kind = ResourceKind.GitBranch,
+                    Observations =
+                    [
+                        new ObservedResourceState
+                        {
+                            Kind = ResourceKind.GitBranch,
+                            Id = "feature/3261",
+                            Exists = true,
+                            MatchesExpectedState = true,
+                            ActualState = null,
+                        },
+                    ],
+                    DiscoveredResources = [],
+                }));
+        try
+        {
+            await SeedJournalEntryAsync(
+                store,
+                runId: "run-drift-null",
+                rootId: 3261,
+                workItemId: 3261,
+                action: "branch_ensure_feature",
+                target: "feature/3261",
+                startedAt: 1_700_000_000_100,
+                effects:
+                [
+                    new JournalResourceEffect
+                    {
+                        Kind = ResourceKind.GitBranch,
+                        Id = "feature/3261",
+                        Intent = ResourceIntent.EnsurePresent,
+                        Mutation = ResourceMutation.NoChangedAlreadySatisfied,
+                        PolyphonyOwned = true,
+                    },
+                ]);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Drift(3261));
+
+            output.ShouldNotContain("\"actual_state\"");
+            output.ShouldNotContain("\"platform\"");
+            output.ShouldNotContain("\"parent_id\"");
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalDrift_DeserializationRoundTrip_FieldsMapped()
+    {
+        await SeedAsync(new WorkItemBuilder().WithId(3_262).WithType(EpicType).WithTitle("Drift Roundtrip").WithState(InProgressState).Build());
+        var (cmd, store, dispose) = CreateJournalDriftCommand(
+            new StubResourceObserver(
+                new ResourceObservationBatch
+                {
+                    Kind = ResourceKind.AdoWorkItem,
+                    Observations =
+                    [
+                        new ObservedResourceState
+                        {
+                            Kind = ResourceKind.AdoWorkItem,
+                            Id = "workitem:3262",
+                            Exists = false,
+                            MatchesExpectedState = false,
+                            ActualState = "missing",
+                        },
+                    ],
+                    DiscoveredResources = [],
+                }));
+        try
+        {
+            await SeedJournalEntryAsync(
+                store,
+                runId: "run-drift-roundtrip",
+                rootId: 3262,
+                workItemId: 3262,
+                action: "workitem_snapshot",
+                target: "workitem:3262",
+                startedAt: 1_700_000_000_200,
+                effects:
+                [
+                    new JournalResourceEffect
+                    {
+                        Kind = ResourceKind.AdoWorkItem,
+                        Id = "workitem:3262",
+                        Intent = ResourceIntent.EnsurePresent,
+                        Mutation = ResourceMutation.NoChangedAlreadySatisfied,
+                        PolyphonyOwned = true,
+                    },
+                ]);
+
+            var (_, output) = await CaptureConsoleAsync(() => cmd.Drift(3262));
+            var result = JsonSerializer.Deserialize(output, PolyphonyJsonContext.Default.DriftResult);
+
+            result.ShouldNotBeNull();
+            result.RootId.ShouldBe(3262);
+            result.Findings.ShouldHaveSingleItem();
+            result.Findings[0].Kind.ShouldBe(ResourceKind.AdoWorkItem);
+            result.Findings[0].Classification.ShouldBe(DriftClassifications.ExternalDelete);
+            result.Summary.ExternalDelete.ShouldBe(1);
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
+    [Fact]
+    public async Task JournalDrift_NotFound_ReturnsErrorJson_WithCacheErrorExitCode()
+    {
+        var (cmd, _, dispose) = CreateJournalDriftCommand();
+        try
+        {
+            var (exitCode, output) = await CaptureConsoleAsync(() => cmd.Drift(99_996));
+
+            exitCode.ShouldBe(ExitCodes.CacheError);
+            exitCode.ShouldBe(3);
+
+            var doc = JsonDocument.Parse(output);
+            doc.RootElement.GetProperty("error").GetString().ShouldNotBeNullOrEmpty();
+            doc.RootElement.GetProperty("work_item_id").GetInt32().ShouldBe(99_996);
+        }
+        finally
+        {
+            dispose();
+        }
+    }
+
     // =========================================================================
     // Schema renames — JSON contract
     // =========================================================================
@@ -931,36 +1140,46 @@ public sealed class JsonOutputContractTests : CommandTestBase
         var hierarchyCmd = CreateHierarchyCommand();
         var planCmd = CreatePlanCommands();
         var nextReadyCmd = CreateStateCommands();
+        var (journalDriftCmd, _, driftDispose) = CreateJournalDriftCommand();
         using var fx = new ConductorDirFixture();
 
-        var (validateExit, validateOutput) = await CaptureConsoleAsync(() => validateCmd.Validate(missingId, "begin_planning"));
-        var (hierarchyExit, hierarchyOutput) = await CaptureConsoleAsync(() => hierarchyCmd.Hierarchy(missingId));
-        var (loadTypeExit, loadTypeOutput) = await CaptureConsoleAsync(() => planCmd.LoadType(missingId, fx.ConfigDir));
-        var (nextReadyExit, nextReadyOutput) = await CaptureConsoleAsync(() => nextReadyCmd.NextReady(missingId));
-
-        // All four operator-facing commands should return CacheError (3) on missing work item.
-        validateExit.ShouldBe(ExitCodes.CacheError);
-        hierarchyExit.ShouldBe(ExitCodes.CacheError);
-        loadTypeExit.ShouldBe(ExitCodes.CacheError);
-        nextReadyExit.ShouldBe(ExitCodes.CacheError);
-
-        // All four should produce valid JSON with an "error" field.
-        // Validate/Hierarchy/NextReady include "work_item_id"; LoadType emits its own shape
-        // (PlanLoadTypeResult with empty type/definition + error), so we only assert the
-        // common "error" string contract here.
-        foreach (var output in new[] { validateOutput, hierarchyOutput, loadTypeOutput, nextReadyOutput })
+        try
         {
-            var doc = JsonDocument.Parse(output);
-            doc.RootElement.TryGetProperty("error", out var errorProp).ShouldBeTrue();
-            errorProp.GetString().ShouldNotBeNullOrEmpty();
+            var (validateExit, validateOutput) = await CaptureConsoleAsync(() => validateCmd.Validate(missingId, "begin_planning"));
+            var (hierarchyExit, hierarchyOutput) = await CaptureConsoleAsync(() => hierarchyCmd.Hierarchy(missingId));
+            var (loadTypeExit, loadTypeOutput) = await CaptureConsoleAsync(() => planCmd.LoadType(missingId, fx.ConfigDir));
+            var (nextReadyExit, nextReadyOutput) = await CaptureConsoleAsync(() => nextReadyCmd.NextReady(missingId));
+            var (journalDriftExit, journalDriftOutput) = await CaptureConsoleAsync(() => journalDriftCmd.Drift(missingId));
+
+            // All five operator-facing commands should return CacheError (3) on missing work item.
+            validateExit.ShouldBe(ExitCodes.CacheError);
+            hierarchyExit.ShouldBe(ExitCodes.CacheError);
+            loadTypeExit.ShouldBe(ExitCodes.CacheError);
+            nextReadyExit.ShouldBe(ExitCodes.CacheError);
+            journalDriftExit.ShouldBe(ExitCodes.CacheError);
+
+            // All five should produce valid JSON with an "error" field.
+            // Validate/Hierarchy/NextReady/JournalDrift include "work_item_id"; LoadType emits its own shape
+            // (PlanLoadTypeResult with empty type/definition + error), so we only assert the
+            // common "error" string contract here.
+            foreach (var output in new[] { validateOutput, hierarchyOutput, loadTypeOutput, nextReadyOutput, journalDriftOutput })
+            {
+                var doc = JsonDocument.Parse(output);
+                doc.RootElement.TryGetProperty("error", out var errorProp).ShouldBeTrue();
+                errorProp.GetString().ShouldNotBeNullOrEmpty();
+            }
+
+            // Validate/Hierarchy/NextReady/JournalDrift additionally guarantee the work_item_id field.
+            foreach (var output in new[] { validateOutput, hierarchyOutput, nextReadyOutput, journalDriftOutput })
+            {
+                var doc = JsonDocument.Parse(output);
+                doc.RootElement.TryGetProperty("work_item_id", out var idProp).ShouldBeTrue();
+                idProp.GetInt32().ShouldBe(missingId);
+            }
         }
-
-        // Validate/Hierarchy/NextReady additionally guarantee the work_item_id field.
-        foreach (var output in new[] { validateOutput, hierarchyOutput, nextReadyOutput })
+        finally
         {
-            var doc = JsonDocument.Parse(output);
-            doc.RootElement.TryGetProperty("work_item_id", out var idProp).ShouldBeTrue();
-            idProp.GetInt32().ShouldBe(missingId);
+            driftDispose();
         }
     }
 
@@ -1566,7 +1785,26 @@ public sealed class JsonOutputContractTests : CommandTestBase
             () => { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } });
     }
 
-    private static async Task<long> SeedJournalEntryAsync(JournalStore store, string runId, int? rootId, int? workItemId, string action, string target, long startedAt)
+    private (JournalDriftCommand Cmd, JournalStore Store, Action Dispose) CreateJournalDriftCommand(params IResourceObserver[] observers)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"polyphony-journal-drift-contract-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var store = new JournalStore(Path.Combine(dir, ".polyphony-state", "journal.db"));
+        return (
+            new JournalDriftCommand(store, Repository, new JournalDriftAnalyzer(observers)),
+            store,
+            () => { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } });
+    }
+
+    private static async Task<long> SeedJournalEntryAsync(
+        JournalStore store,
+        string runId,
+        int? rootId,
+        int? workItemId,
+        string action,
+        string target,
+        long startedAt,
+        IReadOnlyList<JournalResourceEffect>? effects = null)
     {
         var actionId = await store.RecordStartAsync(
             new JournalEntryStart
@@ -1580,7 +1818,7 @@ public sealed class JsonOutputContractTests : CommandTestBase
             },
             CancellationToken.None);
 
-        await store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, null, CancellationToken.None);
+        await store.RecordEndAsync(actionId, JournalOutcome.Success, null, null, null, effects, CancellationToken.None);
         return actionId;
     }
 
@@ -1595,6 +1833,16 @@ public sealed class JsonOutputContractTests : CommandTestBase
         public Task<IReadOnlyList<JournalEntry>> QueryAsync(JournalQuery query, CancellationToken ct) => throw new InvalidOperationException(queryError ?? "query failed");
 
         public Task ExportAsync(string destinationPath, CancellationToken ct) => throw new InvalidOperationException(exportError ?? "export failed");
+    }
+
+    private sealed class StubResourceObserver(ResourceObservationBatch batch) : IResourceObserver
+    {
+        public string Kind => batch.Kind;
+        public bool CanObserve => true;
+        public string? DeferredReason => null;
+
+        public Task<ResourceObservationBatch> ObserveAsync(ResourceObservationRequest request, CancellationToken ct)
+            => Task.FromResult(batch);
     }
 
     private WorklistCommands CreateWorklistCommands()

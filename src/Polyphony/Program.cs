@@ -25,6 +25,7 @@ app.Add<ValidateCommand>();
 app.Add<ValidateConfigCommand>();
 app.Add<HierarchyCommand>();
 app.Add<JournalCommands>();
+app.Add<JournalDriftCommand>();
 app.Add<HealthCommand>();
 app.Add<StatusCommand>();
 app.Add<PlanCommands>("plan");
