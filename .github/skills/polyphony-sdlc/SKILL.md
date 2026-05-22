@@ -792,7 +792,7 @@ Per-type knob in `process-config.yaml`:
 
 ```yaml
 types:
-  Feature:
+  <YourPlannableType>:
     facets: [plannable, implementable]
     execution_mode: plan_then_implement   # default: parallel
 ```
