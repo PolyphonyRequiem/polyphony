@@ -119,8 +119,145 @@ public sealed partial class ResetCommands
             };
         }
 
+        // W12 (AB#3293): regardless of pipeline outcome, attempt to
+        // tombstone every active lineage for the root. Tombstoning is
+        // strictly local journal bookkeeping; it does not depend on
+        // remote/twig cleanup actually succeeding. Run it best-effort
+        // — a journal hiccup here must not flip a successful reset
+        // into a failure (the watermark already advanced).
+        var lineageResult = await RunLineageRetireAsync(root, execute, ct).ConfigureAwait(false);
+        var stepsCompleted = result.StepsCompleted.ToList();
+        var stepsFailed = result.StepsFailed.ToList();
+        if (lineageResult.Success)
+            stepsCompleted.Add("lineages");
+        else
+            stepsFailed.Add("lineages");
+        result = result with
+        {
+            Lineages = lineageResult,
+            StepsCompleted = stepsCompleted,
+            StepsFailed = stepsFailed,
+        };
+
         Console.WriteLine(JsonSerializer.Serialize(result, PolyphonyJsonContext.Default.ResetRootResult));
         return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// W12 (AB#3293): Retire every active (non-tombstoned) lineage
+    /// for <paramref name="root"/>. Dry-run reports what WOULD be
+    /// retired without writing; execute mode writes
+    /// <c>retired_at</c> + reason to each row.
+    ///
+    /// <para>Reset writes a tombstone, not a delete, so future runs
+    /// can see what lineages existed (for diagnostics, attach,
+    /// reconcile) while routing verbs treat the retired rows as
+    /// foreign.</para>
+    /// </summary>
+    private async Task<Polyphony.Models.LineageRetireResult> RunLineageRetireAsync(int root, bool execute, CancellationToken ct)
+    {
+        const string Reason = "reset root";
+        if (_journalStore is NullJournalStore)
+        {
+            return new Polyphony.Models.LineageRetireResult
+            {
+                Root = root,
+                RunId = null,
+                AllActive = true,
+                Executed = execute,
+                Reason = Reason,
+                RetiredRunIds = [],
+                SkippedRunIds = [],
+                Success = true,
+            };
+        }
+
+        IReadOnlyList<JournalLineage> lineages;
+        try
+        {
+            lineages = await _journalStore.GetLineagesAsync(root, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return new Polyphony.Models.LineageRetireResult
+            {
+                Root = root,
+                RunId = null,
+                AllActive = true,
+                Executed = execute,
+                Reason = Reason,
+                RetiredRunIds = [],
+                SkippedRunIds = [],
+                Success = false,
+                Error = $"Failed to enumerate lineages: {ex.Message}",
+            };
+        }
+
+        var active = lineages.Where(l => l.RetiredAt is null).ToList();
+        var alreadyRetired = lineages
+            .Where(l => l.RetiredAt is not null)
+            .Select(l => l.RunId)
+            .ToList();
+        if (active.Count == 0)
+        {
+            return new Polyphony.Models.LineageRetireResult
+            {
+                Root = root,
+                RunId = null,
+                AllActive = true,
+                Executed = execute,
+                Reason = Reason,
+                RetiredRunIds = [],
+                SkippedRunIds = alreadyRetired,
+                Success = true,
+            };
+        }
+
+        var retired = new List<string>();
+        if (execute)
+        {
+            foreach (var lineage in active)
+            {
+                try
+                {
+                    var didRetire = await _journalStore.RetireLineageAsync(
+                        lineage.RunId, root, Reason, ct).ConfigureAwait(false);
+                    if (didRetire) retired.Add(lineage.RunId);
+                }
+                catch (Exception ex)
+                {
+                    return new Polyphony.Models.LineageRetireResult
+                    {
+                        Root = root,
+                        RunId = null,
+                        AllActive = true,
+                        Executed = true,
+                        Reason = Reason,
+                        RetiredRunIds = retired,
+                        SkippedRunIds = alreadyRetired,
+                        Success = false,
+                        Error = $"Failed to retire '{lineage.RunId}': {ex.Message}",
+                    };
+                }
+            }
+        }
+        else
+        {
+            // Dry-run: report what WOULD be retired.
+            retired.AddRange(active.Select(l => l.RunId));
+        }
+
+        return new Polyphony.Models.LineageRetireResult
+        {
+            Root = root,
+            RunId = null,
+            AllActive = true,
+            Executed = execute,
+            Reason = Reason,
+            RetiredRunIds = retired,
+            SkippedRunIds = alreadyRetired,
+            Success = true,
+        };
     }
 
     private async Task<ResetRootResult> ResetRootPatternCoreAsync(

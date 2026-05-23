@@ -52,7 +52,8 @@ public sealed partial class ResetCommands(
     Polyphony.Routing.HierarchyWalker walker,
     RunContext? runContext = null,
     JournaledActionDecorator? journalDecorator = null,
-    ProjectionResetExecutor? projectionResetExecutor = null)
+    ProjectionResetExecutor? projectionResetExecutor = null,
+    IJournalStore? journalStore = null)
 {
     private readonly ITwigClient _twig = twig;
     private readonly IGitClient _git = git;
@@ -62,6 +63,7 @@ public sealed partial class ResetCommands(
     private readonly ProjectionResetExecutor? _projectionResetExecutor = projectionResetExecutor;
     private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
     private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
+    private readonly IJournalStore _journalStore = journalStore ?? JournalCommandSupport.NullStore;
 
     /// <summary>
     /// Canonical root-scoped branch prefix set for ref classes whose

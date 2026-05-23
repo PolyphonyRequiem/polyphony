@@ -117,4 +117,19 @@ public sealed record LineageObservation
     /// callers highlight the "you are here" row in renderings.
     /// </summary>
     public required bool IsCurrent { get; init; }
+
+    /// <summary>
+    /// W12 (AB#3293): unix-ms tombstone timestamp from the
+    /// <c>journal_lineages</c> table, or <c>null</c> when the lineage
+    /// is still active. Routing verbs treat tombstoned rows as
+    /// foreign even when they belong to lineages that produced rows
+    /// in <c>actions</c>.
+    /// </summary>
+    public long? RetiredAt { get; init; }
+
+    /// <summary>
+    /// W12 (AB#3293): operator-supplied retirement reason, or
+    /// <c>null</c> when none was provided / the lineage is active.
+    /// </summary>
+    public string? RetiredReason { get; init; }
 }

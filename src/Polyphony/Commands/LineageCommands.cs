@@ -29,7 +29,7 @@ namespace Polyphony.Commands;
 /// observed in the existing <c>actions</c> table".</para>
 /// </summary>
 [VerbGroup("lineage")]
-public sealed class LineageCommands(
+public sealed partial class LineageCommands(
     RunContext runContext,
     IJournalStore journalStore)
 {
@@ -112,7 +112,9 @@ public sealed class LineageCommands(
     /// Walk the journal for every distinct run id under <paramref name="rootId"/>,
     /// counting rows and bounding first/last activity timestamps so a
     /// triage operator can spot "yesterday's stuck run" without
-    /// running raw SQL.
+    /// running raw SQL. Also merges in W11's <c>journal_lineages</c>
+    /// rows so retired lineages and lineages-with-no-actions surface
+    /// alongside lineages-with-actions.
     /// </summary>
     private async Task<IReadOnlyList<LineageObservation>> ReadLineagesAsync(int rootId, CancellationToken ct)
     {
@@ -131,21 +133,57 @@ public sealed class LineageCommands(
             // remaining inputs.
             return Array.Empty<LineageObservation>();
         }
-        if (rows.Count == 0) return Array.Empty<LineageObservation>();
 
-        var groups = rows
-            .GroupBy(r => r.RunId, StringComparer.Ordinal)
-            .Select(g => new LineageObservation
+        IReadOnlyList<JournalLineage> tombstones;
+        try
+        {
+            tombstones = await journalStore.GetLineagesAsync(rootId, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            tombstones = Array.Empty<JournalLineage>();
+        }
+
+        var byRunId = new Dictionary<string, LineageObservation>(StringComparer.Ordinal);
+        foreach (var group in rows.GroupBy(r => r.RunId, StringComparer.Ordinal))
+        {
+            byRunId[group.Key] = new LineageObservation
             {
-                RunId = g.Key,
-                RowCount = g.Count(),
-                FirstSeenAt = g.Min(r => r.StartedAt),
-                LastSeenAt = g.Max(r => r.FinishedAt ?? r.StartedAt),
-                IsCurrent = string.Equals(g.Key, runContext.RunId, StringComparison.Ordinal),
-            })
+                RunId = group.Key,
+                RowCount = group.Count(),
+                FirstSeenAt = group.Min(r => r.StartedAt),
+                LastSeenAt = group.Max(r => r.FinishedAt ?? r.StartedAt),
+                IsCurrent = string.Equals(group.Key, runContext.RunId, StringComparison.Ordinal),
+            };
+        }
+        // Merge in W11 lineage rows. A lineage may exist in
+        // journal_lineages without any actions (rare — e.g. attach
+        // recorded a stub, or the lineage was retired before any
+        // mutating action). Such lineages must still appear in the
+        // status report so operators can see them.
+        foreach (var tombstone in tombstones)
+        {
+            if (!byRunId.TryGetValue(tombstone.RunId, out var existing))
+            {
+                existing = new LineageObservation
+                {
+                    RunId = tombstone.RunId,
+                    RowCount = 0,
+                    FirstSeenAt = tombstone.CreatedAt,
+                    LastSeenAt = tombstone.RetiredAt ?? tombstone.CreatedAt,
+                    IsCurrent = string.Equals(tombstone.RunId, runContext.RunId, StringComparison.Ordinal),
+                };
+            }
+            byRunId[tombstone.RunId] = existing with
+            {
+                RetiredAt = tombstone.RetiredAt,
+                RetiredReason = tombstone.RetiredReason,
+            };
+        }
+
+        return byRunId.Values
             .OrderBy(o => o.RunId, StringComparer.Ordinal)
             .ToList();
-        return groups;
     }
 
     private string? TryResolveManifestPath(int rootId)

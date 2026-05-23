@@ -55,6 +55,7 @@ namespace Polyphony;
 [JsonSerializable(typeof(LineageStatusResult))]
 [JsonSerializable(typeof(LineageObservation))]
 [JsonSerializable(typeof(LineageObservation[]))]
+[JsonSerializable(typeof(LineageRetireResult))]
 [JsonSerializable(typeof(PlanWritePlanPayload))]
 [JsonSerializable(typeof(PlanCommitAndPushPayload))]
 [JsonSerializable(typeof(PlanSeedChildrenPayload))]

@@ -22,5 +22,14 @@ public sealed record ResetRootResult
     public ResetManifestResult? Manifest { get; init; }
     public ResetStateResult? State { get; init; }
     public bool StateSkipped { get; init; }
+
+    /// <summary>
+    /// W12 (AB#3293): outcome of the journal-lineage retire step.
+    /// Always populated (with <c>RetiredRunIds = []</c>) when reset
+    /// runs to success; <c>null</c> when the pipeline halted before
+    /// the lineages step or when the journal is the null store.
+    /// </summary>
+    public Polyphony.Models.LineageRetireResult? Lineages { get; init; }
+
     public string? Error { get; init; }
 }
