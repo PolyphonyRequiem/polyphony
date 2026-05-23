@@ -50,6 +50,7 @@ app.Add<AgentCommands>("agent");
 app.Add<ResearchCommands>("research");
 app.Add<ResetCommands>("reset");
 app.Add<LineageCommands>("lineage");
+app.Add<ReconcileCommand>();
 
 // Set of registered top-level verb names + verb-group prefixes. Used by the
 // Layer 2 unknown-verb pre-check below — CAF v5 treats an unknown verb the
@@ -61,7 +62,7 @@ var knownVerbRoots = new HashSet<string>(StringComparer.Ordinal)
     "validate", "validate-config", "hierarchy", "journal", "health", "status",
     "plan", "policy", "guidance", "branch", "state", "pr", "scope", "root",
     "requirements", "merge-group", "manifest", "lock", "worktree", "worklist", "edges", "agent",
-    "research", "reset",
+    "research", "reset", "reconcile", "lineage",
     // Built-ins / pass-throughs handled by CAF itself.
     "--help", "-h", "--version",
 };
