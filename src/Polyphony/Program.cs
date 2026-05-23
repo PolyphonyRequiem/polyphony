@@ -49,6 +49,7 @@ app.Add<EdgesCommands>("edges");
 app.Add<AgentCommands>("agent");
 app.Add<ResearchCommands>("research");
 app.Add<ResetCommands>("reset");
+app.Add<LineageCommands>("lineage");
 
 // Set of registered top-level verb names + verb-group prefixes. Used by the
 // Layer 2 unknown-verb pre-check below — CAF v5 treats an unknown verb the
