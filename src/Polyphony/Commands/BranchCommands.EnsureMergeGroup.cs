@@ -87,6 +87,32 @@ public sealed partial class BranchCommands
                         ? await TryGetCurrentBranchAsync(innerCt).ConfigureAwait(false)
                         : null;
 
+                    if (localExisted || remoteExisted)
+                    {
+                        var lineageReason = await CheckBranchAdoptionLineageAsync(
+                            "branch_ensure_merge_group", branch, innerCt).ConfigureAwait(false);
+                        if (lineageReason is not null)
+                        {
+                            payload = new BranchEnsureMergeGroupPayload
+                            {
+                                RootId = rootId,
+                                MergeGroupPath = path.Canonical,
+                                Depth = path.Depth,
+                                BranchName = branch,
+                                BaseBranch = baseBranch,
+                                ResultAction = "error",
+                                Succeeded = false,
+                                WasMutated = false,
+                                WasCreated = false,
+                                WasPushed = false,
+                                BaseFetched = false,
+                                Error = "foreign_lineage: " + lineageReason,
+                            };
+                            EmitMgError(rootId, mgPath, payload.Error, branch: branch, baseBranch: baseBranch, depth: path.Depth);
+                            return ExitCodes.RoutingFailure;
+                        }
+                    }
+
                     string action;
                     bool pushed = false;
                     string? createdFrom = null;

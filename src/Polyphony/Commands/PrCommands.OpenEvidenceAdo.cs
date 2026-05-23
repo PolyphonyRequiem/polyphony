@@ -257,6 +257,19 @@ public sealed partial class PrCommands
 
             if (existing is not null)
             {
+                // W10 (AB#3291): refuse foreign-lineage adoption.
+                var lineageReason = await CheckAdoPrLineageAsync(
+                    organization, project, repository, existing.PullRequestId,
+                    bodyHasFrontMatter: false,
+                    journalAction: "pr_open_evidence_pr",
+                    journalTarget: BranchPairJournalTarget(headBranch, resolvedBase),
+                    ct).ConfigureAwait(false);
+                if (lineageReason is not null)
+                {
+                    return EvidenceAdoOutcome.Failure(headBranch, resolvedBase,
+                        "foreign_lineage", "foreign_lineage: " + lineageReason);
+                }
+
                 return new EvidenceAdoOutcome(
                     PrNumber: existing.PullRequestId,
                     PrUrl: BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),

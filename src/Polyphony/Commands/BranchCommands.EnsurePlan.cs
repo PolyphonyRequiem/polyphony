@@ -132,6 +132,34 @@ public sealed partial class BranchCommands
                         ? await TryGetCurrentBranchAsync(innerCt).ConfigureAwait(false)
                         : null;
 
+                    if (localExisted || remoteExisted)
+                    {
+                        var lineageReason = await CheckBranchAdoptionLineageAsync(
+                            "branch_ensure_plan", branch, innerCt).ConfigureAwait(false);
+                        if (lineageReason is not null)
+                        {
+                            payload = new BranchEnsurePlanPayload
+                            {
+                                RootId = rootId,
+                                WorkItemId = itemId,
+                                ParentItemId = parent,
+                                IsRootPlan = isRootPlan,
+                                BranchName = branch,
+                                BaseBranch = baseBranch,
+                                ResultAction = "error",
+                                Succeeded = false,
+                                WasMutated = false,
+                                WasCreated = false,
+                                WasPushed = false,
+                                BaseFetched = false,
+                                Error = "foreign_lineage: " + lineageReason,
+                            };
+                            EmitPlanError(rootId, itemId, parentItemId, payload.Error,
+                                branch: branch, baseBranch: baseBranch, isRootPlan: isRootPlan);
+                            return ExitCodes.RoutingFailure;
+                        }
+                    }
+
                     string action;
                     bool pushed = false;
                     string? createdFrom = null;

@@ -219,6 +219,34 @@ public sealed partial class PrCommands
                     if (existing.Count > 0)
                     {
                         var found = existing[0];
+
+                        // W10 (AB#3291): refuse foreign-lineage adoption.
+                        var lineageReason = await CheckGhMergeLineageAsync(
+                            slug, found.Number, bodyHasFrontMatter: false,
+                            journalAction: "pr_open_evidence_pr",
+                            journalTarget: BranchPairJournalTarget(headBranch, resolvedBase),
+                            innerCt).ConfigureAwait(false);
+                        if (lineageReason is not null)
+                        {
+                            payload = new PrOpenEvidencePrPayload
+                            {
+                                WorkItemId = workItem,
+                                RootId = effectiveRoot,
+                                HeadBranch = headBranch,
+                                BaseBranch = resolvedBase,
+                                RepoSlug = slug,
+                                PrNumber = found.Number,
+                                PrUrl = found.Url ?? "",
+                                Title = prTitle,
+                                ResultAction = "error",
+                                Succeeded = false,
+                                WasMutated = false,
+                                Error = "foreign_lineage: " + lineageReason,
+                            };
+                            EmitEvidenceError(workItem, effectiveRoot, payload.Error, headBranch: headBranch, baseBranch: resolvedBase);
+                            return ExitCodes.RoutingFailure;
+                        }
+
                         var result = new PrOpenEvidenceResult
                         {
                             PrNumber = found.Number,

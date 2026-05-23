@@ -297,4 +297,55 @@ public sealed partial class PrCommands
             ct).ConfigureAwait(false);
         return decision.Allowed ? null : decision.Reason;
     }
+
+    /// <summary>
+    /// W10 (AB#3291) ADO analog of <see cref="CheckGhMergeLineageAsync"/>.
+    /// Used by both the ADO merge verbs and the ADO open verbs at the
+    /// reused-existing-PR branch. Body comes from
+    /// <see cref="IAdoClient.GetPullRequestPollDataAsync"/>.
+    /// </summary>
+    internal async Task<string?> CheckAdoPrLineageAsync(
+        string organization,
+        string project,
+        string repository,
+        int prNumber,
+        bool bodyHasFrontMatter,
+        string journalAction,
+        string journalTarget,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(_runContext.RunId) || _runContext.HasManualLineage)
+        {
+            return null;
+        }
+
+        if (ado is null)
+        {
+            return null;
+        }
+
+        string? body = null;
+        try
+        {
+            var poll = await ado.GetPullRequestPollDataAsync(
+                organization, project, repository, prNumber, ct).ConfigureAwait(false);
+            body = poll?.Body;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception)
+        {
+            // Fail open — same posture as the GH analog.
+        }
+
+        var decision = await PrLineageGuard.CheckAsync(
+            body: body,
+            currentRunId: _runContext.RunId,
+            isManualLineage: _runContext.HasManualLineage,
+            bodyHasFrontMatter: bodyHasFrontMatter,
+            journal: _journalStore,
+            journalAction: journalAction,
+            journalTarget: journalTarget,
+            ct).ConfigureAwait(false);
+        return decision.Allowed ? null : decision.Reason;
+    }
 }

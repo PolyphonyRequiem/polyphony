@@ -65,6 +65,38 @@ public sealed partial class BranchCommands
                         ? await TryGetCurrentBranchAsync(innerCt).ConfigureAwait(false)
                         : null;
 
+                    if (localExisted || remoteExisted)
+                    {
+                        var lineageReason = await CheckBranchAdoptionLineageAsync(
+                            "branch_ensure_feature", branch, innerCt).ConfigureAwait(false);
+                        if (lineageReason is not null)
+                        {
+                            payload = new BranchEnsureFeaturePayload
+                            {
+                                RootId = parsedRootId,
+                                WorkItemId = parsedRootId,
+                                BranchName = branch,
+                                BaseBranch = baseBranch,
+                                ResultAction = "error",
+                                Succeeded = false,
+                                WasMutated = false,
+                                WasCreated = false,
+                                WasPushed = false,
+                                Error = "foreign_lineage: " + lineageReason,
+                            };
+                            var foreignResult = new BranchEnsureFeatureResult
+                            {
+                                Branch = branch,
+                                Action = "error",
+                                RemoteExisted = remoteExisted,
+                                Pushed = false,
+                                Error = payload.Error,
+                            };
+                            Console.WriteLine(JsonSerializer.Serialize(foreignResult, PolyphonyJsonContext.Default.BranchEnsureFeatureResult));
+                            return ExitCodes.RoutingFailure;
+                        }
+                    }
+
                     string action;
                     bool pushed = false;
                     string? createdFrom = null;

@@ -183,6 +183,20 @@ public sealed partial class PrCommands
 
                 if (existing is not null)
                 {
+                    // W10 (AB#3291): refuse foreign-lineage adoption.
+                    var lineageReason = await CheckAdoPrLineageAsync(
+                        organization, project, repository, existing.PullRequestId,
+                        bodyHasFrontMatter: false,
+                        journalAction: "pr_open_mg_pr",
+                        journalTarget: BranchPairJournalTarget(headBranch, baseBranch),
+                        innerCt).ConfigureAwait(false);
+                    if (lineageReason is not null)
+                    {
+                        EmitOpenMgAdoError(rootId, mgPath, organization, project, repository, slug,
+                            "foreign_lineage", "foreign_lineage: " + lineageReason, headBranch, baseBranch);
+                        return ExitCodes.Success;
+                    }
+
                     EmitOpenMgAdo(new PrOpenMergeGroupAdoResult
                     {
                         RootId = rootId,

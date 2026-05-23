@@ -91,6 +91,32 @@ public sealed partial class BranchCommands
                         ? await TryGetCurrentBranchAsync(innerCt).ConfigureAwait(false)
                         : null;
 
+                    if (localExisted || remoteExisted)
+                    {
+                        var lineageReason = await CheckBranchAdoptionLineageAsync(
+                            "branch_ensure_impl", branch, innerCt).ConfigureAwait(false);
+                        if (lineageReason is not null)
+                        {
+                            payload = new BranchEnsureImplPayload
+                            {
+                                RootId = rootId,
+                                WorkItemId = itemId,
+                                MergeGroupPath = path.Canonical,
+                                BranchName = branch,
+                                BaseBranch = baseBranch,
+                                ResultAction = "error",
+                                Succeeded = false,
+                                WasMutated = false,
+                                WasCreated = false,
+                                WasPushed = false,
+                                BaseFetched = false,
+                                Error = "foreign_lineage: " + lineageReason,
+                            };
+                            EmitImplError(rootId, itemId, mgPath, payload.Error, branch: branch, baseBranch: baseBranch);
+                            return ExitCodes.RoutingFailure;
+                        }
+                    }
+
                     string action;
                     bool pushed = false;
                     string? createdFrom = null;
