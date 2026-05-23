@@ -153,6 +153,7 @@ public sealed class JournalEffectContractTests
                 FacetsTagMutated = true,
                 Succeeded = true,
                 WasMutated = true,
+                PlanningCompleted = true,
             }),
             InvokeSelector(typeof(PlanCommands), "SelectPlanRebaseStaleDescendantEffects", new PlanRebaseStaleDescendantPayload
             {

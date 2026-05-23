@@ -206,9 +206,11 @@ public sealed partial class PrCommands
                     var prTitle = string.IsNullOrWhiteSpace(title)
                         ? await ResolveEvidencePrTitleAsync(workItem, innerCt).ConfigureAwait(false)
                         : title;
-                    var prBody = string.IsNullOrWhiteSpace(body)
+                    var rawBody = string.IsNullOrWhiteSpace(body)
                         ? BuildDefaultEvidenceBody(workItem, effectiveRoot, headBranch, resolvedBase)
                         : body;
+                    // W6 (AB#3280): stamp the run-id marker on the first line.
+                    var prBody = PrBodyMarker.EnsureRunIdPrefix(rawBody, _runContext.RunId);
 
                     var existing = await gh.ListPullRequestsAsync(
                         slug,
@@ -217,6 +219,34 @@ public sealed partial class PrCommands
                     if (existing.Count > 0)
                     {
                         var found = existing[0];
+
+                        // W10 (AB#3291): refuse foreign-lineage adoption.
+                        var lineageReason = await CheckGhMergeLineageAsync(
+                            slug, found.Number, bodyHasFrontMatter: false,
+                            journalAction: "pr_open_evidence_pr",
+                            journalTarget: BranchPairJournalTarget(headBranch, resolvedBase),
+                            innerCt).ConfigureAwait(false);
+                        if (lineageReason is not null)
+                        {
+                            payload = new PrOpenEvidencePrPayload
+                            {
+                                WorkItemId = workItem,
+                                RootId = effectiveRoot,
+                                HeadBranch = headBranch,
+                                BaseBranch = resolvedBase,
+                                RepoSlug = slug,
+                                PrNumber = found.Number,
+                                PrUrl = found.Url ?? "",
+                                Title = prTitle,
+                                ResultAction = "error",
+                                Succeeded = false,
+                                WasMutated = false,
+                                Error = "foreign_lineage: " + lineageReason,
+                            };
+                            EmitEvidenceError(workItem, effectiveRoot, payload.Error, headBranch: headBranch, baseBranch: resolvedBase);
+                            return ExitCodes.RoutingFailure;
+                        }
+
                         var result = new PrOpenEvidenceResult
                         {
                             PrNumber = found.Number,

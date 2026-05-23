@@ -21,11 +21,13 @@ namespace Polyphony.Commands;
 /// <param name="RequestsParentChange">Value of the <c>requests_parent_change</c> flag (false when not Present).</param>
 /// <param name="AncestorPlanGenerations">Snapshot map (empty when not Present).</param>
 /// <param name="ErrorDetail">Reason for malformed status; null otherwise.</param>
+/// <param name="RunId">W7 (AB#3281): value of the <c>run_id</c> key when Present and well-formed; null otherwise.</param>
 public sealed record PlanPrFrontMatterStrictResult(
     FrontMatterStatus Status,
     bool RequestsParentChange,
     IReadOnlyDictionary<string, int> AncestorPlanGenerations,
-    string? ErrorDetail);
+    string? ErrorDetail,
+    string? RunId = null);
 
 /// <summary>
 /// Minimal front-matter parser for plan-PR bodies. Plan PRs (opened by
@@ -96,11 +98,13 @@ internal static class PlanPrFrontMatter
 
             var requestsParent = ReadBool(root, "requests_parent_change");
             var generations = ReadIntMap(root, "ancestor_plan_generations");
+            var runId = ReadString(root, "run_id");
 
             return new PrPollMetadata
             {
                 RequestsParentChange = requestsParent,
                 AncestorPlanGenerations = generations,
+                RunId = runId,
             };
         }
         catch
@@ -272,7 +276,24 @@ internal static class PlanPrFrontMatter
             generations = dict;
         }
 
-        return new PlanPrFrontMatterStrictResult(FrontMatterStatus.Present, requestsParent, generations, null);
+        // W7 (AB#3281): optional run_id. Strict parse — when present
+        // it must be a non-empty plain scalar; anything else is Malformed
+        // so a bad lineage stamp blocks rather than silently degrades.
+        string? runId = null;
+        if (root.Children.TryGetValue(new YamlScalarNode("run_id"), out var ridNode))
+        {
+            if (ridNode is not YamlScalarNode ridScalar || string.IsNullOrEmpty(ridScalar.Value))
+            {
+                return new PlanPrFrontMatterStrictResult(
+                    FrontMatterStatus.Malformed,
+                    false,
+                    emptyDict,
+                    "'run_id' must be a non-empty YAML scalar.");
+            }
+            runId = ridScalar.Value;
+        }
+
+        return new PlanPrFrontMatterStrictResult(FrontMatterStatus.Present, requestsParent, generations, null, runId);
     }
 
     private static bool ReadBool(YamlMappingNode root, string key)
@@ -280,6 +301,18 @@ internal static class PlanPrFrontMatter
         if (!root.Children.TryGetValue(new YamlScalarNode(key), out var node)) return false;
         if (node is not YamlScalarNode scalar) return false;
         return string.Equals(scalar.Value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// W7 (AB#3281): lenient scalar read used by the polling-side
+    /// <see cref="Parse"/>. Returns null for any shape that isn't a
+    /// non-empty scalar so a bad front-matter doesn't crash a hot path.
+    /// </summary>
+    private static string? ReadString(YamlMappingNode root, string key)
+    {
+        if (!root.Children.TryGetValue(new YamlScalarNode(key), out var node)) return null;
+        if (node is not YamlScalarNode scalar) return null;
+        return string.IsNullOrEmpty(scalar.Value) ? null : scalar.Value;
     }
 
     private static IReadOnlyDictionary<string, int> ReadIntMap(YamlMappingNode root, string key)
@@ -374,30 +407,41 @@ internal static class PlanPrFrontMatter
         }
 
         var tail = body[match.Length..];
-        var rewritten = SerialiseFrontMatter(strict.RequestsParentChange, newAncestorPlanGenerations) + tail;
+        var rewritten = SerialiseFrontMatter(strict.RequestsParentChange, newAncestorPlanGenerations, strict.RunId) + tail;
         return new FrontMatterReplacement.Replaced(rewritten);
     }
 
     /// <summary>
     /// Emit the canonical front-matter block: opening fence, deterministic
-    /// key order (<c>requests_parent_change</c> first, then
-    /// <c>ancestor_plan_generations</c> with sorted keys), closing fence.
-    /// Output line endings are <c>\n</c>. The closing <c>---</c> is emitted
-    /// WITHOUT a trailing newline — the body tail (appended by the caller)
-    /// carries the line ending that originally followed the closing fence,
-    /// so a CRLF body's tail round-trips byte-exactly and a body whose tail
-    /// is empty (front-matter only, no body) ends with exactly one <c>\n</c>
-    /// after the closing fence.
+    /// key order (<c>requests_parent_change</c>, optional <c>run_id</c>,
+    /// then <c>ancestor_plan_generations</c> with sorted keys), closing
+    /// fence. Output line endings are <c>\n</c>. The closing <c>---</c>
+    /// is emitted WITHOUT a trailing newline — the body tail (appended
+    /// by the caller) carries the line ending that originally followed
+    /// the closing fence, so a CRLF body's tail round-trips byte-exactly
+    /// and a body whose tail is empty (front-matter only, no body) ends
+    /// with exactly one <c>\n</c> after the closing fence.
     /// </summary>
     private static string SerialiseFrontMatter(
         bool requestsParentChange,
-        IReadOnlyDictionary<string, int> generations)
+        IReadOnlyDictionary<string, int> generations,
+        string? runId = null)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("---\n");
         sb.Append("requests_parent_change: ");
         sb.Append(requestsParentChange ? "true" : "false");
         sb.Append('\n');
+        // W7 (AB#3281): emit run_id as a top-level key alongside
+        // requests_parent_change, only when the lineage is known. Omitting
+        // the key on legacy callers keeps round-trip byte-identical for
+        // historical plan PRs.
+        if (!string.IsNullOrEmpty(runId))
+        {
+            sb.Append("run_id: ");
+            sb.Append(runId);
+            sb.Append('\n');
+        }
         sb.Append("ancestor_plan_generations:\n");
         foreach (var kvp in generations.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {

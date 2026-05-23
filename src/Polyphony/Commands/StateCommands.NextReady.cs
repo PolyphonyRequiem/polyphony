@@ -132,6 +132,20 @@ public sealed partial class StateCommands
             return ExitCodes.ConfigError;
         }
 
+        // W8: refuse to trust the polyphony:facets=* tag when the
+        // journal shows this lineage never stamped it but a prior
+        // lineage did. Defends fresh-checkout / cross-machine / reset
+        // scenarios where the tag survived but the run that produced
+        // it did not. See JournalLineageGrounding for the matrix.
+        if (overrideFacets is not null
+            && await JournalLineageGrounding.IsTagForeignAsync(
+                _journalStore, _runContext, workItem, "plan_seed_children", ct).ConfigureAwait(false))
+        {
+            await Console.Error.WriteLineAsync(
+                $"warning: polyphony:facets tag on item {workItem} appears foreign to current lineage '{_runContext.RunId}' — ignoring for routing.").ConfigureAwait(false);
+            overrideFacets = null;
+        }
+
         var resolved = RequirementInputResolver.Resolve(typeConfig, children.Count, overrideFacets);
 
         var derivation = RequirementSetDeriver.Derive(
@@ -1055,6 +1069,16 @@ public sealed partial class StateCommands
                     HasImplementationMergedKind = false,
                     Error = ex.Message,
                 };
+            }
+
+            // W8: same foreign-tag refusal applied to the child rollup
+            // path so a parent's disposition is not poisoned by a
+            // child's stale facets tag.
+            if (overrideFacets is not null
+                && await JournalLineageGrounding.IsTagForeignAsync(
+                    _journalStore, _runContext, child.Id, "plan_seed_children", ct).ConfigureAwait(false))
+            {
+                overrideFacets = null;
             }
 
             var resolved = RequirementInputResolver.Resolve(typeConfig, grandchildren.Count, overrideFacets);

@@ -40,6 +40,7 @@ public sealed class JournalStoreTests : IDisposable
 
         objectNames.ShouldContain("actions");
         objectNames.ShouldContain("journal_effects");
+        objectNames.ShouldContain("journal_lineages");
         objectNames.ShouldContain("schema_version");
         objectNames.ShouldContain("idx_actions_work_item");
         objectNames.ShouldContain("idx_actions_root");
@@ -49,6 +50,7 @@ public sealed class JournalStoreTests : IDisposable
         objectNames.ShouldContain("idx_journal_effects_entry");
         objectNames.ShouldContain("idx_journal_effects_kind_id");
         objectNames.ShouldContain("idx_journal_effects_owned_kind");
+        objectNames.ShouldContain("idx_journal_lineages_root");
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "SELECT version FROM schema_version WHERE id = 1;";

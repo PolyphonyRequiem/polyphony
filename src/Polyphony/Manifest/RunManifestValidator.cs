@@ -1,4 +1,5 @@
 using Polyphony.Branching;
+using Polyphony.Journal;
 
 namespace Polyphony.Manifest;
 
@@ -11,9 +12,32 @@ namespace Polyphony.Manifest;
 public static class RunManifestValidator
 {
     /// <summary>
-    /// The supported manifest schema version.
+    /// The current manifest schema version emitted by new writes
+    /// (post-W2). Schema 1 manifests are still loadable (legacy);
+    /// schema 2 adds the <see cref="RunManifest.RunId"/> field.
     /// </summary>
-    public const int SupportedSchema = 1;
+    public const int CurrentSchema = 2;
+
+    /// <summary>
+    /// Lowest schema version the loader will accept. Anything below
+    /// this is a hard error (no migration path).
+    /// </summary>
+    public const int MinSupportedSchema = 1;
+
+    /// <summary>
+    /// Highest schema version the loader will accept (alias for
+    /// <see cref="CurrentSchema"/>). Kept distinct so a future read-only
+    /// transition window between two schema versions is expressible
+    /// without renaming.
+    /// </summary>
+    public const int MaxSupportedSchema = CurrentSchema;
+
+    /// <summary>
+    /// Back-compat alias for the value most callers historically read.
+    /// Prefer <see cref="CurrentSchema"/> for writes and the
+    /// <c>Min</c>/<c>Max</c> constants for range checks.
+    /// </summary>
+    public const int SupportedSchema = CurrentSchema;
 
     /// <summary>
     /// The supported branch-model version (matches Rev 4 of the ADR).
@@ -29,9 +53,9 @@ public static class RunManifestValidator
 
         var issues = new List<string>();
 
-        if (manifest.Schema != SupportedSchema)
+        if (manifest.Schema < MinSupportedSchema || manifest.Schema > MaxSupportedSchema)
         {
-            issues.Add($"schema must be {SupportedSchema} (got {manifest.Schema}).");
+            issues.Add($"schema must be in [{MinSupportedSchema},{MaxSupportedSchema}] (got {manifest.Schema}).");
         }
 
         if (manifest.BranchModelVersion != SupportedBranchModelVersion)
@@ -42,6 +66,11 @@ public static class RunManifestValidator
         if (manifest.RootId <= 0)
         {
             issues.Add($"root_id must be positive (got {manifest.RootId}).");
+        }
+
+        if (manifest.RunId is not null && !RunIdMint.IsWellFormed(manifest.RunId))
+        {
+            issues.Add($"run_id '{manifest.RunId}' is not a 26-character Crockford-base32 ULID.");
         }
 
         if (string.IsNullOrWhiteSpace(manifest.PlatformProject))
@@ -67,6 +96,29 @@ public static class RunManifestValidator
         ValidateMergedPlanPrs(manifest.MergedPlanPrs, issues);
 
         return issues;
+    }
+
+    /// <summary>
+    /// Returns non-fatal warnings (e.g., legacy schema 1 missing a
+    /// <see cref="RunManifest.RunId"/>) that should be surfaced to
+    /// operators without blocking the load. Always pair with
+    /// <see cref="Validate"/>: warnings DO NOT subsume issues.
+    /// </summary>
+    public static IReadOnlyList<string> CollectWarnings(RunManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+
+        var warnings = new List<string>();
+        if (manifest.Schema >= 2 && string.IsNullOrEmpty(manifest.RunId))
+        {
+            warnings.Add($"schema {manifest.Schema} manifest is missing run_id; new writers should populate it (W2).");
+        }
+        else if (manifest.Schema < 2 && string.IsNullOrEmpty(manifest.RunId))
+        {
+            warnings.Add("legacy schema 1 manifest predates the run_id primitive (W2); resume across processes is best-effort until a fresh init runs.");
+        }
+
+        return warnings;
     }
 
     /// <summary>Throwing variant — used by the loader.</summary>

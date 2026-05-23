@@ -123,4 +123,34 @@ public sealed class PlanPrFrontMatterTests
         meta.RequestsParentChange.ShouldBeTrue();
         meta.AncestorPlanGenerations["root"].ShouldBe(1);
     }
+
+    [Fact]
+    public void Parse_RunIdAbsent_ReturnsNull()
+    {
+        // W7 (AB#3281): lenient parser must tolerate legacy bodies that
+        // pre-date the stamping rollout; absence is the common case.
+        var body = "---\nrequests_parent_change: false\nancestor_plan_generations:\n  root: 1\n---\n";
+        var meta = PlanPrFrontMatter.Parse(body);
+        meta.RunId.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Parse_RunIdValid_RoundTrips()
+    {
+        // W7 (AB#3281): the polling hot path surfaces RunId so callers
+        // can correlate the PR with the run that authored it.
+        var body = "---\nrequests_parent_change: false\nrun_id: 01HZK7Y9ABCDEF0123456789AB\nancestor_plan_generations: {}\n---\n";
+        var meta = PlanPrFrontMatter.Parse(body);
+        meta.RunId.ShouldBe("01HZK7Y9ABCDEF0123456789AB");
+    }
+
+    [Fact]
+    public void Parse_RunIdMalformedMapping_ReturnsNull()
+    {
+        // Lenient: a nested-mapping shape is degenerate but the polling
+        // path should never crash. Surface null and let upstream decide.
+        var body = "---\nrun_id:\n  nested: oops\n---\n";
+        var meta = PlanPrFrontMatter.Parse(body);
+        meta.RunId.ShouldBeNull();
+    }
 }

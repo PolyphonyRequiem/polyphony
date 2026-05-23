@@ -18,6 +18,23 @@ public sealed record ManifestInitResult
     /// <summary>The recorded creator (workflow author / operator).</summary>
     public required string CreatedBy { get; init; }
 
+    /// <summary>
+    /// The lineage ULID stamped on the manifest. Resolved from
+    /// <c>POLYPHONY_RUN_ID</c> when set; otherwise minted at init. The
+    /// launcher exports the same value so every nested
+    /// <c>polyphony</c> subprocess sees the same lineage. See
+    /// AB#3275 / AB#3276 / W1-W2.
+    /// </summary>
+    public string? RunId { get; init; }
+
+    /// <summary>
+    /// How <see cref="RunId"/> was sourced: <c>"env"</c> when the
+    /// launcher's <c>POLYPHONY_RUN_ID</c> was honoured, <c>"minted"</c>
+    /// when init fell back to a fresh ULID, or <c>null</c> on error
+    /// envelopes where the value was never resolved.
+    /// </summary>
+    public string? RunIdSource { get; init; }
+
     /// <summary>The topology hash of the empty merge-group set.</summary>
     public required string TopologyHash { get; init; }
 

@@ -31,4 +31,12 @@ public static class ExitCodes
     /// One or more critical health checks failed (polyphony health).
     /// </summary>
     public const int HealthCheckFailed = 4;
+
+    /// <summary>
+    /// W5 (AB#3279): A mutating verb refused to run because <c>POLYPHONY_RUN_ID</c>
+    /// is unset (the lineage fell back to a process-scoped <c>manual_*</c>
+    /// id). The verb writes no journal rows and emits a structured
+    /// error envelope explaining how to set the env var.
+    /// </summary>
+    public const int MissingRunIdLineage = 5;
 }

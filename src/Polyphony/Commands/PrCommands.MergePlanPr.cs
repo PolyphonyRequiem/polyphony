@@ -387,6 +387,26 @@ public sealed partial class PrCommands
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                 prState: poll.State);
 
+        // ── 6a. Foreign-lineage refusal (W9, AB#3282). The irreversibility
+        // firewall: a head_ref / base_ref match proves we have the right
+        // branch pair, NOT that THIS lineage opened the PR. A foreign PR
+        // (operator-opened, leftover from a prior run, opened by a
+        // parallel manual lineage) must not be merged by the driver.
+        var lineage = await PrLineageGuard.CheckAsync(
+            body: poll.Body,
+            currentRunId: _runContext.RunId,
+            isManualLineage: _runContext.HasManualLineage,
+            bodyHasFrontMatter: true,
+            journal: _journalStore,
+            journalAction: "pr_open_plan_pr",
+            journalTarget: BranchPairJournalTarget(headBranch, baseBranch),
+            ct).ConfigureAwait(false);
+        if (!lineage.Allowed)
+            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "foreign_lineage",
+                lineage.Reason,
+                isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
+                prState: poll.State);
+
         // ── 6b. Stale-generation refusal (P6). Only meaningful for OPEN
         // PRs — for MERGED PRs the merge already happened and we'd just
         // be running the recovery path. Root plans skip the check (no

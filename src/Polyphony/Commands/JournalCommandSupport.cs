@@ -13,6 +13,8 @@ internal static class JournalCommandSupport
     internal static JournaledActionDecorator ResolveDecorator(JournaledActionDecorator? decorator)
         => decorator ?? new JournaledActionDecorator(new NullJournalStore());
 
+    internal static readonly IJournalStore NullStore = new NullJournalStore();
+
     internal static JournaledActionInvocation CreateInvocation(
         RunContext runContext,
         string action,

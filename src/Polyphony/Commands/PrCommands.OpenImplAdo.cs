@@ -195,9 +195,11 @@ public sealed partial class PrCommands
         var prTitle = string.IsNullOrWhiteSpace(title)
             ? await ResolveImplPrTitleAsync(itemId, ct).ConfigureAwait(false)
             : title;
-        var prBody = string.IsNullOrWhiteSpace(body)
+        var rawBody = string.IsNullOrWhiteSpace(body)
             ? BuildDefaultImplBody(rootId, itemId, path.Canonical, headBranch, baseBranch)
             : body;
+        // W6 (AB#3280): stamp the run-id marker on the first line.
+        var prBody = PrBodyMarker.EnsureRunIdPrefix(rawBody, _runContext.RunId);
 
         try
         {
@@ -255,6 +257,19 @@ public sealed partial class PrCommands
 
             if (existing is not null)
             {
+                // W10 (AB#3291): refuse foreign-lineage adoption.
+                var lineageReason = await CheckAdoPrLineageAsync(
+                    organization, project, repository, existing.PullRequestId,
+                    bodyHasFrontMatter: false,
+                    journalAction: "pr_open_impl_pr",
+                    journalTarget: BranchPairJournalTarget(headBranch, baseBranch),
+                    ct).ConfigureAwait(false);
+                if (lineageReason is not null)
+                {
+                    return ImplAdoOutcome.Failure(headBranch, baseBranch,
+                        "foreign_lineage", "foreign_lineage: " + lineageReason);
+                }
+
                 return new ImplAdoOutcome(
                     PrNumber: existing.PullRequestId,
                     PrUrl: BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),

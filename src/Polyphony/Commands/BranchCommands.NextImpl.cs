@@ -142,11 +142,33 @@ public sealed partial class BranchCommands
                         candidates = implementable;
                     }
 
-                    var nonTerminal = candidates
-                        .Where(n => !IsTerminalCategory(n.Node.State))
-                        .Where(n => !PolyphonyTags.HasImplMergedInMg(
-                            TagSet.Parse(n.Node.Tags), implMergedKey))
-                        .ToList();
+                    // W8: trust polyphony:impl-merged-in-mg tag only when
+                    // current lineage produced it. When the journal shows
+                    // this lineage never recorded a branch_mark_impl_merged
+                    // for the item but a prior lineage did, treat the tag
+                    // as foreign residue (don't exclude the item from
+                    // candidates). Concurrent async predicate evaluation
+                    // is fine here — JournalLineageGrounding is read-only.
+                    var nonTerminal = new List<NodeWithParent>();
+                    foreach (var candidate in candidates)
+                    {
+                        if (IsTerminalCategory(candidate.Node.State))
+                            continue;
+                        if (!PolyphonyTags.HasImplMergedInMg(TagSet.Parse(candidate.Node.Tags), implMergedKey))
+                        {
+                            nonTerminal.Add(candidate);
+                            continue;
+                        }
+                        var tagIsForeign = await JournalLineageGrounding.IsTagForeignAsync(
+                            _journalStore, _runContext, candidate.Node.WorkItemId,
+                            "branch_mark_impl_merged", innerCt).ConfigureAwait(false);
+                        if (tagIsForeign)
+                        {
+                            await Console.Error.WriteLineAsync(
+                                $"warning: polyphony:impl-merged-in-mg tag on item {candidate.Node.WorkItemId} appears foreign to current lineage '{_runContext.RunId}' — ignoring for routing.").ConfigureAwait(false);
+                            nonTerminal.Add(candidate);
+                        }
+                    }
                     workspace = await ResolveAdoWorkspaceAsync(innerCt).ConfigureAwait(false);
 
                     if (nonTerminal.Count == 0)

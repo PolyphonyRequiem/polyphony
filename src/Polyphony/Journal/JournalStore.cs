@@ -20,6 +20,26 @@ public interface IJournalStore
         CancellationToken ct);
     Task<IReadOnlyList<JournalEntry>> QueryAsync(JournalQuery query, CancellationToken ct);
     Task ExportAsync(string destinationPath, CancellationToken ct);
+
+    /// <summary>
+    /// W11 (AB#3292): record a (run_id, root_id) lineage row. Idempotent —
+    /// repeated calls for the same pair are no-ops. The first observation
+    /// wins for <c>created_at</c> / host / user.
+    /// </summary>
+    Task RecordLineageAsync(string runId, int rootId, string? host, string? user, CancellationToken ct);
+
+    /// <summary>
+    /// W11 (AB#3292): all lineage rows for the given root, ordered by
+    /// <c>created_at</c> ascending. Returns retired and active rows alike;
+    /// callers filter via <see cref="JournalLineage.RetiredAt"/>.
+    /// </summary>
+    Task<IReadOnlyList<JournalLineage>> GetLineagesAsync(int rootId, CancellationToken ct);
+
+    /// <summary>
+    /// W12 (AB#3293): tombstone a lineage. Sets <c>retired_at</c> /
+    /// <c>retired_reason</c>. Returns <c>true</c> if a row was updated.
+    /// </summary>
+    Task<bool> RetireLineageAsync(string runId, int rootId, string? reason, CancellationToken ct);
 }
 
 public sealed class JournalStore : IJournalStore
@@ -59,7 +79,24 @@ public sealed class JournalStore : IJournalStore
         command.Parameters.AddWithValue("$payloadJson", (object?)entry.PayloadJson ?? DBNull.Value);
 
         var scalar = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
-        return Convert.ToInt64(scalar, System.Globalization.CultureInfo.InvariantCulture);
+        var insertedId = Convert.ToInt64(scalar, System.Globalization.CultureInfo.InvariantCulture);
+
+        // W11 (AB#3292): opportunistically record the lineage. Cheap
+        // INSERT OR IGNORE — first observation wins. Only when we
+        // actually have a root id; lineage is meaningless without it.
+        if (entry.RootId is { } rootIdForLineage)
+        {
+            await RecordLineageInternalAsync(
+                connection,
+                entry.RunId,
+                rootIdForLineage,
+                Environment.MachineName,
+                Environment.UserName,
+                entry.StartedAt,
+                ct).ConfigureAwait(false);
+        }
+
+        return insertedId;
     }
 
     public async Task RecordEndAsync(
@@ -223,6 +260,99 @@ public sealed class JournalStore : IJournalStore
         await destinationConnection.OpenAsync(ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         sourceConnection.BackupDatabase(destinationConnection);
+    }
+
+    public async Task RecordLineageAsync(string runId, int rootId, string? host, string? user, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+        if (rootId <= 0) throw new ArgumentOutOfRangeException(nameof(rootId), "rootId must be positive.");
+
+        await using var connection = await OpenConnectionAsync(ct).ConfigureAwait(false);
+        await RecordLineageInternalAsync(
+            connection,
+            runId,
+            rootId,
+            host,
+            user,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            ct).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<JournalLineage>> GetLineagesAsync(int rootId, CancellationToken ct)
+    {
+        if (rootId <= 0) throw new ArgumentOutOfRangeException(nameof(rootId), "rootId must be positive.");
+
+        await using var connection = await OpenConnectionAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT run_id, root_id, created_at, retired_at, retired_reason, created_by_host, created_by_user
+            FROM journal_lineages
+            WHERE root_id = $rootId
+            ORDER BY created_at ASC, run_id ASC;
+            """;
+        command.Parameters.AddWithValue("$rootId", rootId);
+
+        var results = new List<JournalLineage>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            results.Add(new JournalLineage
+            {
+                RunId = reader.GetString(0),
+                RootId = reader.GetInt32(1),
+                CreatedAt = reader.GetInt64(2),
+                RetiredAt = reader.IsDBNull(3) ? null : reader.GetInt64(3),
+                RetiredReason = reader.IsDBNull(4) ? null : reader.GetString(4),
+                CreatedByHost = reader.IsDBNull(5) ? null : reader.GetString(5),
+                CreatedByUser = reader.IsDBNull(6) ? null : reader.GetString(6),
+            });
+        }
+        return results;
+    }
+
+    public async Task<bool> RetireLineageAsync(string runId, int rootId, string? reason, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+        if (rootId <= 0) throw new ArgumentOutOfRangeException(nameof(rootId), "rootId must be positive.");
+
+        await using var connection = await OpenConnectionAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE journal_lineages
+            SET retired_at = $retiredAt,
+                retired_reason = COALESCE($reason, retired_reason)
+            WHERE run_id = $runId AND root_id = $rootId AND retired_at IS NULL;
+            """;
+        command.Parameters.AddWithValue("$retiredAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        command.Parameters.AddWithValue("$reason", (object?)reason ?? DBNull.Value);
+        command.Parameters.AddWithValue("$runId", runId);
+        command.Parameters.AddWithValue("$rootId", rootId);
+        var rowsAffected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        return rowsAffected > 0;
+    }
+
+    private static async Task RecordLineageInternalAsync(
+        SqliteConnection connection,
+        string runId,
+        int rootId,
+        string? host,
+        string? user,
+        long createdAtUnixMs,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        // INSERT OR IGNORE: first observation wins. Retirement is a
+        // separate UPDATE path; never collapse an existing row.
+        command.CommandText = """
+            INSERT OR IGNORE INTO journal_lineages(run_id, root_id, created_at, created_by_host, created_by_user)
+            VALUES ($runId, $rootId, $createdAt, $host, $user);
+            """;
+        command.Parameters.AddWithValue("$runId", runId);
+        command.Parameters.AddWithValue("$rootId", rootId);
+        command.Parameters.AddWithValue("$createdAt", createdAtUnixMs);
+        command.Parameters.AddWithValue("$host", (object?)host ?? DBNull.Value);
+        command.Parameters.AddWithValue("$user", (object?)user ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
     private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken ct)

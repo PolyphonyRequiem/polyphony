@@ -196,9 +196,13 @@ public sealed partial class PrCommands
                     var prTitle = string.IsNullOrWhiteSpace(title)
                         ? await ResolveImplPrTitleAsync(itemId, innerCt).ConfigureAwait(false)
                         : title;
-                    var prBody = string.IsNullOrWhiteSpace(body)
+                    var rawBody = string.IsNullOrWhiteSpace(body)
                         ? BuildDefaultImplBody(rootId, itemId, path.Canonical, headBranch, baseBranch)
                         : body;
+                    // W6 (AB#3280): stamp the run-id marker on the first
+                    // line so cross-machine readers can ground the PR in
+                    // a lineage when the local journal is silent.
+                    var prBody = PrBodyMarker.EnsureRunIdPrefix(rawBody, _runContext.RunId);
 
                     var existing = await gh.ListPullRequestsAsync(
                         slug,
@@ -207,6 +211,38 @@ public sealed partial class PrCommands
                     if (existing.Count > 0)
                     {
                         var found = existing[0];
+
+                        // W10 (AB#3291): refuse to adopt a foreign-lineage PR
+                        // even if its head/base match — a leftover from a prior
+                        // run that shares the canonical branch names must not
+                        // be silently claimed by the current lineage.
+                        var lineageReason = await CheckGhMergeLineageAsync(
+                            slug, found.Number, bodyHasFrontMatter: false,
+                            journalAction: "pr_open_impl_pr",
+                            journalTarget: BranchPairJournalTarget(headBranch, baseBranch),
+                            innerCt).ConfigureAwait(false);
+                        if (lineageReason is not null)
+                        {
+                            payload = new PrOpenImplPrPayload
+                            {
+                                RootId = rootId,
+                                ItemId = itemId,
+                                MergeGroupPath = path.Canonical,
+                                HeadBranch = headBranch,
+                                BaseBranch = baseBranch,
+                                RepoSlug = slug,
+                                PrNumber = found.Number,
+                                PrUrl = found.Url ?? "",
+                                Title = prTitle,
+                                ResultAction = "error",
+                                Succeeded = false,
+                                WasMutated = false,
+                                Error = "foreign_lineage: " + lineageReason,
+                            };
+                            EmitImplError(rootId, itemId, mgPath, payload.Error, headBranch: headBranch, baseBranch: baseBranch);
+                            return ExitCodes.RoutingFailure;
+                        }
+
                         var result = new PrOpenImplResult
                         {
                             PrNumber = found.Number,

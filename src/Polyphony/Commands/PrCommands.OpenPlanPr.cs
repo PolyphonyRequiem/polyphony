@@ -299,7 +299,7 @@ public sealed partial class PrCommands
             var summaryBody = string.IsNullOrWhiteSpace(body)
                 ? BuildDefaultPlanBodySummary(rootId, itemId, isRootPlan, headBranch, baseBranch)
                 : body;
-            var fullBody = BuildPlanPrBody(snapshot, summaryBody);
+            var fullBody = BuildPlanPrBody(snapshot, summaryBody, _runContext.RunId);
 
             // ── 4. Reuse check: existing open PR? ─────────────────────────
             var existing = await gh.ListPullRequestsAsync(
@@ -522,16 +522,27 @@ public sealed partial class PrCommands
     /// Render the PR body with the well-known YAML front-matter at the
     /// top, followed by a blank line, then the human-readable summary.
     /// Format pinned to match what <see cref="PlanPrFrontMatter"/> can
-    /// parse back out (and what the Phase 3 ADR specified). Both keys
-    /// are always emitted to keep the front-matter shape stable.
+    /// parse back out (and what the Phase 3 ADR specified). All recognised
+    /// keys are emitted in canonical order so the front-matter shape stays
+    /// stable across runs.
     /// </summary>
     private static string BuildPlanPrBody(
         IReadOnlyDictionary<string, int> snapshot,
-        string summary)
+        string summary,
+        string? runId = null)
     {
         var sb = new StringBuilder();
         sb.Append("---\n");
         sb.Append("requests_parent_change: false\n");
+        // W7 (AB#3281): emit run_id alongside requests_parent_change when
+        // the lineage is known so plan-PR observers can ground the PR in
+        // a lineage when the local journal is silent. Omitted for legacy
+        // callers (null/empty) to keep body bytes stable for hand-written
+        // plans that pre-date the stamping rollout.
+        if (!string.IsNullOrEmpty(runId))
+        {
+            sb.Append("run_id: ").Append(runId).Append('\n');
+        }
         if (snapshot.Count == 0)
         {
             sb.Append("ancestor_plan_generations: {}\n");

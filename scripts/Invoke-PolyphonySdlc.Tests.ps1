@@ -417,7 +417,7 @@ Describe 'Invoke-PolyphonySdlc — command construction' {
         } finally { Pop-Location }
     }
 
-    It 'Includes all six -m metadata flags' {
+    It 'Includes all seven -m metadata flags' {
         Push-Location $script:fx.Main
         try {
             $r = & $script:ScriptPath -RootId 9999 -DryRun | ConvertFrom-Json
@@ -425,13 +425,14 @@ Describe 'Invoke-PolyphonySdlc — command construction' {
             for ($i = 0; $i -lt $r.args.Count; $i++) {
                 if ($r.args[$i] -eq '-m') { $mFlags += $r.args[$i + 1] }
             }
-            $mFlags.Count | Should -Be 6
+            $mFlags.Count | Should -Be 7
             ($mFlags | Where-Object { $_ -eq 'tracker=ado' }).Count | Should -Be 1
             ($mFlags | Where-Object { $_ -like 'project_url=https://dev.azure.com/test-org/TestProj' }).Count | Should -Be 1
             ($mFlags | Where-Object { $_ -like 'git_repo=*' }).Count | Should -Be 1
             ($mFlags | Where-Object { $_ -eq 'workitem_id=9999' }).Count | Should -Be 1
             ($mFlags | Where-Object { $_ -like 'worktree_name=feature-9999*' }).Count | Should -Be 1
             ($mFlags | Where-Object { $_ -like 'cwd=*feature-9999*' }).Count | Should -Be 1
+            ($mFlags | Where-Object { $_ -like 'run_id=*' }).Count | Should -Be 1
         } finally { Pop-Location }
     }
 
@@ -802,6 +803,98 @@ Describe 'Invoke-PolyphonySdlc — terminal-state pre-flight (AB#3165)' {
         try {
             $r = & $script:ScriptPath -RootId 9999 -SkipStateCheck -DryRun | ConvertFrom-Json
             $r.dry_run | Should -BeTrue
+        } finally { Pop-Location }
+    }
+}
+
+
+Describe 'Invoke-PolyphonySdlc — POLYPHONY_RUN_ID (W1, AB#3275)' {
+
+    BeforeEach {
+        $script:fx = New-BareRepoFixture
+        # Make sure no outer wrapper has pre-set the env var; each test
+        # owns its own lineage state.
+        Remove-Item Env:POLYPHONY_RUN_ID -ErrorAction SilentlyContinue
+    }
+    AfterEach  {
+        Remove-BareRepoFixture $script:fx
+        Remove-Item Env:POLYPHONY_RUN_ID -ErrorAction SilentlyContinue
+    }
+
+    It 'Mints a ULID-shaped run_id on a fresh root and emits -m run_id=<ulid>' {
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -RootId 4321 -DryRun | ConvertFrom-Json
+            $r.run_id        | Should -Match '^[0-9A-HJKMNP-TV-Z]{26}$'
+            $r.run_id_source | Should -Be 'minted'
+            $r.args          | Should -Contain "run_id=$($r.run_id)"
+        } finally { Pop-Location }
+    }
+
+    It 'Reuses an existing manifest run_id on -Intent resume' {
+        Push-Location $script:fx.Main
+        try {
+            # Seed: register the worktree first via init-root (so subsequent
+            # `-Intent resume` sees a legitimate worktree), then stamp a
+            # known run_id into the manifest. The dry-run path skips the
+            # actual checkout, so we add the worktree by hand.
+            $rootDir   = Join-Path $script:fx.Runs 'root-8765'
+            $wtDir     = Join-Path $rootDir 'feature-8765'
+            New-Item -ItemType Directory -Path $rootDir -Force | Out-Null
+            & git --git-dir $script:fx.Bare worktree add -b feature/8765 $wtDir main --quiet 2>&1 | Out-Null
+            $manifestDir = Join-Path $wtDir '.polyphony'
+            New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+            $known = '01JZ7P0X9KZBKQR4N3FVMT8YWA'
+            "schema: 2`nrun_id: $known`nroot_id: 8765`n" |
+                Set-Content -Path (Join-Path $manifestDir 'run.yaml')
+
+            $r = & $script:ScriptPath -RootId 8765 -Intent resume -DryRun | ConvertFrom-Json
+            $r.run_id        | Should -Be $known
+            $r.run_id_source | Should -Be 'manifest'
+            $r.args          | Should -Contain "run_id=$known"
+        } finally { Pop-Location }
+    }
+
+    It 'Honors an externally-exported POLYPHONY_RUN_ID (nested invocation)' {
+        $external = '01JZ7P0X9KZBKQR4N3FVMT8YEX'
+        $env:POLYPHONY_RUN_ID = $external
+        try {
+            Push-Location $script:fx.Main
+            try {
+                $r = & $script:ScriptPath -RootId 2468 -DryRun | ConvertFrom-Json
+                $r.run_id        | Should -Be $external
+                $r.run_id_source | Should -Be 'external'
+                $r.args          | Should -Contain "run_id=$external"
+            } finally { Pop-Location }
+        } finally {
+            Remove-Item Env:POLYPHONY_RUN_ID -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Reset path also emits -m run_id and honors prior-manifest lineage' {
+        Push-Location $script:fx.Main
+        try {
+            # Seed a prior-run manifest at the reset path.
+            $manifestDir = Join-Path $script:fx.Runs 'root-1357/feature-1357/.polyphony'
+            New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+            $prior = '01JZ7P0X9KZBKQR4N3FVMT8RST'
+            "schema: 2`nrun_id: $prior`nroot_id: 1357`n" |
+                Set-Content -Path (Join-Path $manifestDir 'run.yaml')
+
+            $r = & $script:ScriptPath -RootId 1357 -Intent reset -DryRun | ConvertFrom-Json
+            $r.run_id        | Should -Be $prior
+            $r.run_id_source | Should -Be 'manifest'
+            $r.args          | Should -Contain "run_id=$prior"
+        } finally { Pop-Location }
+    }
+
+    It 'Reset path mints a fresh run_id when no prior manifest exists' {
+        Push-Location $script:fx.Main
+        try {
+            $r = & $script:ScriptPath -RootId 9876 -Intent reset -DryRun | ConvertFrom-Json
+            $r.run_id        | Should -Match '^[0-9A-HJKMNP-TV-Z]{26}$'
+            $r.run_id_source | Should -Be 'minted'
+            $r.args          | Should -Contain "run_id=$($r.run_id)"
         } finally { Pop-Location }
     }
 }

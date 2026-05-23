@@ -32,8 +32,12 @@ public sealed partial class StateCommands(
     IProcessRunner runner,
     IWorkItemRepository repository,
     ProcessConfig processConfig,
-    PlanObserver planObserver)
+    PlanObserver planObserver,
+    Polyphony.Journal.RunContext? runContext = null,
+    Polyphony.Journal.IJournalStore? journalStore = null)
 {
+    private readonly Polyphony.Journal.RunContext _runContext = runContext ?? new Polyphony.Journal.RunContext();
+    private readonly Polyphony.Journal.IJournalStore? _journalStore = journalStore;
     private const string DotnetExe = "dotnet";
 
     /// <summary>

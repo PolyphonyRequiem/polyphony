@@ -47,10 +47,12 @@ public sealed partial class PlanCommands(
     RepoIdentityResolver repoIdentityResolver,
     PullRequestReader pullRequestReader,
     RunContext? runContext = null,
-    JournaledActionDecorator? journalDecorator = null)
+    JournaledActionDecorator? journalDecorator = null,
+    IJournalStore? journalStore = null)
 {
     private readonly RunContext _runContext = JournalCommandSupport.ResolveRunContext(runContext);
     private readonly JournaledActionDecorator _journalDecorator = JournalCommandSupport.ResolveDecorator(journalDecorator);
+    private readonly IJournalStore _journalStore = journalStore ?? new NullJournalStore();
     /// <summary>
     /// Validates current recursion depth against a configured maximum. Always exits 0.
     /// </summary>

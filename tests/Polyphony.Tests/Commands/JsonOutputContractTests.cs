@@ -2282,6 +2282,10 @@ public sealed class JsonOutputContractTests : CommandTestBase
         public Task<IReadOnlyList<JournalEntry>> QueryAsync(JournalQuery query, CancellationToken ct) => throw new InvalidOperationException(queryError ?? "query failed");
 
         public Task ExportAsync(string destinationPath, CancellationToken ct) => throw new InvalidOperationException(exportError ?? "export failed");
+
+        public Task RecordLineageAsync(string runId, int rootId, string? host, string? user, CancellationToken ct) => Task.CompletedTask;
+        public Task<IReadOnlyList<JournalLineage>> GetLineagesAsync(int rootId, CancellationToken ct) => Task.FromResult<IReadOnlyList<JournalLineage>>([]);
+        public Task<bool> RetireLineageAsync(string runId, int rootId, string? reason, CancellationToken ct) => Task.FromResult(false);
     }
 
     private sealed class StubResourceObserver(ResourceObservationBatch batch) : IResourceObserver

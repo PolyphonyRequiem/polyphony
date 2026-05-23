@@ -42,10 +42,15 @@ public sealed partial class PrCommands(
     Polyphony.Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
     RunContext runContext,
     JournaledActionDecorator decorator,
-    IAdoClient? ado = null)
+    IAdoClient? ado = null,
+    IJournalStore? journalStore = null)
 {
     private readonly RunContext _runContext = runContext;
     private readonly JournaledActionDecorator _journalDecorator = decorator;
+    // W9 (AB#3282): the merge-* verbs consult the journal to ground
+    // foreign-PR refusal when the body stamp is absent. Optional so
+    // GitHub-only test fixtures that don't wire a journal still work.
+    private readonly IJournalStore _journalStore = journalStore ?? new NullJournalStore();
 
     private static readonly Regex PullUrlRegex =
         new(@"/pull/(\d+)", RegexOptions.Compiled);
@@ -154,7 +159,9 @@ public sealed partial class PrCommands(
                     var prTitle = string.IsNullOrWhiteSpace(title)
                         ? await ResolvePrTitleAsync(workItem, innerCt).ConfigureAwait(false)
                         : title;
-                    var body = await BuildPrBodyAsync(workItem, featureBranch, targetBranch, innerCt).ConfigureAwait(false);
+                    var rawBody = await BuildPrBodyAsync(workItem, featureBranch, targetBranch, innerCt).ConfigureAwait(false);
+                    // W6 (AB#3280): stamp the run-id marker on the first line.
+                    var body = PrBodyMarker.EnsureRunIdPrefix(rawBody, _runContext.RunId);
 
                     var existing = await gh.ListPullRequestsAsync(
                         slug,

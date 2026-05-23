@@ -179,6 +179,18 @@ public sealed record PrPollMetadata
 
     /// <summary>Map of ancestor item id (or <c>"root"</c>) to <c>plan_generation</c> snapshot recorded at branch creation. Empty for non-plan PRs.</summary>
     public required IReadOnlyDictionary<string, int> AncestorPlanGenerations { get; init; }
+
+    /// <summary>
+    /// W7 (AB#3281): the originating run's lineage id, parsed from the
+    /// <c>run_id:</c> key in plan-PR YAML front-matter. Null when the
+    /// front-matter is absent or the key is missing — both are
+    /// acceptable on legacy plan PRs that pre-date the stamping
+    /// rollout. Plan-PR observers consult this to ground a plan PR in
+    /// a lineage when the local journal is silent (the plan-PR
+    /// analogue of <see cref="Polyphony.Commands.PrBodyMarker"/> for
+    /// non-plan PRs).
+    /// </summary>
+    public string? RunId { get; init; }
 }
 
 /// <summary>

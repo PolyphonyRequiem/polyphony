@@ -208,6 +208,15 @@ public sealed partial class PlanCommands
                 FacetsTagMutated = result?.FacetsTagSet ?? false,
                 Succeeded = exitCode == ExitCodes.Success && result is not null && result.ErrorCount == 0,
                 WasMutated = result is not null && (result.SeededCount > 0 || result.PlannedTagSet || result.FacetsTagSet),
+                // W4 (AB#3278): the explicit "planning lifecycle finished"
+                // fact detect-state's journal-grounded path consumes to
+                // discriminate `complete` from `merged_unseeded`. True iff
+                // the seeder succeeded AND the planned tag is now present
+                // on the parent (newly mutated this run OR already there).
+                PlanningCompleted = exitCode == ExitCodes.Success
+                    && result is not null
+                    && result.ErrorCount == 0
+                    && (result.PlannedTagSet || result.PlannedTagAlready),
             },
             PolyphonyJsonContext.Default.PlanSeedChildrenPayload,
             payload => payload.Succeeded,

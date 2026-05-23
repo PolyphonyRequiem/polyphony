@@ -34,10 +34,12 @@ public sealed partial class BranchCommands(
     Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
     Sdlc.Observers.PullRequestReader pullRequestReader,
     RunContext runContext,
-    JournaledActionDecorator decorator)
+    JournaledActionDecorator decorator,
+    Polyphony.Journal.IJournalStore? journalStore = null)
 {
     private readonly RunContext _runContext = runContext;
     private readonly JournaledActionDecorator _journalDecorator = decorator;
+    private readonly Polyphony.Journal.IJournalStore? _journalStore = journalStore;
 
     /// <summary>
     /// Check ADO predecessor links for blocking dependencies on a work item.
