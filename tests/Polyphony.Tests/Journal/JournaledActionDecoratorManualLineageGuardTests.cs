@@ -210,5 +210,9 @@ public sealed class JournaledActionDecoratorManualLineageGuardTests
             => Task.FromResult<IReadOnlyList<JournalEntry>>(Array.Empty<JournalEntry>());
 
         public Task ExportAsync(string destinationPath, CancellationToken ct) => Task.CompletedTask;
+
+        public Task RecordLineageAsync(string runId, int rootId, string? host, string? user, CancellationToken ct) => Task.CompletedTask;
+        public Task<IReadOnlyList<JournalLineage>> GetLineagesAsync(int rootId, CancellationToken ct) => Task.FromResult<IReadOnlyList<JournalLineage>>([]);
+        public Task<bool> RetireLineageAsync(string runId, int rootId, string? reason, CancellationToken ct) => Task.FromResult(false);
     }
 }
