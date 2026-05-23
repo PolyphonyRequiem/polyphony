@@ -154,7 +154,9 @@ public sealed partial class PrCommands(
                     var prTitle = string.IsNullOrWhiteSpace(title)
                         ? await ResolvePrTitleAsync(workItem, innerCt).ConfigureAwait(false)
                         : title;
-                    var body = await BuildPrBodyAsync(workItem, featureBranch, targetBranch, innerCt).ConfigureAwait(false);
+                    var rawBody = await BuildPrBodyAsync(workItem, featureBranch, targetBranch, innerCt).ConfigureAwait(false);
+                    // W6 (AB#3280): stamp the run-id marker on the first line.
+                    var body = PrBodyMarker.EnsureRunIdPrefix(rawBody, _runContext.RunId);
 
                     var existing = await gh.ListPullRequestsAsync(
                         slug,

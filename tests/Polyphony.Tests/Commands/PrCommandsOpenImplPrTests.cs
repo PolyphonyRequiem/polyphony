@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.Processes;
@@ -205,4 +207,35 @@ public sealed class PrCommandsOpenImplPrTests : CommandTestBase
         output.ShouldContain("\"mg_path\"");
         output.ShouldContain("\"created\"");
     }
+
+    [Fact]
+    public async Task OpenImplPr_HappyPath_StampsRunIdMarkerOnFirstLineOfBody()
+    {
+        // W6 (AB#3280): the body sent to `gh pr create` must start with
+        // the <!-- polyphony:run_id=... --> marker so cross-machine
+        // readers (and post-merge journal-rehydration) can ground the
+        // PR in the originating lineage when the local journal is
+        // silent. Test fixture uses RunId="test-run".
+        var (cmd, runner) = CreateCommand();
+        StubLsRemoteHas(runner, "refs/heads/impl/100-200", exists: true);
+        StubLsRemoteHas(runner, "refs/heads/mg/100_core", exists: true);
+        StubGitRemoteOrigin(runner, "https://github.com/PolyphonyRequiem/polyphony.git");
+        StubTwigShowTree(runner, 200, "Add login form");
+        StubPrListEmpty(runner);
+        StubPrCreate(runner, "https://github.com/PolyphonyRequiem/polyphony/pull/200");
+
+        var (exit, _) = await CaptureConsoleAsync(
+            () => cmd.OpenImplPr(rootId: 100, itemId: 200, mgPath: "core"));
+        exit.ShouldBe(ExitCodes.Success);
+
+        var create = runner.Invocations.Single(i =>
+            i.Executable == "gh" && i.Arguments.Count >= 2
+            && i.Arguments[0] == "pr" && i.Arguments[1] == "create");
+        var bodyIdx = create.Arguments.ToList().IndexOf("--body");
+        bodyIdx.ShouldBeGreaterThan(-1);
+        var body = create.Arguments[bodyIdx + 1];
+        body.ShouldStartWith("<!-- polyphony:run_id=test-run -->");
+        PrBodyMarker.TryParseRunId(body).ShouldBe("test-run");
+    }
 }
+

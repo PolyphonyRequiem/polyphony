@@ -195,9 +195,11 @@ public sealed partial class PrCommands
         var prTitle = string.IsNullOrWhiteSpace(title)
             ? await ResolveImplPrTitleAsync(itemId, ct).ConfigureAwait(false)
             : title;
-        var prBody = string.IsNullOrWhiteSpace(body)
+        var rawBody = string.IsNullOrWhiteSpace(body)
             ? BuildDefaultImplBody(rootId, itemId, path.Canonical, headBranch, baseBranch)
             : body;
+        // W6 (AB#3280): stamp the run-id marker on the first line.
+        var prBody = PrBodyMarker.EnsureRunIdPrefix(rawBody, _runContext.RunId);
 
         try
         {

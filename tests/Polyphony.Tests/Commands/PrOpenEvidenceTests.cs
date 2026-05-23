@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Polyphony.Commands;
 using Polyphony.Infrastructure.Processes;
@@ -206,10 +207,17 @@ public sealed class PrOpenEvidenceTests : CommandTestBase
         result.Title.ShouldBe("Explicit evidence title");
 
         // The explicit body must have made it onto the gh pr create call.
+        // W6 (AB#3280): explicit-body callers get the run-id marker
+        // prefix prepended; the explicit body content is preserved verbatim
+        // after the marker.
         var createInvocation = runner.Invocations
             .First(i => i.Executable == "gh" && i.Arguments.Count >= 2
                 && i.Arguments[0] == "pr" && i.Arguments[1] == "create");
-        createInvocation.Arguments.ShouldContain("Explicit body content");
+        var bodyIdx = createInvocation.Arguments.ToList().IndexOf("--body");
+        bodyIdx.ShouldBeGreaterThan(-1);
+        var sentBody = createInvocation.Arguments[bodyIdx + 1];
+        sentBody.ShouldStartWith("<!-- polyphony:run_id=test-run -->");
+        sentBody.ShouldContain("Explicit body content");
     }
 
     [Fact]

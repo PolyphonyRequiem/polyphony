@@ -196,9 +196,13 @@ public sealed partial class PrCommands
                     var prTitle = string.IsNullOrWhiteSpace(title)
                         ? await ResolveImplPrTitleAsync(itemId, innerCt).ConfigureAwait(false)
                         : title;
-                    var prBody = string.IsNullOrWhiteSpace(body)
+                    var rawBody = string.IsNullOrWhiteSpace(body)
                         ? BuildDefaultImplBody(rootId, itemId, path.Canonical, headBranch, baseBranch)
                         : body;
+                    // W6 (AB#3280): stamp the run-id marker on the first
+                    // line so cross-machine readers can ground the PR in
+                    // a lineage when the local journal is silent.
+                    var prBody = PrBodyMarker.EnsureRunIdPrefix(rawBody, _runContext.RunId);
 
                     var existing = await gh.ListPullRequestsAsync(
                         slug,

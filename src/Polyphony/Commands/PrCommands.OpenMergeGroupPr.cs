@@ -125,9 +125,11 @@ public sealed partial class PrCommands
                     var prTitle = string.IsNullOrWhiteSpace(title)
                         ? $"merge group {path.Canonical} for root #{rootId}"
                         : title;
-                    var prBody = string.IsNullOrWhiteSpace(body)
+                    var rawBody = string.IsNullOrWhiteSpace(body)
                         ? BuildDefaultMgBody(rootId, path.Canonical, headBranch, baseBranch)
                         : body;
+                    // W6 (AB#3280): stamp the run-id marker on the first line.
+                    var prBody = PrBodyMarker.EnsureRunIdPrefix(rawBody, _runContext.RunId);
 
                     var existing = await gh.ListPullRequestsAsync(
                         slug,

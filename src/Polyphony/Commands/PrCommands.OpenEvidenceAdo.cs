@@ -196,9 +196,11 @@ public sealed partial class PrCommands
         var prTitle = string.IsNullOrWhiteSpace(title)
             ? await ResolveEvidencePrTitleAsync(workItem, ct).ConfigureAwait(false)
             : title;
-        var prBody = string.IsNullOrWhiteSpace(body)
+        var rawBody = string.IsNullOrWhiteSpace(body)
             ? BuildDefaultEvidenceBody(workItem, effectiveRoot, headBranch, resolvedBase)
             : body;
+        // W6 (AB#3280): stamp the run-id marker on the first line.
+        var prBody = PrBodyMarker.EnsureRunIdPrefix(rawBody, _runContext.RunId);
 
         try
         {

@@ -563,7 +563,8 @@ public sealed class PrCommandsOpenMgAdoTests : CommandTestBase
         await CaptureConsoleAsync(
             () => cmd.OpenMergeGroupAdo(Org, Project, Repo, rootId: 100, mgPath: "core",
                 body: "explicit body content"));
-        ado.LastCreateDescription.ShouldBe("explicit body content");
+        // W6 (AB#3280): explicit-body callers still get the run-id marker prefix.
+        ado.LastCreateDescription.ShouldBe("<!-- polyphony:run_id=test-run -->" + Environment.NewLine + "explicit body content");
     }
 
     // ─── PR URL synthesis when ADO returns empty Url ─────────────────────

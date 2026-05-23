@@ -416,7 +416,9 @@ public sealed class PrCommandsCreateFeatureAdoTests : CommandTestBase
         await CaptureConsoleAsync(
             () => cmd.CreateFeatureAdo(Org, Project, Repo, rootId: 100,
                 body: "explicit body content"));
-        ado.LastCreateDescription.ShouldBe("explicit body content");
+        // W6 (AB#3280): explicit-body callers still get the run-id
+        // marker prefix; the explicit body is preserved verbatim after.
+        ado.LastCreateDescription.ShouldBe("<!-- polyphony:run_id=test-run -->" + Environment.NewLine + "explicit body content");
     }
 
     // ─── PR URL synthesis when ADO returns empty Url ─────────────────────
