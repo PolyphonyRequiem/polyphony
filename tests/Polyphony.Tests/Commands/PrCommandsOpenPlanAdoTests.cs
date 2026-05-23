@@ -292,6 +292,10 @@ public sealed class PrCommandsOpenPlanAdoTests : CommandTestBase
         ado.LastCreateDescription.ShouldContain("ancestor_plan_generations:");
         ado.LastCreateDescription.ShouldContain("\"5678\": 4");
         ado.LastCreateDescription.ShouldContain("root: 2");
+        // W7 (AB#3281): ADO-side default body must stamp the current
+        // run's lineage just like the GitHub-side path so foreign-PR
+        // detection has parity across platforms.
+        ado.LastCreateDescription.ShouldContain("run_id: test-run");
     }
 
     // ─── Reuse with matching snapshot ────────────────────────────────────

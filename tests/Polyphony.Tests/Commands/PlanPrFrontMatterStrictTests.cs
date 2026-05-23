@@ -194,4 +194,53 @@ public sealed class PlanPrFrontMatterStrictTests
         r.Status.ShouldBe(FrontMatterStatus.Present);
         r.RequestsParentChange.ShouldBeTrue();
     }
+
+    [Fact]
+    public void RunId_AbsentKey_RoundTripsAsNull()
+    {
+        // W7 (AB#3281): legacy plan-PR bodies stamped pre-run_id rollout
+        // do not carry the key. Strict parse must accept that shape and
+        // surface RunId == null so the validator does not block them.
+        var body = "---\nrequests_parent_change: false\nancestor_plan_generations:\n  root: 1\n---";
+        var r = PlanPrFrontMatter.ParseStrict(body);
+
+        r.Status.ShouldBe(FrontMatterStatus.Present);
+        r.RunId.ShouldBeNull();
+    }
+
+    [Fact]
+    public void RunId_ValidScalar_IsRoundTripped()
+    {
+        // W7 (AB#3281): well-formed lineage stamp must arrive intact at
+        // the call site so a stale-fence reviewer can refuse the merge
+        // when the lineage doesn't match the journal's current run.
+        var body = "---\nrequests_parent_change: false\nrun_id: 01HZK7Y9ABCDEF0123456789AB\nancestor_plan_generations: {}\n---";
+        var r = PlanPrFrontMatter.ParseStrict(body);
+
+        r.Status.ShouldBe(FrontMatterStatus.Present);
+        r.RunId.ShouldBe("01HZK7Y9ABCDEF0123456789AB");
+    }
+
+    [Fact]
+    public void RunId_EmptyScalar_IsMalformed()
+    {
+        // An author who clears run_id has produced a worse signal than
+        // omitting it — block the merge so they can either fix or remove.
+        var body = "---\nrequests_parent_change: false\nrun_id: \"\"\nancestor_plan_generations: {}\n---";
+        var r = PlanPrFrontMatter.ParseStrict(body);
+
+        r.Status.ShouldBe(FrontMatterStatus.Malformed);
+        r.ErrorDetail!.ShouldContain("run_id");
+    }
+
+    [Fact]
+    public void RunId_NonScalarMapping_IsMalformed()
+    {
+        // Shape error: someone tried to nest a structure under run_id.
+        var body = "---\nrun_id:\n  nested: oops\n---";
+        var r = PlanPrFrontMatter.ParseStrict(body);
+
+        r.Status.ShouldBe(FrontMatterStatus.Malformed);
+        r.ErrorDetail!.ShouldContain("run_id");
+    }
 }

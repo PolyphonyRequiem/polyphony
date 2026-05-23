@@ -312,7 +312,7 @@ public sealed partial class PrCommands
         var summaryBody = string.IsNullOrWhiteSpace(body)
             ? BuildDefaultPlanBodySummary(rootId, itemId, isRootPlan, headBranch, baseBranch)
             : body;
-        var fullBody = BuildPlanPrBody(snapshot, summaryBody);
+        var fullBody = BuildPlanPrBody(snapshot, summaryBody, _runContext.RunId);
 
         try
         {

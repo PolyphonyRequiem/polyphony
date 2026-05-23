@@ -399,6 +399,9 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
         body.ShouldContain("ancestor_plan_generations:");
         body.ShouldContain("\"5678\": 4");
         body.ShouldContain("root: 2");
+        // W7 (AB#3281): default body must stamp the current run's lineage
+        // so foreign-PR detection can ground refusal decisions.
+        body.ShouldContain("run_id: test-run");
 
         // Round-trip: feed the emitted body back through PlanPrFrontMatter.
         var roundTripped = PlanPrFrontMatter.Parse(body);
@@ -406,6 +409,7 @@ public sealed class PrCommandsOpenPlanPrTests : CommandTestBase
         roundTripped.AncestorPlanGenerations.Count.ShouldBe(2);
         roundTripped.AncestorPlanGenerations["5678"].ShouldBe(4);
         roundTripped.AncestorPlanGenerations["root"].ShouldBe(2);
+        roundTripped.RunId.ShouldBe("test-run");
     }
 
     // ─── Reuse semantics ─────────────────────────────────────────────────

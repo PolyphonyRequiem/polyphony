@@ -200,4 +200,36 @@ public sealed class PlanPrFrontMatterReplaceTests
         Should.Throw<ArgumentNullException>(() =>
             PlanPrFrontMatter.ReplaceSnapshotPreservingTail(body, null!));
     }
+
+    [Fact]
+    public void RunIdPreserved_ThroughSnapshotReplacement()
+    {
+        // W7 (AB#3281): the restack-remedy verb rewrites the snapshot
+        // but must preserve the run_id stamp — otherwise the rebase
+        // would silently strip the lineage tag and the downstream
+        // foreign-PR check loses its evidence.
+        var body = "---\nrequests_parent_change: true\nrun_id: 01HZK7Y9ABCDEF0123456789AB\nancestor_plan_generations:\n  root: 1\n---\n\nbody";
+        var result = PlanPrFrontMatter.ReplaceSnapshotPreservingTail(
+            body, Snapshot(("root", 2)));
+
+        var replaced = result.ShouldBeOfType<FrontMatterReplacement.Replaced>();
+        replaced.NewBody.ShouldContain("run_id: 01HZK7Y9ABCDEF0123456789AB");
+        var roundTrip = PlanPrFrontMatter.ParseStrict(replaced.NewBody);
+        roundTrip.Status.ShouldBe(FrontMatterStatus.Present);
+        roundTrip.RunId.ShouldBe("01HZK7Y9ABCDEF0123456789AB");
+    }
+
+    [Fact]
+    public void RunIdAbsent_RewriteDoesNotInventOne()
+    {
+        // Legacy body without run_id: rewrite must not synthesise one out
+        // of thin air — only the lineage that was already stamped at PR
+        // open time is canonical.
+        var body = "---\nrequests_parent_change: false\nancestor_plan_generations:\n  root: 1\n---\n\nbody";
+        var result = PlanPrFrontMatter.ReplaceSnapshotPreservingTail(
+            body, Snapshot(("root", 2)));
+
+        var replaced = result.ShouldBeOfType<FrontMatterReplacement.Replaced>();
+        replaced.NewBody.ShouldNotContain("run_id:");
+    }
 }
