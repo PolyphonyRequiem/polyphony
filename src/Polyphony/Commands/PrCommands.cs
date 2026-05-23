@@ -42,10 +42,15 @@ public sealed partial class PrCommands(
     Polyphony.Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
     RunContext runContext,
     JournaledActionDecorator decorator,
-    IAdoClient? ado = null)
+    IAdoClient? ado = null,
+    IJournalStore? journalStore = null)
 {
     private readonly RunContext _runContext = runContext;
     private readonly JournaledActionDecorator _journalDecorator = decorator;
+    // W9 (AB#3282): the merge-* verbs consult the journal to ground
+    // foreign-PR refusal when the body stamp is absent. Optional so
+    // GitHub-only test fixtures that don't wire a journal still work.
+    private readonly IJournalStore _journalStore = journalStore ?? new NullJournalStore();
 
     private static readonly Regex PullUrlRegex =
         new(@"/pull/(\d+)", RegexOptions.Compiled);

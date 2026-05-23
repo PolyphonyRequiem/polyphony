@@ -107,6 +107,55 @@ public sealed partial class PrCommands
 
                 var slug = $"{ghRepo.Owner}/{ghRepo.Name}";
 
+                // W9 (AB#3282): pull the PR's poll data once so we can
+                // ground the foreign-PR check against the W6 hidden
+                // marker AND derive the (head,base) target needed for
+                // the journal fallback. Evidence PRs are passed by
+                // number alone, so the head/base aren't on hand from
+                // the caller — fetch them here.
+                try
+                {
+                    var pollData = await gh.GetPullRequestPollDataAsync(slug, prNumber, innerCt).ConfigureAwait(false);
+                    if (pollData is not null
+                        && !string.IsNullOrEmpty(_runContext.RunId)
+                        && !_runContext.HasManualLineage)
+                    {
+                        var jt = BranchPairJournalTarget(
+                            pollData.HeadRefName ?? string.Empty,
+                            pollData.BaseRefName ?? string.Empty);
+                        var d = await PrLineageGuard.CheckAsync(
+                            pollData.Body, _runContext.RunId,
+                            _runContext.HasManualLineage,
+                            bodyHasFrontMatter: false,
+                            _journalStore,
+                            "pr_open_evidence_pr",
+                            jt, innerCt).ConfigureAwait(false);
+                        if (!d.Allowed)
+                        {
+                            payload = new PrMergeEvidencePrPayload
+                            {
+                                PrNumber = prNumber,
+                                PrUrl = prUrl,
+                                RepoSlug = slug,
+                                Repository = slug,
+                                ResultAction = "error",
+                                Succeeded = false,
+                                WasMutated = false,
+                                AlreadyMerged = false,
+                                Error = "foreign_lineage: " + d.Reason,
+                            };
+                            EmitMergeEvidenceError(prNumber, prUrl, "foreign_lineage: " + d.Reason, slug);
+                            return ExitCodes.RoutingFailure;
+                        }
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception)
+                {
+                    // Fail open: a body-fetch failure must not block the
+                    // merge. Same posture as MergeShared.CheckGhMergeLineageAsync.
+                }
+
                 try
                 {
                     var result = await gh.MergePullRequestAsync(

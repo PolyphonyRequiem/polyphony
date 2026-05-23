@@ -240,6 +240,23 @@ public sealed partial class PrCommands
             }
 
             var openPr = resolution.OpenPr!;
+            // W9 (AB#3282): refuse foreign PRs. The (head, base) pair
+            // matched, but a foreign run could have opened a PR with the
+            // same branches if the local journal was wiped and the prior
+            // branches survived. Check W6 hidden marker / W9 journal row
+            // before mutating the platform.
+            var lineageReason = await CheckGhMergeLineageAsync(
+                slug, openPr.Number, bodyHasFrontMatter: false,
+                journalAction: "pr_open_impl_pr",
+                journalTarget: BranchPairJournalTarget(headBranch, baseBranch),
+                ct).ConfigureAwait(false);
+            if (lineageReason is not null)
+            {
+                EmitMergeImplError(rootId, itemId, mgPath, method, deleteBranchBool,
+                    "foreign_lineage: " + lineageReason, headBranch, baseBranch);
+                return ExitCodes.RoutingFailure;
+            }
+
             var mergeMatch = string.IsNullOrEmpty(matchHeadCommit) ? null : matchHeadCommit;
             var result = await gh.MergePullRequestAsync(
                 slug, openPr.Number, mergeMethod, admin, deleteBranchBool, mergeMatch, ct: ct).ConfigureAwait(false);

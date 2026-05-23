@@ -244,4 +244,57 @@ public sealed partial class PrCommands
                 return false;
         }
     }
+
+    /// <summary>
+    /// W9 (AB#3282): wrap <see cref="PrLineageGuard"/> with the body
+    /// fetch the merge verbs need. <see cref="FindPrForMergeAsync"/>
+    /// returns only branch/number summaries, so the body — required
+    /// for both the W6 hidden marker and the W7 plan-PR front-matter
+    /// — lives behind an extra <c>gh pr view</c> call. Centralised
+    /// here so all four GitHub merge-* verbs share one foreign-PR
+    /// posture and one error envelope shape.
+    /// </summary>
+    /// <returns>
+    /// <c>null</c> when the lineage check allows the merge to proceed;
+    /// a structured refusal reason otherwise (callers translate the
+    /// reason into their verb-specific error envelope and exit code).
+    /// </returns>
+    internal async Task<string?> CheckGhMergeLineageAsync(
+        string repoSlug,
+        int prNumber,
+        bool bodyHasFrontMatter,
+        string journalAction,
+        string journalTarget,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(_runContext.RunId) || _runContext.HasManualLineage)
+        {
+            return null;
+        }
+
+        string? body = null;
+        try
+        {
+            var poll = await gh.GetPullRequestPollDataAsync(repoSlug, prNumber, ct).ConfigureAwait(false);
+            body = poll?.Body;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception)
+        {
+            // Fail open: a body-fetch failure must not block the merge.
+            // The W6 marker is a defense-in-depth check; the journal
+            // is the next line of defense — keep going.
+        }
+
+        var decision = await PrLineageGuard.CheckAsync(
+            body: body,
+            currentRunId: _runContext.RunId,
+            isManualLineage: _runContext.HasManualLineage,
+            bodyHasFrontMatter: bodyHasFrontMatter,
+            journal: _journalStore,
+            journalAction: journalAction,
+            journalTarget: journalTarget,
+            ct).ConfigureAwait(false);
+        return decision.Allowed ? null : decision.Reason;
+    }
 }

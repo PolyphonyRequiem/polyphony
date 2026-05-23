@@ -154,6 +154,33 @@ public sealed partial class PrCommands
                     }
 
                     var openPr = resolution.OpenPr!;
+                    // W9 (AB#3282): refuse foreign PRs (see MergeImplPr).
+                    var mgLineageReason = await CheckGhMergeLineageAsync(
+                        slug, openPr.Number, bodyHasFrontMatter: false,
+                        journalAction: "pr_open_mg_pr",
+                        journalTarget: BranchPairJournalTarget(headBranch, baseBranch),
+                        innerCt).ConfigureAwait(false);
+                    if (mgLineageReason is not null)
+                    {
+                        payload = new PrMergeMergeGroupPrPayload
+                        {
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            PrNumber = openPr.Number,
+                            Method = MgMethod,
+                            DeleteBranch = MgDeleteBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            AlreadyMerged = false,
+                            Error = "foreign_lineage: " + mgLineageReason,
+                        };
+                        EmitMergeMgError(rootId, mgPath, "foreign_lineage: " + mgLineageReason, headBranch, baseBranch);
+                        return ExitCodes.RoutingFailure;
+                    }
                     var mergeMatch = string.IsNullOrEmpty(matchHeadCommit) ? null : matchHeadCommit;
                     var result = await gh.MergePullRequestAsync(
                         slug, openPr.Number, GhMergeMethod.Merge, admin, MgDeleteBranch, mergeMatch, ct: innerCt).ConfigureAwait(false);
