@@ -52,6 +52,7 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<RunContext>();
         services.AddSingleton<IJournalLocator, JournalLocator>();
         services.AddSingleton<IJournalStore, JournalStore>();
+        services.AddSingleton<IJournalReader, JournalReader>();
         services.AddSingleton<JournaledActionDecorator>();
         services.AddSingleton<JournalDriftAnalyzer>();
         services.AddSingleton<ProjectionResetCoverageAnalyzer>();

@@ -117,6 +117,38 @@ internal static class ResourceObserverSupport
             ?? GetStringAttribute(attributes, "sha")
             ?? GetStringAttribute(attributes, "commit_sha");
 
+    /// <summary>
+    /// Returns <c>true</c> when <paramref name="branchName"/> is a polyphony-style
+    /// branch attributable to <paramref name="rootId"/> from the branch name alone.
+    /// </summary>
+    /// <remarks>
+    /// Recognized schemes (all defined in
+    /// <c>docs/decisions/branch-model.md</c>):
+    /// <list type="bullet">
+    ///   <item><c>feature/{r}</c></item>
+    ///   <item><c>plan/{r}</c>, <c>plan/{r}-{descendant}</c></item>
+    ///   <item><c>mg/{r}_{mg_path}</c></item>
+    ///   <item><c>impl/{r}-{item}</c></item>
+    ///   <item><c>evidence/{r}</c>, <c>evidence/{r}-{item}</c></item>
+    ///   <item><c>sdlc/root/{r}</c> — the root's own per-item SDLC branch.</item>
+    /// </list>
+    /// <para>
+    /// <b>Known gap (intentional):</b> the <c>sdlc/root/{id}</c> scheme is also
+    /// produced for every descendant work item under the root (see
+    /// <c>ResetCommands.Branches.EnumerateRootSdlcBranchesAsync</c>). For an
+    /// orphan <c>sdlc/root/{child_id}</c> branch — i.e. one not in the journal
+    /// — attributing it to a specific root requires walking the work-item
+    /// hierarchy, which this matcher (operating on the branch name only)
+    /// cannot do. Journaled <c>sdlc/root/{child_id}</c> branches are caught
+    /// regardless via the expected-resource path in
+    /// <c>GitBranchObserver.ObserveAsync</c>; only the orphan-descendant case
+    /// is uncovered here. If the pattern→projection equivalence suite
+    /// (AB#3307) surfaces real incidents of orphan descendant <c>sdlc/root</c>
+    /// branches, thread a hierarchy-resolved <c>HashSet&lt;int&gt;</c> of
+    /// in-scope work-item ids through <c>ResourceObservationRequest</c> and
+    /// add an overload here.
+    /// </para>
+    /// </remarks>
     public static bool MatchesPolyphonyBranchPattern(int rootId, string branchName)
     {
         var prefix = rootId.ToString(CultureInfo.InvariantCulture);
@@ -126,7 +158,8 @@ internal static class ResourceObserverSupport
             || branchName.StartsWith($"mg/{prefix}_", StringComparison.Ordinal)
             || branchName.StartsWith($"impl/{prefix}-", StringComparison.Ordinal)
             || string.Equals(branchName, $"evidence/{prefix}", StringComparison.Ordinal)
-            || branchName.StartsWith($"evidence/{prefix}-", StringComparison.Ordinal);
+            || branchName.StartsWith($"evidence/{prefix}-", StringComparison.Ordinal)
+            || string.Equals(branchName, $"sdlc/root/{prefix}", StringComparison.Ordinal);
     }
 
     public static JsonObject CreateActualAttributes(params (string Name, object? Value)[] values)

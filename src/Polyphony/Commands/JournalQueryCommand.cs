@@ -7,7 +7,7 @@ using Polyphony.Journal.Projections;
 namespace Polyphony.Commands;
 
 [VerbGroup("")]
-public sealed class JournalQueryCommand(IJournalStore store, IServiceProvider services)
+public sealed class JournalQueryCommand(IJournalReader store, IServiceProvider services)
 {
     /// <summary>
     /// Query the root journal's projected resource effects.

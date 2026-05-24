@@ -7,7 +7,7 @@ using Polyphony.Journal.Projections;
 namespace Polyphony.Commands;
 
 [VerbGroup("")]
-public sealed class JournalOwnedCommand(IJournalStore store, IServiceProvider services)
+public sealed class JournalOwnedCommand(IJournalReader store, IServiceProvider services)
 {
     /// <summary>
     /// Return the root journal's current Polyphony-owned resources.
