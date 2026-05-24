@@ -1,0 +1,45 @@
+# Polyphony
+
+> Type-agnostic SDLC routing engine and conductor workflow suite for Azure DevOps. Polyphony is a .NET 11 CLI that decides what should happen to a work item — phase, transition, branch hint — based on a per-repo `.polyphony-config/process-config.yaml`. It pairs with `twig` (which executes decisions against ADO) and with `conductor` (which orchestrates the surrounding AI workflows). Polyphony itself never writes to ADO.
+
+Polyphony ships two artifacts from one tree: the **Polyphony CLI binary** (`src/Polyphony/`) and the **conductor workflow suite** (`.conductor/registry/workflows/`). They version together but are independent.
+
+## Agent orientation
+
+- [AGENTS.md](AGENTS.md): Canonical agent guide for this repo. Build, test, lint, do-not-edit zones, cardinal rules.
+- [README.md](README.md): Operator overview, install, quickstart.
+- [docs/README.md](docs/README.md): Documentation landing page and tour.
+- [docs/polyphony-skills-index.md](docs/polyphony-skills-index.md): Which doc / skill to read first based on what you're about to do.
+- [docs/glossary.md](docs/glossary.md): Canonical vocabulary. AB#3259 hard cut — no aliases.
+
+## Reference docs
+
+- [docs/reference/polyphony-cli-reference.md](docs/reference/polyphony-cli-reference.md): All CLI verbs, JSON shapes, exit codes, worked examples.
+- [docs/reference/polyphony-tags.md](docs/reference/polyphony-tags.md): The `polyphony:*` tag namespace stamped on work items.
+- [docs/reference/polyphony-state-effects-catalog.md](docs/reference/polyphony-state-effects-catalog.md): What each verb writes (tags, fields, state).
+- [docs/reference/polyphony-conductor-directory.md](docs/reference/polyphony-conductor-directory.md): Every file in `.polyphony-config/`.
+- [docs/reference/polyphony-process-config-schema.md](docs/reference/polyphony-process-config-schema.md): Full `process-config.yaml` schema with V-1..V-14 rules.
+
+## Concept docs
+
+- [docs/concepts/polyphony-architecture.md](docs/concepts/polyphony-architecture.md): Layering, three-vocabulary contract, platform abstraction, data flow.
+- [docs/concepts/per-run-worktree-layout.md](docs/concepts/per-run-worktree-layout.md): Per-root worktree contract; runs-root layout.
+- [docs/concepts/polyphony-agent-failure-modes.md](docs/concepts/polyphony-agent-failure-modes.md): Postmortem of six failure modes; cites the doc that would have prevented each.
+
+## How-to guides
+
+- [docs/guides/onboarding-guide.md](docs/guides/onboarding-guide.md): Step-by-step new-repo onboarding with a worked example.
+
+## Decisions (ADRs)
+
+- [docs/decisions/README.md](docs/decisions/README.md): Index with status of all architectural decisions.
+
+## Proposals (forward-looking)
+
+- [docs/proposals/README.md](docs/proposals/README.md): Index of in-flight proposals (PR/branch verb collapse, script-to-verb migration, typed contract surface).
+
+## Optional
+
+- [docs/projects/README.md](docs/projects/README.md): In-flight project plans (Epic-level plan docs; many superseded by completion).
+- [docs/discussions/README.md](docs/discussions/README.md): Exploratory threads (workflow compiler evaluation et al.).
+- [workflows/README.md](workflows/README.md): Conductor workflow suite tour.
