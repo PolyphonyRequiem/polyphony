@@ -42,6 +42,12 @@ The fastest orientation path is `docs/README.md` → `docs/polyphony-skills-inde
 
 ---
 
+## Docs strategy
+
+`docs/` follows [Diátaxis](https://diataxis.fr): `reference/` (what), `concepts/` (why), `guides/` (how), plus lifecycle dirs `decisions/` (MADR 4.0 ADRs), `proposals/`, `projects/`, `discussions/`. Every doc carries YAML frontmatter (`doc_type`, `status`, `synopsis`) and follows `docs/STYLE.md`. New docs go in the matching purpose dir with a one-line entry in that dir's `README.md`. The curated LLM index lives at `/llms.txt`.
+
+---
+
 ## Build, test, lint
 
 Run from the repo root.
