@@ -7,7 +7,7 @@ description: >-
   6-step smoke test that proves the wiring before any workflow runs, and a
   catalogue of common bootstrap pitfalls. The full step-by-step walkthrough
   (process template selection, type definitions, templates, agent guidance,
-  profile, validation, first run) lives in `docs/onboarding-guide.md`; this
+  profile, validation, first run) lives in `docs/guides/onboarding-guide.md`; this
   skill is the agent-loadable companion.
 user-invokable: false
 ---
@@ -17,7 +17,7 @@ user-invokable: false
 This skill is the **agent-loadable companion** to the long-form bootstrap
 guide. The full step-by-step walkthrough — process template selection, type
 definitions, templates, agent guidance, profile, validation, first run — is
-in **`docs/onboarding-guide.md`**, which uses a fictitious project called
+in **`docs/guides/onboarding-guide.md`**, which uses a fictitious project called
 **kyber** as its worked example throughout.
 
 What lives **here** that is NOT in the long guide:
@@ -31,10 +31,10 @@ What lives **here** that is NOT in the long guide:
 Read order if you are doing this for real:
 
 1. This skill (you're here) — confirm prereqs, run smoke test.
-2. **`docs/onboarding-guide.md`** — the long walkthrough.
-3. **`docs/polyphony-conductor-directory.md`** — every file in `.polyphony-config/`.
-4. **`docs/polyphony-process-config-schema.md`** — full YAML schema, V-1..V-14.
-5. **`docs/polyphony-agent-failure-modes.md`** — prior agents' bootstrap mistakes.
+2. **`docs/guides/onboarding-guide.md`** — the long walkthrough.
+3. **`docs/reference/polyphony-conductor-directory.md`** — every file in `.polyphony-config/`.
+4. **`docs/reference/polyphony-process-config-schema.md`** — full YAML schema, V-1..V-14.
+5. **`docs/concepts/polyphony-agent-failure-modes.md`** — prior agents' bootstrap mistakes.
 
 ---
 
@@ -72,7 +72,7 @@ Pick any returned ID. Call it `$WI` from here on.
 
 ## 2 · Run the long-form bootstrap
 
-Follow `docs/onboarding-guide.md` sections 3–9 to:
+Follow `docs/guides/onboarding-guide.md` sections 3–9 to:
 
 - Verify (or create) a repository layout — either a **vanilla `git clone`** (the recommended default for new operators) **or** the bare-repo + per-run worktree layout (optional, for operators who prefer it). Both are first-class as of the bare-requirement drop.
   - **Vanilla clone** (recommended): plain `git clone <url>` is enough. The launcher writes per-root worktrees under `<runs_root>/root-{N}/` regardless of whether the source repo is bare or vanilla.
@@ -232,8 +232,8 @@ Basic has only `To Do`, `Doing`, `Done`
 returns `is_valid: true, target_state: "Removed"`; `twig state Removed`
 then fails with `"Unknown state 'Removed'. Valid states: To Do, Doing,
 Done"`. Detect via step 3.5 / section 4. Full treatment:
-`docs/polyphony-agent-failure-modes.md` § 6 and
-`docs/polyphony-process-config-schema.md` "Anti-pattern callout".
+`docs/concepts/polyphony-agent-failure-modes.md` § 6 and
+`docs/reference/polyphony-process-config-schema.md` "Anti-pattern callout".
 
 ### 5b · State-name vocabulary mismatch (`InProgress` vs `Active`)
 
@@ -245,7 +245,7 @@ named `Active`. The category-based lookup function exists
 (`StateResolver.ResolveByCategory` —
 `twig2/src/Twig.Domain/ValueObjects/StateResolver.cs:14-24`) but polyphony
 does not call it. Spell out the literal name correct for your template.
-Full contract: `docs/polyphony-architecture.md` "The three vocabularies".
+Full contract: `docs/concepts/polyphony-architecture.md` "The three vocabularies".
 
 ### 5c · Wrong `--config` argument shape
 
@@ -277,7 +277,7 @@ config emits 10 of those warnings before V-11..V-14. Recommended order:
 |-----------|------------------------------------------------------------------------|
 | V-9, V-10 | **Before running any planning workflow** — agents read these directly  |
 | V-14      | Optional today (reserved placeholder; no live consumer — see           |
-|           | `docs/polyphony-conductor-directory.md` § 5)                            |
+|           | `docs/reference/polyphony-conductor-directory.md` § 5)                            |
 | V-11/12/13| Before promoting to production SDLC use; defaults work meanwhile       |
 
 ### 5f · First-run quirk: twig silently rewrites `.twig/config`
@@ -318,7 +318,7 @@ leaves a freshly-checked-out worktree dirty before any work begins.
 [ ] 1.   polyphony --help shows exactly: route validate validate-config hierarchy
 [ ] 1.   twig workspace returns a workspace (not "no workspace found")
 [ ] 1.   Pick a real $WI to smoke-test against
-[ ] 2.   Walk docs/onboarding-guide.md sections 2-9
+[ ] 2.   Walk docs/guides/onboarding-guide.md sections 2-9
 [ ] 2.a  Repo layout in place: either vanilla `git clone` OR bare-repo (`~/projects/<repo>.git + ~/projects/<repo> + ~/projects/<repo>-runs`). Both are first-class. (§ 2 of onboarding guide)
 [ ] 2.b  polyphony state preflight --work-item $WI → all checks PASSED (the bare_repo check was dropped; if it appears in older builds it is advisory only)
 [ ] 2.   polyphony validate-config --config .polyphony-config → exit 0 (warnings ok)
@@ -328,7 +328,7 @@ leaves a freshly-checked-out worktree dirty before any work begins.
 [ ] 3.4  validate --work-item $WI --event <evt> returns is_valid + target_state
 [ ] 3.5  twig process --type $type lists $target_state in its state set
 [ ] 4    Walk every (type, event) pair in transitions: through 3.5 (catches 5a)
-[ ] 6    docs/onboarding-guide.md § 10: conductor run polyphony@polyphony works
+[ ] 6    docs/guides/onboarding-guide.md § 10: conductor run polyphony@polyphony works
 ```
 
 If every line passes, the repo is bootstrapped.
@@ -408,6 +408,6 @@ applyTo: "**"
 
 No polyphony-side wiring. Conductor auto-discovers on the next workflow run.
 
-Long-form discussion + examples: `docs/onboarding-guide.md` § 7. Per-role
+Long-form discussion + examples: `docs/guides/onboarding-guide.md` § 7. Per-role
 contract: `.polyphony-config/agent-guidance/README.md`.
 

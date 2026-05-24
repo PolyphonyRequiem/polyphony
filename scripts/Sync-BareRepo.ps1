@@ -83,7 +83,7 @@ Write-Warning @"
 supports vanilla (non-bare) clones as first-class — vanilla operators can
 reconcile main with a plain ``git pull`` (or ``git fetch --prune`` + ``git
 reset --hard origin/main``) without this helper. This script remains
-functional for operators on the bare-repo layout. See docs/onboarding-guide.md.
+functional for operators on the bare-repo layout. See docs/guides/onboarding-guide.md.
 "@
 
 # ── Exit code constants ──────────────────────────────────────────────────────

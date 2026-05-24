@@ -225,7 +225,7 @@ before.
   and its tests.
 - Delete `.conductor/registry/scripts/` (review-router and seeder are now
   in the binary).
-- Update `docs/onboarding-guide.md` to reflect the single-binary install
+- Update `docs/guides/onboarding-guide.md` to reflect the single-binary install
   model (no copy-scripts step).
 - Update `README.md` to document the new verb groups.
 - Add a short section to `polyphony-sdlc` skill describing the verb

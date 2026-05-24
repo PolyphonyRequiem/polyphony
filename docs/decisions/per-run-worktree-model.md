@@ -2,7 +2,6 @@
 doc_type: decision
 status: accepted
 synopsis: Per-root worktree contract under runs-root with same-root run-lock concurrency control.
-supersedes: [onboarding-guide.md]
 ---
 
 # ADR: Per-run worktree model + same-root run lock (concurrency)
@@ -10,7 +9,7 @@ supersedes: [onboarding-guide.md]
 > **Status:** Accepted; rolling out across AB#3085 PR stack (PR 1a/1b/1c, PR 2,
 > PR 3 launcher, PR 4 workflows).
 > **Supersedes:** the implicit "main worktree + sibling per-item worktrees"
-> convention referenced obliquely in `docs/onboarding-guide.md` and inherited
+> convention referenced obliquely in `docs/guides/onboarding-guide.md` and inherited
 > from the original `Invoke-PolyphonySdlc.ps1` (PR #194).
 
 ## Context
@@ -179,5 +178,5 @@ copies `.twig/` over. No in-place `.git` surgery.
   *where* worktrees live changes.
 - `docs/decisions/polyphony.md` — the run lock + dispatch model that
   this ADR's filesystem-layer model complements.
-- `docs/per-run-worktree-layout.md` — operator-facing reference for the
+- `docs/concepts/per-run-worktree-layout.md` — operator-facing reference for the
   layout; this ADR is the design rationale.

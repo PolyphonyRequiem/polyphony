@@ -27,12 +27,12 @@ You have twig installed and the polyphony CLI on PATH. The repo has no
 1. **`polyphony-bootstrap.skill.md`** — the step-by-step (prereqs → directory
    → `process-config.yaml` → `validate-config` → 6-step smoke test → workflow
    wiring → pitfalls).
-2. **`polyphony-conductor-directory.md`** — what every file in `.polyphony-config/`
+2. **`reference/polyphony-conductor-directory.md`** — what every file in `.polyphony-config/`
    is for; minimum-viable vs. complete checklists.
-3. **`polyphony-process-config-schema.md`** — full YAML schema, V-1..V-14
+3. **`reference/polyphony-process-config-schema.md`** — full YAML schema, V-1..V-14
    rules, worked examples per ADO process template (Basic / Agile / Scrum /
    CMMI / custom).
-4. **`polyphony-agent-failure-modes.md`** — the six failure modes a
+4. **`concepts/polyphony-agent-failure-modes.md`** — the six failure modes a
    prior agent hit; § 6 covers the `scope_removed: Removed` latent bug.
 
 ### 2 · Author or modify a workflow YAML or PowerShell helper
@@ -42,11 +42,11 @@ see § "Not covered" below for where they live).
 1. **`polyphony-workflow-author.skill.md`** — the shell-out idiom, decision
    matrix for which CLI to call, the three-vocabulary rule, canonical helper
    scripts, conventions for adding new ones.
-2. **`polyphony-cli-reference.md`** — JSON shapes, exit codes, and worked
+2. **`reference/polyphony-cli-reference.md`** — JSON shapes, exit codes, and worked
    examples for `route` / `validate` / `validate-config` / `hierarchy`.
-3. **`polyphony-architecture.md`** *(skim)* — layering and the platform
+3. **`concepts/polyphony-architecture.md`** *(skim)* — layering and the platform
    abstraction; orient yourself before adding new shell-out sites.
-4. **`polyphony-agent-failure-modes.md`** — § 1, § 2, § 3 are the
+4. **`concepts/polyphony-agent-failure-modes.md`** — § 1, § 2, § 3 are the
    workflow-author failures; read before estimating any change.
 
 ### 3 · Add or modify a polyphony CLI verb
@@ -55,18 +55,18 @@ You are touching `src/Polyphony/Commands/`.
 1. **`polyphony-cli-developer.skill.md`** — ConsoleAppFramework command
    pattern, primary-constructor DI, AOT JSON via `PolyphonyJsonContext`,
    `CommandTestBase` scaffolding, `JsonOutputContractTests` checklist.
-2. **`polyphony-cli-reference.md`** — confirm the verb you are about to add
+2. **`reference/polyphony-cli-reference.md`** — confirm the verb you are about to add
    doesn't already exist (the four current verbs cover most "obvious" needs).
-3. **`polyphony-architecture.md`** — confirm your new verb belongs in the
+3. **`concepts/polyphony-architecture.md`** — confirm your new verb belongs in the
    polyphony layer, not in twig or in a helper script.
 
 ### 4 · Just understand what polyphony is
 You are not changing anything; you want the model.
 
-1. **`polyphony-architecture.md`** — layering, three-vocabulary contract,
+1. **`concepts/polyphony-architecture.md`** — layering, three-vocabulary contract,
    data flow worked example.
-2. **`polyphony-cli-reference.md`** — the four verbs, what they each return.
-3. **`polyphony-agent-failure-modes.md`** — calibrate your model
+2. **`reference/polyphony-cli-reference.md`** — the four verbs, what they each return.
+3. **`concepts/polyphony-agent-failure-modes.md`** — calibrate your model
    against six concrete failures the docs prevent.
 
 ## What this index does NOT cover
@@ -92,13 +92,13 @@ You are not changing anything; you want the model.
 |----------------------------------------------|-----:|--------------------------------|------------------------------------------------------------------------|
 | `polyphony-skills-index.md`                  |  ~6K | Anyone landing fresh           | This file. Which doc to read first based on what you're about to do.   |
 | `polyphony-bootstrap.skill.md`               | ~18K | Repo onboarder                 | How to wire a repo from zero `.polyphony-config/` to running workflows.       |
-| `polyphony-conductor-directory.md`           | ~15K | Repo onboarder / config author | Reference for every file inside `.polyphony-config/` other than the schema.   |
-| `polyphony-process-config-schema.md`         | ~17K | Config author                  | Full YAML schema, V-1..V-14, per-template worked examples.             |
-| `polyphony-cli-reference.md`                 | ~15K | Workflow author / CLI consumer | The four verbs, JSON shapes, exit codes, worked examples.              |
-| `polyphony-architecture.md`                  | ~18K | Anyone changing layers         | Layering, platform abstraction, three-vocabulary contract, data flow.  |
+| `reference/polyphony-conductor-directory.md`           | ~15K | Repo onboarder / config author | Reference for every file inside `.polyphony-config/` other than the schema.   |
+| `reference/polyphony-process-config-schema.md`         | ~17K | Config author                  | Full YAML schema, V-1..V-14, per-template worked examples.             |
+| `reference/polyphony-cli-reference.md`                 | ~15K | Workflow author / CLI consumer | The four verbs, JSON shapes, exit codes, worked examples.              |
+| `concepts/polyphony-architecture.md`                  | ~18K | Anyone changing layers         | Layering, platform abstraction, three-vocabulary contract, data flow.  |
 | `polyphony-workflow-author.skill.md`         | ~11K | Workflow / script author       | Shell-out idiom, decision matrix, canonical helpers, anti-patterns.    |
 | `polyphony-cli-developer.skill.md`           | ~13K | Polyphony CLI contributor      | How to add / modify a verb in `src/Polyphony/Commands/`.               |
-| `polyphony-agent-failure-modes.md`   |  ~9K | Anyone (calibration)           | Postmortem of 6 failure modes; cite which doc would have prevented each.|
+| `concepts/polyphony-agent-failure-modes.md`   |  ~9K | Anyone (calibration)           | Postmortem of 6 failure modes; cite which doc would have prevented each.|
 
 Sizes rounded; see file system for canonical bytes. Files marked
 `.skill.md` carry frontmatter and are intended to be auto-loaded by an agent

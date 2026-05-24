@@ -9,7 +9,7 @@ synopsis: The `polyphony:*` tag namespace stamped on every work item the polypho
 
 > Status: Phase 1 design (PR-lifecycle overhaul).
 > Authoritative source for the `polyphony:*` tag namespace.
-> Companion to `docs/glossary.md` (terms) and `docs/polyphony-cli-reference.md` (verbs).
+> Companion to `docs/glossary.md` (terms) and `docs/reference/polyphony-cli-reference.md` (verbs).
 
 ## Why
 

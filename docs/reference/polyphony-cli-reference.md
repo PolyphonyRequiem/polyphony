@@ -968,14 +968,14 @@ home. Otherwise, the script registry is where it belongs.
 
 - **Workflow suite documentation:** `.github/skills/polyphony-sdlc/SKILL.md`
   (which YAML calls which verb, recursion budget, agent roster).
-- **Architecture and three-vocabulary rule:** `docs/polyphony-architecture.md`
+- **Architecture and three-vocabulary rule:** `docs/concepts/polyphony-architecture.md`
   (event names vs. state names vs. state categories — the rule that
   underpins `validate`).
-- **`process-config.yaml` schema:** `docs/polyphony-process-config-schema.md`
+- **`process-config.yaml` schema:** `docs/reference/polyphony-process-config-schema.md`
   (validated by `validate-config`).
-- **`.polyphony-config/` directory layout:** `docs/polyphony-conductor-directory.md`
+- **`.polyphony-config/` directory layout:** `docs/reference/polyphony-conductor-directory.md`
   (consumed by `plan load-type` and `plan load-guidance`).
-- **Onboarding a fresh repo:** `docs/onboarding-guide.md` (which verbs to
+- **Onboarding a fresh repo:** `docs/guides/onboarding-guide.md` (which verbs to
   call when, with worked examples).
 - **CLI authoring conventions:** `.github/skills/polyphony-cli-developer/SKILL.md`
   (when adding a new verb).

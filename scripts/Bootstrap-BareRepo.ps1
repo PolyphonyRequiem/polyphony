@@ -4,7 +4,7 @@
 .SYNOPSIS
     [DEPRECATED — see banner at top of script] Bootstrap a fresh-clone polyphony
     repo into the bare-repo + worktree layout described in
-    docs/per-run-worktree-layout.md (#420).
+    docs/concepts/per-run-worktree-layout.md (#420).
 
 .DESCRIPTION
     Sister script to scripts/Migrate-ToBareRepo.ps1: that one converts an
@@ -93,7 +93,7 @@ Write-Warning @"
 path. Polyphony now supports vanilla (non-bare) clones as first-class — the
 recommended onboarding is now a plain ``git clone <url>``. This script
 remains functional for operators who explicitly want the bare-repo layout,
-but is no longer required. See docs/onboarding-guide.md.
+but is no longer required. See docs/guides/onboarding-guide.md.
 "@
 
 # ── Exit code constants ──────────────────────────────────────────────────────

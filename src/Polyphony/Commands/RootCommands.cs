@@ -12,7 +12,7 @@ namespace Polyphony.Commands;
 /// <summary>
 /// Root verbs (<c>polyphony root ...</c>). Manage the <c>polyphony:root</c>
 /// marker tag and resolve a work item's nearest root ancestor.
-/// Authoritative spec: <c>docs/polyphony-tags.md</c>.
+/// Authoritative spec: <c>docs/reference/polyphony-tags.md</c>.
 ///
 /// <list type="bullet">
 ///   <item><c>declare</c> — stamp <c>polyphony:root</c> on an item (idempotent).</item>

@@ -22,7 +22,7 @@
          contract puts each root run in its own per-root tree under
          `{runs_root}/root-{N}/`.
 
-    See docs/per-run-worktree-layout.md for the runs-root + per-root worktree
+    See docs/concepts/per-run-worktree-layout.md for the runs-root + per-root worktree
     contract.
 
     Closes AB#3011 (the original wrapper) and AB#3098 (this rework).
@@ -215,7 +215,7 @@ if ($Intent -ne 'reset') {
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-$script:LayoutDoc        = 'docs/per-run-worktree-layout.md'
+$script:LayoutDoc        = 'docs/concepts/per-run-worktree-layout.md'
 
 # ─── Helper: canonical path comparison (boundary-aware, OS-aware) ─────────────
 
@@ -476,7 +476,7 @@ Write-Host '[polyphony-sdlc] Window kept open (-NoExit). Close manually.' -Foreg
 # MG (because all the work is already on main) sends the scope reviewer into a
 # 12-cycle false-positive loop that wastes 15+ min before hitting
 # scope_revise_cap_gate. Refusing here eliminates that failure mode by
-# construction. See docs/per-run-worktree-layout.md and the AB#3165 Epic.
+# construction. See docs/concepts/per-run-worktree-layout.md and the AB#3165 Epic.
 #
 # Bypassed by:
 #   * -Intent resume / replan  (operator is intentionally rejoining)
@@ -488,7 +488,7 @@ if (-not $SkipStateCheck -and $Intent -eq 'new') {
     if (-not $twigCmd) {
         throw @"
 [polyphony-sdlc] twig is not on PATH; cannot run terminal-state pre-flight.
-Install twig (per docs/onboarding-guide.md) or pass -SkipStateCheck to bypass.
+Install twig (per docs/guides/onboarding-guide.md) or pass -SkipStateCheck to bypass.
 "@
     }
     $twigStdout = & twig show $RootId --output json 2>&1

@@ -12,7 +12,7 @@ namespace Polyphony.Commands;
 
 /// <summary>
 /// Scope verbs (<c>polyphony scope ...</c>). Manage the bare <c>polyphony</c>
-/// in-scope marker on work items. Authoritative spec: <c>docs/polyphony-tags.md</c>.
+/// in-scope marker on work items. Authoritative spec: <c>docs/reference/polyphony-tags.md</c>.
 ///
 /// <list type="bullet">
 ///   <item><c>check</c> — read scope disposition for one item.</item>

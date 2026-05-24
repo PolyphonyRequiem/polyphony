@@ -77,7 +77,7 @@ Polyphony is a .NET 11 CLI that decides *what should happen* to a work item in a
 - **Every doc has YAML frontmatter** (`doc_type`, `status`, `synopsis`). See [`STYLE.md`](STYLE.md).
 - **ADRs use MADR 4.0** structure, with both prose `> Status:` (for revision history nuance) AND machine-readable `status:` frontmatter.
 - **Citations use `path:line-start-line-end`** for verifiability. Use section names for long-lived refs.
-- **Vocabulary is canonical**. See [`glossary.md`](glossary.md). Forbidden synonyms (`apex`, `wave`, `cascade`, `primary_*`, …) will fail the vocabulary lint.
+- **Vocabulary is canonical**. See [`glossary.md`](glossary.md) for the forbidden-synonyms block; the vocabulary lint will reject them.
 - **Type-agnosticism (P5)** is load-bearing: no work-item type name (Epic / Issue / Task / Bug / custom) appears in any routing condition.
 
 ---

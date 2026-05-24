@@ -122,7 +122,7 @@ The prose `> **Status:**` line and the `status:` frontmatter coexist deliberatel
 
 ## Vocabulary
 
-The canonical vocabulary lives in [`glossary.md`](glossary.md). Forbidden synonyms (e.g. `apex`, `wave`, `cascade`, `primary_*`, `*_dispatch` suffix, `terminal_*` prefix) are gated by `.conductor/registry/tests/lint-vocabulary.ps1`. AB#3259 was a hard cut — there are no aliases.
+The canonical vocabulary lives in [`glossary.md`](glossary.md). Its "forbidden synonyms" block is the source of truth; the lint at `.conductor/registry/tests/lint-vocabulary.ps1` enforces it. AB#3259 was a hard cut — there are no aliases.
 
 When introducing a new term, add it to `glossary.md` and (if it overlaps with a forbidden synonym) extend the lint.
 

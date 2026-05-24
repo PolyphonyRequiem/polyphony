@@ -382,7 +382,7 @@ agents:
 
   # ── Preflight: stamp the polyphony:root marker tag ───────────────────────
   #
-  # Per docs/polyphony-tags.md §"Workflow integration":
+  # Per docs/reference/polyphony-tags.md §"Workflow integration":
   # > Entry: the worklist driver receives root_id as input. Calls
   # > `polyphony root declare {root_id}` (idempotent) to stamp the root tag.
   #

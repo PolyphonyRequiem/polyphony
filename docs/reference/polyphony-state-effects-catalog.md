@@ -110,7 +110,7 @@ introduce new dependencies.
 - **Idempotent**: yes (`changed: false` if tag already present).
 - **History**: had a DI registration bug (`ScopeCommands` not registered)
   that made the verb NPE on every call until PR #160 fixed it.
-- **Workflow integration**: documented at `docs/polyphony-tags.md:172`
+- **Workflow integration**: documented at `docs/reference/polyphony-tags.md:172`
   as part of worklist-driver entry. Wired into polyphony in PR #161.
 
 ### `polyphony root resolve --work-item <N>`

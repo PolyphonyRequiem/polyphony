@@ -310,7 +310,7 @@ jobs:
           conductor registry list polyphony
           \`\`\`
 
-          See [docs/onboarding-guide.md](https://github.com/${GITHUB_REPOSITORY}/blob/v${VERSION}/docs/onboarding-guide.md) for the full bootstrap walkthrough.
+          See [docs/guides/onboarding-guide.md](https://github.com/${GITHUB_REPOSITORY}/blob/v${VERSION}/docs/guides/onboarding-guide.md) for the full bootstrap walkthrough.
           EOF
           echo '--- release-notes.md ---'
           cat release-notes.md

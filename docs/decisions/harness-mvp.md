@@ -25,7 +25,7 @@ was overdue.
 
 The four strategies considered (PR #159's wake):
 
-1. **Mechanical state-effects catalog** — `docs/polyphony-state-effects-catalog.md`.
+1. **Mechanical state-effects catalog** — `docs/reference/polyphony-state-effects-catalog.md`.
    Shipped, but documentation-only; no automatic enforcement.
 2. **Runtime trace mode** — issue #162. Deferred.
 3. **Property-based / state-machine workflow testing** — issue #163. Deferred.
@@ -153,6 +153,6 @@ becomes unstable.
 - **`tests/harness/README.md`** — user-facing layout and run instructions.
 - **`.github/skills/polyphony-harness/SKILL.md`** — agent-loadable companion.
 - Issue #272 — upstream conductor `/api/gate` endpoint.
-- State-effects catalog — `docs/polyphony-state-effects-catalog.md`
+- State-effects catalog — `docs/reference/polyphony-state-effects-catalog.md`
   (Strategy 1 of the four).
 - Issues #162, #163, #164 — Strategies 2, 3, 4 (deferred).

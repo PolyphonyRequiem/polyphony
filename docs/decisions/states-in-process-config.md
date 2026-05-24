@@ -114,8 +114,8 @@ when items fail to route days later.
 
 ## See also
 
-- `docs/polyphony-process-config-schema.md` — V-21 row and `states:` schema
-- `docs/polyphony-agent-failure-modes.md` § 6 — historical failure mode (now
+- `docs/reference/polyphony-process-config-schema.md` — V-21 row and `states:` schema
+- `docs/concepts/polyphony-agent-failure-modes.md` § 6 — historical failure mode (now
   structurally closed by V-21)
 - `src/Polyphony/Configuration/ProcessConfig.cs` — `States`, `GetCategory`,
   `ParseCategory`

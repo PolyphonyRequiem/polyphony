@@ -97,7 +97,7 @@ After installing Polyphony, run `polyphony health` to verify your environment an
 
 ## 2. Repository Layout (Vanilla or Bare Repo + Per-Run Worktrees)
 
-> **Status:** as of the bare-requirement drop, polyphony supports **both** a plain `git clone` (vanilla) layout and the bare-repo + per-run-worktree layout. The launcher and preflight no longer gate on bare-repo. A vanilla clone is the recommended default for new operators; the bare-repo layout remains supported for operators who prefer it. See [`docs/per-run-worktree-layout.md`](per-run-worktree-layout.md) for the per-root worktree contract (which applies to both layouts).
+> **Status:** as of the bare-requirement drop, polyphony supports **both** a plain `git clone` (vanilla) layout and the bare-repo + per-run-worktree layout. The launcher and preflight no longer gate on bare-repo. A vanilla clone is the recommended default for new operators; the bare-repo layout remains supported for operators who prefer it. See [`docs/concepts/per-run-worktree-layout.md`](../concepts/per-run-worktree-layout.md) for the per-root worktree contract (which applies to both layouts).
 
 ### Why this layout
 
@@ -149,7 +149,7 @@ Rename-Item ~/projects/<repo> ~/projects/<repo>.legacy
 git -C ~/projects/<repo> status   # → clean, on main
 ```
 
-The script is idempotent, dry-run by default, and never touches `~/projects/<repo>/` until you've explicitly moved it aside in step 1's printed instructions. See [`docs/per-run-worktree-layout.md`](per-run-worktree-layout.md) for the manual procedure if you need to migrate without the script.
+The script is idempotent, dry-run by default, and never touches `~/projects/<repo>/` until you've explicitly moved it aside in step 1's printed instructions. See [`docs/concepts/per-run-worktree-layout.md`](../concepts/per-run-worktree-layout.md) for the manual procedure if you need to migrate without the script.
 
 ### Fresh clone (no existing local checkout)
 

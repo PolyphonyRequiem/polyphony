@@ -6,7 +6,7 @@ namespace Polyphony.Tagging;
 /// Constants for the <c>polyphony:*</c> tag namespace stamped on ADO work
 /// items by the polyphony pipeline.
 ///
-/// Authoritative spec: <c>docs/polyphony-tags.md</c>.
+/// Authoritative spec: <c>docs/reference/polyphony-tags.md</c>.
 /// </summary>
 public static class PolyphonyTags
 {

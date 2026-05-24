@@ -1,7 +1,7 @@
 namespace Polyphony;
 
 /// <summary>
-/// JSON contract for <c>polyphony root resolve</c>. See <c>docs/polyphony-tags.md</c>.
+/// JSON contract for <c>polyphony root resolve</c>. See <c>docs/reference/polyphony-tags.md</c>.
 /// <see cref="FallbackRequired"/> indicates the workflow should fire the root
 /// fallback gate (no <c>polyphony:root</c> ancestor was found within the
 /// configured walk budget).
