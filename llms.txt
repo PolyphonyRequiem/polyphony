@@ -9,7 +9,6 @@ Polyphony ships two artifacts from one tree: the **Polyphony CLI binary** (`src/
 - [AGENTS.md](AGENTS.md): Canonical agent guide for this repo. Build, test, lint, do-not-edit zones, cardinal rules.
 - [README.md](README.md): Operator overview, install, quickstart.
 - [docs/README.md](docs/README.md): Documentation landing page and tour.
-- [docs/polyphony-skills-index.md](docs/polyphony-skills-index.md): Which doc / skill to read first based on what you're about to do.
 - [docs/glossary.md](docs/glossary.md): Canonical vocabulary. AB#3259 hard cut — no aliases.
 
 ## Reference docs

@@ -389,7 +389,7 @@ For agent rosters, recursion budgets, and the platform-abstraction model
 | [`docs/reference/polyphony-process-config-schema.md`](docs/reference/polyphony-process-config-schema.md)      | Full schema for `process-config.yaml`.                                 |
 | [`docs/reference/polyphony-conductor-directory.md`](docs/reference/polyphony-conductor-directory.md)          | Everything in `.polyphony-config/` outside `process-config.yaml`.             |
 | [`docs/guides/onboarding-guide.md`](docs/guides/onboarding-guide.md)                                    | Step-by-step new-repo onboarding, with worked example.                 |
-| [`docs/polyphony-skills-index.md`](docs/polyphony-skills-index.md)                        | Index of the agent skills shipped under `.github/skills/`.             |
+| [`.github/skills/`](.github/skills/)                                                      | Agent skills (auto-loadable). Includes `polyphony-bootstrap`, `polyphony-cli-developer`, `polyphony-workflow-author`, etc. |
 | [`docs/concepts/polyphony-agent-failure-modes.md`](docs/concepts/polyphony-agent-failure-modes.md)          | Known failure modes and remediation patterns.                          |
 | [`docs/decisions/`](docs/decisions/)                                                      | ADRs (verb-migration rationale, DU adoption, etc.).                    |
 

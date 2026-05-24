@@ -277,7 +277,7 @@ I would explicitly support:
 
 D12 is the hard stop against magical thinking.
 
-Polyphony's journal is honest that **agent-direct mutations are not polyphony mutations**. The coder agent commits directly with git; polyphony sees none of that and should not pretend otherwise (`docs/proposals/polyphony-journal.md:410-447`).
+Polyphony's journal is honest that **agent-direct mutations are not polyphony mutations**. The coder agent commits directly with git; polyphony sees none of that and should not pretend otherwise.
 
 That means a compiler cannot honestly promise “this agent MUST commit code” unless the runtime also controls the tools.
 

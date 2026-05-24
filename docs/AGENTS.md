@@ -26,7 +26,7 @@ This file is the docs-specific deepening of the repo-root [`AGENTS.md`](../AGENT
 | `reference/` | Stable reference material (CLI verbs, schemas, tag namespace). | Diátaxis "reference" |
 | `concepts/` | Explanation docs (architecture, models, failure modes). | Diátaxis "explanation" |
 | `guides/` | How-to + tutorial (onboarding, operating). | Diátaxis "how-to" + "tutorial" |
-| (root) | Hub docs (`README.md`, `glossary.md`, `polyphony-skills-index.md`, `STYLE.md`, `AGENTS.md`, `llms.txt` lives at REPO root). | n/a |
+| (root) | Hub docs (`README.md`, `glossary.md`, `STYLE.md`, `AGENTS.md`; `llms.txt` lives at REPO root). | n/a |
 
 The folder is the *lifecycle / genre*; the frontmatter `doc_type:` mirrors it for machine queries. The optional frontmatter `diataxis:` field declares the purpose axis.
 

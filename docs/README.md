@@ -8,7 +8,7 @@ synopsis: Landing page for the polyphony docs corpus. Map by purpose and by fold
 
 Landing page for the polyphony docs corpus. This is the doc to read first if you are landing in this repo with no context.
 
-For canonical agent guidance, see [`AGENTS.md`](../AGENTS.md) at the repo root. For the task-to-doc-routing index (skills + docs), see [`polyphony-skills-index.md`](polyphony-skills-index.md).
+For canonical agent guidance, see [`AGENTS.md`](../AGENTS.md) at the repo root; it carries the task-to-skill routing map.
 
 ---
 
@@ -64,7 +64,6 @@ Polyphony is a .NET 11 CLI that decides *what should happen* to a work item in a
 | Doc | Purpose |
 |---|---|
 | [`glossary.md`](glossary.md) | Canonical vocabulary. AB#3259 hard cut — forbidden synonyms are gated by a CI lint. |
-| [`polyphony-skills-index.md`](polyphony-skills-index.md) | Task-to-doc / task-to-skill routing index. |
 | [`AGENTS.md`](AGENTS.md) | Docs-folder rules for AI agents. |
 | [`STYLE.md`](STYLE.md) | Frontmatter schema, ADR template, Diátaxis types, citation style. |
 

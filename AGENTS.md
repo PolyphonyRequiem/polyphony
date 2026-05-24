@@ -38,7 +38,7 @@ Before changing anything, load the right skill from `.github/skills/`:
 
 Cross-tool: ADO work-item discipline lives in the **`twig-cli`** skill; end-to-end SDLC orchestration in **`twig-sdlc`**.
 
-The fastest orientation path is `docs/README.md` → `docs/polyphony-skills-index.md` → the relevant skill.
+The fastest orientation path is `docs/README.md` → the relevant skill.
 
 ---
 
@@ -140,6 +140,5 @@ This repo is developed primarily on Windows (PowerShell 7+). CI runs on Linux. S
 
 ## When in doubt
 
-- Read `docs/README.md` for the docs tour.
-- Read `docs/polyphony-skills-index.md` for the task-to-doc map.
+- Read `docs/README.md` for the docs tour and task-to-doc routing.
 - For "what should the docs of polyphony itself look like", see `docs/STYLE.md`.
