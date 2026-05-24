@@ -1,0 +1,21 @@
+{
+  "organization": "dangreen-msft",
+  "project": "Polyphony",
+  "team": "",
+  "processTemplate": "Basic",
+  "defaults": {
+    "mode": "sprint",
+    "inheritParentArea": true,
+    "inheritParentIteration": true
+  },
+  "seed": {
+    "staleDays": 14
+  },
+  "git": {
+    "branchPattern": "(?:^|/)(?\u003Cid\u003E\\d{3,})(?:-|/|$)"
+  },
+  "workspace": {},
+  "areas": {
+    "mode": "under"
+  }
+}
