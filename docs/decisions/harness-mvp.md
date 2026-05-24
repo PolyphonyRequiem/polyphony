@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: Path-coverage harness MVP enabling end-to-end workflow validation without dogfooding against ADO.
+---
+
 # ADR: Workflow Path-Coverage Harness (MVP)
 
 > **Status:** Accepted, MVP shipped 2026-05-10 across PRs #269, #270, #271.

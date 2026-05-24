@@ -1,3 +1,9 @@
+---
+doc_type: plan
+status: active
+synopsis: Plan for the `polyphony health` CLI command — environment and configuration diagnostics emitting structured JSON.
+---
+
 # Polyphony Health Command Plan
 
 ## Overview

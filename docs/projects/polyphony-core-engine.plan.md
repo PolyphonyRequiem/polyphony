@@ -1,3 +1,10 @@
+---
+doc_type: plan
+status: done
+work_item_id: 2581
+synopsis: Phase 1 — deterministic routing engine implementing route/validate/hierarchy CLI commands. Shipped.
+---
+
 # Phase 1: Polyphony Core Engine
 
 **Epic:** #2581 — Phase 1: Polyphony Core Engine

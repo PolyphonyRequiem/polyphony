@@ -1,3 +1,10 @@
+---
+doc_type: concept
+status: active
+diataxis: explanation
+synopsis: Layering, three-vocabulary contract, platform-abstraction seam, and end-to-end data flow for a typical operation.
+---
+
 # Polyphony Architecture
 
 This document describes the layering, the platform-abstraction seam, the three vocabularies

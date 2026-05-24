@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Hostile-architect critique of compiler-lite — verdict DO-NOT-BUILD; the diagnosis is wrong, fix lint/schema/CI maturity first.
+---
+
 # D2 — Hostile Architect Critique: The Case Against Compiler-Lite
 
 **Verdict: DO-NOT-BUILD** — compiler-lite is misdiagnosing a lint/schema/CI maturity problem as an authoring-surface problem, and would add a second source of truth, generator maintenance, source-map/debugging obligations, and platform-vendor complexity before the existing YAML+Conductor contract has been fully exercised.

@@ -1,3 +1,10 @@
+---
+doc_type: decision
+status: accepted
+scope: twig
+synopsis: Catalog of seven Twig.Domain types evaluated for DU conversion; three recommended, one deferred, three skipped.
+---
+
 # Catalog: DU Candidates in Twig.Domain
 
 **Task:** #2808 — Catalog DU candidates in Twig.Domain with rationale  

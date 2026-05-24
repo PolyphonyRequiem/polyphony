@@ -1,3 +1,9 @@
+---
+doc_type: index
+status: active
+synopsis: Docs-folder-specific agent rules (frontmatter, citations, ADR additivity). Companion to the repo-root AGENTS.md.
+---
+
 # docs/AGENTS.md — Documentation Rules for AI Agents
 
 This file is the docs-specific deepening of the repo-root [`AGENTS.md`](../AGENTS.md). Read that first.
@@ -13,7 +19,7 @@ This file is the docs-specific deepening of the repo-root [`AGENTS.md`](../AGENT
 
 | Folder | Purpose | Diátaxis fit |
 |---|---|---|
-| `decisions/` | Architectural decision records (ADRs). Lifecycle: ratified. | n/a (decisions are their own genre) |
+| `decisions/` | Architectural decision records (ADRs). Lifecycle: ratified or draft. | n/a (decisions are their own genre) |
 | `proposals/` | Forward-looking proposals not yet accepted. Lifecycle: proposed. | n/a |
 | `discussions/` | Exploratory threads, often numbered (`01-…`, `02-…`). Lifecycle: exploratory. | n/a |
 | `projects/` | In-flight project plans (Epic-level). Lifecycle: in-progress / superseded by completion. | n/a |

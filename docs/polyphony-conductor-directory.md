@@ -1,3 +1,10 @@
+---
+doc_type: reference
+status: active
+diataxis: reference
+synopsis: Reference for every file in `.polyphony-config/` outside `process-config.yaml` (per-type defs, agent guidance, profile).
+---
+
 # `.polyphony-config/` Directory Reference
 
 Companion to `polyphony-process-config-schema.md`. That doc covers the schema

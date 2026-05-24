@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: state-to-category mapping moves from agent-guidance into process-config.yaml as a per-template required field.
+---
+
 # Decision: state→category mapping lives in process-config.yaml
 
 **Date:** 2026-05-10

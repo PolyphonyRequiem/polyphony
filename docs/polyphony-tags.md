@@ -1,3 +1,10 @@
+---
+doc_type: reference
+status: active
+diataxis: reference
+synopsis: The `polyphony:*` tag namespace stamped on every work item the polyphony pipeline owns.
+---
+
 # Polyphony Tag Mechanism
 
 > Status: Phase 1 design (PR-lifecycle overhaul).

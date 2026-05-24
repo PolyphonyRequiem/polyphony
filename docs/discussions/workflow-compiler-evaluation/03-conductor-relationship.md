@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Compiler-lite investigation — how a C# workflow authoring surface would relate to the conductor runtime and the polyphony domain brain.
+---
+
 # Workflow Compiler Investigation — Relationship to the Conductor Engine
 
 ## Executive summary

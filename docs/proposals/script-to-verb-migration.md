@@ -1,3 +1,9 @@
+---
+doc_type: proposal
+status: draft
+synopsis: Migrate PowerShell helper scripts into typed polyphony CLI verbs (AB#3258; depends on AB#3255 typed contract surface).
+---
+
 # PowerShell Script → Typed Verb Migration
 
 **Status:** Draft

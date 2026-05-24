@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: actionable.yaml uses an in-workflow router to split execution between the polyphony executor and the human executor.
+---
+
 # Actionable Workflow — Executor Split via In-Workflow Router
 
 > **Status:** Accepted. Phase 6 — actionable facet workflow scaffold.

@@ -1,3 +1,9 @@
+---
+doc_type: reference
+status: active
+synopsis: Canonical vocabulary for polyphony across workflows, code, scripts, and docs. Forbidden synonyms are gated by lint-vocabulary.ps1.
+---
+
 # Polyphony PR/Branch Lifecycle — Ubiquitous Language
 
 > **Status: authoritative** (AB#3259). This glossary defines the canonical vocabulary for polyphony across workflows, code, scripts, and docs. New terms and renames update this file **first** — code changes follow. Use of terms not present here, or use of explicitly forbidden terms, is a lint failure (`lint-vocabulary.ps1`).

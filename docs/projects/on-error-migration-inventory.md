@@ -1,3 +1,9 @@
+---
+doc_type: plan
+status: active
+synopsis: Read-only inventory of `on_error:` usage informing AB#3257 (failure-mode gate elimination) sequencing.
+---
+
 # on_error Migration Inventory
 
 **Status:** Read-only inventory; informs AB#3257 sequencing

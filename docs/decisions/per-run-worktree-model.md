@@ -1,3 +1,10 @@
+---
+doc_type: decision
+status: accepted
+synopsis: Per-root worktree contract under runs-root with same-root run-lock concurrency control.
+supersedes: [onboarding-guide.md]
+---
+
 # ADR: Per-run worktree model + same-root run lock (concurrency)
 
 > **Status:** Accepted; rolling out across AB#3085 PR stack (PR 1a/1b/1c, PR 2,

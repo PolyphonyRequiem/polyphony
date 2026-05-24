@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: HTML-comment fence + four-cell verdict matrix for cross-PG scope renegotiation (Phase 3 PR P8 mechanics).
+---
+
 # Scope renegotiation: HTML-comment fence + four-cell verdict matrix
 
 **Status:** accepted (Phase 3 PR P8 — mechanics-only)

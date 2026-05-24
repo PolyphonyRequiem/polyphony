@@ -1,3 +1,10 @@
+---
+doc_type: concept
+status: active
+diataxis: explanation
+synopsis: Operator-facing reference for the per-root worktree contract under runs-root; vanilla and bare-repo layouts both supported.
+---
+
 # Per-run worktree layout
 
 > **Status:** the per-root worktree contract (operator's main worktree is never a dispatch target; every root run gets its own `<runs_root>/root-{N}/` subtree) is shipped and stable. The original AB#3085 stack additionally required the *source repo* to be bare; that requirement has since been **dropped** — vanilla `git clone` and bare-repo layouts are both first-class. The per-root worktree model below applies to both. The bare-repo migration / bootstrap scripts remain functional but are no longer required.

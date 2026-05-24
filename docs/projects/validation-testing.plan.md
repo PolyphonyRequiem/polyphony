@@ -1,3 +1,10 @@
+---
+doc_type: plan
+status: done
+work_item_id: 2584
+synopsis: Phase 4 — validation and testing of the polyphony routing engine. Shipped.
+---
+
 # Phase 4: Validation & Testing
 
 **Epic:** #2584 — Phase 4: Validation & Testing

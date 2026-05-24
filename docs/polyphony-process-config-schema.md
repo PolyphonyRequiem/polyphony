@@ -1,3 +1,10 @@
+---
+doc_type: reference
+status: active
+diataxis: reference
+synopsis: Full `process-config.yaml` schema with V-1..V-14 validation rules and per-template worked examples.
+---
+
 # `.polyphony-config/process-config.yaml` Schema Reference
 
 Schema and validation rules for the process configuration file consumed by every

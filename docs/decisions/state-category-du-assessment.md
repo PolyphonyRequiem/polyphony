@@ -1,3 +1,10 @@
+---
+doc_type: decision
+status: accepted
+scope: twig
+synopsis: StateCategory stays an enum; data-free labels with ordinal semantics are not DU candidates.
+---
+
 # Assessment: StateCategory Enum → Discriminated Union
 
 **Task:** #2807 — Assess StateCategory enum to DU feasibility  

@@ -1,3 +1,10 @@
+---
+doc_type: concept
+status: active
+diataxis: explanation
+synopsis: Postmortem of six concrete AI-agent failure modes when working on polyphony, each linked to the doc that would have prevented it.
+---
+
 # Failure Modes I Just Caused
 
 A short postmortem. Six concrete failure modes I (a Copilot CLI agent) hit while working

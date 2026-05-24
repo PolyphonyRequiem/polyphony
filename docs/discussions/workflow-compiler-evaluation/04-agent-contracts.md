@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Compiler-lite investigation — the agent-contract boundary as the highest-value compiler target; generated YAML/prompt scaffolding/lint metadata.
+---
+
 # Workflow Compiler Investigation — Agent Contracts Integration
 
 ## Executive summary
@@ -6,7 +12,7 @@
 - Today, the worst type loss happens at **agent JSON -> Jinja string interpolation -> CLI args -> re-parse in C#**. `plan-level.yaml`'s `architect.output.children` becomes `--children-json "..."`, then `PlanCommands.WritePlan` and `SeedChildren` parse it back into JSON again (`.conductor/registry/workflows/plan-level.yaml:991-1009, 2566-2584`; `src/Polyphony/Commands/PlanCommands.WritePlan.cs:38-50, 69-125`; `src/Polyphony/Commands/PlanCommands.SeedChildren.cs:195-228`).
 - Prompts are already part of the contract surface. The prompt, YAML schema, routes, and downstream verb/script bindings repeatedly restate the same facts. A compiler should not fully synthesize prose, but it should generate the **load-bearing contract fragments** inside prompts so they cannot drift.
 - Static compilation can enforce field existence, type compatibility, null/omission discipline, route exhaustiveness, and prompt/route/tool alignment. It **cannot** guarantee that the LLM told the truth or obeyed side-effect constraints; that must remain a runtime/harness/human concern.
-- AB#3255 is **not yet a conductor replacement**. The proposal explicitly says “not a conductor redesign” (`docs/proposals/typed-contract-surface.md:23-29`). The pragmatic move is “compile to conductor now, keep an intermediate representation that could later power a polyphony-native runtime.”
+- AB#3255 is **not yet a conductor replacement**. The proposal explicitly says “not a conductor redesign” (`docs/proposals/typed-contract-surface.md:29-35`). The pragmatic move is “compile to conductor now, keep an intermediate representation that could later power a polyphony-native runtime.”
 
 ## One real trace: `architect` -> `write-plan` -> `seed-children`
 
@@ -176,7 +182,7 @@ The compiler should publish, per field:
 - omit-when-null behavior
 - whether conductor may treat it as absent
 
-AB#3255 already heads this direction: it explicitly recommends publishing required/optional and can-omit-when-null metadata (`docs/proposals/typed-contract-surface.md:121-145`).
+AB#3255 already heads this direction: it explicitly recommends publishing required/optional and can-omit-when-null metadata (`docs/proposals/typed-contract-surface.md:126-150`).
 
 ### Binding provenance
 

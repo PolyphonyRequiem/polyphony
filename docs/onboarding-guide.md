@@ -1,3 +1,10 @@
+---
+doc_type: guide
+status: active
+diataxis: tutorial
+synopsis: Step-by-step new-repo onboarding for the polyphony@polyphony workflow, using a fictitious kyber/KyberAgile project as the worked example.
+---
+
 # Onboarding Guide — Polyphony SDLC Configuration
 
 A step-by-step guide for onboarding a new repository to the

@@ -1,3 +1,9 @@
+---
+doc_type: index
+status: active
+synopsis: Landing page for the polyphony docs corpus. Map by purpose and by folder; orientation for fresh agents and humans.
+---
+
 # Polyphony Documentation
 
 Landing page for the polyphony docs corpus. This is the doc to read first if you are landing in this repo with no context.

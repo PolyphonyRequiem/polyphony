@@ -1,3 +1,10 @@
+---
+doc_type: reference
+status: active
+diataxis: reference
+synopsis: Every polyphony CLI verb — JSON shapes, exit codes, worked examples — across all nine command groups.
+---
+
 # Polyphony CLI Reference
 
 The Polyphony CLI is a single .NET 11 binary that exposes ~24 verbs

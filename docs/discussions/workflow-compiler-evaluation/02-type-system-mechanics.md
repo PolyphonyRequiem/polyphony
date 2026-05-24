@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Compiler-lite investigation — C# type-system unification mechanics; argues for fluent-builder over typed records, not attributes or reflection.
+---
+
 # Workflow compiler investigation — type-system unification mechanics in C#
 
 ## Executive summary

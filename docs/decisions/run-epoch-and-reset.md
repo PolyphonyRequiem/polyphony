@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: draft
+synopsis: Adds run-epoch + first-class reset verb so a root can be re-dispatched cleanly without manual ceremony.
+---
+
 # ADR: Run epoch + first-class reset for root re-dispatch
 
 > **Status:** Proposed — author signoff sought (Daniel) before PR 1 lands.

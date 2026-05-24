@@ -17,7 +17,7 @@ Every `.md` file under `docs/` must start with a YAML frontmatter block:
 ```yaml
 ---
 doc_type: decision | proposal | discussion | reference | concept | guide | index | plan
-status: active | draft | accepted | superseded | in-progress | exploratory
+status: active | draft | accepted | superseded | in-progress | done | exploratory
 synopsis: One-sentence description of the doc's purpose and scope.
 ---
 ```
@@ -53,6 +53,7 @@ For files under `decisions/`, `proposals/`, `discussions/`, and `projects/`, the
 | `accepted` | For ADRs: the decision is in force. |
 | `superseded` | Replaced by a newer doc; see `superseded-by:`. |
 | `in-progress` | For plan docs: work is underway. |
+| `done` | For plan docs: work completed; doc is now historical. |
 | `exploratory` | For discussions: capturing thinking, not deciding anything. |
 
 ---

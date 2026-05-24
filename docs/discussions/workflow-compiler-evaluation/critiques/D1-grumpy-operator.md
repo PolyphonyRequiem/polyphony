@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Grumpy-operator critique of compiler-lite — verdict QUALIFY; approve narrow slice only with explicit kill criteria.
+---
+
 # D1 — Grumpy Operator Critique: Compiler-Lite Through the "It Burned Me Again" Lens
 
 **Verdict: QUALIFY** — approve only the narrow compiler-lite slice with explicit kill criteria and no permission to pretend it fixed the engine.

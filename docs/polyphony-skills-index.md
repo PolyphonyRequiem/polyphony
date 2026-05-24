@@ -1,3 +1,9 @@
+---
+doc_type: index
+status: active
+synopsis: Task-to-doc / task-to-skill routing index for fresh agents and humans landing in the polyphony repo.
+---
+
 # Polyphony Docs & Skills — Reading Index
 
 A landing page for fresh agents and humans landing in the polyphony repo with

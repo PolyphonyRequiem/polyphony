@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: Wires the ADO leg of feature-pr.yaml end-to-end so both ADO and GitHub run the same review-remediation-merge chain.
+---
+
 # ADO Feature-PR Lifecycle Parity (Phase 5 closeout)
 
 > **Status:** Accepted. Wires the ADO leg of `feature-pr.yaml` end-to-end so

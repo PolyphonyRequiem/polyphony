@@ -1,3 +1,10 @@
+---
+doc_type: decision
+status: accepted
+synopsis: Root driver dispatches lifecycle work via tree-walking with per-item worktree isolation; replaces the deleted single-shot polyphony-full.yaml.
+supersedes: [polyphony-full.yaml]
+---
+
 # Root Driver — Tree-Walking Dispatch with Per-Item Worktree Isolation
 
 > **Status:** Accepted. Phase 7 — polyphony MVP.

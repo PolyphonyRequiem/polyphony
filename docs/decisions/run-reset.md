@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: Per-root run watermark + observer filter + proactive cleanup (PR 1 of 3 of the reset effort).
+---
+
 # Run-reset: per-root run watermark + observer filter + proactive cleanup
 
 **Status:** Accepted (PR 1 of 3)
