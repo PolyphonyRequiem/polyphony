@@ -58,41 +58,69 @@ public sealed partial class PrCommands
             ("--pr-number", prNumber == RequiredInput.MissingInt)) is { } halt)
             return halt;
 
+        var execution = await PollStatusAdoAsync(
+            organization, project, repositoryId, prNumber, includeMetadata, allowAnyApprovalVote, ct)
+            .ConfigureAwait(false);
+        EmitPollStatusAdo(execution.Result);
+        return execution.ExitCode;
+    }
+
+    /// <summary>
+    /// Typed seam introduced by AB#3313. Computes the
+    /// <see cref="PrPollStatusResult"/> envelope without any stdout side
+    /// effects. The public <see cref="PollStatusAdo"/> shell parses the CLI
+    /// envelope, calls this method, serializes the result, and translates
+    /// to a process exit code. Composable from in-process callers such as
+    /// the future <c>PrLifecycle</c> skeleton without round-tripping through
+    /// JSON.
+    /// </summary>
+    internal async Task<CommandExecution<PrPollStatusResult>> PollStatusAdoAsync(
+        string organization,
+        string project,
+        string repositoryId,
+        int prNumber,
+        bool includeMetadata,
+        bool allowAnyApprovalVote,
+        CancellationToken ct)
+    {
         var prUrl = BuildAdoPrUrl(organization, project, repositoryId, prNumber);
 
         if (string.IsNullOrWhiteSpace(organization)
             || string.IsNullOrWhiteSpace(project)
             || string.IsNullOrWhiteSpace(repositoryId))
         {
-            EmitPollStatusAdoError(
-                prUrl,
-                "organization, project, and repositoryId are required",
-                "invalid_argument",
-                slug: BuildAdoSlug(organization, project, repositoryId),
-                prNumber: prNumber);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollStatusAdoErrorResult(
+                    prUrl,
+                    "organization, project, and repositoryId are required",
+                    "invalid_argument",
+                    slug: BuildAdoSlug(organization, project, repositoryId),
+                    prNumber: prNumber),
+                ExitCodes.Success);
         }
         if (prNumber <= 0)
         {
-            EmitPollStatusAdoError(
-                prUrl,
-                $"prNumber must be a positive integer (got {prNumber})",
-                "invalid_argument",
-                slug: BuildAdoSlug(organization, project, repositoryId),
-                prNumber: prNumber);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollStatusAdoErrorResult(
+                    prUrl,
+                    $"prNumber must be a positive integer (got {prNumber})",
+                    "invalid_argument",
+                    slug: BuildAdoSlug(organization, project, repositoryId),
+                    prNumber: prNumber),
+                ExitCodes.Success);
         }
         if (ado is null)
         {
             // Shouldn't happen in production (DI registers IAdoClient) but the
             // ctor allows null so unit tests can opt out of the ADO leg.
-            EmitPollStatusAdoError(
-                prUrl,
-                "IAdoClient is not configured",
-                "ado_failed",
-                slug: BuildAdoSlug(organization, project, repositoryId),
-                prNumber: prNumber);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollStatusAdoErrorResult(
+                    prUrl,
+                    "IAdoClient is not configured",
+                    "ado_failed",
+                    slug: BuildAdoSlug(organization, project, repositoryId),
+                    prNumber: prNumber),
+                ExitCodes.Success);
         }
 
         var slug = BuildAdoSlug(organization, project, repositoryId);
@@ -103,13 +131,14 @@ public sealed partial class PrCommands
                 organization, project, repositoryId, prNumber, allowAnyApprovalVote, ct).ConfigureAwait(false);
             if (data is null)
             {
-                EmitPollStatusAdoError(
-                    prUrl,
-                    $"PR #{prNumber} not found in {slug}",
-                    "pr_not_found",
-                    slug: slug,
-                    prNumber: prNumber);
-                return ExitCodes.Success;
+                return new CommandExecution<PrPollStatusResult>(
+                    BuildPollStatusAdoErrorResult(
+                        prUrl,
+                        $"PR #{prNumber} not found in {slug}",
+                        "pr_not_found",
+                        slug: slug,
+                        prNumber: prNumber),
+                    ExitCodes.Success);
             }
 
             // Fetch ADO threads alongside the PR detail. Threads drive the
@@ -207,20 +236,21 @@ public sealed partial class PrCommands
                 Warnings = warnings,
                 Metadata = metadata,
             };
-            EmitPollStatusAdo(result);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(result, ExitCodes.Success);
         }
         catch (OperationCanceledException) { throw; }
         catch (AdoAuthenticationException ex)
         {
             // Raised by IPolyphonyAuthProvider when no ADO credential chain succeeds (PAT env or AAD).
-            EmitPollStatusAdoError(prUrl, ex.Message, "no_pat", slug, prNumber);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollStatusAdoErrorResult(prUrl, ex.Message, "no_pat", slug, prNumber),
+                ExitCodes.Success);
         }
         catch (TimeoutException ex)
         {
-            EmitPollStatusAdoError(prUrl, ex.Message, "ado_timeout", slug, prNumber);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollStatusAdoErrorResult(prUrl, ex.Message, "ado_timeout", slug, prNumber),
+                ExitCodes.Success);
         }
         catch (HttpRequestException ex)
         {
@@ -228,13 +258,15 @@ public sealed partial class PrCommands
             var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
                 ? "no_pat"
                 : "ado_failed";
-            EmitPollStatusAdoError(prUrl, ex.Message, code, slug, prNumber);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollStatusAdoErrorResult(prUrl, ex.Message, code, slug, prNumber),
+                ExitCodes.Success);
         }
         catch (Exception ex)
         {
-            EmitPollStatusAdoError(prUrl, ex.Message, "ado_failed", slug, prNumber);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollStatusAdoErrorResult(prUrl, ex.Message, "ado_failed", slug, prNumber),
+                ExitCodes.Success);
         }
     }
 
@@ -332,14 +364,14 @@ public sealed partial class PrCommands
         => Console.WriteLine(JsonSerializer.Serialize(
             result, PolyphonyJsonContext.Default.PrPollStatusResult));
 
-    private static void EmitPollStatusAdoError(
+    private static PrPollStatusResult BuildPollStatusAdoErrorResult(
         string prUrl,
         string message,
         string errorCode,
         string slug,
         int prNumber)
     {
-        var result = new PrPollStatusResult
+        return new PrPollStatusResult
         {
             PrUrl = prUrl,
             PrNumber = prNumber,
@@ -359,6 +391,5 @@ public sealed partial class PrCommands
             Error = message,
             ErrorCode = errorCode,
         };
-        EmitPollStatusAdo(result);
     }
 }

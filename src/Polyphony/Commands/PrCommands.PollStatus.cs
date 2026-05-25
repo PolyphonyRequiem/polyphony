@@ -38,10 +38,30 @@ public sealed partial class PrCommands
             ("--pr-url", string.IsNullOrEmpty(prUrl))) is { } halt)
             return halt;
 
+        var execution = await PollStatusAsync(prUrl, includeMetadata, ct).ConfigureAwait(false);
+        EmitPoll(execution.Result);
+        return execution.ExitCode;
+    }
+
+    /// <summary>
+    /// Typed seam introduced by AB#3313. Computes the
+    /// <see cref="PrPollStatusResult"/> envelope without any stdout side
+    /// effects. The public <see cref="PollStatus"/> shell parses the CLI
+    /// envelope, calls this method, serializes the result, and translates
+    /// to a process exit code. Composable from in-process callers such as
+    /// the future <c>PrLifecycle</c> skeleton without round-tripping through
+    /// JSON.
+    /// </summary>
+    internal async Task<CommandExecution<PrPollStatusResult>> PollStatusAsync(
+        string prUrl,
+        bool includeMetadata,
+        CancellationToken ct)
+    {
         if (!TryParsePrUrl(prUrl, out var slug, out var prNumber))
         {
-            EmitPollError(prUrl, $"could not parse pr url '{prUrl}' (expected https://github.com/owner/repo/pull/N)");
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollErrorResult(prUrl, $"could not parse pr url '{prUrl}' (expected https://github.com/owner/repo/pull/N)"),
+                ExitCodes.Success);
         }
 
         try
@@ -49,8 +69,9 @@ public sealed partial class PrCommands
             var data = await gh.GetPullRequestPollDataAsync(slug, prNumber, ct).ConfigureAwait(false);
             if (data is null)
             {
-                EmitPollError(prUrl, $"PR #{prNumber} not found in {slug}", slug, prNumber);
-                return ExitCodes.Success;
+                return new CommandExecution<PrPollStatusResult>(
+                    BuildPollErrorResult(prUrl, $"PR #{prNumber} not found in {slug}", slug, prNumber),
+                    ExitCodes.Success);
             }
 
             // Build review-thread snapshot. Threads are now the source
@@ -128,19 +149,20 @@ public sealed partial class PrCommands
                 Warnings = warnings,
                 Metadata = metadata,
             };
-            EmitPoll(result);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(result, ExitCodes.Success);
         }
         catch (OperationCanceledException) { throw; }
         catch (ExternalToolTimeoutException ex)
         {
-            EmitPollError(prUrl, ex.FormatErrorMessage("gh pr view"), slug, prNumber);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollErrorResult(prUrl, ex.FormatErrorMessage("gh pr view"), slug, prNumber),
+                ExitCodes.Success);
         }
         catch (Exception ex)
         {
-            EmitPollError(prUrl, ex.Message, slug, prNumber);
-            return ExitCodes.Success;
+            return new CommandExecution<PrPollStatusResult>(
+                BuildPollErrorResult(prUrl, ex.Message, slug, prNumber),
+                ExitCodes.Success);
         }
     }
 
@@ -252,13 +274,13 @@ public sealed partial class PrCommands
         => Console.WriteLine(JsonSerializer.Serialize(
             result, PolyphonyJsonContext.Default.PrPollStatusResult));
 
-    private static void EmitPollError(
+    private static PrPollStatusResult BuildPollErrorResult(
         string prUrl,
         string message,
         string repoSlug = "",
         int prNumber = 0)
     {
-        var result = new PrPollStatusResult
+        return new PrPollStatusResult
         {
             PrUrl = prUrl,
             PrNumber = prNumber,
@@ -277,6 +299,5 @@ public sealed partial class PrCommands
             Policy = new PrPollPolicy { MergeAllowed = false, BlockingReasons = [message] },
             Error = message,
         };
-        EmitPoll(result);
     }
 }
