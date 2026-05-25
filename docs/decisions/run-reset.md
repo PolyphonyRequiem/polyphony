@@ -214,6 +214,16 @@ populated by the server — no per-PR write needed.
 
 ## PR 2 implementation notes — reset verb family
 
+> **Superseded (AB#3308, 2026-05-24):** The pattern-based sub-verb surface
+> documented below was retired in
+> [Pattern strategy retirement](pattern-strategy-retirement.md). The
+> projection-based reset shipped in AB#3253 is now the only path; the six
+> sub-verbs (`reset state`, `reset prs`, `reset worktrees`,
+> `reset branches`, `reset facets`, `reset manifest`) no longer exist.
+> Operators use `polyphony reset root` directly. The historical sub-verb
+> table is preserved below for context; treat it as accurate-for-its-time,
+> not current.
+
 Ships six verbs under the `polyphony reset` verb group:
 
 | Verb                  | Role                                                     |

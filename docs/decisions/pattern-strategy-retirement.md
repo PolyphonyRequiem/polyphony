@@ -1,12 +1,12 @@
 ---
 doc_type: decision
-status: proposed
+status: accepted
 synopsis: Retire the legacy `pattern` reset strategy; projection becomes the only path. Close the residual `sdlc/root` branch-pattern hole that the pattern leg covers today. Split the journal store into an explicit read-only reader for diagnostic surfaces.
 ---
 
 # Retire pattern reset strategy; projection becomes the only path
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-24
 **Supersedes prior draft:** This ADR replaces the never-merged `run-inventory.md` draft from the same date. The earlier draft proposed a new `RunInventory` module + verdict vocabulary + manifest-as-expectation-source; rubber-duck review + an empirical investigation of the existing `src/Polyphony/Journal/{Observers,Drift,Reset,Projections}/` infrastructure showed the proposed module duplicated what already ships behind `--strategy projection`. The honest remaining work is narrower than the draft assumed and is captured here.
 

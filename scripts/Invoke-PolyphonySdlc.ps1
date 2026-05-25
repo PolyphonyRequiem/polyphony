@@ -314,10 +314,10 @@ if ($Intent -eq 'reset') {
     }
 
     # Auto-detect platform from origin for gh-identity pinning. The reset
-    # workflow itself does not take a platform input — the verbs resolve
-    # the platform per-leg (e.g. reset prs reads the manifest +
-    # .polyphony-config) — but we still need GH_TOKEN exported for the
-    # PR-abandonment leg when the workspace is on github.
+    # workflow itself does not take a platform input — the projection reset
+    # executor resolves the platform internally (the PR-abandonment leg
+    # reads the manifest + .polyphony-config) — but we still need GH_TOKEN
+    # exported for that leg when the workspace is on github.
     $resetPlatform = if ($Platform) { $Platform } else {
         $resetRemoteUrl = & git remote get-url origin 2>&1
         if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resetRemoteUrl)) {
