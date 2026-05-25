@@ -28,7 +28,6 @@ public sealed class ProjectionResetExecutorTests
         var result = await executor.ExecuteAsync(100, new ProjectionResetExecutionOptions { Execute = true }, CancellationToken.None);
 
         result.Success.ShouldBeFalse();
-        result.Strategy.ShouldBe(ProjectionResetStrategy.Projection);
         result.Coverage.ShouldBe(ProjectionResetCoverage.Incomplete);
         result.Error.ShouldNotBeNull();
         result.Error.ShouldContain("missing journal effects for actions: fixture_no_effects");

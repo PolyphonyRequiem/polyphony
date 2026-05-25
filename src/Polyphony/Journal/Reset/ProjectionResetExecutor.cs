@@ -169,9 +169,7 @@ public sealed class ProjectionResetExecutor(
             Root = rootId,
             Success = string.IsNullOrWhiteSpace(error),
             DryRun = !options.Execute,
-            Strategy = ProjectionResetStrategy.Projection,
             Coverage = coverage,
-            FallbackUsed = false,
             AttemptedTargets = attemptedTargets,
             DeletedTargets = deletedTargets,
             FailedTargets = failedTargets,
@@ -285,10 +283,4 @@ public sealed record ProjectionResetExecutionOptions
     public bool ForceMutated { get; init; }
     public bool SkipState { get; init; }
     public string Comment { get; init; } = string.Empty;
-}
-
-public static class ProjectionResetStrategy
-{
-    public const string Projection = "projection";
-    public const string Pattern = "pattern";
 }

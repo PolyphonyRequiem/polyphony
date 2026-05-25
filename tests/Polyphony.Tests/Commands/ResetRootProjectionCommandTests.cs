@@ -19,7 +19,7 @@ namespace Polyphony.Tests.Commands;
 public sealed class ResetRootProjectionCommandTests : CommandTestBase
 {
     [Fact]
-    public async Task ResetRoot_DefaultStrategy_UsesProjectionEnvelope()
+    public async Task ResetRoot_UsesProjectionExecutor()
     {
         var world = new MutableBranchWorld(exists: true, matchesExpected: true, actualState: "abc123");
         var observer = new MutableBranchObserver(world);
@@ -63,7 +63,6 @@ public sealed class ResetRootProjectionCommandTests : CommandTestBase
         exit.ShouldBe(ExitCodes.Success);
         result.ShouldNotBeNull();
         result.Root.ShouldBe(100);
-        result.Strategy.ShouldBe(ProjectionResetStrategy.Projection);
         result.DryRun.ShouldBeTrue();
         result.Success.ShouldBeTrue();
         result.AttemptedTargets.ShouldHaveSingleItem();

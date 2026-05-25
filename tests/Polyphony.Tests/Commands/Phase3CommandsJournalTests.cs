@@ -85,37 +85,6 @@ public sealed class Phase3CommandsJournalTests : CommandTestBase
         effect.PolyphonyOwned.ShouldBeTrue();
     }
 
-    [Fact]
-    public async Task ResetState_Execute_WritesJournalEntry()
-    {
-        var (cmd, runner, store) = CreateResetCommand();
-        StubSync(runner);
-        StubTagsRoundTrip(runner, 100, "polyphony:root; polyphony:run-started-at=2024-01-01T00:00:00.000Z");
-
-        var (exitCode, _) = await CaptureConsoleAsync(() => cmd.ResetState(root: 100, execute: true));
-        var entries = await store.QueryAsync(new JournalQuery { Action = "reset_state" }, CancellationToken.None);
-
-        exitCode.ShouldBe(ExitCodes.Success);
-        entries.Count.ShouldBe(1);
-        var entry = entries[0];
-        entry.Target.ShouldBe("workitem:100");
-        entry.Outcome.ShouldBe(JournalOutcome.Success);
-
-        var payload = JsonSerializer.Deserialize(entry.PayloadJson!, PolyphonyJsonContext.Default.ResetStatePayload);
-        payload.ShouldNotBeNull();
-        payload.Root.ShouldBe(100);
-        payload.DryRun.ShouldBeFalse();
-        payload.NewWatermark.ShouldNotBeNullOrWhiteSpace();
-
-        entry.Effects.Count.ShouldBe(1);
-        var effect = entry.Effects[0];
-        effect.Kind.ShouldBe(ResourceKind.AdoWorkItemTag);
-        effect.Id.ShouldStartWith("100:polyphony:run-started-at=");
-        effect.Intent.ShouldBe(ResourceIntent.EnsurePresent);
-        effect.Mutation.ShouldBe(ResourceMutation.Changed);
-        effect.PolyphonyOwned.ShouldBeTrue();
-    }
-
     private (PlanCommands Command, FakeProcessRunner Runner, JournalStore Store) CreatePlanCommand(string runId = "run-journal")
     {
         var runner = new FakeProcessRunner();
@@ -150,21 +119,6 @@ public sealed class Phase3CommandsJournalTests : CommandTestBase
         return (command, runner, store);
     }
 
-    private (ResetCommands Command, FakeProcessRunner Runner, JournalStore Store) CreateResetCommand(string runId = "run-journal")
-    {
-        var runner = new FakeProcessRunner();
-        var twig = new TwigClient(runner);
-        var git = new GitClient(runner);
-        var gh = new GhClient(runner);
-        var store = CreateJournalStore();
-        var pullRequestReader = new PullRequestReader(gh, null);
-        var resolver = new RepoIdentityResolver(git);
-        var planObserver = new PlanObserver(git, gh, new ThrowingAdoClient(), twig, resolver);
-        var walker = new HierarchyWalker(Config, Repository);
-        var command = new ResetCommands(twig, git, pullRequestReader, planObserver, walker, new RunContext(runId), new JournaledActionDecorator(store));
-        return (command, runner, store);
-    }
-
     private JournalStore CreateJournalStore()
     {
         var dir = Path.Combine(_scratchRoot, Guid.NewGuid().ToString("N"));
@@ -196,42 +150,6 @@ public sealed class Phase3CommandsJournalTests : CommandTestBase
     private static void StubCreateChild(FakeProcessRunner runner, int newId)
         => runner.WhenStartsWith("twig", ["new"],
             new ProcessResult(0, $$"""{"id":{{newId}},"title":"Created"}""", ""));
-
-    private static void StubTagsRoundTrip(FakeProcessRunner runner, int workItemId, string initialTags)
-    {
-        var state = new[] { initialTags };
-
-        runner.WhenAsync(
-            (e, a) => e == "twig"
-                && a.Count >= 4
-                && a[0] == "show"
-                && a[1] == workItemId.ToString()
-                && a[^1] == "json",
-            (_, _) =>
-            {
-                var encoded = JsonEncodedText.Encode(state[0]).Value;
-                var json = $$"""{"id":{{workItemId}},"tags":"{{encoded}}"}""";
-                return Task.FromResult(new ProcessResult(0, json, ""));
-            });
-
-        runner.WhenAsync(
-            (e, a) => e == "twig"
-                && a.Count >= 5
-                && a[0] == "patch"
-                && a[1] == "--id"
-                && a[2] == workItemId.ToString()
-                && a[3] == "--json",
-            (args, _) =>
-            {
-                using var doc = JsonDocument.Parse(args[4]);
-                if (doc.RootElement.TryGetProperty("System.Tags", out var tagsEl))
-                {
-                    state[0] = tagsEl.GetString() ?? state[0];
-                }
-
-                return Task.FromResult(new ProcessResult(0, "{}", ""));
-            });
-    }
 
     public override void Dispose()
     {

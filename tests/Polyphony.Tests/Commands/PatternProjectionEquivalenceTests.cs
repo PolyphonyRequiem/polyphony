@@ -10,62 +10,47 @@ using Xunit;
 namespace Polyphony.Tests.Commands;
 
 /// <summary>
-/// Pattern → projection equivalence verification (AB#3307) — the gating
-/// evidence that the legacy <c>--strategy pattern</c> leg can be deleted
-/// (AB#3308) without losing reset coverage.
-///
-/// <para>
-/// The pattern leg in <see cref="ResetCommands"/> (the
-/// <c>ResetRootPatternCoreAsync</c> chain in
-/// <c>ResetCommands.Root.cs</c>) runs six per-leg helpers in order:
-/// <c>prs → worktrees → branches → facets → manifest → state</c>. Each
-/// leg re-derives "what does this root own?" from a hand-rolled regex
-/// over <c>git for-each-ref</c> (or the equivalent twig/gh shell-out).
-/// The projection leg
-/// (<see cref="ProjectionResetExecutor"/> + <see cref="ProjectionResetCatalog"/>)
-/// reads the journal, computes drift, plans deletions, and dispatches
-/// per-kind <see cref="IResourceDeleter"/>s.
-/// </para>
-///
-/// <para>This suite verifies four equivalence claims that, together,
-/// give us confidence to retire pattern:</para>
+/// Catalog + matcher invariants for the projection reset path
+/// (post-AB#3308). These tests began life as the AB#3307 pattern →
+/// projection equivalence gate; the pattern leg is now retired
+/// (<c>docs/decisions/pattern-strategy-retirement.md</c>), and what
+/// remains is the structural verification that the projection
+/// catalog covers every resource kind the legacy pattern legs touched:
 ///
 /// <list type="number">
-///   <item><b>Catalog phases mirror pattern legs.</b> Every pattern
-///         leg name appears as a <see cref="ResetPhaseDefinition"/> in
-///         <see cref="ProjectionResetCatalog.OrderedPhases"/>, in the
-///         same order.</item>
-///   <item><b>Catalog phase routing.</b> Every resource kind a pattern
-///         leg acts on routes to the expected catalog phase (with the
-///         AdoWorkItemTag → facets-vs-state split handled by ID
-///         shape).</item>
-///   <item><b>Catalog excluded kinds match pattern non-coverage.</b>
-///         Every kind the pattern leg never touched (PR comments,
-///         votes, work-item state, etc.) is recorded in
-///         <see cref="ProjectionResetCatalog.ExcludedKinds"/> with a
-///         rationale.</item>
-///   <item><b>Branch-name matcher covers the pattern leg's enumeration
-///         patterns.</b> Every branch name producible by
-///         <c>ResetCommands.RootBranchPatterns</c> (plus the separate
-///         <c>sdlc/root/{id}</c> enumeration) is recognized by
-///         <see cref="ResourceObserverSupport.MatchesPolyphonyBranchPattern"/>
-///         on the discovered-resource path. This is the AB#3306 fix.
+///   <item><b>Catalog phases preserve the historical pattern-leg
+///         ordering</b> (<c>prs → worktrees → branches → facets →
+///         manifest → state</c>). The order is the documented reset
+///         sequence in <c>docs/decisions/run-reset.md</c>; it is now
+///         enforced solely through <see cref="ProjectionResetCatalog"/>.
 ///         </item>
+///   <item><b>Catalog phase routing.</b> Each resource kind a pattern
+///         leg used to act on routes to exactly one catalog phase, with
+///         the AdoWorkItemTag facets-vs-state split discriminated by
+///         tag-id shape (<c>polyphony:planned</c> /
+///         <c>polyphony:facets</c> for facets,
+///         <c>polyphony:run-started-at</c> for state).</item>
+///   <item><b>Catalog excluded kinds cover historical pattern
+///         non-coverage.</b> Every kind the pattern leg never touched
+///         (PR comments, votes, work-item state, git tags) is recorded
+///         in <see cref="ProjectionResetCatalog.ExcludedKinds"/> with a
+///         rationale.</item>
+///   <item><b>Branch-name matcher recognizes every historical
+///         pattern-leg enumeration shape.</b> Every branch name the
+///         retired <c>RootBranchPatterns</c> helper + the descendant
+///         <c>sdlc/root/{id}</c> enumeration would have produced is
+///         recognized by
+///         <see cref="ResourceObserverSupport.MatchesPolyphonyBranchPattern"/>
+///         on the discovered-resource path (the AB#3306 fix).</item>
 /// </list>
 ///
 /// <para>One behavioural fixture
 /// (<see cref="Coverage_ReportsCompleteForRepresentativeFixture"/>)
-/// drives the coverage analyzer end-to-end with a synthetic journal
-/// containing one entry per pattern-leg kind, asserting that the
-/// production-shaped observer + deleter set reports
+/// drives <see cref="ProjectionResetCoverageAnalyzer"/> end-to-end with
+/// a synthetic journal containing one entry per reset-relevant kind,
+/// asserting that the production observer + deleter set reports
 /// <see cref="ProjectionResetCoverage.Complete"/>. If a future deleter
-/// or observer registration regresses, this fixture catches it before
-/// pattern deletion can mask the regression.</para>
-///
-/// <para>This suite is deletion-gated infrastructure: once AB#3308
-/// removes the pattern leg, the equivalence claim collapses to "the
-/// projection catalog is internally consistent" and these tests can
-/// be pruned to just the catalog/matcher invariants.</para>
+/// or observer registration regresses, this fixture catches it.</para>
 /// </summary>
 public sealed class PatternProjectionEquivalenceTests
 {
