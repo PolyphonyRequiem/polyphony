@@ -10,11 +10,11 @@ namespace Polyphony.Commands;
 
 [VerbGroup("")]
 public sealed class JournalDriftCommand(
-    IJournalStore store,
+    IJournalReader store,
     IWorkItemRepository repository,
     JournalDriftAnalyzer analyzer)
 {
-    private readonly IJournalStore _store = store;
+    private readonly IJournalReader _store = store;
     private readonly IWorkItemRepository _repository = repository;
     private readonly JournalDriftAnalyzer _analyzer = analyzer;
 

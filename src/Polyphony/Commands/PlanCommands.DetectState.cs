@@ -189,7 +189,7 @@ public sealed partial class PlanCommands
         var prUrl = latestPr.Url ?? string.Empty;
 
         // ── 6b. Run-watermark filter (root-root tag). ─────────────────────
-        // Stamped by `polyphony reset state`; when present, merged PRs
+        // Stamped by `polyphony reset root`; when present, merged PRs
         // whose MergedAt <= watermark are artifacts of a prior run and
         // must NOT count as "complete" — otherwise the redo dispatch
         // sees the stale merged plan PR, declares the plan complete,

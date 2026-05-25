@@ -198,6 +198,14 @@ Call-site inventory (verified by grep, 2026-05-17):
 
 ### Reset verb family
 
+> **Superseded (AB#3308, 2026-05-24):** The sub-verb surface enumerated
+> below was retired in
+> [Pattern strategy retirement](pattern-strategy-retirement.md). The
+> projection-based reset shipped in AB#3253 is now the only path, and
+> the only public verb is `polyphony reset root` (no `--strategy` flag,
+> no per-axis sub-verbs). The historical surface is preserved below for
+> context; treat it as accurate-for-its-time, not current.
+
 Six new CLI verbs under `polyphony reset`:
 
 ```

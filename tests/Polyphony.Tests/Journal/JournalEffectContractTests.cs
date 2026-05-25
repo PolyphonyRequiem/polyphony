@@ -198,25 +198,6 @@ public sealed class JournalEffectContractTests
                 Succeeded = true,
                 WasMutated = true,
             }),
-            InvokeSelector(typeof(ResetCommands), "SelectResetBranchesEffects", new ResetBranchesPayload
-            {
-                Root = 100,
-                DryRun = false,
-                Succeeded = true,
-                WasMutated = true,
-                DeletedBranches = [new ResetDeletedBranch { Branch = "plan/100", DeletedLocal = true, DeletedRemote = true }],
-                FailedBranches = [],
-            }),
-            InvokeSelector(typeof(ResetCommands), "SelectResetStateEffects", new ResetStatePayload
-            {
-                Root = 100,
-                DryRun = false,
-                Succeeded = true,
-                WasMutated = true,
-                PreviousWatermark = "2024-01-01T00:00:00.000Z",
-                NewWatermark = "2024-02-01T00:00:00.000Z",
-                RemovedDuplicateTags = 1,
-            }),
         }.SelectMany(effectSet => effectSet).ToArray();
 
         effects.ShouldNotBeEmpty();

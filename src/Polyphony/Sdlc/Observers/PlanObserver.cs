@@ -912,7 +912,7 @@ public sealed class PlanObserver(
     /// </para>
     /// <para>
     /// The tag lives on the root work item (the only writer is
-    /// <c>polyphony reset state</c>). Reading via the same
+    /// <c>polyphony reset root</c>). Reading via the same
     /// <c>twig show</c> primitive that <see cref="IsParentSeededAsync"/>
     /// uses keeps the two tag reads on a single twig surface.
     /// </para>

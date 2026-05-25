@@ -4,9 +4,9 @@ using Polyphony.Journal;
 namespace Polyphony.Commands;
 
 [VerbGroup("")]
-public sealed partial class JournalCommands(IJournalStore store)
+public sealed partial class JournalCommands(IJournalReader store)
 {
-    private readonly IJournalStore _store = store;
+    private readonly IJournalReader _store = store;
 
     private static void EmitError(string message, string? path = null)
     {

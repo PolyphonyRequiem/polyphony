@@ -6,7 +6,7 @@ using Polyphony.Journal;
 namespace Polyphony.Commands;
 
 [VerbGroup("")]
-public sealed class JournalHasCommand(IJournalStore store, IServiceProvider services)
+public sealed class JournalHasCommand(IJournalReader store, IServiceProvider services)
 {
     /// <summary>
     /// Check whether the root journal contains a specific action.

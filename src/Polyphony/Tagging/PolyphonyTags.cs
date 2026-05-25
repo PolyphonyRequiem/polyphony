@@ -126,7 +126,7 @@ public static class PolyphonyTags
     /// <summary>
     /// Tag-name prefix for the "this root's current run started at this
     /// ISO-8601 UTC instant" marker, stamped on the root by
-    /// <c>polyphony reset state</c> (and re-stamped on every subsequent
+    /// <c>polyphony reset root</c> (and re-stamped on every subsequent
     /// reset). Observers consume it as a watermark — any merged PR whose
     /// <c>MergedAt</c> is at or before this instant is treated as an
     /// artifact of a prior run and is filtered out of satisfaction

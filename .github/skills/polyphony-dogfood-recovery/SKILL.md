@@ -115,10 +115,10 @@ edge cases still need manual attention:
 
 ### 3.1 · Uncommitted operator edits in root worktrees
 
-`polyphony reset worktrees` refuses to remove a worktree with uncommitted
-changes (defense-in-depth — you'd lose work). If the preview reports
-`failed_worktrees` with reason `dirty`, stash or commit those edits
-first, then re-run.
+The projection reset's worktree leg refuses to remove a worktree with
+uncommitted changes (defense-in-depth — you'd lose work). If the preview
+reports `failed_worktrees` with reason `dirty`, stash or commit those
+edits first, then re-run.
 
 ```powershell
 git -C "<runs_root>/root-<N>/feature-<N>" status
@@ -141,10 +141,10 @@ git -C <main_worktree> checkout -- .twig/config
 ### 3.3 · Manually-curated work-item state
 
 If you've hand-edited tags, fields, or state on the root via twig
-between the original run and the reset, `polyphony reset state` advances
-the watermark but does NOT roll back those manual edits. Verify the root
-+ descendant state matches the desired pre-run baseline before
-re-launch:
+between the original run and the reset, the projection reset's state
+leg advances the watermark but does NOT roll back those manual edits.
+Verify the root + descendant state matches the desired pre-run baseline
+before re-launch:
 
 ```powershell
 twig show <RootId> --output json | ConvertFrom-Json | Select state, tags
