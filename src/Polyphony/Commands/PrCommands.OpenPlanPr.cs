@@ -84,61 +84,31 @@ public sealed partial class PrCommands
             CreateJournalInvocation("pr_open_plan_pr", BranchPairJournalTarget(jHead, jBase), rootId, itemId),
             async innerCt =>
             {
-                var sw = new StringWriter();
-                var originalOut = Console.Out;
-                int exitCode;
-                try
+                var execution = await OpenPlanPrAsync(rootId, itemId, parentItemId, ancestorIds, manifestPath, title, body, innerCt).ConfigureAwait(false);
+                EmitPlanPr(execution.Result);
+                var result = execution.Result;
+                payload = new PrOpenPlanPrPayload
                 {
-                    Console.SetOut(sw);
-                    exitCode = await OpenPlanPrBodyAsync(rootId, itemId, parentItemId, ancestorIds, manifestPath, title, body, innerCt).ConfigureAwait(false);
-                }
-                finally
-                {
-                    Console.SetOut(originalOut);
-                }
-                var output = sw.ToString();
-                Console.Write(output);
-                PrOpenPlanPrResult? result = null;
-                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrOpenPlanPrResult); }
-                catch (JsonException) { }
-                payload = result is null
-                    ? new PrOpenPlanPrPayload
-                    {
-                        RootId = rootId,
-                        ItemId = itemId,
-                        ParentItemId = parentItemId,
-                        ItemKey = itemId == rootId ? "root" : (itemId > 0 ? itemId.ToString(CultureInfo.InvariantCulture) : ""),
-                        IsRootPlan = itemId == rootId,
-                        HeadBranch = jHead,
-                        BaseBranch = jBase,
-                        ResultAction = "error",
-                        Succeeded = false,
-                        WasMutated = false,
-                        Stale = false,
-                        Error = output.Trim(),
-                    }
-                    : new PrOpenPlanPrPayload
-                    {
-                        RootId = result.RootId,
-                        ItemId = result.ItemId,
-                        ParentItemId = result.ParentItemId,
-                        ItemKey = result.ItemKey,
-                        IsRootPlan = result.IsRootPlan,
-                        HeadBranch = result.HeadBranch,
-                        BaseBranch = result.BaseBranch,
-                        RepoSlug = result.RepoSlug,
-                        PrNumber = result.PrNumber,
-                        PrUrl = result.PrUrl,
-                        Title = result.Title,
-                        ResultAction = result.Error is not null ? "error"
-                            : (result.Stale ? "stale"
-                            : (result.Created ? "created" : "reused_existing_pr")),
-                        Succeeded = result.Error is null && !result.Stale,
-                        WasMutated = result.Created,
-                        Stale = result.Stale,
-                        Error = result.Error,
-                    };
-                return exitCode;
+                    RootId = result.RootId,
+                    ItemId = result.ItemId,
+                    ParentItemId = result.ParentItemId,
+                    ItemKey = result.ItemKey,
+                    IsRootPlan = result.IsRootPlan,
+                    HeadBranch = result.HeadBranch,
+                    BaseBranch = result.BaseBranch,
+                    RepoSlug = result.RepoSlug,
+                    PrNumber = result.PrNumber,
+                    PrUrl = result.PrUrl,
+                    Title = result.Title,
+                    ResultAction = result.Error is not null ? "error"
+                        : (result.Stale ? "stale"
+                        : (result.Created ? "created" : "reused_existing_pr")),
+                    Succeeded = result.Error is null && !result.Stale,
+                    WasMutated = result.Created,
+                    Stale = result.Stale,
+                    Error = result.Error,
+                };
+                return execution.ExitCode;
             },
             outcomeSelector: exitCode => SelectJournalOutcome(
                 exitCode,
@@ -149,7 +119,14 @@ public sealed partial class PrCommands
             ct: ct).ConfigureAwait(false);
     }
 
-    private async Task<int> OpenPlanPrBodyAsync(
+    /// <summary>
+    /// Typed seam introduced by AB#3313. Computes the
+    /// <see cref="PrOpenPlanPrResult"/> envelope without any stdout side
+    /// effects. The public <see cref="OpenPlanPr"/> shell parses the CLI
+    /// envelope, calls this method, serializes the result, and feeds the
+    /// journal payload directly from the typed result (no JSON reparse).
+    /// </summary>
+    internal async Task<CommandExecution<PrOpenPlanPrResult>> OpenPlanPrAsync(
         int rootId,
         int itemId,
         int parentItemId,
@@ -163,13 +140,11 @@ public sealed partial class PrCommands
         // ── 1. Validate input + derive head/base + ancestor chain. ────────
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
-            EmitPlanPrError(rootId, itemId, parentItemId, $"rootId must be positive (got {rootId})");
-            return ExitCodes.ConfigError;
+            return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId, $"rootId must be positive (got {rootId})"), ExitCodes.ConfigError);
         }
         if (!WorkItemId.TryParse(itemId, out var item))
         {
-            EmitPlanPrError(rootId, itemId, parentItemId, $"itemId must be positive (got {itemId})");
-            return ExitCodes.ConfigError;
+            return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId, $"itemId must be positive (got {itemId})"), ExitCodes.ConfigError);
         }
 
         bool isRootPlan = itemId == rootId;
@@ -182,9 +157,8 @@ public sealed partial class PrCommands
         {
             if (parentItemId != 0)
             {
-                EmitPlanPrError(rootId, itemId, parentItemId,
-                    $"--parent-item-id must not be provided when --item-id == --root-id (got {parentItemId}); the root plan has no parent.");
-                return ExitCodes.ConfigError;
+                return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId,
+                    $"--parent-item-id must not be provided when --item-id == --root-id (got {parentItemId}); the root plan has no parent."), ExitCodes.ConfigError);
             }
             itemKey = "root";
             headBranch = BranchNameBuilder.RootPlan(root).Value;
@@ -202,20 +176,17 @@ public sealed partial class PrCommands
             {
                 if (!WorkItemId.TryParse(parentItemId, out var parentItem))
                 {
-                    EmitPlanPrError(rootId, itemId, parentItemId, $"--parent-item-id must be positive (got {parentItemId})");
-                    return ExitCodes.ConfigError;
+                    return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId, $"--parent-item-id must be positive (got {parentItemId})"), ExitCodes.ConfigError);
                 }
                 if (parentItemId == itemId)
                 {
-                    EmitPlanPrError(rootId, itemId, parentItemId,
-                        $"--parent-item-id ({parentItemId}) must not equal --item-id; a plan cannot be its own parent.");
-                    return ExitCodes.ConfigError;
+                    return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId,
+                        $"--parent-item-id ({parentItemId}) must not equal --item-id; a plan cannot be its own parent."), ExitCodes.ConfigError);
                 }
                 if (parentItemId == rootId)
                 {
-                    EmitPlanPrError(rootId, itemId, parentItemId,
-                        $"--parent-item-id ({parentItemId}) equals --root-id; omit --parent-item-id when the parent is the root plan.");
-                    return ExitCodes.ConfigError;
+                    return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId,
+                        $"--parent-item-id ({parentItemId}) equals --root-id; omit --parent-item-id when the parent is the root plan."), ExitCodes.ConfigError);
                 }
                 resolvedParent = parentItemId;
                 headBranch = BranchNameBuilder.DescendantPlan(root, item).Value;
@@ -226,8 +197,7 @@ public sealed partial class PrCommands
 
         if (!TryParseAncestorChain(ancestorIds, isRootPlan, itemKey, out var ancestorKeys, out var ancestorError))
         {
-            EmitPlanPrError(rootId, itemId, parentItemId, ancestorError, headBranch, baseBranch);
-            return ExitCodes.ConfigError;
+            return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId, ancestorError, headBranch, baseBranch), ExitCodes.ConfigError);
         }
 
         // ── 2. Read manifest + compute snapshot. ───────────────────────────
@@ -242,8 +212,7 @@ public sealed partial class PrCommands
         var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
         if (resolvedPath.Error is not null)
         {
-            EmitPlanPrError(rootId, itemId, parentItemId, resolvedPath.Error, headBranch, baseBranch);
-            return ExitCodes.CacheError;
+            return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId, resolvedPath.Error, headBranch, baseBranch), ExitCodes.CacheError);
         }
         var localManifestPath = resolvedPath.Path;
         try
@@ -253,15 +222,13 @@ public sealed partial class PrCommands
         }
         catch (FileNotFoundException)
         {
-            EmitPlanPrError(rootId, itemId, parentItemId,
+            return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId,
                 $"manifest not found at {localManifestPath} — run `polyphony manifest init --root-id {rootId} ...` first",
-                headBranch, baseBranch);
-            return ExitCodes.CacheError;
+                headBranch, baseBranch), ExitCodes.CacheError);
         }
         catch (InvalidOperationException ex)
         {
-            EmitPlanPrError(rootId, itemId, parentItemId, $"manifest invalid: {ex.Message}", headBranch, baseBranch);
-            return ExitCodes.CacheError;
+            return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId, $"manifest invalid: {ex.Message}", headBranch, baseBranch), ExitCodes.CacheError);
         }
 
         // ── 3. Confirm head + base exist on the remote. ────────────────────
@@ -270,27 +237,24 @@ public sealed partial class PrCommands
             var headRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{headBranch}", ct).ConfigureAwait(false);
             if (headRefs.Count == 0)
             {
-                EmitPlanPrError(rootId, itemId, parentItemId,
+                return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId,
                     $"head branch '{headBranch}' does not exist on remote — run 'polyphony branch ensure-plan' and push first",
-                    headBranch, baseBranch);
-                return ExitCodes.RoutingFailure;
+                    headBranch, baseBranch), ExitCodes.RoutingFailure);
             }
             var baseRefs = await git.LsRemoteHeadsAsync("origin", $"refs/heads/{baseBranch}", ct).ConfigureAwait(false);
             if (baseRefs.Count == 0)
             {
-                EmitPlanPrError(rootId, itemId, parentItemId,
+                return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId,
                     $"base branch '{baseBranch}' does not exist on remote — ensure the parent plan branch is materialized first",
-                    headBranch, baseBranch);
-                return ExitCodes.RoutingFailure;
+                    headBranch, baseBranch), ExitCodes.RoutingFailure);
             }
 
             var slug = await TryResolveSlugAsync(ct).ConfigureAwait(false);
             if (string.IsNullOrEmpty(slug))
             {
-                EmitPlanPrError(rootId, itemId, parentItemId,
+                return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId,
                     "Could not resolve repo slug from origin remote",
-                    headBranch, baseBranch);
-                return ExitCodes.RoutingFailure;
+                    headBranch, baseBranch), ExitCodes.RoutingFailure);
             }
 
             var prTitle = string.IsNullOrWhiteSpace(title)
@@ -323,7 +287,30 @@ public sealed partial class PrCommands
 
                 if (SnapshotsEquivalent(existingMeta.AncestorPlanGenerations, snapshot))
                 {
-                    EmitPlanPr(new PrOpenPlanPrResult
+                    return new CommandExecution<PrOpenPlanPrResult>(
+                        new PrOpenPlanPrResult
+                        {
+                            RootId = rootId,
+                            ItemId = itemId,
+                            ParentItemId = resolvedParent ?? 0,
+                            ItemKey = itemKey,
+                            IsRootPlan = isRootPlan,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            RepoSlug = slug,
+                            PrNumber = found.Number,
+                            PrUrl = found.Url ?? string.Empty,
+                            Title = prTitle,
+                            Created = false,
+                            Stale = false,
+                            RequestsParentChange = existingMeta.RequestsParentChange,
+                            AncestorPlanGenerations = existingMeta.AncestorPlanGenerations,
+                        },
+                        ExitCodes.Success);
+                }
+
+                return new CommandExecution<PrOpenPlanPrResult>(
+                    new PrOpenPlanPrResult
                     {
                         RootId = rootId,
                         ItemId = itemId,
@@ -337,14 +324,26 @@ public sealed partial class PrCommands
                         PrUrl = found.Url ?? string.Empty,
                         Title = prTitle,
                         Created = false,
-                        Stale = false,
+                        Stale = true,
                         RequestsParentChange = existingMeta.RequestsParentChange,
                         AncestorPlanGenerations = existingMeta.AncestorPlanGenerations,
-                    });
-                    return ExitCodes.Success;
-                }
+                        Error = BuildStaleMessage(existingMeta.AncestorPlanGenerations, snapshot),
+                    },
+                    ExitCodes.RoutingFailure);
+            }
 
-                EmitPlanPr(new PrOpenPlanPrResult
+            // ── 5. Create the PR. ─────────────────────────────────────────
+            var url = await gh.CreatePullRequestAsync(slug, baseBranch, headBranch, prTitle, fullBody, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId,
+                    "gh pr create failed — no URL returned",
+                    headBranch, baseBranch), ExitCodes.RoutingFailure);
+            }
+
+            var trimmedUrl = url.Trim();
+            return new CommandExecution<PrOpenPlanPrResult>(
+                new PrOpenPlanPrResult
                 {
                     RootId = rootId,
                     ItemId = itemId,
@@ -354,54 +353,20 @@ public sealed partial class PrCommands
                     HeadBranch = headBranch,
                     BaseBranch = baseBranch,
                     RepoSlug = slug,
-                    PrNumber = found.Number,
-                    PrUrl = found.Url ?? string.Empty,
+                    PrNumber = ExtractPrNumber(trimmedUrl),
+                    PrUrl = trimmedUrl,
                     Title = prTitle,
-                    Created = false,
-                    Stale = true,
-                    RequestsParentChange = existingMeta.RequestsParentChange,
-                    AncestorPlanGenerations = existingMeta.AncestorPlanGenerations,
-                    Error = BuildStaleMessage(existingMeta.AncestorPlanGenerations, snapshot),
-                });
-                return ExitCodes.RoutingFailure;
-            }
-
-            // ── 5. Create the PR. ─────────────────────────────────────────
-            var url = await gh.CreatePullRequestAsync(slug, baseBranch, headBranch, prTitle, fullBody, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(url))
-            {
-                EmitPlanPrError(rootId, itemId, parentItemId,
-                    "gh pr create failed — no URL returned",
-                    headBranch, baseBranch);
-                return ExitCodes.RoutingFailure;
-            }
-
-            var trimmedUrl = url.Trim();
-            EmitPlanPr(new PrOpenPlanPrResult
-            {
-                RootId = rootId,
-                ItemId = itemId,
-                ParentItemId = resolvedParent ?? 0,
-                ItemKey = itemKey,
-                IsRootPlan = isRootPlan,
-                HeadBranch = headBranch,
-                BaseBranch = baseBranch,
-                RepoSlug = slug,
-                PrNumber = ExtractPrNumber(trimmedUrl),
-                PrUrl = trimmedUrl,
-                Title = prTitle,
-                Created = true,
-                Stale = false,
-                RequestsParentChange = false,
-                AncestorPlanGenerations = snapshot,
-            });
-            return ExitCodes.Success;
+                    Created = true,
+                    Stale = false,
+                    RequestsParentChange = false,
+                    AncestorPlanGenerations = snapshot,
+                },
+                ExitCodes.Success);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            EmitPlanPrError(rootId, itemId, parentItemId, ex.Message, headBranch, baseBranch);
-            return ExitCodes.RoutingFailure;
+            return new CommandExecution<PrOpenPlanPrResult>(BuildPlanPrErrorResult(rootId, itemId, parentItemId, ex.Message, headBranch, baseBranch), ExitCodes.RoutingFailure);
         }
     }
 
@@ -591,7 +556,7 @@ public sealed partial class PrCommands
         => Console.WriteLine(JsonSerializer.Serialize(
             result, PolyphonyJsonContext.Default.PrOpenPlanPrResult));
 
-    private static void EmitPlanPrError(
+    private static PrOpenPlanPrResult BuildPlanPrErrorResult(
         int rootId,
         int itemId,
         int parentItemId,
@@ -602,7 +567,7 @@ public sealed partial class PrCommands
         var itemKey = itemId == rootId
             ? "root"
             : itemId.ToString(CultureInfo.InvariantCulture);
-        EmitPlanPr(new PrOpenPlanPrResult
+        return new PrOpenPlanPrResult
         {
             RootId = rootId,
             ItemId = itemId,
@@ -620,6 +585,6 @@ public sealed partial class PrCommands
             RequestsParentChange = false,
             AncestorPlanGenerations = new Dictionary<string, int>(StringComparer.Ordinal),
             Error = message,
-        });
+        };
     }
 }

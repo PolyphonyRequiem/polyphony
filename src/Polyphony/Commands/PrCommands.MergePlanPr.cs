@@ -94,50 +94,36 @@ public sealed partial class PrCommands
             CreateJournalInvocation("pr_merge_plan_pr", PullRequestJournalTarget(prNumber), rootId, itemId),
             async innerCt =>
             {
-                var sw = new StringWriter();
-                var originalOut = Console.Out;
-                int exitCode;
-                try
+                var execution = await MergePlanPrAsync(
+                    rootId, itemId, prNumber, parentItemId, ancestorIds, manifestPath, admin, lockTtlHours, by, innerCt)
+                    .ConfigureAwait(false);
+                EmitMergePlan(execution.Result);
+                var result = execution.Result;
+                payload = new PrMergePlanPrPayload
                 {
-                    Console.SetOut(sw);
-                    exitCode = await MergePlanPrBodyAsync(rootId, itemId, prNumber, parentItemId, ancestorIds, manifestPath, admin, lockTtlHours, by, innerCt).ConfigureAwait(false);
-                }
-                finally
-                {
-                    Console.SetOut(originalOut);
-                }
-                var output = sw.ToString();
-                Console.Write(output);
-                PrMergePlanPrResult? result = null;
-                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrMergePlanPrResult); }
-                catch (JsonException) { }
-                payload = result is null
-                    ? new PrMergePlanPrPayload { RootId = rootId, ItemId = itemId, ParentItemId = parentItemId, PrNumber = prNumber, ItemKey = itemId == rootId ? "root" : (itemId > 0 ? itemId.ToString(CultureInfo.InvariantCulture) : ""), IsRootPlan = itemId == rootId, HeadBranch = "", BaseBranch = "", ManifestBranch = "", ResultAction = "error", Succeeded = false, WasMutated = false, AlreadyMerged = false, Error = output.Trim() }
-                    : new PrMergePlanPrPayload
-                    {
-                        RootId = result.RootId,
-                        ItemId = result.ItemId,
-                        ParentItemId = result.ParentItemId,
-                        PrNumber = result.PrNumber,
-                        ItemKey = result.ItemKey,
-                        IsRootPlan = result.IsRootPlan,
-                        HeadBranch = result.HeadBranch,
-                        BaseBranch = result.BaseBranch,
-                        ManifestBranch = result.ManifestBranch,
-                        RepoSlug = result.RepoSlug,
-                        PrUrl = null,
-                        LockToken = result.LockToken,
-                        MergeCommit = result.MergeCommit,
-                        ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.AlreadyMerged ? "already_merged" : "merged"),
-                        Succeeded = string.IsNullOrEmpty(result.ErrorCode),
-                        WasMutated = result.Merged && !result.AlreadyMerged,
-                        AlreadyMerged = result.AlreadyMerged,
-                        ManifestRecorded = result.ManifestRecorded,
-                        ManifestPushed = result.ManifestPushed,
-                        ErrorCode = result.ErrorCode?.Length > 0 ? result.ErrorCode : null,
-                        Error = result.Error,
-                    };
-                return exitCode;
+                    RootId = result.RootId,
+                    ItemId = result.ItemId,
+                    ParentItemId = result.ParentItemId,
+                    PrNumber = result.PrNumber,
+                    ItemKey = result.ItemKey,
+                    IsRootPlan = result.IsRootPlan,
+                    HeadBranch = result.HeadBranch,
+                    BaseBranch = result.BaseBranch,
+                    ManifestBranch = result.ManifestBranch,
+                    RepoSlug = result.RepoSlug,
+                    PrUrl = null,
+                    LockToken = result.LockToken,
+                    MergeCommit = result.MergeCommit,
+                    ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.AlreadyMerged ? "already_merged" : "merged"),
+                    Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                    WasMutated = result.Merged && !result.AlreadyMerged,
+                    AlreadyMerged = result.AlreadyMerged,
+                    ManifestRecorded = result.ManifestRecorded,
+                    ManifestPushed = result.ManifestPushed,
+                    ErrorCode = result.ErrorCode?.Length > 0 ? result.ErrorCode : null,
+                    Error = result.Error,
+                };
+                return execution.ExitCode;
             },
             outcomeSelector: exitCode => SelectJournalOutcome(
                 exitCode,
@@ -148,7 +134,14 @@ public sealed partial class PrCommands
             ct: ct).ConfigureAwait(false);
     }
 
-    private async Task<int> MergePlanPrBodyAsync(
+    /// <summary>
+    /// Typed seam introduced by AB#3313. Computes the
+    /// <see cref="PrMergePlanPrResult"/> envelope without any stdout side
+    /// effects. The public <see cref="MergePlanPr"/> shell parses the CLI
+    /// envelope, calls this method, serializes the result, and feeds the
+    /// journal payload directly from the typed result (no JSON reparse).
+    /// </summary>
+    internal async Task<CommandExecution<PrMergePlanPrResult>> MergePlanPrAsync(
         int rootId,
         int itemId,
         int prNumber,
@@ -163,15 +156,15 @@ public sealed partial class PrCommands
 
         // ── 1. Validate inputs + derive head/base. ──────────────────────────
         if (!Branching.RootId.TryParse(rootId, out var root))
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
                 $"--root-id must be positive (got {rootId})");
 
         if (!WorkItemId.TryParse(itemId, out var item))
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
                 $"--item-id must be positive (got {itemId})");
 
         if (prNumber <= 0)
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
                 $"--pr-number must be positive (got {prNumber})");
 
         bool isRootPlan = itemId == rootId;
@@ -183,7 +176,7 @@ public sealed partial class PrCommands
         if (isRootPlan)
         {
             if (parentItemId != 0)
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
                     $"--parent-item-id must be omitted when --item-id == --root-id (got {parentItemId}); the root plan has no parent.");
             itemKey = "root";
             headBranch = BranchNameBuilder.RootPlan(root).Value;
@@ -199,13 +192,13 @@ public sealed partial class PrCommands
             else
             {
                 if (!WorkItemId.TryParse(parentItemId, out var parentItem))
-                    return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
+                    return MergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
                         $"--parent-item-id must be positive (got {parentItemId})");
                 if (parentItemId == itemId)
-                    return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
+                    return MergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
                         $"--parent-item-id ({parentItemId}) must not equal --item-id; a plan cannot be its own parent.");
                 if (parentItemId == rootId)
-                    return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
+                    return MergePlanError(rootId, itemId, parentItemId, prNumber, "config_error",
                         $"--parent-item-id ({parentItemId}) equals --root-id; omit --parent-item-id when the parent is the root plan.");
                 resolvedParent = parentItemId;
                 headBranch = BranchNameBuilder.DescendantPlan(root, item).Value;
@@ -222,7 +215,7 @@ public sealed partial class PrCommands
         // Resolved here so we can fail-fast without holding a lock.
         var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
         if (resolvedPath.Error is not null)
-            return EmitMergePlanError(rootId, itemId, resolvedParent, prNumber, "internal_error", resolvedPath.Error,
+            return MergePlanError(rootId, itemId, resolvedParent, prNumber, "internal_error", resolvedPath.Error,
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch);
         var localManifestPath = resolvedPath.Path;
 
@@ -235,11 +228,11 @@ public sealed partial class PrCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            return EmitMergePlanError(rootId, itemId, resolvedParent, prNumber, "repo_not_resolved", ex.Message,
+            return MergePlanError(rootId, itemId, resolvedParent, prNumber, "repo_not_resolved", ex.Message,
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch);
         }
         if (string.IsNullOrEmpty(slug))
-            return EmitMergePlanError(rootId, itemId, resolvedParent, prNumber, "repo_not_resolved",
+            return MergePlanError(rootId, itemId, resolvedParent, prNumber, "repo_not_resolved",
                 "Could not resolve repo slug from origin remote",
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch);
 
@@ -251,7 +244,7 @@ public sealed partial class PrCommands
         }
         catch (Exception ex)
         {
-            return EmitMergePlanError(rootId, itemId, resolvedParent, prNumber, "internal_error", ex.Message,
+            return MergePlanError(rootId, itemId, resolvedParent, prNumber, "internal_error", ex.Message,
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug);
         }
 
@@ -281,7 +274,7 @@ public sealed partial class PrCommands
                 AcquireFailureReason.Stale => "lock_stale",
                 _ => "lock_unreadable",
             };
-            return EmitMergePlanError(rootId, itemId, resolvedParent, prNumber, code,
+            return MergePlanError(rootId, itemId, resolvedParent, prNumber, code,
                 $"Could not acquire run lock at '{lockPath}' (reason: {acquireOutcome.Reason?.ToString().ToLowerInvariant() ?? "unknown"}).",
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug);
         }
@@ -317,7 +310,7 @@ public sealed partial class PrCommands
     }
 
 
-    private async Task<int> MergePlanPrUnderLockAsync(
+    private async Task<CommandExecution<PrMergePlanPrResult>> MergePlanPrUnderLockAsync(
         int rootId,
         int itemId,
         int parentItemId,
@@ -339,14 +332,14 @@ public sealed partial class PrCommands
         {
             var status = await git.GetStatusAsync(ct).ConfigureAwait(false);
             if (status.Count > 0)
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "worktree_dirty",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "worktree_dirty",
                     $"Worktree is not clean ({status.Count} entries from `git status --porcelain`); commit, stash, or discard local changes before retrying.",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
                 $"Could not read worktree status: {ex.Message}",
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken);
         }
@@ -366,23 +359,23 @@ public sealed partial class PrCommands
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
                 $"gh pr view failed: {ex.Message}",
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken);
         }
         if (poll is null)
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "pr_not_found",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "pr_not_found",
                 $"PR #{prNumber} not found on {slug}.",
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken);
 
         if (!string.Equals(poll.HeadRefName, headBranch, StringComparison.Ordinal))
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "head_ref_mismatch",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "head_ref_mismatch",
                 $"PR #{prNumber} head ref is '{poll.HeadRefName ?? "<null>"}' but the verb expected '{headBranch}'. Refusing to act on the wrong PR.",
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                 prState: poll.State);
 
         if (!string.Equals(poll.BaseRefName, baseBranch, StringComparison.Ordinal))
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "base_ref_mismatch",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "base_ref_mismatch",
                 $"PR #{prNumber} base ref is '{poll.BaseRefName ?? "<null>"}' but the verb expected '{baseBranch}'. Refusing to act on the wrong PR.",
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                 prState: poll.State);
@@ -407,7 +400,7 @@ public sealed partial class PrCommands
                 }
                 catch (Exception ex)
                 {
-                    return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
+                    return MergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
                         $"Could not parse manifest at {manifestPath} for staleness check: {ex.Message}",
                         isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                         prState: poll.State);
@@ -424,7 +417,7 @@ public sealed partial class PrCommands
                     // Root plans were already excluded above, so a descendant
                     // without a snapshot indicates a hand-opened PR or one
                     // pre-dating P3; we can't verify its safety.
-                    return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "stale_generation",
+                    return MergePlanError(rootId, itemId, parentItemId, prNumber, "stale_generation",
                         $"PR #{prNumber} body has no ancestor_plan_generations snapshot in front-matter; descendant plan PRs must carry a snapshot to be merged safely. Re-open the PR via `polyphony pr open-plan-pr` to embed the current snapshot.",
                         isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                         prState: poll.State);
@@ -441,7 +434,7 @@ public sealed partial class PrCommands
                         })
                         .ToList();
 
-                    return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "stale_generation",
+                    return MergePlanError(rootId, itemId, parentItemId, prNumber, "stale_generation",
                         $"PR #{prNumber} ancestor plan-generation snapshot is stale vs the current manifest on origin/{manifestBranch}. Stale entries: {PlanGenerationStaleness.FormatStaleEntries(staleness.StaleEntries)}. Re-open the PR with the current snapshot before merging.",
                         isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                         prState: poll.State, staleAncestors: staleEntries);
@@ -465,14 +458,14 @@ public sealed partial class PrCommands
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
                     $"Could not fetch PR #{prNumber} changed files for diff validation: {ex.Message}",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                     prState: poll.State);
             }
 
             if (changedFiles is null)
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "pr_not_found",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "pr_not_found",
                     $"PR #{prNumber} files endpoint returned no payload during diff validation.",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                     prState: poll.State);
@@ -495,7 +488,7 @@ public sealed partial class PrCommands
 
             if (classification.Severity == ValidationSeverity.Blocking)
             {
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "validation_blocked",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "validation_blocked",
                     $"PR #{prNumber} fails plan-diff validation ({classification.Code}): {classification.Message}",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                     prState: poll.State);
@@ -512,7 +505,7 @@ public sealed partial class PrCommands
         if (string.Equals(poll.State, "MERGED", StringComparison.OrdinalIgnoreCase))
         {
             if (string.IsNullOrEmpty(poll.MergeCommitSha))
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "missing_merge_commit",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "missing_merge_commit",
                     $"PR #{prNumber} reports state MERGED but the platform did not return a merge commit SHA.",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                     prState: poll.State);
@@ -535,18 +528,18 @@ public sealed partial class PrCommands
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "merge_failed",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "merge_failed",
                     $"gh pr merge failed: {ex.Message}",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                     prState: poll.State);
             }
             if (!mergeResult.Succeeded)
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "merge_failed",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "merge_failed",
                     $"gh pr merge did not succeed: {mergeResult.Detail}",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                     prState: poll.State);
             if (string.IsNullOrEmpty(mergeResult.MergeSha))
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "missing_merge_commit",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "missing_merge_commit",
                     "gh pr merge returned without a merge commit SHA; cannot record the merge in the ledger.",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                     prState: "MERGED");
@@ -555,7 +548,7 @@ public sealed partial class PrCommands
         }
         else
         {
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "pr_state_unmergeable",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "pr_state_unmergeable",
                 $"PR #{prNumber} is in state '{poll.State}'; only OPEN or MERGED are actionable.",
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                 prState: poll.State);
@@ -574,7 +567,7 @@ public sealed partial class PrCommands
         }
         catch (Exception ex)
         {
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
                 $"Could not load manifest at '{manifestPath}': {ex.Message}",
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                 prState: "MERGED", merged: true, alreadyMerged: alreadyMerged, mergeCommit: mergeCommit);
@@ -582,7 +575,7 @@ public sealed partial class PrCommands
 
         var ledger = ManifestPlanLedger.Apply(manifest, itemKey, prNumber, mergeCommit, DateTime.UtcNow);
         if (ledger.ConflictReason is not null)
-            return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "ledger_conflict", ledger.ConflictReason,
+            return MergePlanError(rootId, itemId, parentItemId, prNumber, "ledger_conflict", ledger.ConflictReason,
                 isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                 prState: "MERGED", merged: true, alreadyMerged: alreadyMerged, mergeCommit: mergeCommit,
                 prevGen: ledger.PreviousGeneration, currGen: ledger.CurrentGeneration);
@@ -602,7 +595,7 @@ public sealed partial class PrCommands
             }
             catch (Exception ex)
             {
-                return EmitMergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
+                return MergePlanError(rootId, itemId, parentItemId, prNumber, "internal_error",
                     $"Manifest save failed: {ex.Message}",
                     isRootPlan, itemKey, headBranch, baseBranch, manifestBranch, slug: slug, lockToken: lockToken,
                     prState: "MERGED", merged: true, alreadyMerged: alreadyMerged, mergeCommit: mergeCommit,
@@ -612,31 +605,32 @@ public sealed partial class PrCommands
         }
 
         // ── 10. Emit success. ──────────────────────────────────────────────
-        EmitMergePlan(new PrMergePlanPrResult
-        {
-            RootId = rootId,
-            ItemId = itemId,
-            ParentItemId = parentItemId,
-            ItemKey = itemKey,
-            IsRootPlan = isRootPlan,
-            HeadBranch = headBranch,
-            BaseBranch = baseBranch,
-            ManifestBranch = manifestBranch,
-            RepoSlug = slug,
-            PrNumber = prNumber,
-            PrState = "MERGED",
-            Merged = true,
-            AlreadyMerged = alreadyMerged,
-            MergeCommit = mergeCommit,
-            ManifestRecorded = manifestRecorded,
-            ManifestPushed = manifestPushed,
-            PreviousGeneration = ledger.PreviousGeneration,
-            CurrentGeneration = ledger.CurrentGeneration,
-            LockToken = lockToken,
-            LockReleased = false,  // set by the caller after release; emitted as false here so workflows treat success+leaked-lock as a workflow-warning-not-failure case
-            ErrorCode = "",
-        });
-        return ExitCodes.Success;
+        return new CommandExecution<PrMergePlanPrResult>(
+            new PrMergePlanPrResult
+            {
+                RootId = rootId,
+                ItemId = itemId,
+                ParentItemId = parentItemId,
+                ItemKey = itemKey,
+                IsRootPlan = isRootPlan,
+                HeadBranch = headBranch,
+                BaseBranch = baseBranch,
+                ManifestBranch = manifestBranch,
+                RepoSlug = slug,
+                PrNumber = prNumber,
+                PrState = "MERGED",
+                Merged = true,
+                AlreadyMerged = alreadyMerged,
+                MergeCommit = mergeCommit,
+                ManifestRecorded = manifestRecorded,
+                ManifestPushed = manifestPushed,
+                PreviousGeneration = ledger.PreviousGeneration,
+                CurrentGeneration = ledger.CurrentGeneration,
+                LockToken = lockToken,
+                LockReleased = false,  // set by the caller after release; emitted as false here so workflows treat success+leaked-lock as a workflow-warning-not-failure case
+                ErrorCode = "",
+            },
+            ExitCodes.Success);
     }
 
     private async Task<string> SafeResolveRepoRootAsync(CancellationToken ct)
@@ -645,7 +639,7 @@ public sealed partial class PrCommands
         catch { return ""; }
     }
 
-    private static int EmitMergePlanError(
+    private static CommandExecution<PrMergePlanPrResult> MergePlanError(
         int rootId,
         int itemId,
         int parentItemId,
@@ -669,33 +663,34 @@ public sealed partial class PrCommands
         bool manifestPushed = false,
         IReadOnlyList<StaleAncestorEntry>? staleAncestors = null)
     {
-        EmitMergePlan(new PrMergePlanPrResult
-        {
-            RootId = rootId,
-            ItemId = itemId,
-            ParentItemId = parentItemId,
-            ItemKey = itemKey,
-            IsRootPlan = isRootPlan,
-            HeadBranch = headBranch,
-            BaseBranch = baseBranch,
-            ManifestBranch = manifestBranch,
-            RepoSlug = slug,
-            PrNumber = prNumber,
-            PrState = prState,
-            Merged = merged,
-            AlreadyMerged = alreadyMerged,
-            MergeCommit = mergeCommit,
-            ManifestRecorded = manifestRecorded,
-            ManifestPushed = manifestPushed,
-            PreviousGeneration = prevGen,
-            CurrentGeneration = currGen,
-            LockToken = lockToken,
-            LockReleased = false,
-            ErrorCode = errorCode,
-            Error = message,
-            StaleAncestors = staleAncestors,
-        });
-        return ExitCodes.Success;  // routing-style: workflow branches on ErrorCode, not exit code
+        return new CommandExecution<PrMergePlanPrResult>(
+            new PrMergePlanPrResult
+            {
+                RootId = rootId,
+                ItemId = itemId,
+                ParentItemId = parentItemId,
+                ItemKey = itemKey,
+                IsRootPlan = isRootPlan,
+                HeadBranch = headBranch,
+                BaseBranch = baseBranch,
+                ManifestBranch = manifestBranch,
+                RepoSlug = slug,
+                PrNumber = prNumber,
+                PrState = prState,
+                Merged = merged,
+                AlreadyMerged = alreadyMerged,
+                MergeCommit = mergeCommit,
+                ManifestRecorded = manifestRecorded,
+                ManifestPushed = manifestPushed,
+                PreviousGeneration = prevGen,
+                CurrentGeneration = currGen,
+                LockToken = lockToken,
+                LockReleased = false,
+                ErrorCode = errorCode,
+                Error = message,
+                StaleAncestors = staleAncestors,
+            },
+            ExitCodes.Success); // routing-style: workflow branches on ErrorCode, not exit code
     }
 
     private static void EmitMergePlan(PrMergePlanPrResult result)

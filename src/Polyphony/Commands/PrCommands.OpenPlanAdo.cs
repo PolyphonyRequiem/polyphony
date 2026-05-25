@@ -108,49 +108,33 @@ public sealed partial class PrCommands
             CreateJournalInvocation("pr_open_plan_ado", BranchPairJournalTarget(jHead, jBase), rootId, itemId),
             async innerCt =>
             {
-                var sw = new StringWriter();
-                var originalOut = Console.Out;
-                int exitCode;
-                try
+                var execution = await OpenPlanAdoAsync(organization, project, repository, rootId, itemId, parentItemId, ancestorIds, manifestPath, title, body, innerCt).ConfigureAwait(false);
+                EmitOpenPlanAdo(execution.Result);
+                var result = execution.Result;
+                payload = new PrOpenPlanAdoPayload
                 {
-                    Console.SetOut(sw);
-                    exitCode = await OpenPlanAdoBodyAsync(organization, project, repository, rootId, itemId, parentItemId, ancestorIds, manifestPath, title, body, innerCt).ConfigureAwait(false);
-                }
-                finally
-                {
-                    Console.SetOut(originalOut);
-                }
-                var output = sw.ToString();
-                Console.Write(output);
-                PrOpenPlanAdoResult? result = null;
-                try { result = JsonSerializer.Deserialize(output.Trim(), PolyphonyJsonContext.Default.PrOpenPlanAdoResult); }
-                catch (JsonException) { }
-                payload = result is null
-                    ? new PrOpenPlanAdoPayload { RootId = rootId, ItemId = itemId, ParentItemId = parentItemId, ItemKey = itemId == rootId ? "root" : (itemId > 0 ? itemId.ToString(CultureInfo.InvariantCulture) : ""), IsRootPlan = itemId == rootId, Organization = organization, Project = project, Repository = repository, HeadBranch = jHead, BaseBranch = jBase, ResultAction = "error", Succeeded = false, WasMutated = false, Stale = false, Error = output.Trim() }
-                    : new PrOpenPlanAdoPayload
-                    {
-                        RootId = result.RootId,
-                        ItemId = result.ItemId,
-                        ParentItemId = result.ParentItemId,
-                        ItemKey = result.ItemKey,
-                        IsRootPlan = result.IsRootPlan,
-                        Organization = result.Organization,
-                        Project = result.Project,
-                        Repository = result.Repository,
-                        HeadBranch = result.HeadBranch,
-                        BaseBranch = result.BaseBranch,
-                        RepoSlug = result.RepoSlug,
-                        PrNumber = result.PrNumber,
-                        PrUrl = result.PrUrl,
-                        Title = result.Title,
-                        ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.Stale ? "stale" : (result.Created ? "created" : "reused_existing_pr")),
-                        Succeeded = string.IsNullOrEmpty(result.ErrorCode),
-                        WasMutated = result.Created,
-                        Stale = result.Stale,
-                        ErrorCode = result.ErrorCode,
-                        Error = result.Error,
-                    };
-                return exitCode;
+                    RootId = result.RootId,
+                    ItemId = result.ItemId,
+                    ParentItemId = result.ParentItemId,
+                    ItemKey = result.ItemKey,
+                    IsRootPlan = result.IsRootPlan,
+                    Organization = result.Organization,
+                    Project = result.Project,
+                    Repository = result.Repository,
+                    HeadBranch = result.HeadBranch,
+                    BaseBranch = result.BaseBranch,
+                    RepoSlug = result.RepoSlug,
+                    PrNumber = result.PrNumber,
+                    PrUrl = result.PrUrl,
+                    Title = result.Title,
+                    ResultAction = result.ErrorCode?.Length > 0 ? "error" : (result.Stale ? "stale" : (result.Created ? "created" : "reused_existing_pr")),
+                    Succeeded = string.IsNullOrEmpty(result.ErrorCode),
+                    WasMutated = result.Created,
+                    Stale = result.Stale,
+                    ErrorCode = result.ErrorCode,
+                    Error = result.Error,
+                };
+                return execution.ExitCode;
             },
             outcomeSelector: exitCode => SelectJournalOutcome(
                 exitCode,
@@ -161,7 +145,14 @@ public sealed partial class PrCommands
             ct: ct).ConfigureAwait(false);
     }
 
-    private async Task<int> OpenPlanAdoBodyAsync(
+    /// <summary>
+    /// Typed seam introduced by AB#3313. Computes the
+    /// <see cref="PrOpenPlanAdoResult"/> envelope without any stdout side
+    /// effects. The public <see cref="OpenPlanAdo"/> shell parses the CLI
+    /// envelope, calls this method, serializes the result, and feeds the
+    /// journal payload directly from the typed result (no JSON reparse).
+    /// </summary>
+    internal async Task<CommandExecution<PrOpenPlanAdoResult>> OpenPlanAdoAsync(
         string organization,
         string project,
         string repository,
@@ -181,21 +172,18 @@ public sealed partial class PrCommands
             || string.IsNullOrWhiteSpace(project)
             || string.IsNullOrWhiteSpace(repository))
         {
-            EmitOpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
                 "invalid_argument", "organization, project, and repository are required");
-            return ExitCodes.Success;
         }
         if (!Branching.RootId.TryParse(rootId, out var root))
         {
-            EmitOpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
                 "invalid_argument", $"rootId must be positive (got {rootId})");
-            return ExitCodes.Success;
         }
         if (!WorkItemId.TryParse(itemId, out var item))
         {
-            EmitOpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
                 "invalid_argument", $"itemId must be positive (got {itemId})");
-            return ExitCodes.Success;
         }
 
         bool isRootPlan = itemId == rootId;
@@ -208,10 +196,9 @@ public sealed partial class PrCommands
         {
             if (parentItemId != 0)
             {
-                EmitOpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
+                return OpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
                     "invalid_argument",
                     $"--parent-item-id must not be provided when --item-id == --root-id (got {parentItemId}); the root plan has no parent.");
-                return ExitCodes.Success;
             }
             itemKey = "root";
             headBranch = BranchNameBuilder.RootPlan(root).Value;
@@ -228,23 +215,20 @@ public sealed partial class PrCommands
             {
                 if (!WorkItemId.TryParse(parentItemId, out var parentItem))
                 {
-                    EmitOpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
+                    return OpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
                         "invalid_argument", $"--parent-item-id must be positive (got {parentItemId})");
-                    return ExitCodes.Success;
                 }
                 if (parentItemId == itemId)
                 {
-                    EmitOpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
+                    return OpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
                         "invalid_argument",
                         $"--parent-item-id ({parentItemId}) must not equal --item-id; a plan cannot be its own parent.");
-                    return ExitCodes.Success;
                 }
                 if (parentItemId == rootId)
                 {
-                    EmitOpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
+                    return OpenPlanAdoError(rootId, itemId, parentItemId, organization, project, repository, slug,
                         "invalid_argument",
                         $"--parent-item-id ({parentItemId}) equals --root-id; omit --parent-item-id when the parent is the root plan.");
-                    return ExitCodes.Success;
                 }
                 resolvedParent = parentItemId;
                 headBranch = BranchNameBuilder.DescendantPlan(root, item).Value;
@@ -255,18 +239,16 @@ public sealed partial class PrCommands
 
         if (!TryParseAncestorChain(ancestorIds, isRootPlan, itemKey, out var ancestorKeys, out var ancestorError))
         {
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "invalid_argument", ancestorError, headBranch, baseBranch);
-            return ExitCodes.Success;
         }
 
         if (ado is null)
         {
             // Shouldn't happen in production (DI registers IAdoClient) but the
             // ctor allows null so unit tests can opt out of the ADO leg.
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "ado_failed", "IAdoClient is not configured", headBranch, baseBranch);
-            return ExitCodes.Success;
         }
 
         // ── 2. Read manifest + compute snapshot. ───────────────────────────
@@ -279,9 +261,8 @@ public sealed partial class PrCommands
         var resolvedPath = await ManifestPathHelper.ResolveAsync(statePaths, rootId, manifestPath, ct).ConfigureAwait(false);
         if (resolvedPath.Error is not null)
         {
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "manifest_read_failed", resolvedPath.Error, headBranch, baseBranch);
-            return ExitCodes.Success;
         }
         var localManifestPath = resolvedPath.Path;
         try
@@ -291,18 +272,16 @@ public sealed partial class PrCommands
         }
         catch (FileNotFoundException)
         {
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "manifest_read_failed",
                 $"manifest not found at {localManifestPath} — run `polyphony manifest init --root-id {rootId} ...` first",
                 headBranch, baseBranch);
-            return ExitCodes.Success;
         }
         catch (OperationCanceledException) { throw; }
         catch (InvalidOperationException ex)
         {
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "manifest_invalid", $"manifest invalid: {ex.Message}", headBranch, baseBranch);
-            return ExitCodes.Success;
         }
 
         // ── 3. Build PR title + body. ──────────────────────────────────────
@@ -323,11 +302,10 @@ public sealed partial class PrCommands
 
             if (activePrs is null)
             {
-                EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+                return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                     "pr_not_found",
                     $"Repository '{repository}' not found in {organization}/{project}.",
                     headBranch, baseBranch);
-                return ExitCodes.Success;
             }
 
             var expectedSourceRef = "refs/heads/" + headBranch;
@@ -370,7 +348,34 @@ public sealed partial class PrCommands
 
                 if (SnapshotsEquivalent(existingMeta.AncestorPlanGenerations, snapshot))
                 {
-                    EmitOpenPlanAdo(new PrOpenPlanAdoResult
+                    return new CommandExecution<PrOpenPlanAdoResult>(
+                        new PrOpenPlanAdoResult
+                        {
+                            RootId = rootId,
+                            ItemId = itemId,
+                            ParentItemId = resolvedParent,
+                            ItemKey = itemKey,
+                            IsRootPlan = isRootPlan,
+                            HeadBranch = headBranch,
+                            BaseBranch = baseBranch,
+                            Organization = organization,
+                            Project = project,
+                            Repository = repository,
+                            RepoSlug = slug,
+                            PrNumber = existing.PullRequestId,
+                            PrUrl = BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
+                            Title = prTitle,
+                            Created = false,
+                            Stale = false,
+                            RequestsParentChange = existingMeta.RequestsParentChange,
+                            AncestorPlanGenerations = existingMeta.AncestorPlanGenerations,
+                            ErrorCode = "",
+                        },
+                        ExitCodes.Success);
+                }
+
+                return new CommandExecution<PrOpenPlanAdoResult>(
+                    new PrOpenPlanAdoResult
                     {
                         RootId = rootId,
                         ItemId = itemId,
@@ -387,38 +392,13 @@ public sealed partial class PrCommands
                         PrUrl = BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
                         Title = prTitle,
                         Created = false,
-                        Stale = false,
+                        Stale = true,
                         RequestsParentChange = existingMeta.RequestsParentChange,
                         AncestorPlanGenerations = existingMeta.AncestorPlanGenerations,
-                        ErrorCode = "",
-                    });
-                    return ExitCodes.Success;
-                }
-
-                EmitOpenPlanAdo(new PrOpenPlanAdoResult
-                {
-                    RootId = rootId,
-                    ItemId = itemId,
-                    ParentItemId = resolvedParent,
-                    ItemKey = itemKey,
-                    IsRootPlan = isRootPlan,
-                    HeadBranch = headBranch,
-                    BaseBranch = baseBranch,
-                    Organization = organization,
-                    Project = project,
-                    Repository = repository,
-                    RepoSlug = slug,
-                    PrNumber = existing.PullRequestId,
-                    PrUrl = BuildAdoPrUrl(organization, project, repository, existing.PullRequestId),
-                    Title = prTitle,
-                    Created = false,
-                    Stale = true,
-                    RequestsParentChange = existingMeta.RequestsParentChange,
-                    AncestorPlanGenerations = existingMeta.AncestorPlanGenerations,
-                    ErrorCode = "stale_metadata",
-                    Error = BuildStaleMessage(existingMeta.AncestorPlanGenerations, snapshot),
-                });
-                return ExitCodes.Success;
+                        ErrorCode = "stale_metadata",
+                        Error = BuildStaleMessage(existingMeta.AncestorPlanGenerations, snapshot),
+                    },
+                    ExitCodes.Success);
             }
 
             // ── 5. Create the PR. ─────────────────────────────────────────
@@ -432,50 +412,48 @@ public sealed partial class PrCommands
 
             if (created is null)
             {
-                EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+                return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                     "pr_not_found",
                     $"Repository '{repository}' not found in {organization}/{project}.",
                     headBranch, baseBranch);
-                return ExitCodes.Success;
             }
 
-            EmitOpenPlanAdo(new PrOpenPlanAdoResult
-            {
-                RootId = rootId,
-                ItemId = itemId,
-                ParentItemId = resolvedParent,
-                ItemKey = itemKey,
-                IsRootPlan = isRootPlan,
-                HeadBranch = headBranch,
-                BaseBranch = baseBranch,
-                Organization = organization,
-                Project = project,
-                Repository = repository,
-                RepoSlug = slug,
-                PrNumber = created.PullRequestId,
-                PrUrl = BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
-                Title = prTitle,
-                Created = true,
-                Stale = false,
-                RequestsParentChange = false,
-                AncestorPlanGenerations = snapshot,
-                ErrorCode = "",
-            });
-            return ExitCodes.Success;
+            return new CommandExecution<PrOpenPlanAdoResult>(
+                new PrOpenPlanAdoResult
+                {
+                    RootId = rootId,
+                    ItemId = itemId,
+                    ParentItemId = resolvedParent,
+                    ItemKey = itemKey,
+                    IsRootPlan = isRootPlan,
+                    HeadBranch = headBranch,
+                    BaseBranch = baseBranch,
+                    Organization = organization,
+                    Project = project,
+                    Repository = repository,
+                    RepoSlug = slug,
+                    PrNumber = created.PullRequestId,
+                    PrUrl = BuildAdoPrUrl(organization, project, repository, created.PullRequestId),
+                    Title = prTitle,
+                    Created = true,
+                    Stale = false,
+                    RequestsParentChange = false,
+                    AncestorPlanGenerations = snapshot,
+                    ErrorCode = "",
+                },
+                ExitCodes.Success);
         }
         catch (OperationCanceledException) { throw; }
         catch (AdoAuthenticationException ex)
         {
             // Raised by IPolyphonyAuthProvider when no ADO credential chain succeeds (PAT env or AAD).
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "no_pat", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
         }
         catch (TimeoutException ex)
         {
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "ado_timeout", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
         }
         catch (HttpRequestException ex)
         {
@@ -483,15 +461,13 @@ public sealed partial class PrCommands
             var code = ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
                 ? "no_pat"
                 : "ado_failed";
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 code, ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
         }
         catch (Exception ex)
         {
-            EmitOpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
+            return OpenPlanAdoError(rootId, itemId, resolvedParent, organization, project, repository, slug,
                 "ado_failed", ex.Message, headBranch, baseBranch);
-            return ExitCodes.Success;
         }
     }
 
@@ -500,7 +476,7 @@ public sealed partial class PrCommands
         => Console.WriteLine(JsonSerializer.Serialize(
             result, PolyphonyJsonContext.Default.PrOpenPlanAdoResult));
 
-    private static void EmitOpenPlanAdoError(
+    private static CommandExecution<PrOpenPlanAdoResult> OpenPlanAdoError(
         int rootId,
         int itemId,
         int parentItemId,
@@ -516,28 +492,30 @@ public sealed partial class PrCommands
         var itemKey = itemId == rootId
             ? "root"
             : (itemId > 0 ? itemId.ToString(CultureInfo.InvariantCulture) : "");
-        EmitOpenPlanAdo(new PrOpenPlanAdoResult
-        {
-            RootId = rootId,
-            ItemId = itemId,
-            ParentItemId = parentItemId,
-            ItemKey = itemKey,
-            IsRootPlan = itemId == rootId && itemId > 0,
-            HeadBranch = headBranch,
-            BaseBranch = baseBranch,
-            Organization = organization ?? string.Empty,
-            Project = project ?? string.Empty,
-            Repository = repository ?? string.Empty,
-            RepoSlug = slug ?? string.Empty,
-            PrNumber = 0,
-            PrUrl = string.Empty,
-            Title = string.Empty,
-            Created = false,
-            Stale = false,
-            RequestsParentChange = false,
-            AncestorPlanGenerations = new Dictionary<string, int>(StringComparer.Ordinal),
-            ErrorCode = errorCode,
-            Error = message,
-        });
+        return new CommandExecution<PrOpenPlanAdoResult>(
+            new PrOpenPlanAdoResult
+            {
+                RootId = rootId,
+                ItemId = itemId,
+                ParentItemId = parentItemId,
+                ItemKey = itemKey,
+                IsRootPlan = itemId == rootId && itemId > 0,
+                HeadBranch = headBranch,
+                BaseBranch = baseBranch,
+                Organization = organization ?? string.Empty,
+                Project = project ?? string.Empty,
+                Repository = repository ?? string.Empty,
+                RepoSlug = slug ?? string.Empty,
+                PrNumber = 0,
+                PrUrl = string.Empty,
+                Title = string.Empty,
+                Created = false,
+                Stale = false,
+                RequestsParentChange = false,
+                AncestorPlanGenerations = new Dictionary<string, int>(StringComparer.Ordinal),
+                ErrorCode = errorCode,
+                Error = message,
+            },
+            ExitCodes.Success);
     }
 }
