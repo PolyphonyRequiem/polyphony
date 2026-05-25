@@ -618,9 +618,14 @@ agents:
   #      marker → bot reviewer (probably pr_initial_reviewer). Only
   #      treat items under the `**Blocking concerns**` section as
   #      negative; ignore everything else in the bot's body.
-  #   2. Comment author matches the PR author → exclude (PR author
-  #      narrating their own work doesn't count as feedback to themselves).
-  #   3. Otherwise → human reviewer. Use natural-language judgement.
+  #   2. Otherwise → human reviewer. Use natural-language judgement,
+  #      regardless of whether the comment author matches the PR
+  #      author identity. Polyphony PRs are agent-authored under the
+  #      operator's PAT, so author-identity equality is NOT a valid
+  #      proxy for bot-vs-human — the marker is. Self-approval /
+  #      self-waiting-for-author is a platform branch-protection
+  #      concern, not the analyzer's. See
+  #      docs/decisions/pr-feedback-identity-classification.md.
   #
   # Output digest contract: `feedback_digest` is a stable hash of
   # (comment ids + thread ids + vote tuples + body sha) of everything
@@ -690,24 +695,28 @@ agents:
          marker-posting agent). Only treat items under the `**Blocking
          concerns**` section as negative; ignore everything else in
          the bot's body.
-      2. Else if `author == PR author identity` → **author self-comment**.
-         Exclude entirely (the PR author narrating their own work is
-         not feedback to themselves).
-      3. Else → **human reviewer**. Use natural-language judgement of
+      2. Else → **human reviewer**. Use natural-language judgement of
          the comment's sentiment and any embedded code-review concerns.
+         **Do NOT compare `author` against the PR author identity** —
+         polyphony PRs are agent-authored under the operator's PAT, so
+         the operator's own comments on the PR are valid human-in-the-
+         loop interventions and must be treated as feedback.
 
       For reviewer **votes** on ADO: a `-5` (waiting for author) vote
-      counts as negative feedback. A `+5` (approved with suggestions)
-      vote ALONE does not — but if it's paired with unresolved actionable
-      threads, the threads still win and you should treat the unresolved
-      threads as negative feedback. A `+10` or `-10` was already terminated
-      by the deterministic classifier; if you see one here it means
-      mixed signals — defer to the threads / comments to decide.
+      counts as negative feedback regardless of who cast it (including
+      the PR author themselves — self-vote enforcement is a platform
+      branch-protection concern, not yours). A `+5` (approved with
+      suggestions) vote ALONE does not — but if it's paired with
+      unresolved actionable threads, the threads still win and you
+      should treat the unresolved threads as negative feedback. A
+      `+10` or `-10` was already terminated by the deterministic
+      classifier; if you see one here it means mixed signals — defer
+      to the threads / comments to decide.
 
       Unresolved threads (status active / pending — anything that is NOT
       resolved / fixed / closed / by-design / won-fix) that contain at
-      least one in-scope (non-author) comment count as negative feedback
-      even if the comment body is short.
+      least one non-bot comment count as negative feedback even if the
+      comment body is short.
 
       ## Output
 
