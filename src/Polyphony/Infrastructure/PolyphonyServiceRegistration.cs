@@ -49,6 +49,7 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<PhaseDetector>();
         services.AddSingleton<HierarchyWalker>();
         services.AddSingleton<TransitionValidator>();
+        services.AddSingleton<Polyphony.Branching.BranchEnsurer>();
         services.AddSingleton<RunContext>();
         services.AddSingleton<IJournalLocator, JournalLocator>();
         services.AddSingleton<IJournalStore, JournalStore>();

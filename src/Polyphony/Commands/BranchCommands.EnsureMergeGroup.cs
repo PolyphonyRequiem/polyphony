@@ -2,7 +2,6 @@ using System.Text.Json;
 using ConsoleAppFramework;
 using Polyphony.Annotations;
 using Polyphony.Branching;
-using Polyphony.Infrastructure.Processes;
 using Polyphony.Journal;
 using Polyphony.Journal.Payloads;
 
@@ -77,114 +76,50 @@ public sealed partial class BranchCommands
             {
                 try
                 {
-                    // ── 2. Check current state of MG branch on remote and locally. ─
-                    var remoteRefs = await git.LsRemoteHeadsAsync(remote, branch, innerCt).ConfigureAwait(false);
-                    var remoteExisted = remoteRefs.Count > 0;
+                    var outcome = await _branchEnsurer.EnsureAsync(
+                        new BranchSpec(branch, baseBranch, remote),
+                        innerCt).ConfigureAwait(false);
 
-                    var localSha = await git.RevParseLocalBranchAsync(branch, innerCt).ConfigureAwait(false);
-                    var localExisted = localSha is not null;
-                    var currentBranch = localExisted
-                        ? await TryGetCurrentBranchAsync(innerCt).ConfigureAwait(false)
-                        : null;
-
-                    string action;
-                    bool pushed = false;
-                    string? createdFrom = null;
-
-                    // ── 3. Verify the base branch exists on the remote — if it
-                    //      doesn't, child creation can't succeed. We check this
-                    //      only when we'd actually need it (target branch missing
-                    //      both locally and remotely). ─────────────────────────────
-                    bool baseRemoteExisted;
-                    bool baseFetched = false;
-                    bool wasMutated;
-
-                    if (localExisted)
+                    if (outcome.Status == BranchEnsureStatus.BaseMissingOnRemote)
                     {
-                        await git.CheckoutAsync(branch, innerCt).ConfigureAwait(false);
-                        action = "checked_out";
-                        wasMutated = currentBranch is null || !string.Equals(currentBranch, branch, StringComparison.Ordinal);
-
-                        if (!remoteExisted)
+                        payload = new BranchEnsureMergeGroupPayload
                         {
-                            await git.PushAsync(branch, remote, innerCt).ConfigureAwait(false);
-                            pushed = true;
-                            wasMutated = true;
-                        }
-
-                        // Base is irrelevant when the target already exists.
-                        baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
-                    }
-                    else if (remoteExisted)
-                    {
-                        await git.FetchAsync(remote, branch, innerCt).ConfigureAwait(false);
-                        await git.CheckoutTrackingAsync(branch, remote, innerCt).ConfigureAwait(false);
-                        action = "checked_out";
-                        baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
-                        wasMutated = true;
-                    }
-                    else
-                    {
-                        // Need to materialize from base. Confirm base exists on remote first.
-                        baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
-                        if (!baseRemoteExisted)
-                        {
-                            payload = new BranchEnsureMergeGroupPayload
-                            {
-                                RootId = rootId,
-                                MergeGroupPath = path.Canonical,
-                                Depth = path.Depth,
-                                BranchName = branch,
-                                BaseBranch = baseBranch,
-                                ResultAction = "error",
-                                Succeeded = false,
-                                WasMutated = false,
-                                WasCreated = false,
-                                WasPushed = false,
-                                BaseFetched = false,
-                                Error = $"base branch '{baseBranch}' does not exist on remote '{remote}'. " +
-                                    (path.IsTopLevel
-                                        ? "Run 'polyphony branch ensure-feature' first to create the feature branch."
-                                        : "Run 'polyphony branch ensure-mg' for the parent path first."),
-                            };
-                            EmitMgError(
-                                rootId,
-                                mgPath,
-                                payload.Error,
-                                branch: branch,
-                                baseBranch: baseBranch,
-                                depth: path.Depth);
-                            return ExitCodes.RoutingFailure;
-                        }
-
-                        // If the base isn't local, fetch and check it out so the
-                        // create-from-base step has a known local start point.
-                        var baseLocalSha = await git.RevParseLocalBranchAsync(baseBranch, innerCt).ConfigureAwait(false);
-                        if (baseLocalSha is null)
-                        {
-                            await git.FetchAsync(remote, baseBranch, innerCt).ConfigureAwait(false);
-                            await git.CheckoutTrackingAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
-                            baseFetched = true;
-                        }
-
-                        await git.CreateBranchAsync(branch, baseBranch, innerCt).ConfigureAwait(false);
-                        await git.PushAsync(branch, remote, innerCt).ConfigureAwait(false);
-                        action = "created";
-                        pushed = true;
-                        createdFrom = baseBranch;
-                        wasMutated = true;
+                            RootId = rootId,
+                            MergeGroupPath = path.Canonical,
+                            Depth = path.Depth,
+                            BranchName = branch,
+                            BaseBranch = baseBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            WasCreated = false,
+                            WasPushed = false,
+                            BaseFetched = false,
+                            Error = $"base branch '{baseBranch}' does not exist on remote '{remote}'. " +
+                                (path.IsTopLevel
+                                    ? "Run 'polyphony branch ensure-feature' first to create the feature branch."
+                                    : "Run 'polyphony branch ensure-mg' for the parent path first."),
+                        };
+                        EmitMgError(
+                            rootId,
+                            mgPath,
+                            payload.Error,
+                            branch: branch,
+                            baseBranch: baseBranch,
+                            depth: path.Depth);
+                        return ExitCodes.RoutingFailure;
                     }
 
                     var result = new BranchEnsureMergeGroupResult
                     {
                         Branch = branch,
                         BaseBranch = baseBranch,
-                        Action = action,
-                        RemoteExisted = remoteExisted,
-                        Pushed = pushed,
-                        BaseRemoteExisted = baseRemoteExisted,
-                        BaseFetched = baseFetched,
-                        CreatedFrom = createdFrom,
+                        Action = outcome.Action,
+                        RemoteExisted = outcome.RemoteExisted,
+                        Pushed = outcome.Pushed,
+                        BaseRemoteExisted = outcome.BaseRemoteExisted,
+                        BaseFetched = outcome.BaseFetched,
+                        CreatedFrom = outcome.CreatedFrom,
                         RootId = rootId,
                         MgPath = path.Canonical,
                         Depth = path.Depth,
@@ -198,13 +133,13 @@ public sealed partial class BranchCommands
                         Depth = path.Depth,
                         BranchName = branch,
                         BaseBranch = baseBranch,
-                        ResultAction = action,
+                        ResultAction = outcome.Action,
                         Succeeded = true,
-                        WasMutated = wasMutated,
-                        WasCreated = string.Equals(action, "created", StringComparison.Ordinal),
-                        WasPushed = pushed,
-                        BaseFetched = baseFetched,
-                        Sha = await TryGetBranchShaAsync(branch, innerCt).ConfigureAwait(false),
+                        WasMutated = outcome.WasMutated,
+                        WasCreated = string.Equals(outcome.Action, "created", StringComparison.Ordinal),
+                        WasPushed = outcome.Pushed,
+                        BaseFetched = outcome.BaseFetched,
+                        Sha = await _branchEnsurer.TryGetBranchShaAsync(branch, innerCt).ConfigureAwait(false),
                     };
                     EmitMergeGroup(result);
                     return ExitCodes.Success;
@@ -247,12 +182,6 @@ public sealed partial class BranchCommands
             payloadSelector: _ => SerializePayload(payload, PolyphonyJsonContext.Default.BranchEnsureMergeGroupPayload),
             effectsSelector: _ => SelectEnsureMergeGroupEffects(payload),
             ct: ct).ConfigureAwait(false);
-    }
-
-    private async Task<bool> BaseExistsOnRemoteAsync(string baseBranch, string remote, CancellationToken ct)
-    {
-        var refs = await git.LsRemoteHeadsAsync(remote, baseBranch, ct).ConfigureAwait(false);
-        return refs.Count > 0;
     }
 
     private static void EmitMergeGroup(BranchEnsureMergeGroupResult result)

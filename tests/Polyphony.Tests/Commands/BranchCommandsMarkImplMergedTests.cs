@@ -32,7 +32,8 @@ public sealed class BranchCommandsMarkImplMergedTests : CommandTestBase
             new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
             new Polyphony.Sdlc.Observers.PullRequestReader(gh, null),
             JournalTestSupport.CreateRunContext(),
-            JournalTestSupport.CreateDecorator()), runner);
+            JournalTestSupport.CreateDecorator(),
+            new Polyphony.Branching.BranchEnsurer(git)), runner);
     }
 
     private static void StubSync(FakeProcessRunner runner)

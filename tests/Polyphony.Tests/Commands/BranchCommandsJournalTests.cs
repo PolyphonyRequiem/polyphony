@@ -269,7 +269,8 @@ public sealed class BranchCommandsJournalTests : CommandTestBase
             new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
             new Polyphony.Sdlc.Observers.PullRequestReader(gh, null),
             new RunContext(runId),
-            new JournaledActionDecorator(store));
+            new JournaledActionDecorator(store),
+            new Polyphony.Branching.BranchEnsurer(git));
         return (command, runner, store);
     }
 

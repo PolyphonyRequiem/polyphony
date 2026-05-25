@@ -38,7 +38,8 @@ public sealed class JournalE2ETests : Polyphony.Tests.Commands.CommandTestBase
             new Polyphony.Sdlc.Observers.RepoIdentityResolver(git),
             new Polyphony.Sdlc.Observers.PullRequestReader(gh, null),
             new RunContext("run-e2e"),
-            new JournaledActionDecorator(store));
+            new JournaledActionDecorator(store),
+            new Polyphony.Branching.BranchEnsurer(git));
         var journalCommands = new JournalCommands(store);
 
         runner.WhenExact("git", ["ls-remote", "--heads", "origin", "evidence/100-200"], new ProcessResult(0, "", ""));

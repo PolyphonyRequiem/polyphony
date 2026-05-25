@@ -122,110 +122,52 @@ public sealed partial class BranchCommands
             {
                 try
                 {
-                    // ── 2. Check current state of plan branch on remote and locally. ─
-                    var remoteRefs = await git.LsRemoteHeadsAsync(remote, branch, innerCt).ConfigureAwait(false);
-                    var remoteExisted = remoteRefs.Count > 0;
+                    var outcome = await _branchEnsurer.EnsureAsync(
+                        new BranchSpec(branch, baseBranch, remote),
+                        innerCt).ConfigureAwait(false);
 
-                    var localSha = await git.RevParseLocalBranchAsync(branch, innerCt).ConfigureAwait(false);
-                    var localExisted = localSha is not null;
-                    var currentBranch = localExisted
-                        ? await TryGetCurrentBranchAsync(innerCt).ConfigureAwait(false)
-                        : null;
-
-                    string action;
-                    bool pushed = false;
-                    string? createdFrom = null;
-                    bool baseRemoteExisted;
-                    bool baseFetched = false;
-                    bool wasMutated;
-
-                    if (localExisted)
+                    if (outcome.Status == BranchEnsureStatus.BaseMissingOnRemote)
                     {
-                        await git.CheckoutAsync(branch, innerCt).ConfigureAwait(false);
-                        action = "checked_out";
-                        wasMutated = currentBranch is null || !string.Equals(currentBranch, branch, StringComparison.Ordinal);
+                        var hint = isRootPlan
+                            ? "Run 'polyphony branch ensure-feature' first to create the feature branch."
+                            : (parent is null
+                                ? "Run 'polyphony branch ensure-plan' for the root plan first (--item-id == --root-id)."
+                                : $"Run 'polyphony branch ensure-plan --root-id {rootId} --item-id {parentItemId}' first to create the parent plan branch.");
 
-                        if (!remoteExisted)
+                        payload = new BranchEnsurePlanPayload
                         {
-                            await git.PushAsync(branch, remote, innerCt).ConfigureAwait(false);
-                            pushed = true;
-                            wasMutated = true;
-                        }
-
-                        baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
-                    }
-                    else if (remoteExisted)
-                    {
-                        await git.FetchAsync(remote, branch, innerCt).ConfigureAwait(false);
-                        await git.CheckoutTrackingAsync(branch, remote, innerCt).ConfigureAwait(false);
-                        action = "checked_out";
-                        baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
-                        wasMutated = true;
-                    }
-                    else
-                    {
-                        // ── 3. Need to materialize from base. Confirm base exists on remote. ─
-                        baseRemoteExisted = await BaseExistsOnRemoteAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
-                        if (!baseRemoteExisted)
-                        {
-                            var hint = isRootPlan
-                                ? "Run 'polyphony branch ensure-feature' first to create the feature branch."
-                                : (parent is null
-                                    ? "Run 'polyphony branch ensure-plan' for the root plan first (--item-id == --root-id)."
-                                    : $"Run 'polyphony branch ensure-plan --root-id {rootId} --item-id {parentItemId}' first to create the parent plan branch.");
-
-                            payload = new BranchEnsurePlanPayload
-                            {
-                                RootId = rootId,
-                                WorkItemId = itemId,
-                                ParentItemId = parent,
-                                IsRootPlan = isRootPlan,
-                                BranchName = branch,
-                                BaseBranch = baseBranch,
-                                ResultAction = "error",
-                                Succeeded = false,
-                                WasMutated = false,
-                                WasCreated = false,
-                                WasPushed = false,
-                                BaseFetched = false,
-                                Error = $"base branch '{baseBranch}' does not exist on remote '{remote}'. {hint}",
-                            };
-                            EmitPlanError(rootId, itemId, parentItemId,
-                                payload.Error,
-                                branch: branch,
-                                baseBranch: baseBranch,
-                                isRootPlan: isRootPlan);
-                            return ExitCodes.RoutingFailure;
-                        }
-
-                        // If the base isn't local, fetch and check it out so the
-                        // create-from-base step has a known local start point.
-                        var baseLocalSha = await git.RevParseLocalBranchAsync(baseBranch, innerCt).ConfigureAwait(false);
-                        if (baseLocalSha is null)
-                        {
-                            await git.FetchAsync(remote, baseBranch, innerCt).ConfigureAwait(false);
-                            await git.CheckoutTrackingAsync(baseBranch, remote, innerCt).ConfigureAwait(false);
-                            baseFetched = true;
-                        }
-
-                        await git.CreateBranchAsync(branch, baseBranch, innerCt).ConfigureAwait(false);
-                        await git.PushAsync(branch, remote, innerCt).ConfigureAwait(false);
-                        action = "created";
-                        pushed = true;
-                        createdFrom = baseBranch;
-                        wasMutated = true;
+                            RootId = rootId,
+                            WorkItemId = itemId,
+                            ParentItemId = parent,
+                            IsRootPlan = isRootPlan,
+                            BranchName = branch,
+                            BaseBranch = baseBranch,
+                            ResultAction = "error",
+                            Succeeded = false,
+                            WasMutated = false,
+                            WasCreated = false,
+                            WasPushed = false,
+                            BaseFetched = false,
+                            Error = $"base branch '{baseBranch}' does not exist on remote '{remote}'. {hint}",
+                        };
+                        EmitPlanError(rootId, itemId, parentItemId,
+                            payload.Error,
+                            branch: branch,
+                            baseBranch: baseBranch,
+                            isRootPlan: isRootPlan);
+                        return ExitCodes.RoutingFailure;
                     }
 
                     var result = new BranchEnsurePlanResult
                     {
                         Branch = branch,
                         BaseBranch = baseBranch,
-                        Action = action,
-                        RemoteExisted = remoteExisted,
-                        Pushed = pushed,
-                        BaseRemoteExisted = baseRemoteExisted,
-                        BaseFetched = baseFetched,
-                        CreatedFrom = createdFrom,
+                        Action = outcome.Action,
+                        RemoteExisted = outcome.RemoteExisted,
+                        Pushed = outcome.Pushed,
+                        BaseRemoteExisted = outcome.BaseRemoteExisted,
+                        BaseFetched = outcome.BaseFetched,
+                        CreatedFrom = outcome.CreatedFrom,
                         RootId = rootId,
                         ItemId = itemId,
                         ParentItemId = parent,
@@ -239,13 +181,13 @@ public sealed partial class BranchCommands
                         IsRootPlan = isRootPlan,
                         BranchName = branch,
                         BaseBranch = baseBranch,
-                        ResultAction = action,
+                        ResultAction = outcome.Action,
                         Succeeded = true,
-                        WasMutated = wasMutated,
-                        WasCreated = string.Equals(action, "created", StringComparison.Ordinal),
-                        WasPushed = pushed,
-                        BaseFetched = baseFetched,
-                        Sha = await TryGetBranchShaAsync(branch, innerCt).ConfigureAwait(false),
+                        WasMutated = outcome.WasMutated,
+                        WasCreated = string.Equals(outcome.Action, "created", StringComparison.Ordinal),
+                        WasPushed = outcome.Pushed,
+                        BaseFetched = outcome.BaseFetched,
+                        Sha = await _branchEnsurer.TryGetBranchShaAsync(branch, innerCt).ConfigureAwait(false),
                     };
                     EmitPlan(result);
                     return ExitCodes.Success;
