@@ -58,6 +58,7 @@ public static class PolyphonyServiceRegistration
         services.AddSingleton<JournalDriftAnalyzer>();
         services.AddSingleton<ProjectionResetCoverageAnalyzer>();
         services.AddSingleton<ProjectionResetPlanner>();
+        services.AddSingleton<IRunWatermarkStamper, RunWatermarkStamper>();
         services.AddSingleton<ProjectionResetExecutor>();
 
         // Journal drift observers. Every ResourceKind is explicitly accounted for here:

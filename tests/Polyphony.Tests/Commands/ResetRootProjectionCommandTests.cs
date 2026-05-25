@@ -54,7 +54,8 @@ public sealed class ResetRootProjectionCommandTests : CommandTestBase
             new JournalDriftAnalyzer([observer]),
             new ProjectionResetCoverageAnalyzer([observer], [deleter]),
             new ProjectionResetPlanner(),
-            [deleter]);
+            [deleter],
+            new NoOpRunWatermarkStamper());
         var command = CreateCommand(executor);
 
         var (exit, output) = await CaptureConsoleAsync(() => command.ResetRoot(root: 100, execute: false));
@@ -136,5 +137,11 @@ public sealed class ResetRootProjectionCommandTests : CommandTestBase
             world.ActualState = "missing";
             return Task.FromResult(new ResourceDeleteOutcome { Success = true, Deleted = true });
         }
+    }
+
+    private sealed class NoOpRunWatermarkStamper : IRunWatermarkStamper
+    {
+        public Task StampAsync(int rootId, DateTimeOffset utcNow, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 }
