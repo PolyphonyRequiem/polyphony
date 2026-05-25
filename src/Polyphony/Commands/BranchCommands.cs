@@ -34,10 +34,12 @@ public sealed partial class BranchCommands(
     Sdlc.Observers.RepoIdentityResolver repoIdentityResolver,
     Sdlc.Observers.PullRequestReader pullRequestReader,
     RunContext runContext,
-    JournaledActionDecorator decorator)
+    JournaledActionDecorator decorator,
+    Polyphony.Branching.BranchEnsurer branchEnsurer)
 {
     private readonly RunContext _runContext = runContext;
     private readonly JournaledActionDecorator _journalDecorator = decorator;
+    private readonly Polyphony.Branching.BranchEnsurer _branchEnsurer = branchEnsurer;
 
     /// <summary>
     /// Check ADO predecessor links for blocking dependencies on a work item.
@@ -567,30 +569,6 @@ public sealed partial class BranchCommands(
         => payload is null ? null : JsonSerializer.Serialize(payload, jsonTypeInfo);
 
     private static string WorkItemJournalTarget(int workItemId) => $"workitem:{workItemId}";
-
-    private async Task<string?> TryGetCurrentBranchAsync(CancellationToken ct)
-    {
-        try
-        {
-            return await git.GetCurrentBranchAsync(ct).ConfigureAwait(false);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private async Task<string?> TryGetBranchShaAsync(string branch, CancellationToken ct)
-    {
-        try
-        {
-            return await git.RevParseLocalBranchAsync(branch, ct).ConfigureAwait(false);
-        }
-        catch
-        {
-            return null;
-        }
-    }
 
     private static int? TryParseFeatureRootId(string branch)
     {
