@@ -74,8 +74,8 @@ public sealed class BranchCommandsCheckDepsTests : CommandTestBase
               ]
             }
             """);
-        StubShow(runner, 200, """{"id":200,"fields":{"System.State":"Done","System.Title":"Pred A"}}""");
-        StubShow(runner, 201, """{"id":201,"fields":{"System.State":"Closed","System.Title":"Pred B"}}""");
+        StubShow(runner, 200, """{"id":200,"state":"Done","title":"Pred A"}""");
+        StubShow(runner, 201, """{"id":201,"state":"Closed","title":"Pred B"}""");
 
         var (exit, output) = await CaptureConsoleAsync(() => cmd.CheckDeps(100));
 
@@ -103,9 +103,9 @@ public sealed class BranchCommandsCheckDepsTests : CommandTestBase
               ]
             }
             """);
-        StubShow(runner, 200, """{"id":200,"fields":{"System.State":"Done","System.Title":"Pred A"}}""");
-        StubShow(runner, 201, """{"id":201,"fields":{"System.State":"Doing","System.Title":"Pred B"}}""");
-        StubShow(runner, 202, """{"id":202,"fields":{"System.State":"To Do","System.Title":"Pred C"}}""");
+        StubShow(runner, 200, """{"id":200,"state":"Done","title":"Pred A"}""");
+        StubShow(runner, 201, """{"id":201,"state":"Doing","title":"Pred B"}""");
+        StubShow(runner, 202, """{"id":202,"state":"To Do","title":"Pred C"}""");
 
         var (exit, output) = await CaptureConsoleAsync(() => cmd.CheckDeps(100));
 
@@ -133,7 +133,7 @@ public sealed class BranchCommandsCheckDepsTests : CommandTestBase
               ]
             }
             """);
-        StubShow(runner, 300, """{"id":300,"fields":{"System.State":"Done","System.Title":"Pred X"}}""");
+        StubShow(runner, 300, """{"id":300,"state":"Done","title":"Pred X"}""");
 
         var (_, output) = await CaptureConsoleAsync(() => cmd.CheckDeps(100));
         var result = Deserialize(output);

@@ -28,7 +28,7 @@ public sealed class PrCommandsTests : CommandTestBase
 
     private static void StubTwigShowTree(FakeProcessRunner runner, int id, string? title)
     {
-        var json = title is null ? "" : $$"""{"title":"{{title}}","id":{{id}}}""";
+        var json = title is null ? "" : $$$"""{"focus":{"title":"{{{title}}}","id":{{{id}}}}}""";
         runner.WhenExact("twig", new[] { "show", id.ToString(), "--tree", "--output", "json" },
             new ProcessResult(title is null ? 1 : 0, json, ""));
     }

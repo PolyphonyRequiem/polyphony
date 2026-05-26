@@ -268,7 +268,9 @@ public sealed partial class PrCommands(
         try
         {
             var tree = await twig.ShowTreeAsync(workItem, ct).ConfigureAwait(false);
-            var title = tree?["title"]?.GetValue<string>();
+            // twig >= v0.81.0 tree root is {parentChain, focus, children, …};
+            // the active item's title lives under `focus`.
+            var title = tree?["focus"]?["title"]?.GetValue<string>();
             return string.IsNullOrWhiteSpace(title) ? fallback : $"feat: {title} AB#{workItem}";
         }
         catch
