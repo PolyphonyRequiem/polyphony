@@ -209,9 +209,11 @@ public sealed partial class BranchCommands(
 
     private static (string State, string Title) ExtractStateAndTitle(JsonNode item)
     {
-        var fields = item["fields"];
-        var state = fields?["System.State"]?.GetValue<string>() ?? string.Empty;
-        var title = fields?["System.Title"]?.GetValue<string>() ?? string.Empty;
+        // twig >= v0.81.0 promotes state/title to top-level cells on
+        // `twig show --output json`. The fields[] subobject no longer
+        // redundantly carries System.State / System.Title.
+        var state = item["state"]?.GetValue<string>() ?? string.Empty;
+        var title = item["title"]?.GetValue<string>() ?? string.Empty;
         return (state, title);
     }
 

@@ -329,7 +329,9 @@ public sealed partial class PrCommands
         try
         {
             var tree = await twig.ShowTreeAsync(workItem, ct).ConfigureAwait(false);
-            var workItemTitle = tree?["title"]?.GetValue<string>();
+            // twig >= v0.81.0 tree root is {parentChain, focus, children, …};
+            // the active item's title lives under `focus`.
+            var workItemTitle = tree?["focus"]?["title"]?.GetValue<string>();
             return string.IsNullOrWhiteSpace(workItemTitle)
                 ? fallback
                 : $"Evidence: {workItemTitle} (#{workItem})";
