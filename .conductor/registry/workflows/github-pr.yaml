@@ -95,15 +95,17 @@ output:
   # for Python booleans (see conductor-mechanics M7).
   #
   # pr_merger may not run — the workflow can exit without a merge via
+  # already_merged_emitter (re-entry: operator merged via GitHub UI) or
   # closed_unmerged_emitter (operator closed the PR). Per M3
   # (StrictUndefined), guard `pr_merger is defined` first.
   merged: >-
     {%- if pr_merger is defined -%}{{ (pr_merger.output.merged | default(false)) | string | lower }}
+    {%- elif already_merged_emitter is defined -%}true
     {%- elif closed_unmerged_emitter is defined -%}false
     {%- else -%}false{%- endif -%}
   pr_url: >-
     {%- if pr_merger is defined -%}{{ pr_merger.output.pr_url | default('') }}
-    {%- elif closed_unmerged_emitter is defined -%}{{ closed_unmerged_emitter.output.pr_url | default('') }}
+    {%- elif poll_status is defined -%}{{ poll_status.output.pr_url | default('') }}
     {%- else -%}{%- endif -%}
   # When the PR exits unmerged with bot-analyzed negative feedback still
   # outstanding (e.g. operator closed the PR after pushing back, or the

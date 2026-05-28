@@ -40,7 +40,7 @@ tools:
   - filesystem
 
 output:
-  observations: "{{ close_out.output.observations | json }}"
+  observations: "{{ close_out.output.observations | tojson }}"
   summary: "{{ close_out.output.summary | default('') }}"
   observation_count: "{{ close_out.output.observations | length }}"
 
