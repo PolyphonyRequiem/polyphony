@@ -484,7 +484,8 @@ agents:
       - "--pr-number"
       - "{{ workflow.input.pr_number }}"
     routes:
-      - to: poll_error_gate
+      # on_error: auto-abort (AB#3257 — trivial gate removed; retry via conductor on_error: when Phase 1 ships)
+      - to: abort_run
         when: "{{ poll_status.output.error is defined and poll_status.output.error }}"
       - to: closed_unmerged_emitter
         when: "{{ poll_status.output.route == 'abort_unmerged' }}"
@@ -501,34 +502,6 @@ agents:
         when: "{{ poll_status.output.route == 'none' }}"
       # Catch-all per M4 — defensive deferral to analyzer.
       - to: pr_feedback_analyzer
-
-  # ── Poll error gate ───────────────────────────────────────────────────
-  - name: poll_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ PR Poll Failed — ADO PR #{{ workflow.input.pr_number }}
-
-      Could not read the PR review state for ADO PR
-      **#{{ workflow.input.pr_number }}**.
-
-      **State:** `{{ poll_status.output.state if poll_status.output.state is defined else "unknown" }}`
-      **Error:** {{ poll_status.output.error if poll_status.output.error is defined else "Unexpected state — check polyphony pr poll-status-ado output schema" }}
-
-      Common causes: missing/invalid PAT, ADO timeout, transient API
-      failure. Retry is safe (single read).
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-poll the PR
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔄 Retry"
-        value: retry
-        route: poll_status
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Already-merged emitter ────────────────────────────────────────────
   #

@@ -1,6 +1,6 @@
 # on_error Migration Inventory
 
-**Status:** Read-only inventory; informs AB#3257 sequencing
+**Status:** Migration complete as of #528; conductor on_error: retry support pending AB#3257 Phase 1
 **Owner:** polyphony-internal architecture
 **Work item:** AB#3257 — Failure-mode gate elimination
 **Companion:** [conductor on_error brief](https://github.com/PolyphonyRequiem/conductor/blob/02eace858dbaf2d1d22598a6e7debdf2d4c8a439/docs/projects/error-routing/on-error-routing.brainstorm.md)

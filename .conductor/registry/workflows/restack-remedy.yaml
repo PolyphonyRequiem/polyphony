@@ -99,44 +99,15 @@ agents:
       - "--repository-override"
       - "{{ workflow.input.repository }}"
     routes:
-      # Verb-level error (manifest read/parse, repo slug, etc.) — surface
-      # to the restack-error gate so the operator can decide.
-      - to: classify_error_gate
+      # Verb-level error (manifest read/parse, repo slug, etc.) — auto-skip.
+      # on_error: auto-skip (AB#3257 — trivial gate removed; routes to $end on classify error)
+      - to: $end
         when: "{{ classify.output.error_code is defined and classify.output.error_code != null and classify.output.error_code != '' }}"
       # Nothing stale — done.
       - to: $end
         when: "{{ (classify.output.total_stale | default(0)) == 0 }}"
       # At least one stale entry — fan out remedies.
       - to: remedy_group
-
-  # ── Classify error gate ───────────────────────────────────────────────
-  - name: classify_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Restack Classify Failed
-
-      `polyphony plan classify-stale-descendants` could not enumerate
-      stale descendants for root **{{ workflow.input.root_id }}**.
-
-      - **Error code:** `{{ classify.output.error_code }}`
-      - **Error:** {{ classify.output.error | default('(none)') }}
-
-      Common causes: manifest missing or malformed in the per-root state
-      directory (`<git-common-dir>/polyphony/{{ workflow.input.root_id }}/run.yaml`),
-      repo slug not resolvable from `origin`, twig cache stale.
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-run the classifier (after fixing the cause).
-      - **Skip restack** — exit without remediating descendant PRs.
-    options:
-      - label: "🔄 Retry classify"
-        value: retry
-        route: classify
-      - label: "⏭️ Skip restack"
-        value: skip
-        route: $end
 
   # ── Restack summary gate ──────────────────────────────────────────────
   #

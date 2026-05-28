@@ -244,7 +244,8 @@ agents:
       # twig sync). Without this route the catch-all below silently
       # treats errors as "done with tasks" and proceeds toward MG
       # closure — masking real failures and leaving items unstarted.
-      - to: root_router_error_gate
+      # on_error: auto-abort (AB#3257 — trivial gate removed)
+      - to: abort_run
         when: "{{ root_router.output.action == 'error' or (root_router.output.error is defined and root_router.output.error != '') }}"
       # Catch-all per M4: unknown action from next-impl should fail
       # safely to dependency_check (the natural "we're done with tasks"
@@ -925,7 +926,7 @@ agents:
   #                  commit list to an operator via
   #                  squash_coverage_mismatch_gate.
   #   - 'error'    → verb itself failed (git invocation, ref resolution);
-  #                  surface to squash_coverage_error_gate for retry/abort.
+  #                  auto-abort via abort_run (AB#3257).
   #
   # Invariants:
   #   Pre:  Squash committed to `origin/mg/{root}_{path}`; local ref
@@ -958,7 +959,8 @@ agents:
         to: delete_impl_branch
       - when: "{{ assert_impl_pr_coverage.output.action == 'mismatch' }}"
         to: squash_coverage_mismatch_gate
-      - to: squash_coverage_error_gate
+      # on_error: auto-abort (AB#3257 — trivial gate removed)
+      - to: abort_run
 
   # ── Coverage mismatch gate (AB#3211) ──────────────────────────────────
   #
@@ -1022,46 +1024,6 @@ agents:
       - label: "⚡ Force-accept (acknowledge loss, proceed to delete branch)"
         value: force_accept
         route: delete_impl_branch
-
-  # ── Coverage assertion error gate (AB#3211) ───────────────────────────
-  #
-  # Fires when `assert-impl-pr-coverage` itself returns action='error'
-  # (typically a git invocation failure: missing ref, transient network).
-  # Distinct from the mismatch gate — this is a tool failure, not a
-  # data-loss incident.
-  - name: squash_coverage_error_gate
-    type: human_gate
-    description: assert-impl-pr-coverage tool error — operator decides retry or abort
-    prompt: |
-      ## ⚠️ Coverage assertion failed to run — task `{{ root_router.output.root_id }}`
-
-      `polyphony pr assert-impl-pr-coverage` returned an error envelope
-      (the verb itself could not complete; this is a tool failure, not
-      a coverage mismatch).
-
-      **Detail:** {{ assert_impl_pr_coverage.output.error | default('(no error message)') }}
-
-      | Field | Value |
-      |---|---|
-      | Impl ref | `{{ assert_impl_pr_coverage.output.impl_ref | default('(unresolved)') }}` |
-      | MG ref | `{{ assert_impl_pr_coverage.output.mg_ref | default('(unresolved)') }}` |
-
-      Common causes: stale local refs (re-fetch may help), missing
-      `origin/impl/{root}-{item}` (impl branch deleted prematurely),
-      transient git failure.
-
-      Choose an action:
-
-      - **Retry** — re-run the fetch + assertion. Use after manual
-        recovery (e.g. `git fetch origin`).
-      - **Abort** — END this workflow without deleting the impl branch.
-    options:
-      - label: "🔄 Retry (re-fetch + re-assert)"
-        value: retry
-        route: fetch_for_coverage_assertion
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Delete impl branch (deferred from impl_pr_merge per AB#3211) ──────
   #
@@ -1221,60 +1183,6 @@ agents:
         }
     routes:
       - to: root_router
-
-  # ── Primary router error gate ─────────────────────────────────────────
-  #
-  # Fires when `branch next-impl` (root_router) emits action='error' or
-  # a non-empty `error` field. Without an explicit route, the catch-all
-  # below would silently treat the error as "all items done" and proceed
-  # toward MG closure — masking the failure and skipping every remaining
-  # task.
-  #
-  # AB#3126 root cause coupling: next-impl now flushes its
-  # begin_implementation transition via a post-state `twig sync` before
-  # returning. Network/auth blips during that sync surface here as
-  # action='error'.
-  #
-  # Operator options:
-  #   - Retry: re-enter root_router. `next-impl` is idempotent —
-  #     transitions a Doing item to Doing is a no-op for the validator
-  #     (begin_implementation accepts both Proposed and InProgress), and
-  #     the second `twig sync` will retry the push.
-  #   - Abort: $end. The MG remains in its current state; no items are
-  #     advanced to Done. Re-running the workflow later resumes from the
-  #     same point.
-  #
-  # Invariants:
-  #   Pre:  root_router emitted action='error' or a populated `error`.
-  #   Post: Operator has retried (route to root_router) or aborted ($end).
-  - name: root_router_error_gate
-    type: human_gate
-    description: next-impl signaled error — operator decides retry or abort
-    prompt: |
-      ## ❌ next-impl error — MG `mg/{{ workflow.input.root_id }}_{{ workflow.input.mg_path }}`
-
-      `polyphony branch next-impl` returned an error envelope. The most
-      common cause is a transient ADO failure during the post-state
-      `twig sync` that flushes the `begin_implementation` transition
-      (AB#3126).
-
-      **Detail:** {{ root_router.output.error | default('(no error message)') }}
-
-      Choose an action:
-
-      - **Retry** — re-enter `root_router`. `next-impl` is idempotent
-        (selecting the same task again, validating `begin_implementation`
-        on a Doing item, and re-flushing all are no-ops or safe retries).
-      - **Abort** — exit without advancing any further items. The MG
-        remains in its current state; a later workflow re-entry resumes
-        from the same point.
-    options:
-      - label: "🔄 Retry (re-run next-impl)"
-        value: retry
-        route: root_router
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Dependency check ──────────────────────────────────────────────────
   #

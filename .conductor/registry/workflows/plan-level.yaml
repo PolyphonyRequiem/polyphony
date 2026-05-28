@@ -315,7 +315,7 @@ agents:
     routes:
       - to: root_fallback_gate
         when: "{{ root_resolver.output.fallback_required == true }}"
-      - to: root_resolver_error_gate
+      - to: abort_run
         when: "{{ root_resolver.output.error is defined and root_resolver.output.error }}"
       - to: type_loader
 
@@ -343,26 +343,6 @@ agents:
         value: abort
         route: abort_run
 
-  # ── Root resolver error gate ──────────────────────────────────────────
-  - name: root_resolver_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Root Resolution Failed
-
-      Could not resolve the run root for work item
-      **{{ workflow.input.work_item_id }}**.
-
-      **Error:** {{ root_resolver.output.error if root_resolver.output.error is defined else "Unknown error — check that the work item exists in ADO." }}
-
-      ---
-
-      Choose an action:
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
-
   # ── Type loader ──────────────────────────────────────────────────────────
   #
   # Loads type-specific context from .polyphony-config/work-item-types/. Outputs
@@ -379,27 +359,7 @@ agents:
     routes:
       - to: ancestor_chain
         when: "{{ type_loader.output.type is defined and type_loader.output.type != '' }}"
-      - to: type_loader_error_gate
-
-  # ── Type loader error gate ───────────────────────────────────────────────
-  - name: type_loader_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Type Context Load Failed
-
-      Planning for work item **{{ workflow.input.work_item_id }}** cannot continue
-      because the type context could not be loaded.
-
-      **Error:** {{ type_loader.output.error if type_loader.output.error is defined else "Unknown error — check that .polyphony-config/work-item-types/ is configured and the work item exists in ADO." }}
-
-      ---
-
-      Choose an action:
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
+      - to: abort_run
 
   # ── Ancestor chain derivation ─────────────────────────────────────────
   #
@@ -421,33 +381,9 @@ agents:
       - "--item-id"
       - "{{ workflow.input.work_item_id }}"
     routes:
-      - to: ancestor_chain_error_gate
+      - to: abort_run
         when: "{{ ancestor_chain.output.error is defined and ancestor_chain.output.error }}"
       - to: state_detector
-
-  # ── Ancestor chain error gate ─────────────────────────────────────────
-  - name: ancestor_chain_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Ancestor Chain Derivation Failed
-
-      Could not derive the plan-tree ancestor chain for work item
-      **{{ workflow.input.work_item_id }}** under root
-      **{{ root_resolver.output.resolved_root_id }}**.
-
-      **Error:** {{ ancestor_chain.output.error if ancestor_chain.output.error is defined else "Unknown error" }}
-
-      Common causes: work item is not actually a descendant of the root,
-      the parent chain is broken, or a cycle was detected.
-
-      ---
-
-      Choose an action:
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── State detector ────────────────────────────────────────────────────
   #
@@ -492,7 +428,7 @@ agents:
       - "--repository-override"
       - "{{ workflow.input.repository }}"
     routes:
-      - to: state_detector_error_gate
+      - to: abort_run
         when: "{{ state_detector.output.state == 'error' }}"
       - to: child_router
         when: "{{ state_detector.output.state == 'complete' }}"
@@ -511,31 +447,8 @@ agents:
         when: "{{ state_detector.output.state == 'stale_generation' }}"
       - to: architect
         when: "{{ state_detector.output.state == 'not_started' }}"
-      # Catch-all per M4: unexpected state value should surface as a gate,
-      # not raise mid-run "no matching route".
-      - to: state_detector_error_gate
-
-  # ── State detector error gate ─────────────────────────────────────────
-  - name: state_detector_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Plan State Detection Failed
-
-      Could not detect plan-tree state for work item
-      **{{ workflow.input.work_item_id }}** under root
-      **{{ root_resolver.output.resolved_root_id }}**.
-
-      **State:** `{{ state_detector.output.state if state_detector.output.state is defined else "unknown" }}`
-      **Error:** {{ state_detector.output.error if state_detector.output.error is defined else "Unexpected state value — check polyphony plan detect-state output schema" }}
-
-      ---
-
-      Choose an action:
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
+      # Catch-all per M4: unexpected state value; abort deterministically (AB#3257).
+      - to: abort_run
 
   # ── Closed-unmerged gate ───────────────────────────────────────────────
   #
@@ -1036,33 +949,9 @@ agents:
       - "--children-json"
       - "{{ architect.output.children | tojson }}"
     routes:
-      - to: write_plan_error_gate
+      - to: abort_run
         when: "{{ write_plan.output.error is defined and write_plan.output.error }}"
       - to: commit_and_push
-
-  # ── Write plan error gate ──────────────────────────────────────────────
-  - name: write_plan_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Plan Write Failed
-
-      Could not write the plan for work item
-      **{{ workflow.input.work_item_id }}**.
-
-      **Error:** {{ write_plan.output.error if write_plan.output.error is defined else "Unknown error" }}
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-run `polyphony plan write-plan` (idempotent)
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔁 Retry"
-        value: retry
-        route: write_plan
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Ensure plan branch ────────────────────────────────────────────────
   #
@@ -1090,34 +979,9 @@ agents:
       - "--parent-item-id"
       - "{{ ancestor_chain.output.parent_item_id | default(0) }}"
     routes:
-      - to: ensure_plan_branch_error_gate
+      - to: abort_run
         when: "{{ ensure_plan_branch.output.error is defined and ensure_plan_branch.output.error }}"
       - to: write_plan
-
-  # ── Ensure plan branch error gate ─────────────────────────────────────
-  - name: ensure_plan_branch_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Plan Branch Setup Failed
-
-      Could not create or check out the plan branch for work item
-      **{{ workflow.input.work_item_id }}**.
-
-      **Error:** {{ ensure_plan_branch.output.error if ensure_plan_branch.output.error is defined else "Unknown error" }}
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-run `polyphony branch ensure-plan` (idempotent;
-        recovers from transient git-network failures)
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔁 Retry"
-        value: retry
-        route: ensure_plan_branch
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Commit and push ────────────────────────────────────────────────────
   #
@@ -1148,40 +1012,13 @@ agents:
       - "--paths"
       - "plans/plan-{{ workflow.input.work_item_id }}.md,plans/plan-{{ workflow.input.work_item_id }}.children.json"
     routes:
-      - to: commit_and_push_error_gate
+      - to: abort_run
         when: "{{ commit_and_push.output.error is defined and commit_and_push.output.error }}"
       # v2.1: route through pr_open_platform_router so the same
       # commit-and-push leg can feed either open_plan_pr (github) or
       # open_plan_pr_ado (ado). On github (default) the router is a
       # no-op fall-through.
       - to: pr_open_platform_router
-
-  # ── Commit and push error gate ────────────────────────────────────────
-  - name: commit_and_push_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Plan Commit/Push Failed
-
-      Could not commit and push the plan for work item
-      **{{ workflow.input.work_item_id }}**.
-
-      **Branch:** `{{ ensure_plan_branch.output.branch }}`
-      **Error:** {{ commit_and_push.output.error if commit_and_push.output.error is defined else "Unknown error" }}
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-run `polyphony plan commit-and-push` (idempotent;
-        emits no_changes when nothing is staged, recovers from transient
-        push-network failures)
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔁 Retry"
-        value: retry
-        route: commit_and_push
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Open plan PR ───────────────────────────────────────────────────────
   #
@@ -1212,40 +1049,9 @@ agents:
       - "--ancestor-ids"
       - "{{ ancestor_chain.output.ancestor_ids }}"
     routes:
-      - to: open_plan_pr_error_gate
+      - to: abort_run
         when: "{{ open_plan_pr.output.error is defined and open_plan_pr.output.error }}"
       - to: plan_reviewer
-
-  # ── Open plan PR error gate ────────────────────────────────────────────
-  - name: open_plan_pr_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Plan PR Open Failed
-
-      Could not open the plan PR for work item
-      **{{ workflow.input.work_item_id }}**.
-
-      **Branch:** `{{ ensure_plan_branch.output.branch }}`
-      **Error:** {{ open_plan_pr.output.error if open_plan_pr.output.error is defined else "Unknown error" }}
-
-      Common causes: stale ancestor snapshot on an existing PR (operator
-      must close/recreate); gh authentication missing; network timeout
-      (gh rate-limit, GitHub API hiccup, DNS); transient gh process hang.
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-run `polyphony pr open-plan-pr` (idempotent — reuses
-        an existing PR with a matching ancestor snapshot; safe for
-        transient gh/network failures)
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔁 Retry"
-        value: retry
-        route: open_plan_pr
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Plan reviewer (LLM advisory — sentiment-driven model) ─────────────
   #
@@ -1509,7 +1315,7 @@ agents:
       - "{{ open_plan_pr.output.pr_url if (open_plan_pr is defined and open_plan_pr.output.pr_url is defined) else state_detector.output.pr_url }}"
       - "--include-metadata"
     routes:
-      - to: poll_error_gate
+      - to: abort_run
         when: "{{ poll_status.output.error is defined and poll_status.output.error }}"
       # Terminal: operator merged through the platform UI.
       - to: seeder
@@ -1530,31 +1336,6 @@ agents:
         when: "{{ poll_status.output.route == 'none' }}"
       # Catch-all per M4 — defensive; treat unknown as deferral to analyzer.
       - to: pr_feedback_analyzer
-
-  # ── Poll error gate ───────────────────────────────────────────────────
-  - name: poll_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Plan PR Poll Failed
-
-      Could not read the plan PR review state for work item
-      **{{ workflow.input.work_item_id }}**.
-
-      **State:** `{{ poll_status_ado.output.state if (poll_status_ado is defined and poll_status_ado.output.state is defined) else (poll_status.output.state if (poll_status is defined and poll_status.output.state is defined) else "unknown") }}`
-      **Error:** {{ poll_status_ado.output.error if (poll_status_ado is defined and poll_status_ado.output.error is defined) else (poll_status.output.error if (poll_status is defined and poll_status.output.error is defined) else "Unexpected state — check polyphony pr poll-status / poll-status-ado output schema") }}
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-poll the PR
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔄 Retry"
-        value: retry
-        route: pr_poll_platform_router
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Extract parent patch (P8d wiring) ──────────────────────────────────
   #
@@ -2346,7 +2127,8 @@ agents:
     routes:
       - to: stale_generation_gate
         when: "{{ merge_plan_pr.output.error_code is defined and merge_plan_pr.output.error_code == 'stale_generation' }}"
-      - to: merge_error_gate
+      # on_error: auto-abort (AB#3257 — trivial gate removed; cause info in run event log)
+      - to: abort_run
         when: "{{ merge_plan_pr.output.error_code is defined and merge_plan_pr.output.error_code != '' and merge_plan_pr.output.error_code != 'stale_generation' }}"
       - to: extract_renegotiation_flag
 
@@ -2473,99 +2255,6 @@ agents:
     routes:
       - to: merge_plan_pr
 
-  # ── Merge error gate ──────────────────────────────────────────────────
-  #
-  # Cause-aware: surfaces the verb's full diagnostic message (which is
-  # already specific — e.g. worktree_dirty includes the porcelain entry
-  # count and remediation hint) and then a per-error-code "Next step"
-  # block tailored to what the operator actually needs to do before
-  # retrying. Falls back to a generic message for codes not yet enumerated
-  # so a new error_code never silently regresses to "no guidance shown".
-  - name: merge_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Plan PR Merge Failed
-
-      Could not merge the plan PR for work item
-      **{{ workflow.input.work_item_id }}**.
-
-      **Error code:** `{{ merge_plan_pr.output.error_code }}`
-
-      {% if merge_plan_pr.output.error is defined and merge_plan_pr.output.error %}
-      **Details:** {{ merge_plan_pr.output.error }}
-      {% endif %}
-
-      ---
-
-      **Next step:**
-      {% if merge_plan_pr.output.error_code == 'worktree_dirty' %}
-      The worktree has uncommitted changes. From the run's worktree
-      directory, run `git status` to see what's there, then commit,
-      stash, or discard the changes before retrying. Common culprit:
-      stray scratch files left behind by an agent tool call (look for
-      orphan `.txt` / `.json` files at the repo root).
-      {% elif merge_plan_pr.output.error_code == 'lock_held' %}
-      Another polyphony run holds the same-root run lock. Check for an
-      in-flight workflow on the same root; wait for it to finish, or
-      use `polyphony lock force-release` if it's a stale lock.
-      {% elif merge_plan_pr.output.error_code == 'lock_stale' %}
-      The run lock is older than the staleness threshold. Run
-      `polyphony lock force-release --root-id <id>` to clear it, then
-      retry.
-      {% elif merge_plan_pr.output.error_code == 'manifest_push_rejected' %}
-      A concurrent run pushed to the manifest branch first. Retry —
-      the verb will refetch and re-attempt; usually succeeds on the
-      next try.
-      {% elif merge_plan_pr.output.error_code in ['repo_not_resolved', 'config_error'] %}
-      Configuration / environment issue. Check that gh is authenticated
-      to the right user (`gh auth status`), the repo slug resolves, and
-      the run's `.conductor` config is valid. Retry once fixed.
-      {% elif merge_plan_pr.output.error_code == 'pr_not_found' %}
-      The PR number on record no longer exists on the platform.
-      Someone may have closed or deleted it manually. Aborting and
-      restarting plan-level for this work item is usually safer than
-      retrying.
-      {% elif merge_plan_pr.output.error_code in ['head_ref_mismatch', 'base_ref_mismatch'] %}
-      The PR's head or base branch doesn't match what the manifest
-      expects. Inspect the PR on the platform — it may have been
-      retargeted manually. Aborting and re-opening the PR via
-      plan-level is safer than retrying.
-      {% elif merge_plan_pr.output.error_code == 'pr_state_unmergeable' %}
-      The platform reports the PR is not in a mergeable state
-      (conflicts, failing required checks, blocked by branch protection).
-      Resolve the underlying block on the PR page, then retry.
-      {% elif merge_plan_pr.output.error_code == 'merge_failed' %}
-      The platform's merge call returned an error. Check the PR page
-      for the platform-specific reason, address it, then retry.
-      {% elif merge_plan_pr.output.error_code in ['missing_merge_commit', 'ledger_conflict'] %}
-      Post-merge bookkeeping failed. Manifest may be partially
-      updated. Inspect the manifest branch before retrying.
-      {% elif merge_plan_pr.output.error_code == 'validation_blocked' %}
-      A pre-merge validation check rejected the merge. See **Details**
-      above for the specific rule that blocked it; remediate, then
-      retry.
-      {% elif merge_plan_pr.output.error_code == 'internal_error' %}
-      Unexpected verb-internal failure. Capture the run's event log
-      and file a polyphony issue. Retry is safe but may reproduce.
-      {% else %}
-      No targeted guidance for this error code. See **Details** above
-      and inspect the run's event log for context. Retry is safe but
-      may reproduce.
-      {% endif %}
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-attempt the merge
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔄 Retry"
-        value: retry
-        route: merge_plan_pr
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
-
   # ── Seeder ─────────────────────────────────────────────────────────────
   #
   # Idempotent seeder. Consumes architect.output.children and reconciles
@@ -2625,65 +2314,9 @@ agents:
       - "--children-from-ref"
       - "origin/main"
     routes:
-      - to: seeder_error_gate
+      - to: child_router
         when: "{{ seeder.output.error_count is defined and seeder.output.error_count > 0 }}"
       - to: child_router
-
-  # ── Seeder error gate (AB#3067) ─────────────────────────────────────────
-  #
-  # `polyphony plan seed-children` always exits 0 and carries per-child
-  # failures in `errors[]`. This gate fires when `error_count > 0` so the
-  # operator sees the failure rather than continuing into child_router with
-  # a half-seeded tree (which silently terminates the root blocked).
-  #
-  # Retry routes back to `seeder` because the verb is idempotent — it
-  # reconciles against existing children via marker-aware matching, so
-  # re-running after fixing the upstream cause (e.g. resolving a duplicate
-  # title) is safe.
-  - name: seeder_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ Seeder Reported Errors
-
-      `polyphony plan seed-children` for work item
-      **{{ workflow.input.work_item_id }}** returned
-      `error_count = {{ seeder.output.error_count if seeder.output.error_count is defined else 'unknown' }}`.
-
-      The seeder is idempotent — it reconciles architect-emitted
-      children against existing children of the parent work item.
-      Common causes:
-      - Duplicate child title under the parent (twig dedup conflict).
-      - Invalid or inaccessible parent ID at the platform layer.
-      - Twig workspace misconfiguration.
-
-      **Errors (truncated to a first line per item):**
-      {%- if seeder.output.errors is defined %}
-      {%- for e in seeder.output.errors %}
-      - `{{ e.child_id if e.child_id is defined and e.child_id else (e.title if e.title is defined and e.title else '(unknown)') }}` — {{ e.error if e.error is defined else '(no detail)' }}
-      {%- endfor %}
-      {%- else %}
-      _(no per-child error envelopes — see verb stderr in run logs)_
-      {%- endif %}
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-run the seeder (idempotent; safe after fixing the
-        upstream cause, e.g. resolving a duplicate title)
-      - **Continue** — proceed to `child_router` anyway (a partial seed is
-        usually still useful; the next driver iteration will revisit any
-        children that did get created)
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔁 Retry"
-        value: retry
-        route: seeder
-      - label: "▶️  Continue"
-        value: continue
-        route: child_router
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Child router ─────────────────────────────────────────────────────────
   #
@@ -2829,40 +2462,9 @@ agents:
       - "--ancestor-ids"
       - "{{ ancestor_chain.output.ancestor_ids }}"
     routes:
-      - to: open_plan_pr_ado_error_gate
+      - to: abort_run
         when: "{{ open_plan_pr_ado.output.error is defined and open_plan_pr_ado.output.error }}"
       - to: plan_reviewer
-
-  # ── Open plan PR (ADO) error gate ─────────────────────────────────────
-  - name: open_plan_pr_ado_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ ADO Plan PR Open Failed
-
-      Could not open (or reuse) the plan PR on Azure DevOps for work item
-      **{{ workflow.input.work_item_id }}**.
-
-      **Branch:** `{{ ensure_plan_branch.output.branch }}`
-      **Error:** {{ open_plan_pr_ado.output.error if open_plan_pr_ado.output.error is defined else "Unknown error" }}
-
-      Common causes: stale ancestor snapshot on an existing PR (operator
-      must abandon/recreate); ADO PAT missing or insufficient scope;
-      network timeout; repository identifier mismatch.
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-run `polyphony pr open-plan-pr-ado` (idempotent —
-        reuses an existing PR with a matching ancestor snapshot; safe for
-        transient ADO API / network failures)
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔁 Retry"
-        value: retry
-        route: open_plan_pr_ado
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Plan reviewer poster (ADO) ────────────────────────────────────────
   #
@@ -2939,7 +2541,7 @@ agents:
       - "--include-metadata"
       - "--allow-any-approval-vote"
     routes:
-      - to: poll_error_gate
+      - to: abort_run
         when: "{{ poll_status_ado.output.error is defined and poll_status_ado.output.error }}"
       - to: seeder
         when: "{{ poll_status_ado.output.route == 'already_merged' }}"
@@ -2988,7 +2590,7 @@ agents:
       # use a dedicated gate.
       - to: merge_plan_pr_ado_stale_gate
         when: "{{ merge_plan_pr_ado.output.error_code is defined and merge_plan_pr_ado.output.error_code == 'stale_generation' }}"
-      - to: merge_plan_pr_ado_error_gate
+      - to: abort_run
         when: "{{ merge_plan_pr_ado.output.error_code is defined and merge_plan_pr_ado.output.error_code != '' and merge_plan_pr_ado.output.error_code != 'stale_generation' }}"
       - to: restack_remedy
 
@@ -3032,34 +2634,6 @@ agents:
       root_id: "{{ root_resolver.output.resolved_root_id }}"
     routes:
       - to: merge_plan_pr_ado
-
-  # ── Merge plan PR (ADO) error gate ────────────────────────────────────
-  - name: merge_plan_pr_ado_error_gate
-    type: human_gate
-    prompt: |
-      ## ⚠️ ADO Plan PR Merge Failed
-
-      Could not merge the plan PR for work item
-      **{{ workflow.input.work_item_id }}**.
-
-      **Error code:** `{{ merge_plan_pr_ado.output.error_code }}`
-
-      Common causes: lock acquisition failed (another run holds the
-      same-root lock); push conflict on manifest branch; ADO PAT auth;
-      stale head SHA; reviewer requirements not met.
-
-      ---
-
-      Choose an action:
-      - **Retry** — re-attempt the merge
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔄 Retry"
-        value: retry
-        route: merge_plan_pr_ado
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Plan children summary gate ───────────────────────────────────────────
   #
