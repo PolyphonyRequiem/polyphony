@@ -176,7 +176,7 @@ agents:
   # Reads `workflow.input.executor`, validates it is one of the allowed
   # values, and emits `{ executor, work_item_id }` so the routes can
   # branch. Unknown executor values surface as an `error` field that
-  # falls through to workflow_error_gate.
+  # falls through to abort_run.
   #
   # Invariants:
   #   Pre:  workflow.input.executor is one of {polyphony, human}.
@@ -199,9 +199,9 @@ agents:
       - to: human_satisfaction_gate
         when: "{{ executor_router.output.executor == 'human' }}"
       # Catch-all per M4: an unknown executor value (router emits
-      # `output.error`) routes to the workflow error gate so a human
-      # decides retry/abandon rather than `No matching route found`.
-      - to: workflow_error_gate
+      # `output.error`) aborts deterministically rather than raising
+      # `No matching route found`.
+      - to: abort_run
 
   # ── Evidence branch ensure (polyphony leg) ──────────────────────────────
   #
@@ -235,7 +235,7 @@ agents:
       - "--from-ref"
       - "{{ workflow.input.from_ref }}"
     routes:
-      - to: workflow_error_gate
+      - to: abort_run
         when: "{{ ensure_evidence_branch.output.action == 'error' or (ensure_evidence_branch.output.error is defined and ensure_evidence_branch.output.error != '') }}"
       - to: compose_addendum
 
@@ -260,7 +260,7 @@ agents:
   #   Post: output.facets / output.skills / output.mcps / output.guidance
   #         / output.guidance_present are populated. On failure
   #         output.error and output.error_code are populated and the
-  #         workflow routes to workflow_error_gate; the agent never sees
+  #         workflow routes to abort_run; the agent never sees
   #         a partial envelope.
   - name: compose_addendum
     type: script
@@ -271,7 +271,7 @@ agents:
       - "compose-addendum"
       - "{{ workflow.input.work_item_id }}"
     routes:
-      - to: workflow_error_gate
+      - to: abort_run
         when: "{{ compose_addendum.output.error is defined and compose_addendum.output.error != '' }}"
       - to: guidance_loader
 
@@ -491,7 +491,7 @@ agents:
       - "--repository"
       - "{{ workflow.input.repository }}"
     routes:
-      - to: workflow_error_gate
+      - to: abort_run
         when: "{{ open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' }}"
       - to: evidence_floor_check
 
@@ -509,14 +509,12 @@ agents:
   # province. Do not extend with content-quality checks here.
   #
   # Routing (per the verb's routing-style envelope contract):
-  #   - error_code populated (pr_not_found / gh_failed) → workflow_error_gate
+  #   - error_code populated (pr_not_found / gh_failed) → abort_run
   #   - passes_floor == false                          → floor_failed_gate
   #   - passes_floor == true                           → evidence_reviewer
   #
   # The error_code branch fires before the floor branch because a
-  # transport failure means the floor was not actually evaluated — the
-  # error gate's retry path lets the operator re-run after fixing the
-  # underlying gh / network issue.
+  # transport failure means the floor was not actually evaluated.
   #
   # Invariants:
   #   Pre:  open_evidence_pr.output.pr_number > 0.
@@ -539,7 +537,7 @@ agents:
       - "--repository-override"
       - "{{ workflow.input.repository }}"
     routes:
-      - to: workflow_error_gate
+      - to: abort_run
         when: "{{ evidence_floor_check.output.error_code is defined and evidence_floor_check.output.error_code != null }}"
       - to: floor_failed_gate
         when: "{{ evidence_floor_check.output.passes_floor == false }}"
@@ -714,12 +712,11 @@ agents:
         when: "{{ evidence_reviewer.output.decision == 'approve' }}"
       - to: revise_loop_gate
         when: "{{ evidence_reviewer.output.decision == 'request_changes' }}"
-      - to: workflow_error_gate
+      - to: workflow_abandoned
         when: "{{ evidence_reviewer.output.decision == 'block' }}"
-      # Catch-all per M4: unknown / missing decision routes to the
-      # error gate so the operator decides rather than raising
-      # `No matching route found`.
-      - to: workflow_error_gate
+      # Catch-all per M4: unknown / missing decision abandons the workflow
+      # rather than raising `No matching route found`.
+      - to: workflow_abandoned
 
   # ── Revise loop gate (polyphony leg) ────────────────────────────────────
   #
@@ -804,10 +801,10 @@ agents:
     routes:
       - to: workflow_completed
         when: "{{ merge_evidence_pr.output.merged == true }}"
-      - to: workflow_error_gate
+      - to: workflow_abandoned
         when: "{{ merge_evidence_pr.output.merged == false }}"
-      # Catch-all per M4: missing/malformed merged field -> error gate.
-      - to: workflow_error_gate
+      # Catch-all per M4: missing/malformed merged field -> abandoned.
+      - to: workflow_abandoned
 
   # ── Human satisfaction gate (human leg) ────────────────────────────────
   #
@@ -851,71 +848,26 @@ agents:
         value: abandoned
         route: workflow_abandoned
 
-  # ── Workflow error gate (shared) ───────────────────────────────────────
+  # ── Terminal abort (deterministic workflow error) ──────────────────────
   #
-  # Fires on any error path — verb error envelope, reviewer block, or
-  # merge failure. Per P7 the retry option has no automatic cap; the
-  # human decides when to abandon. Retry re-enters at the executor
-  # router so a flipped-mind operator can change the executor input
-  # mid-recovery.
-  #
-  # Per M3 (StrictUndefined), every reference to a verb's output is
-  # guarded with `is defined` because at most one of the upstream verbs
-  # has actually populated an error envelope when this gate fires.
-  #
-  # Invariants:
-  #   Pre:  At least one upstream step has signaled an error.
-  #   Post: Operator chose retry (re-enter executor_router) or
-  #         abandon (workflow_abandoned).
-  - name: workflow_error_gate
-    type: human_gate
-    description: An error occurred — operator decides retry or abandon
-    prompt: |
-      ## ❌ Actionable workflow error — item #{{ workflow.input.work_item_id }}
-
-      An upstream step signaled an error or unrecoverable state.
-
-      {% if executor_router is defined and executor_router.output.error is defined and executor_router.output.error != '' -%}
-      **Stage:** executor_router
-      **Detail:** {{ executor_router.output.error }}
-      {%- elif ensure_evidence_branch is defined and ensure_evidence_branch.output.error is defined and ensure_evidence_branch.output.error != '' -%}
-      **Stage:** ensure_evidence_branch
-      **Detail:** {{ ensure_evidence_branch.output.error }}
-      {%- elif compose_addendum is defined and compose_addendum.output.error is defined and compose_addendum.output.error != '' -%}
-      **Stage:** compose_addendum
-      **Detail:** {{ compose_addendum.output.error }}{% if compose_addendum.output.error_code is defined %} ({{ compose_addendum.output.error_code }}){% endif %}
-      {%- elif open_evidence_pr is defined and open_evidence_pr.output.error is defined and open_evidence_pr.output.error != '' -%}
-      **Stage:** open_evidence_pr
-      **Detail:** {{ open_evidence_pr.output.error }}
-      {%- elif evidence_floor_check is defined and evidence_floor_check.output.error_code is defined and evidence_floor_check.output.error_code != null -%}
-      **Stage:** evidence_floor_check
-      **Detail:** [{{ evidence_floor_check.output.error_code }}] {{ evidence_floor_check.output.error_message }}
-      {%- elif evidence_reviewer is defined and evidence_reviewer.output.decision == 'block' -%}
-      **Stage:** evidence_reviewer
-      **Detail:** {{ evidence_reviewer.output.comment }}
-      {%- elif merge_evidence_pr is defined -%}
-      **Stage:** merge_evidence_pr
-      **Detail:** {% if merge_evidence_pr.output.error is defined %}{{ merge_evidence_pr.output.error }}{% else %}polyphony pr merge-evidence-pr reported merged=false (no error message){% endif %}
-      {%- else -%}
-      **Stage:** unknown
-      **Detail:** Routed to error gate without an explicit error envelope.
-      {%- endif %}
-
-      Choose an action:
-
-      - **Retry** — re-enter at the executor router. Both
-        `branch ensure-evidence-branch` and `pr open-evidence-pr` are
-        idempotent (existing branch / PR is reused). Safe regardless
-        of which stage failed.
-      - **Abandon** — terminate the workflow without satisfying the
-        item.
-    options:
-      - label: "🔄 Retry"
-        value: retry
-        route: executor_router
-      - label: "🛑 Abandon"
-        value: abandon
-        route: workflow_abandoned
+  # Invokes abort-run.ps1, which POSTs to conductor's /api/stop endpoint.
+  # Used for infrastructure errors that previously paused for human retry.
+  - name: abort_run
+    type: script
+    description: Deterministic actionable workflow abort — POSTs /api/stop to halt the run cleanly
+    command: pwsh
+    args:
+      - "-NoProfile"
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/abort-run.ps1"
+      - "-Reason"
+      - "workflow-error"
+      - "-WorkItemId"
+      - "{{ workflow.input.work_item_id }}"
+      - "-Stage"
+      - "actionable"
+    routes:
+      - to: $end
 
   # ── Terminal: workflow completed ───────────────────────────────────────
   #
