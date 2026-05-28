@@ -597,6 +597,138 @@ The testing infrastructure (prompt contracts, guidance-injection harness) is the
 
 
 
+### 2026-05-28: Implementation round 1 (short-term wins #527-#530)
+
+#### 2026-05-28T14:08-07:00: User directive — north-star ordering + in-situ hygiene
+
+**By:** Daniel Green (via Copilot)
+
+**What:** Polyphony-self-contained-orchestration (the "true github registry" outcome — consumers run `conductor registry add polyphony` and get the full SDLC without copying scripts) is the mission outcome and takes priority over Phase 5 DU preview adoption. DU adoption and code/process hygiene are NOT deprioritized — they continue "in situ" within whatever work the squad is doing (i.e., opportunistically applied alongside scoped tasks), but they do not warrant a dedicated thrust competing with self-contained orchestration.
+
+**Why:** Daniel resolved the open question surfaced by the 2026-05-28 squad-wide initial concerns fan-out. Beethoven argued (and Daniel agreed) that self-contained orchestration is the consumability outcome the engine exists for; Bach's schema-registry concerns and Stravinsky's prompt-contract concerns implicitly align — all three point at "make the engine usable from outside." DU + hygiene are real quality goods but stay woven into scoped work rather than crowding the headline.
+
+**Implications for routing:**
+- Create an umbrella epic "Polyphony self-contained orchestration" framing the 4 medium/long investments as supporting work.
+- Every implementation spawn prompt carries a standing in-situ clause: *"Apply DU patterns and hygiene fixes opportunistically where natural in your scope. Don't make these the primary focus, but don't avoid them either."*
+- When a feature proposal lands, the routing question is "does this serve self-contained orchestration?" before "does this match Phase 5?".
+
+---
+
+#### Beethoven — Epic Structure Summary
+
+**Created:** 2026-05-28T14:08-07:00  
+**Created by:** Beethoven (Mission Keeper)
+
+**Epic 0 — Mission North Star:**
+- #521 | Polyphony self-contained orchestration (mission north star) | `squad:epic`, `squad:long-term`
+
+**Epic A — Short-term wins umbrella:**
+- #522 | Squad short-term wins (2026-05-28 fan-out) | `squad:epic`, `squad:short-term`
+
+**Child issues (Short-term):**
+- #527 | Backfill [VerbResult] attributes + SHA-based schema freshness check | Primary owner: `squad:mozart`
+- #528 | Migrate 19 trivial error gates to conductor on_error: (AB#3257) | Primary owner: `squad:wagner`
+- #529 | Surgical YAML patches: github-pr.yaml, close-out.yaml, plan-level.yaml + twig sync audit | Primary owner: `squad:sibelius`
+- #530 | PowerShell hygiene burndown: kill git -C, sanitize $Comment, backport retry-with-backoff | Primary owner: `squad:liszt`
+
+**Epics B–E — Supporting investments for mission north star:**
+- #523 | Workflow-YAML pre-flight linter | `squad:epic`, `squad:medium-term`
+- #524 | Twig↔ADO seam: formalize the boundary | `squad:epic`, `squad:medium-term`
+- #525 | Agent prompt contracts + harness tests | `squad:epic`, `squad:medium-term`
+- #526 | Process-config template-specificity enforcement (V-21) | `squad:epic`, `squad:long-term`
+
+---
+
+#### Mozart — Implementation Delivery: Issue #527 (short-term win)
+
+**PR:** #534 (draft)  
+**Branch:** `squad/527-verbresult-attrs`
+
+**Summary:** All 109 `[Command]` methods in `src/Polyphony/Commands/` already carried `[VerbResult(typeof(X))]` attributes — no annotation gap existed at time of implementation. Real work was SDK bump (preview.3→.4), artifact regen, and in-situ DU hygiene (CS0433 IUnion ambiguity fix in 2 test files).
+
+**Files touched:**
+- `artifacts/verb-output-schemas.json` — Created (force-added; `artifacts/` is in .gitignore). 276848 bytes.
+- `global.json` — SDK pin preview.3 → preview.4
+- `tests/Polyphony.Tests/Routing/TransitionValidatorTests.cs` — In-situ DU hygiene: replaced `((IUnion)outcome).Value.ShouldBeOfType<T>()` with `is` pattern matching.
+- `tests/Polyphony.Tests/Routing/CrossProcessTransitionValidatorTests.cs` — Same IUnion hygiene; also converted `AssertAccepted` from block to expression body.
+
+**In-situ DU hygiene applied:** `IUnion` identifier was ambiguous (CS0433) between `System.Runtime.IUnion` (new in .NET 11 preview.4) and `Twig.Domain`'s bundled polyfill copy compiled against preview.3. Fixed by switching to native `is` pattern matching, which is the idiomatic .NET 11 union access pattern.
+
+**Blocker note:** Brahms's freshness-check PR (#532) is the second half. Both PRs must merge to close #527. Artifact `artifacts/verb-output-schemas.json` is in `.gitignore` — was force-added.
+
+---
+
+#### Brahms — Implementation Delivery: Issue #527 freshness test
+
+**PR:** #532 (draft)  
+**Branch:** `squad/527-schema-freshness-test`
+
+**Summary:** Added `VerbOutputSchemas_ArtifactIsFresh` to `VerbCatalogSanityTests` using in-process SHA-256 normalized comparison. Test is intentionally RED until Mozart's `squad/527-verbresult-attrs` merges (the artifact does not exist yet).
+
+**Approach:** In-process SHA-based comparison. `VerbSchemaGenerator` is a Roslyn source generator (compile-time only) — therefore "in-process" means reading the embedded compile-time constant `VerbOutputSchemaCatalog.Json` and comparing it against the on-disk `artifacts/verb-output-schemas.json`. Both sides are canonicalized (recursive object-key sort + `WriteIndented = true`) before SHA-256 hashing to avoid whitespace-only false positives.
+
+**Environment note:** Local build blocked by SDK mismatch (preview.3 vs preview.4 installed). CI on the PR is the authoritative verification gate.
+
+---
+
+#### Wagner — Implementation Delivery: Issue #528 (short-term win)
+
+**PR:** #535 (draft)  
+**Branch:** `squad/528-error-gate-migration`
+
+**Summary:** Removed all 19 trivial `human_gate` error-interrupt nodes across 6 workflow files. Each gate was a pure deterministic error handler with no judgment required. After this PR, every such error routes automatically (16 gates → `abort_run`, 1 gate → `child_router`, 1 gate → `$end`, 1 gate → split routing in actionable.yaml).
+
+**🚨 CRITICAL DISCOVERY: conductor v0.1.18 does NOT ship `on_error:`.** The `on_error:` syntax referenced in the issue is **not implemented** in conductor v0.1.18. Testing confirmed: `agents.0.routes.1.on_error: Extra inputs are not permitted`. The migration is therefore implemented as **direct routing** today, with `# on_error: auto-abort (AB#3257 — ...)` TODO comments at each affected route. When conductor Phase 1 ships `on_error:`, these sites can be retrofitted.
+
+**Note:** Conductor would only see a crash exit as an error; polyphony CLI verbs exit 0 and write `{error: "..."}` to stdout JSON. True `on_error:` support would require verbs to also write to `$env:CONDUCTOR_ERROR_OUT` on failure.
+
+**Behavioral changes:**
+- **Retry capability removed** from 14 retry+abort gates until AB#3257 lands. Operators must re-trigger workflows manually on transient failures.
+- `seeder_error_gate` was prompt-to-continue; now auto-continues.
+- `classify_error_gate` (restack-remedy) was prompt-to-skip-or-retry; now auto-skips to `$end`.
+
+**Coordination required:** This PR touches `github-pr.yaml` and `plan-level.yaml` — both also modified in Sibelius PR #529 (`squad/529-yaml-patches-twig-sync`). These must be merged sequentially with conflict resolution.
+
+**⚠️ MISSION DECISION FOR DANIEL/BEETHOVEN REVIEW:** Wagner's findings (on_error: unavailable, retry removal from 14 gates, manual re-trigger now required on transient failures) require explicit decision on operator experience impact and whether direct routing + TODO comments is acceptable as a interim measure. See Beethoven's mission concerns (#528) and Mahler's conductor-mechanics findings (medium-term investment: "refactor sub-workflow dispatch to use a shared registry + route-factory pattern").
+
+---
+
+#### Sibelius — Implementation Delivery: Issue #529 (short-term win)
+
+**PR:** #533 (draft)  
+**Branch:** `squad/529-yaml-patches-twig-sync`
+
+**Summary:** Patch 1+2 applied and lint clean. Patch 3 was already complete (partial-bubble-up concern was stale). Twig sync audit found 0 missing post-state syncs (all 3 sites correct).
+
+**Patches applied:**
+1. **`github-pr.yaml` output:** Added `{%- elif already_merged_emitter is defined -%}true` to the `merged` output guard and replaced the `closed_unmerged_emitter.output.pr_url` fallback in `pr_url` with `poll_status.output.pr_url`, matching `ado-pr.yaml:139-148`. Without this, re-entry when the operator had already merged the PR via the GitHub UI produced `merged=false` and an empty `pr_url`.
+2. **`close-out.yaml:43`:** Changed `| json` → `| tojson`. (`| json` is not a Jinja2 filter; silent incorrect output depending on conductor version.)
+3. **`plan-level.yaml` / `root-item-dispatch.yaml`:** No change needed. Both `validate_scope_verdict` and `scope_violation_files` were already correctly wired in both output blocks.
+
+**Twig sync audit:** All 3 actual `twig state` call sites in `.conductor/registry/workflows/*.yaml` already have a post-state `twig sync` (implement-merge-group.yaml:1218→1219, polyphony.yaml:1425→1426, root-item-dispatch.yaml:498→499). No follow-up issues required.
+
+**Lint:** `lint-github-pr.ps1`, `lint-strict-undefined.ps1`, `lint-plan-level.ps1`, `tests/lint-sync-after-mutation.ps1` — all PASS.
+
+---
+
+#### Liszt — Implementation Delivery: Issue #530 (short-term win)
+
+**PR:** #531 (draft)  
+**Branch:** `squad/530-ps-hygiene`
+
+**Summary:** All 3 fixes shipped (git -C kill, $Comment sanitize, retry-backoff backport). AST parse clean, 29/29 Pester tests pass.
+
+**Fixes:**
+1. **Fix 1 — `git -C` removal (Invoke-PolyphonySdlc.ps1:833):** Replaced `& git -C $mainWorktree remote get-url origin` with a `Push-Location`/`Pop-Location`-scoped block. This is the last surviving `git -C` in the production launcher (highest-priority item from the 2026-05-28 fan-out).
+2. **Fix 2 — `$Comment` sanitization (Invoke-PolyphonySdlc.ps1):** Added `Get-SanitizedComment` helper function that strips `\r` and `\n` characters and escapes backtick characters. Applied at the reset-path entry boundary so all downstream uses receive sanitized input. The live injection surface was line 440 where `$resetCmd` was interpolated into an expandable here-string passed to `pwsh -Command`.
+3. **Fix 3 — Retry-with-backoff in teardown (worktree-manager.ps1:254-272):** Backported delay schedule from `GitWorktreeDeleter.cs:RemoveWithRetryAsync` (attempts at 0 ms, 200 ms, 500 ms, 1000 ms). Same "directory already gone = success" short-circuit as the .NET original.
+
+**Patterns established:**
+- `Get-SanitizedComment` is the canonical sanitization boundary for `$Comment` before shell embedding.
+- Worktree teardown retry shape is now consistent between C# and PowerShell.
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus
