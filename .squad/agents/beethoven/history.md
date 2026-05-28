@@ -19,3 +19,20 @@
 - 📌 Epic-vs-issue distinction: epics are tracking issues (no implementation work directly), owned by a phase/outcome; child issues carry the actual acceptance criteria, owner, and file anchors. Epic 0 references B–E by number; Epic A references #527–530 as a checklist.
 - 📌 In-situ directive framing in Epic 0: DU + hygiene are NOT a separate thrust — they are a standing clause on every implementation spawn. Epic 0 body carries this explicitly; all 4 child short-term issues repeat the clause verbatim.
 - 📌 2026-05-28: Created epic + issue structure (issues #521–#530) for the 2026-05-28 squad-wide initial concerns fan-out. Embedded the north-star directive (self-contained orchestration > Phase 5 DU adoption) in Epic 0 and all 4 short-term child issues. Implementation round 1 coordinated.
+
+## Learnings — 2026-05-28
+
+### Beethoven (Mission Keeper)
+
+**Current focus:** Gate disposition review for error-routing retrofit  
+**Status:** Completed review of 3 unilateral disposition changes in PR #535  
+
+**Session round outcomes:**
+- ✅ Reviewed 3 gate dispositions: seeder (❌ request change), classify (⚠️ approve with note), evidence (❌ partial request change)
+- ✅ Documented decision rationale and blast radius analysis
+- ✅ Posted PR #535 comment with detailed feedback
+- **Open items:** Awaiting Daniel answers on seeder partial-seed safety + workflow_abandoned semantics
+
+**Next moves:**
+- Confirm Phase 2 retrofit can proceed once Beethoven questions resolved
+- Add `domain signal`, `gate compression`, `CTA`, `correlation ID`, `disposition (signal)` to glossary (P1)

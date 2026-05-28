@@ -22,3 +22,28 @@
 - 📌 **Test env:** Python 3.14 at `C:\Users\dangreen\AppData\Local\Python\pythoncore-3.14-64\python.exe`. `pip install pytest-asyncio` required for error-routing async tests. 61 new feature tests pass. 324 broader failures in `test_script.py` are pre-existing Windows subprocess issues, not caused by dogfood.
 - 📌 **Top adoption pick (free win):** `conductor validate` now warns on undeclared `agent.output` refs (commit `8ec298d`). Add to CI — surfaces Jinja path drift at PR time. Filed as polyphony issue #540.
 - 📌 **Adoption issues filed:** #537 (script output schemas), #538 (type: terminate), #539 (type: set), #540 (conductor validate CI). Decision doc: `.squad/decisions/inbox/mahler-conductor-dogfood-and-adoption-2026-05-28T223616-0700.md`.
+
+## Learnings — 2026-05-28
+
+### Mahler (Conductor Expert)
+
+**Current focus:** Dogfood environment setup + conductor adoption survey  
+**Status:** Dogfood environment created; Phase 1 + notifications tests passing; error-routing rebase blocked
+
+**Session round outcomes:**
+- ✅ Created dogfood worktree + branch (`dogfood/on-error+notifications`) at `efa520f` base
+- ✅ Documented DOGFOOD-INSTALL.md + .squad/skills/dogfood-conductor/SKILL.md
+- ✅ Ran adoption survey: 12 commits reviewed (v0.1.16→v0.1.18); 10 marked 🟢 Adopt now, 4 marked 🟡 Worth follow-up
+- ✅ Filed adoption survey issues #537-#540 (script output schemas, type: terminate, type: set, conductor validate in CI)
+- ✅ Applied 5 amendments to PR #213 (notifications): added validators, renamed `notification:` → `emit:`, dropped workflow_metadata, fixed coerce error handling
+- ✅ All 18 notification tests pass ✅
+- **BLOCKER:** Identified semantic conflict in PR #229 (error-routing) rebase: `agent_outputs.get()` vs subscript + `None`-seed initialization in context.py
+
+**Open questions:**
+- Daniel's call on context.py conflict resolution (sentinel pattern or keep `is_dict_output`?)
+- Feature verification: `{{ conductor.run_id }}` availability, `type: wait` templated `seconds:`
+
+**Next moves:**
+- Wait for Daniel's conflict resolution decision
+- Verify conductor feature gaps in dogfood once decision made
+- Rebase PR #229 onto v0.1.18 after conflict resolved

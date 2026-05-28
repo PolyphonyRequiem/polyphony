@@ -21,3 +21,28 @@
 - 📌 seeder_error_gate: auto-continue to child_router is safest default (seeder errors are typically partial; child_router processes whatever children loaded). classify_error_gate (restack-remedy): auto-skip to $end is safest (can't restack without classify output).
 - 📌 plan-level.yaml has a pre-existing conductor validate FAIL: circular sub-workflow self-reference (plan_one_child for_each references plan-level.yaml recursively). Identical on main branch — not introduced by #528.
 - 📌 2026-05-28: Participated in implementation round 1 — shipped PR #535 on issue #528 (short-term win).
+- 📌 2026-05-28: Scoped Phase 2 on_error: retrofit (#536) — 19 gates inventoried, Phase 1-only gates identified (5 gates, 3 files), 14 retry+abort gates blocked on RFC Phase 2 retry: action. Key finding: polyphony CLI verbs exit 0 always; on_error: only fires for infrastructure scripts (git, API). Mixed pattern recommended: success-path routing for polyphony verbs, on_error: for infrastructure. Scope doc: .squad/decisions/inbox/wagner-528-phase-2-scope-2026-05-28T22-38-04Z.md.
+- 📌 2026-05-28: Catalogued 8 workflow patterns combining on_error: (Phase 1) + type:notification. Top 5: notify_then_route (#543), decision_point_notification (#544), progress_notification (#545), escalation_chain, bounded_retry_loop. Bach envelope asks: severity field, conductor.run_id built-in, type:wait templated seconds. Patterns doc: .squad/decisions/inbox/wagner-on-error-notifications-patterns-2026-05-28T23-00-46Z.md.
+- 📌 type:notification is fire-and-forget and has access to {{ failing_step.error.* }} when placed downstream of an on_error: route. This is the load-bearing insight for notify_then_route.
+- 📌 bounded_retry_loop (M10 + type:set + type:wait) is the only retry mechanism in Phase 1, but adds 5 nodes per gate and consumes significant max_iterations budget. Use sparingly; replace with retry: when RFC Phase 2 ships.
+- 📌 conductor dogfood combined branch is dogfood/on-error+notifications in C:\Users\dangreen\projects\conductor-notifications.
+
+## Learnings — 2026-05-28
+
+### Wagner (Workflow Author)
+
+**Current focus:** on_error: retrofit Phase 2 scope + pattern catalogue  
+**Status:** Completed comprehensive scope definition + forward-designed 8 concrete patterns
+
+**Session round outcomes:**
+- ✅ Scoped Phase 2 retrofit against Phase 1 API; split into 2a (5 Phase-1 gates) + 2b (14 RFC Phase 2 gates)
+- ✅ Created issue #536: Phase 2 retrofit tracker
+- ✅ Forward-designed 8 concrete patterns (notify_then_route, decision_point_notification, progress_notification, bounded_retry_loop, escalation_chain, renegotiation_notification, async_gate_prompt, gate_disposition_policy)
+- ✅ Created issues #543-#545 for pattern-specific work items
+- ✅ Documented 5 asks for conductor (retry action, same-node re-run, implicit opt-in, default on_error, exit-0 + CONDUCTOR_ERROR_OUT contract)
+- **Cross-agent:** Coordinated envelope-field asks with Bach; flagged feature verification needs for Mahler
+
+**Next moves:**
+- Wait for conductor RFC Phase 2 to merge (blocks 14 gates)
+- Prototype gate compression in github-pr.yaml once patterns approved
+- Restore retry capability for 14 removed gates via on_error + counter scripts (Phase 2b)
