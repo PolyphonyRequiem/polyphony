@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Shouldly;
@@ -112,5 +114,98 @@ public sealed class VerbCatalogSanityTests
             }
         }
         dangling.ShouldBeEmpty(string.Join(Environment.NewLine, dangling));
+    }
+
+    /// <summary>
+    /// SHA-based freshness gate: fails CI when
+    /// <c>artifacts/verb-output-schemas.json</c> drifts from what the
+    /// current verb annotations would generate.
+    ///
+    /// <para>
+    /// Both sides are canonicalized (object keys sorted, consistent
+    /// indentation) before hashing so that whitespace-only reformats
+    /// don't trigger false positives.
+    /// </para>
+    ///
+    /// <para>
+    /// NOTE: this test is RED until Mozart's <c>[VerbResult]</c> backfill
+    /// PR (<c>squad/527-verbresult-attrs</c>) lands and regenerates the
+    /// artifact. That is expected and intentional.
+    /// </para>
+    ///
+    /// <para>
+    /// If this test fails, run:
+    /// <code>dotnet build src/Polyphony.SchemaExporter -c Release</code>
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void VerbOutputSchemas_ArtifactIsFresh()
+    {
+        var repoRoot = FindRepoRoot();
+        var artifactPath = Path.Combine(repoRoot, "artifacts", "verb-output-schemas.json");
+
+        File.Exists(artifactPath).ShouldBeTrue(
+            $"artifacts/verb-output-schemas.json is missing. " +
+            $"Run: dotnet build src/Polyphony.SchemaExporter -c Release" +
+            $"{Environment.NewLine}Looked at: {artifactPath}");
+
+        var embeddedCanon = CanonicalizeJson(VerbOutputSchemaCatalog.Json);
+        var diskCanon = CanonicalizeJson(File.ReadAllText(artifactPath));
+
+        var embeddedSha = Sha256Hex(embeddedCanon);
+        var diskSha = Sha256Hex(diskCanon);
+
+        diskSha.ShouldBe(embeddedSha,
+            $"artifacts/verb-output-schemas.json is stale (SHA mismatch).{Environment.NewLine}" +
+            $"  On-disk SHA : {diskSha}{Environment.NewLine}" +
+            $"  Expected SHA: {embeddedSha}{Environment.NewLine}" +
+            $"Run: dotnet build src/Polyphony.SchemaExporter -c Release");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Helpers for freshness check
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Parse <paramref name="json"/>, sort all object keys recursively,
+    /// and re-serialize with consistent indentation. Two JSON documents
+    /// that are semantically equivalent will produce the same canonical
+    /// string regardless of original key order or whitespace.
+    /// </summary>
+    private static string CanonicalizeJson(string json)
+    {
+        var node = JsonNode.Parse(json)!;
+        return SortNode(node).ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static JsonNode SortNode(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            var sorted = new JsonObject();
+            foreach (var kv in obj.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            {
+                sorted.Add(kv.Key, kv.Value is not null ? SortNode(kv.Value.DeepClone()) : null);
+            }
+            return sorted;
+        }
+
+        if (node is JsonArray arr)
+        {
+            var sortedArr = new JsonArray();
+            foreach (var item in arr)
+            {
+                sortedArr.Add(item is not null ? SortNode(item.DeepClone()) : null);
+            }
+            return sortedArr;
+        }
+
+        return node.DeepClone();
+    }
+
+    private static string Sha256Hex(string input)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }
