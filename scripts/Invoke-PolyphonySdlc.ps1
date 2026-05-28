@@ -217,6 +217,22 @@ if ($Intent -ne 'reset') {
 
 $script:LayoutDoc        = 'docs/per-run-worktree-layout.md'
 
+# ─── Helper: sanitize $Comment against shell-injection surfaces ──────────────
+#
+# $Comment flows into a here-string that is passed to pwsh -Command in the
+# reset-detach path. Newlines (CR, LF, backtick-continuations) and bare
+# backticks can break out of the embedded command string and inject arbitrary
+# PowerShell. Strip them at the boundary before any interpolation.
+
+function Get-SanitizedComment {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    # Strip CR and LF characters.
+    $sanitized = $Value -replace '[\r\n]', ''
+    # Escape backticks (PowerShell escape character) so they are literal.
+    $sanitized = $sanitized -replace '`', '``'
+    return $sanitized
+}
+
 # ─── Helper: canonical path comparison (boundary-aware, OS-aware) ─────────────
 
 function Get-CanonicalPath {
@@ -312,6 +328,9 @@ if ($Intent -eq 'reset') {
             throw "[polyphony-sdlc] -$incompatible is not valid with -Intent reset. The reset workflow operates from the operator's cwd and resolves the root's branches/PRs internally."
         }
     }
+
+    # Sanitize $Comment at the boundary before any shell interpolation.
+    $Comment = Get-SanitizedComment -Value $Comment
 
     # Auto-detect platform from origin for gh-identity pinning. The reset
     # workflow itself does not take a platform input — the projection reset
@@ -830,10 +849,15 @@ $detectedPlatform     = $null
 $detectedRepository   = $null
 $detectedRepoOrg      = $null
 $detectedRepoProject  = $null
-$remoteUrl = & git -C $mainWorktree remote get-url origin 2>&1
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteUrl)) {
-    $remoteUrl = $null
-    $global:LASTEXITCODE = 0
+Push-Location -LiteralPath $mainWorktree
+try {
+    $remoteUrl = & git remote get-url origin 2>&1
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteUrl)) {
+        $remoteUrl = $null
+        $global:LASTEXITCODE = 0
+    }
+} finally {
+    Pop-Location
 }
 
 if ($remoteUrl) {

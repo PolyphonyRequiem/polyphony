@@ -251,7 +251,8 @@ try {
         exit 0
     }
 
-    # teardown
+    # teardown — retry-with-backoff for transient file-handle races on Windows.
+    # Mirrors the delay schedule in GitWorktreeDeleter.cs:RemoveWithRetryAsync.
     if (-not (Test-Path $worktreePath)) {
         # Idempotent: nothing to clean up.
         $envelope.success = $true
@@ -259,10 +260,21 @@ try {
         exit 0
     }
 
-    $output = & git worktree remove --force $worktreePath 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $wtDelays = @(0, 200, 500, 1000)
+    $wtOutput = $null
+    $wtSuccess = $false
+    foreach ($wtDelayMs in $wtDelays) {
+        if ($wtDelayMs -gt 0) { Start-Sleep -Milliseconds $wtDelayMs }
+        $wtOutput = & git worktree remove --force $worktreePath 2>&1
+        if ($LASTEXITCODE -eq 0 -or -not (Test-Path $worktreePath)) {
+            $wtSuccess = $true
+            break
+        }
+    }
+
+    if (-not $wtSuccess) {
         $envelope.error_code = 'worktree_remove_failed'
-        $envelope.error_message = "git worktree remove failed: $($output -join "`n")"
+        $envelope.error_message = "git worktree remove failed: $($wtOutput -join "`n")"
         $envelope | ConvertTo-Json -Compress
         exit 0
     }
