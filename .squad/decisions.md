@@ -3474,3 +3474,22 @@ if (`$argLine -like 'api repos/*/pulls/* --jq *') {
 The wildcard `repos/*/pulls/*` also matches the reviews sub-path (`pulls/42/reviews`). The reviews call receives PR-core JSON (`{state, merged, head_sha}`) instead of a reviews array. `New-GitHubWatermark` then accesses `.id` on the PR-core object → StrictMode throws → exit 5. Fix: change `--jq *` to `--jq {*` (the PR-core jq filter starts with `{`; reviews/comments/check-runs start with `[`).
 
 **Recommendation for Daniel:** Hold PR #547 — two bugs need to be fixed before merge. Bug 1 is a production script bug (auth/404 errors always surface as network_failure regardless of root cause). Bug 2 is a test-only stub pattern error. Both are small fixes, but Bug 1 touches production script logic and warrants Wagner's attention before merging.
+
+---
+
+### 2026-05-29T11:27:44-07:00: Poll-PrStateDelta bugs — patched on PR #547 branch
+**By:** Liszt (PowerShell Expert)
+**Branch:** refactor/pr-gate-compression-v2
+**Commit SHA:** b37d85f5770713639f949f7febffeb68a6156f20
+**PR comment:** https://github.com/PolyphonyRequiem/polyphony/pull/547#issuecomment-4579223684
+
+**Fixes:**
+- Script: removed `-not $Result.Exe -and` from Invoke-AssertCli (property didn't exist on PSObject → StrictMode crash)
+- Test: tightened `--jq *` → `--jq {*` in Build-GhStub PR-core pattern
+- Script: wrapped Find-GitHubDeltas/Find-AdoDeltas call in `@()` — empty list returned $null, single-item list returned bare hashtable, both broke `$deltas.Count`
+- Script: removed `[System.Collections.Generic.List[hashtable]]` type constraint on Select-HighestPrecedenceDelta $Deltas — StrictMode PropertyNotFoundException during argument binding when passed a plain hashtable
+- Test: ConvertFrom-Json auto-converts ISO-8601 strings to DateTime objects; normalised before Should -Match; bumped one test TimeoutSeconds 10→30
+
+**Pester result after fix:** 30/30 PASS, 1 intentional skip (82.41s)
+
+**PR #547 status:** unblocked for Daniel's review.
