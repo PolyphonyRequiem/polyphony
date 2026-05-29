@@ -3006,3 +3006,259 @@ The `.events.jsonl` does contain `notification_started` marker events, but witho
 - **No action needed today.** The dogfood smoke test passes with the current field names.
 - **When PR #213's `27006af` rename is incorporated into the dogfood:** Mahler should notify Wagner so M11 pattern YAML is updated.
 - **For M11 pattern usage notes:** Add a caveat that `type: notification` / `notification:` are the current names and may be renamed to `type: emit` / `emit:` when 27006af is included.
+
+---
+
+## 2026-05-29 — Seed Manifest as Durable State (ADR SHIPPED)
+
+**From:** Bach (Architect, lead decision-maker on seeding design)
+
+The ADR `seed-manifest-as-durable-state.md` has been shipped to `polyphony/docs/decisions/seed-manifest-as-durable-state.md`. It encodes ten greenlit decisions from Daniel's directive and the four-lens debate (Bach/Mahler/Mozart/Sibelius):
+
+1. **Seed manifest is a JSON file at `.polyphony/state/{rootId}/seed-manifest.json`** — filesystem is the entire persistence layer (per Daniel's directive on durable per-root artifacts).
+2. **Atomic `.tmp`+rename writes** — guards against corrupt state mid-crash.
+3. **Marker `polyphony:plan-child-id`** — canonical cross-run identity primitive (embeds atomically with `twig.CreateChildAsync`), superseding Bach's prior title-hash proposal. Per Sibelius's finding.
+4. **`plan_generation` as a rich linked-chain object** — tracks id, parent, cause, created_at; items carry `introduced_in` for orphan detection.
+5. **Verb evolution on `write-plan` and `seed-children` only** — no new verbs.
+6. **Script-internal retry: 3 attempts on codes 3 and 5** — code 1 is permanent (per Mahler's `max_attempts` finding and Mozart's error-boundary amendments).
+7. **New `seeding_blocked` terminal distinct from `workflow_abandoned`** — per Mahler/Beethoven analysis. Network/auth exhaustion is NOT operator volitional.
+8. **GitHub explicitly out of scope** — no `platform` field. ADO-only (per Daniel's directive via Sibelius's platform-reality critique).
+9. **`polyphony:plan-child-id` marker is not WIQL-queryable** — must use `twig show-tree` to find it (acceptable cost per Sibelius).
+10. **Orphan disposition workflow is open** — requires follow-up with Sibelius/Wagner on old plan-generation items in ADO.
+
+**Five open questions documented for follow-up:**
+- Orphan disposition workflow (Sibelius/Wagner)
+- `seeding_blocked` re-trigger discriminator in `root-item-dispatch.yaml` (Wagner)
+- Possible top-level `schema_version` field
+- Seeder idempotency across frequent renegotiation
+- Registration of `seeding_complete` in domain-signal-envelope kind vocabulary
+
+**Cross-seam coordination:**
+- **Sibelius** owns marker embed atomicity (twig seam)
+- **Wagner** owns orphan renegotiation routing
+- **Mahler** owns script-level retry circuit and terminal routing
+- **Mozart** owns error-code clarifications
+
+### 2026-05-29T16:30Z: User Directive — Seeding Plan & Restart-Friendly Reconciliation
+
+**By:** Daniel Green (via Copilot)
+
+On PR #535 Q1 (partial-seed gate): SKIP the gate, but do NOT auto-continue with whatever got seeded. Introduce a durable, shared **seeding plan** artifact keyed per work-root-item-id that survives across runs.
+
+**Reconciliation rules:**
+- If planned elements aren't seeded (or something semantically equivalent isn't present), RETRY seeding.
+- Stop on network/auth failures after 3 retries.
+- **BE RESTART FRIENDLY**, but don't let corrupt state just move forward.
+
+This is a general principle, not just a seeding concern: durable per-root artifacts that drive idempotent re-entry are the right answer for any multi-step workflow that can partially fail. The seeding plan is the first concrete instance.
+
+**Implications for coordination:**
+1. Needs Bach + Beethoven pass to define seeding-plan artifact schema, reconciliation comparison rules, and "semantically equivalent" criteria.
+2. Retry-with-cap maps to Mozart's polyphony-verb-error-boundary ADR, but exit codes are: 3 = twig unavailable, 4 = git failure, 5 = ADO unreachable. Daniel's "stop on network/auth" maps to codes 3 & 5; Mozart has amended the ADR with clarity on retry classification.
+3. PR #535 likely needs rebase onto this new seeding-plan model rather than merge as-is.
+
+### 2026-05-29T16:45Z: User Directive — GitHub Issues OUT OF SCOPE
+
+**By:** Daniel Green (via Copilot)
+
+Polyphony seeding (and by extension seed manifest and all related work) is **ADO-only**. GitHub Issues is explicitly OUT OF SCOPE.
+
+Sibelius's platform analysis noted GitHub Issues has no work item hierarchy (no parent-child, no area paths, no custom fields), making the seeding-plan concept fundamentally incoherent for GitHub. Decision: don't paper over the asymmetry, just exclude GitHub from seeding entirely.
+
+**Implications:**
+- Seed manifest schema does NOT need a `platform` field. ADO is the only execution target.
+- `recreate-stale-descendant` remains GitHub-only (restack/branch territory, separate concern).
+- Any future "what about GitHub" on the seeding path: route to this decision, defer.
+- Renegotiation orphan handling, plan generations, semantic-equivalence primitives — all defined against ADO work items and the `polyphony:plan-child-id` marker.
+
+### Mahler — Conductor Engine Stance on Seeding Plan
+
+**Date:** 2026-05-29T09:33:07-07:00  
+**From:** Mahler (Conductor Engine Specialist)
+
+#### Summary of engine-relevant decisions
+
+**1. No new engine primitives needed.** The seeding plan pattern is fully expressible with existing conductor primitives: `type: script` reads/writes the plan file, `on_error: "kind"` routes on exhausted retries, routing conditions handle reconciliation checks. Do NOT propose conductor-native artifact registry.
+
+**2. Conductor checkpoint storage is not durable per-root-item state.** `CheckpointManager` stores to `$TMPDIR/conductor/checkpoints/` keyed by workflow name + timestamp, NOT keyed to root item ID and NOT surviving reboots. The seeding plan file (`.polyphony/state/{rootId}/seeding-plan.json`) is the correct persistence layer — filesystem, within the worktree, owned by the polyphony script layer.
+
+**3. `max_attempts` on script nodes does not exist.** `RetryPolicy.max_attempts` is agent-node-only. Script nodes have no built-in retry. The 3-retry-on-network circuit must be handled inside the seeding script. The script emits a tagged error kind (e.g., `seeding.network_error`) on exhaustion; YAML routes on `on_error: "seeding.network_error"` to a terminal.
+
+**4. `seeding_blocked` is a new terminal, not `workflow_abandoned`.** `workflow_abandoned` is semantically "operator gave up" (all routes require human click). Exhausted network retries are NOT operator-volitional. Use a new `seeding_blocked` terminal. Tag for Beethoven's AB#3257 scoping.
+
+**5. Atomic plan file writes are a seeding script requirement.** The corrupt-state guard is enforced by refusing to leave the seeding stage without `reconciliation_passed: true`. But partial plan files (crash mid-write) are a real risk. The seeding script MUST write atomically (`.tmp` → rename). This is a script implementation requirement.
+
+### Mozart — Seeding Plan Error Stance
+
+**Date:** 2026-05-29  
+**From:** Mozart (.NET/C# Specialist)
+
+**Amendments to `polyphony-verb-error-boundary.md`:**
+
+**1. Fix exit code catalogue summary:**
+
+| Code | Correct label | Retry class |
+|---|---|---|
+| 0 | Domain outcome | N/A |
+| 1 | Unclassified crash | Permanent (do not retry) |
+| 2 | Config error | Permanent |
+| 3 | Twig CLI unavailable | Transient |
+| 4 | Git operation failure | Transient (with idempotency requirement) |
+| 5 | ADO/PR platform unreachable | Transient |
+| 6 | Polyphony-level timeout | Transient |
+
+Auth failures against ADO surface as code 5, not a distinct auth code. There is no not-found infrastructure code; 404 responses from ADO are domain outcomes (exit 0).
+
+**2. Clarify domain vs infrastructure for 404:** An HTTP 404 from ADO/twig during creation/lookup is a **domain outcome** (exit 0) unless it indicates the platform API endpoint itself is unavailable.
+
+**3. Idempotency invariant for transient-retried verbs:** Any verb that emits a transient exit code (3, 4, 5, 6) MUST be safe to re-invoke with the same arguments. The verb is responsible for read-before-write convergence; must not error if intended state already exists.
+
+**4. Transient failures should carry attempt context:** Verbs SHOULD include an `attempt` field in `CONDUCTOR_ERROR_OUT` on transient failures if attempt number is available. Enables orchestration layers to reconstruct retry state across restarts.
+
+**5. No new partial-success code yet.** Defer code 7. Design `apply-seeding-plan` to converge fully on success (exit 0 with structured result) or fail transient/permanently.
+
+### Sibelius — Platform Analysis & Seeding Plan Stance
+
+**Date:** 2026-05-29T09:33:07-07:00  
+**From:** Sibelius (Twig/ADO Specialist)
+
+**Decision 1: Marker is the canonical identity primitive, not title-hash.** The `<!-- polyphony:plan-child-id=task-N -->` comment embedded in description by seeder at creation time is the correct cross-run identity signal. Marker match should remain primary; title fallback secondary. Limitation: not WIQL-queryable (must use `twig show-tree`). Acceptable cost.
+
+**Decision 2: Seeding plan concept is ADO-typed, not platform-agnostic.** GitHub Issues has no work item hierarchy. "5 children under root R" is ADO-only. Seed manifest must be typed as ADO-specific now with explicit note that GitHub-Issues seeding would require separate implementation. Don't abstract prematurely — platforms are genuinely different.
+
+**Decision 3: Platform validation rejections are NOT retriable.** Seed children surfaces all errors the same way. Platform validation failures (title >255 chars, invalid type for process template, permission denied on area path) are NOT transient. 3-retry limit applies only to network/auth errors. Seeder errors MUST carry `error_kind` field: `transient` vs `non_transient`.
+
+**Decision 4: Renegotiation orphan gap requires `plan_generation` in seed manifest.** When architect replans (renegotiation), `recreate-stale-descendant` does NOT touch ADO children. Old children stay with markers from plan generation N. Seeder for plan N+1 won't find marker match for new child_ids and will create new children, leaving old ones as orphans. Seed manifest MUST track `plan_generation` so seeder can flag prior-generation items as orphans, not reuse candidates.
+
+### Beethoven — Workflow Abandoned Route Analysis
+
+**Date:** 2026-05-29T09:29:44-07:00  
+**From:** Beethoven (Mission Keeper)
+
+Investigated every route into the `workflow_abandoned` terminal in `actionable.yaml`.
+
+**Key finding: Route D is semantically different.** There are 4 routes to `workflow_abandoned`. Three (Routes A, B, C) are genuinely volitional — operator explicitly chose not to continue. Route D (`workflow_error_gate` → abandon) is different: it fires when **upstream error occurred** and operator chose not to retry. Looks like abandonment in output but is actually an error-then-no-retry pattern.
+
+**Batch aggregator implication:** Cannot distinguish from `actionable_satisfied = false` alone.
+
+**Recommendation:** When AB#3257 error-handling retrofit is planned, consider splitting Route D into separate `abandoned_on_error` terminal. This would preserve error envelope in batch aggregator output and let outer loop distinguish "operator gave up cleanly" from "infra failure with no retry."
+
+**Prior claim confirmed:** The Q2 claim in Beethoven's PR #535 analysis ("conductor-state-only, no ADO writes, fully reversible") is **correct and verified** against actual YAML.
+
+### Wagner — PR Gate → Notification+Poll Migration
+
+**Date:** 2026-05-29  
+**From:** Wagner (Workflow Author)  
+**Status:** Proposed — pending Daniel's answers to open questions
+
+**Headline pattern:** The `pending_review_gate` in `github-pr.yaml` and `ado-pr.yaml` is replaced with:
+
+```
+emit domain signal (pr_review_required, disposition:pending, CTA → PR URL)
+  → Poll-PrStateDelta.ps1 (blocks until reaction detected or timeout)
+  → route on reaction_kind:
+      merged  → notify_pr_review_resolved → already_merged_emitter
+      closed  → abort_unmerged
+      timeout → stuck_review_gate_policy_router (human escalation preserved)
+      other   → poll_status (re-read absolute state, existing routing resumes)
+```
+
+This is the first live application of Bach's gate-compression-pattern ADR to polyphony's workflow surface.
+
+**Gate compression summary:**
+
+| File | Total PR-lifecycle gates | Compressed | Stays human |
+|------|--------------------------|------------|-------------|
+| feature-pr.yaml | 5 | 0 | 5 |
+| github-pr.yaml | 5 | 1 | 4 |
+| ado-pr.yaml | 7 | 1 | 6 |
+| implement-merge-group.yaml (MG PR) | 2 | 0 | 2 |
+| **Total** | **19** | **2** | **17** |
+
+**Why only 2 compress:** 17 gates stay in four categories:
+1. **Judgment calls** (7 gates): `revise_cap_gate`, `stuck_review_gate`, `pr_pre_merge_gate`, `remediation_cap_gate` — require human evaluation.
+2. **Configuration errors** (4 gates): `*_inputs_missing_gate` — abort-only; no external state to poll.
+3. **Infrastructure error gates** (4 gates): `poll_error_gate`, `merge_failed_gate`, `mg_pr_failed_gate_ado` — original #528 targets; different territory.
+4. **Git-operation gates** (2 gates): `integrate_target_drift_*` — require manual git operations before PR even exists.
+
+**Script contract for Liszt:** `Poll-PrStateDelta.ps1` — long-running poll script that blocks until reaction detected. Inputs: `-Platform <github|ado>`, `-PrUrl`, `-PrNumber`, `-TimeoutSeconds` (default 86400), `-PollIntervalSeconds` (default 30). Output: `{ reaction_kind, new_watermark, delta_details }` — always exit 0 except infra failures. Reaction kinds: `merged`, `closed`, `new_review`, `new_commit`, `ci_changed`, `timeout`.
+
+**Open questions blocking apply:** Seven questions require Daniel's judgment. Key ones:
+- Q1: Auto-retry `merge_failed_gate` and `mg_pr_failed_gate_ado`?
+- Q2: Default timeout (24h? 8h? configurable only?)
+- Q3: `ci_changed` routing (auto-continue vs notify+wait vs split on green/red?)
+- Q5: Drop `pending_review_gate_policy_router` or keep with updated semantics?
+
+### Liszt — Poll-PrStateDelta Helper Implementation
+
+**Date:** 2026-05-29  
+**From:** Liszt (PowerShell Specialist)  
+**Status:** Implemented
+
+`Poll-PrStateDelta.ps1` is the script-side implementation of the bounded-poll primitive that Wagner's PR-lifecycle gate YAML invokes.
+
+**Script path:** `C:\Users\dangreen\projects\polyphony\scripts\Poll-PrStateDelta.ps1`  
+**Tests:** `C:\Users\dangreen\projects\polyphony\scripts\Poll-PrStateDelta.Tests.ps1`  
+**Contract version:** v1
+
+**Supported platforms:**
+
+| Platform | CLI used | PR URL shape |
+|---|---|---|
+| `github` | `gh api` | `https://github.com/{owner}/{repo}/pull/{n}` |
+| `ado` | `az repos pr` | `https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{n}` or `https://{org}.visualstudio.com/...` |
+
+**Reaction kind enum** (precedence: merged > closed > new_commit > new_review_changes_requested > new_review_approved > new_review_commented > new_comment > ci_status_changed):
+- `initial_observation`
+- `pr_merged`
+- `pr_closed`
+- `new_commit`
+- `new_review_changes_requested`
+- `new_review_approved`
+- `new_review_commented`
+- `new_comment`
+- `ci_status_changed`
+- `timeout` (emitted only when poll exhausts timeout with no delta)
+
+**Exit codes:**
+- 0 = Reaction detected OR timeout (route on `reaction_kind`)
+- 2 = Invalid arguments
+- 3 = Auth/permission failure (gh/az 401)
+- 4 = PR not found (gh/az 404)
+- 5 = Network or rate-limit failure after retries
+
+**Watermark shape:**
+
+*GitHub:*
+```json
+{
+  "last_merged_state": "MERGED" | "CLOSED" | null,
+  "last_commit_sha": "abc123",
+  "last_review_ids": ["id1", "id2"],
+  "last_comment_ids": ["id1"],
+  "last_ci_conclusion": "SUCCESS" | "FAILURE" | "PENDING" | null
+}
+```
+
+*ADO:*
+```json
+{
+  "last_status": "active" | "completed" | "abandoned",
+  "last_commit_sha": "abc123",
+  "last_review_revs": { "user@org.com": 10 },
+  "last_thread_ids": ["1", "2"],
+  "last_build_status": "succeeded" | "failed" | "inProgress" | null
+}
+```
+
+**Design choices:**
+- Watermark written only on `initial_observation` and reaction detection; timeout preserves prior watermark.
+- Atomic write: temp-file + `Move-Item -Force` with absolute paths.
+- Jitter: ±10% of `PollIntervalSeconds` to avoid thundering herd.
+- ADO CI proxy: uses `az repos pr policy list` for build policy status (graceful degrade if unavailable).
+- GitHub CI: queries `/commits/{sha}/check-runs`; maps `failure`/`timed_out` to `FAILURE`, null to `PENDING`, else `SUCCESS`.
+
+**Known limits:**
+- GitHub: no pagination on reviews/comments (suitable for PRs with <~30 reviews).
+- ADO: `az repos pr policy list` requires `azure-devops` az extension.
+- Auth validation is passive (checked on first API failure, not proactively).

@@ -54,3 +54,25 @@
 - ✅ PR #229 comment history recorded
 - ✅ DOGFOOD-INSTALL.md pin note confirmed (commit 0044d84)
 - Ready for next conductor upstream update
+
+## Learnings — 2026-05-29
+
+- 📌 **Conductor `CheckpointManager` is NOT durable per-root-item state.** Stores to `$TMPDIR/conductor/checkpoints/` keyed by workflow name + timestamp. Not root-item-ID scoped, not reboot-safe. Filesystem (`.polyphony/state/{rootId}/`) is the only durable cross-run persistence layer.
+- 📌 **`max_attempts` / `RetryPolicy` is agent-node-only.** `schema.py` line 449/843 explicitly: "Only applies to provider-backed agents (not script or human_gate)." Script nodes have no built-in retry. Retry-on-network for seeding scripts must be script-internal.
+- 📌 **`on_exhaust` parameter does not exist in conductor schema.** The proposed `on_error: { exit_code: 3, max_attempts: 3, on_exhaust: stop }` syntax is not real. Do not cite it in YAML examples.
+- 📌 **`seeding_blocked` should be a new terminal, not `workflow_abandoned`.** Per Beethoven's trigger analysis, `workflow_abandoned` is semantically "operator gave up" (all routes volitional). Exhausted infra retries are NOT volitional. Routing them to `workflow_abandoned` corrupts the terminal's meaning.
+- 📌 **Corrupt-state guard is workflow + script responsibility, not engine.** The engine has no reconciliation concept. Workflow refuses to advance without `reconciliation_passed: true` from the seeding script. Atomic writes (`.tmp` → rename) are a seeding script implementation requirement.
+- 📌 **Re-entry requires seeding plan file + ADO state together.** Plan file = intent; ADO state = truth. Plan file exists but no ADO children = corrupt/partial. Both must be checked on re-entry per P3 (Re-Entry by State Discovery).
+
+### 2026-05-29T09:33-07:00 — Seeding plan engine stance (Q1 ask)
+- ✅ Investigated `checkpoint.py` and `schema.py` in conductor-dogfood for persistent state and retry primitives
+- ✅ Confirmed: no new conductor engine changes needed for seeding plan pattern
+- ✅ Confirmed: `max_attempts` not available on script nodes
+- ✅ Filed handoff: `.squad/handoffs/mahler-seeding-plan-engine.md`
+- ✅ Filed decision: `.squad/decisions/inbox/mahler-seeding-plan-engine-stance.md`
+- Coordinated with Beethoven's `workflow_abandoned` trigger analysis (Route D / `seeding_blocked` recommendation)
+
+### 2026-05-29T17:23-07:00 — Seed Manifest ADR shipped
+- ✅ ADR `seed-manifest-as-durable-state.md` shipped with all ten design decisions encoded
+- Your key findings embedded: no new engine primitives, no durable checkpoint state, `max_attempts` script limitation, `seeding_blocked` terminal recommendation
+- When implementing seeding-plan verb + script, reference ADR "Mahler — Conductor Engine Stance" section for design constraints (especially: script-internal retry circuit, error-to-terminal routing via tagged error kinds, atomic `.tmp`+rename writes)
