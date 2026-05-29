@@ -22,6 +22,7 @@
 - 📌 **Test env:** Python 3.14 at `C:\Users\dangreen\AppData\Local\Python\pythoncore-3.14-64\python.exe`. `pip install pytest-asyncio` required for error-routing async tests. 61 new feature tests pass. 324 broader failures in `test_script.py` are pre-existing Windows subprocess issues, not caused by dogfood.
 - 📌 **Top adoption pick (free win):** `conductor validate` now warns on undeclared `agent.output` refs (commit `8ec298d`). Add to CI — surfaces Jinja path drift at PR time. Filed as polyphony issue #540.
 - 📌 **Adoption issues filed:** #537 (script output schemas), #538 (type: terminate), #539 (type: set), #540 (conductor validate CI). Decision doc: `.squad/decisions/inbox/mahler-conductor-dogfood-and-adoption-2026-05-28T223616-0700.md`.
+- 📌 **2026-05-28 upstream sync:** Raised context.py design conflict as comment on conductor PR #229 (comment link: https://github.com/microsoft/conductor/pull/229#issuecomment-4569235887). Dogfood pinned at v0.1.17 indefinitely pending upstream resolution. DOGFOOD-INSTALL.md updated to document the pin decision and blocker. Attempted cherry-pick of notifications rename (`27006af`) but encountered conflicts in schema.py and validator.py; abandoned per directive to avoid local busywork. Dogfood remains pre-rename (`type: notification` + `notification:` key). Wagner's smoke workflow will need vocab update post-upstream redesign. This is the new working norm per directive #2: raise questions on upstream PRs and accept the version-pin result, do not pursue local rebases or escalate to PR authors.
 
 ## Learnings — 2026-05-28
 
@@ -47,3 +48,9 @@
 - Wait for Daniel's conflict resolution decision
 - Verify conductor feature gaps in dogfood once decision made
 - Rebase PR #229 onto v0.1.18 after conflict resolved
+
+### 2026-05-28T23:43-14Z — Inbox round (Scribe merge)
+- ✅ Dogfood conductor pinned v0.1.17 decision captured
+- ✅ PR #229 comment history recorded
+- ✅ DOGFOOD-INSTALL.md pin note confirmed (commit 0044d84)
+- Ready for next conductor upstream update

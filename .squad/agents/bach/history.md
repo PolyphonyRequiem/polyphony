@@ -43,3 +43,57 @@
 - Wait for Daniel approval on 3 ADRs before implementation
 - Coordinate with Mahler on run_id + wait.seconds verification
 - Write `domain-signal-envelope.md` ADR once approved
+
+---
+
+### 2026-05-28T23:43-14Z — Inbox round (Scribe merge)
+- ✅ 3 ADRs merged to decisions.md (domain-signal-envelope, gate-compression-pattern, polyphony-verb-error-boundary)
+- ✅ Platespinner handoff doc captured
+- ✅ User vocabulary directive (domain signal + emit:) recorded
+- Ready for downstream implementation once Daniel approves
+
+## Learnings — 2026-05-28 (Round 2)
+
+### Bach (Architect) — ADR Delivery + Platespinner Handoff
+
+**All four deliverables shipped:**
+
+1. **Platespinner handoff prompt** at `.squad/handoffs/platespinner-gap-work.md`  
+   - Fully self-contained for a fresh agent session against `conductor-platespinner`  
+   - Includes: full gap issue text (#541 CTA rendering, #542 deep-link context), wire format
+     for `.notifications.jsonl` with 3 realistic example payloads, one-way contract reminder,
+     dogfood install path, definition of done with checkboxes, explicit out-of-scope list  
+   - Key discovery: platespinner's current notifications are state-derived (from SSE run data);
+     domain signals are a NEW parallel channel from `*.notifications.jsonl` files. The handoff
+     makes this explicit so the receiving agent doesn't conflate the two pipelines.
+
+2. **ADR: polyphony-verb-error-boundary** at `polyphony/docs/decisions/polyphony-verb-error-boundary.md`  
+   - Option C hybrid: exit 0 for domain outcomes, non-zero for infrastructure failures  
+   - Exit code catalogue seeded (codes 0–6), Mozart owns per-verb assignments  
+   - Invariant: exit 0 never means "nothing happened" — stdout JSON always present
+
+3. **ADR: domain-signal-envelope** at `polyphony/docs/decisions/domain-signal-envelope.md`  
+   - Polyphony owns `payload` inside conductor's notification envelope  
+   - Required: kind, severity, title, message  
+   - Optional: cta_url, cta_kind, correlation_id, expires_at, disposition, details  
+   - Full wire example + workflow YAML declaration included  
+   - One-way contract stated as an invariant  
+
+4. **ADR: gate-compression-pattern** at `polyphony/docs/decisions/gate-compression-pattern.md`  
+   - Compression rule: observable conditions → emit + poll; judgment gates → stay human_gate  
+   - Canonical 3-step YAML pattern documented  
+   - 4 open asks surfaced for Daniel (poll backoff, expiry behavior, resolved signal convention,
+     max poll cap)
+
+**Design moves worth remembering:**
+- Conductor notification envelope has `data.payload` as the polyphony-owned zone.
+  The outer fields (schema_id, emission_id, correlation) are conductor-owned and must
+  not be redefined by polyphony.
+- The `.notifications.jsonl` file is SEPARATE from `.events.jsonl` — same conductor temp dir,
+  different file. Platespinner's current code only reads `*.events.jsonl`. The domain signal
+  channel requires a new reader.
+- Wagner's dogfood test confirmed: current field names are `type: notification` / `notification:`,
+  NOT yet `type: emit` / `emit:`. Rename is pending PR #213 commit 27006af. Platespinner
+  should build against the envelope format (transparent to rename), not the YAML syntax.
+- The `polyphony/docs/decisions/` path EXISTS in the separate polyphony clone at
+  `C:\Users\dangreen\projects\polyphony\docs\decisions\`. ADRs were written there directly.

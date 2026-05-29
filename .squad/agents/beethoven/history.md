@@ -33,6 +33,15 @@
 - ✅ Posted PR #535 comment with detailed feedback
 - **Open items:** Awaiting Daniel answers on seeder partial-seed safety + workflow_abandoned semantics
 
+**Default recommendations on re-framed questions:**
+1. **Seeder error gate (Q1):** Keep the human gate. Partial seeds are a silent-failure risk; the idempotent seeder is safe to retry. The gate friction is justified.
+2. **workflow_abandoned side-effects (Q2):** Conductor-state-only (no ADO writes in the terminal itself). The parent workflow (root-item-dispatch) owns any state transitions. An abandoned workflow is reversible.
+
 **Next moves:**
 - Confirm Phase 2 retrofit can proceed once Beethoven questions resolved
 - Add `domain signal`, `gate compression`, `CTA`, `correlation ID`, `disposition (signal)` to glossary (P1)
+
+### 2026-05-28T23:43-14Z — Inbox round (Scribe merge)
+- ✅ PR #535 gate disposition questions re-framed with defaults (captured at `.squad/handoffs/beethoven-pr535-questions-restated.md`)
+- ✅ Awaiting Daniel's one-click decisions on both questions
+- Ready for Phase 2 retry retrofit planning

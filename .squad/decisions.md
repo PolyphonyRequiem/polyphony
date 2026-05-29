@@ -2889,3 +2889,120 @@ Inline comment audit completed 2026-05-28. All 8 comments addressed in commit `2
 
 **Action items for Daniel:**
 - This makes the case for **prioritizing conductor RFC Phase 2 `retry:` action** slightly stronger if you want the full pattern catalogue available. But it's not blocking — Wagner's top 3 filed issues (#543/#544/#545) all work on Phase 1 as-is.
+
+---
+
+## 2026-05-28T16:43-07:00 — Inbox Merge (Scribe-compiled)
+
+### User directives (two) — Copilot capture
+
+**By:** Daniel Green (via Copilot)
+
+**Directive 1 — Vocabulary:**
+> "as for bach's domain signal, yes, I agree domain signal vs notification."
+
+The polyphony-side payload primitive is named **domain signal** (the noun). The conductor-level YAML primitive that fires it is `emit:` (per upstream PR #213 reviewer rename). Use both terms in tandem: workflows `emit:` a domain signal. Apply this across all ADRs, M11 SKILL, and any new workflow docs.
+
+**Directive 2 — Upstream PR blockers:**
+> "Mahler's conflict is out of scope for me, if he needs to raise questions on the PRs, he should do so? not sure it's something we need to bother jason about."
+
+When a dogfood/local rebase hits an upstream design conflict (e.g. PR #229's `_MISSING` sentinel vs v0.1.18 base), the polyphony-side resolution is: **raise the question as a comment on the upstream PR and stop pursuing the local rebase**. Do NOT escalate to the PR author directly, do NOT block local work indefinitely. Accept whatever dogfood-version-pin results.
+
+---
+
+### Bach — ADR Summary: domain-signal-envelope
+
+**Date:** 2026-05-28  
+**ADR path:** `polyphony/docs/decisions/domain-signal-envelope.md`  
+**Status:** Accepted  
+**Priority:** P1 (blocks platespinner issues #541/#542 and gate-compression-pattern)
+
+Polyphony owns the `payload` sub-field of the conductor notification envelope. Required payload fields: `kind` (machine-readable signal type), `severity` (info/warning/error/critical), `title` (≤80 chars), `message` (full body). Optional: `cta_url` (URI for CTA button), `cta_kind` (review_pr/open_pr/open_gate/open_run/open_work_item/external), `correlation_id` (stable lifecycle key), `expires_at` (ISO 8601), `disposition` (pending/resolved/expired), `details` (freeform dict). The one-way contract is immovable: conductor → .notifications.jsonl → platespinner → toast → user → external action → poll script → conductor. No write-back ever. Consumers MUST ignore unknown fields. New optional fields can be added without a version bump; type changes require a NotificationTypeDef version bump.
+
+---
+
+### Bach — ADR Summary: gate-compression-pattern
+
+**Date:** 2026-05-28  
+**ADR path:** `polyphony/docs/decisions/gate-compression-pattern.md`  
+**Status:** Accepted (with open asks)  
+**Priority:** P1
+
+Observable-condition gates (PR approval, CI checks, work item state, merge) compress from `human_gate` to `(emit domain signal + script-poll-loop)`. Judgment gates (scope violation, design sign-off, conflict resolution, production deploys) stay `human_gate`. Canonical pattern is three YAML steps: emit domain signal → poll script → wait-on-miss → loop. Poll scripts exit 0 for "condition not yet met" (domain outcome) and non-zero only for infrastructure failures. Resolution SHOULD emit a second domain signal with `disposition: resolved`. Every compressed gate MUST have a wall-clock expiry or iteration cap. **Four open asks for Daniel:** (1) default poll backoff — Bach recommends configurable with 120s default; (2) expiry behavior — Bach recommends route to human_gate fallback; (3) resolved-signal convention — Bach recommends "recommended but not required"; (4) max poll iterations — Bach recommends conductor-level on_error timeout (pending Mahler confirmation).
+
+---
+
+### Bach — ADR Summary: polyphony-verb-error-boundary
+
+**Date:** 2026-05-28  
+**ADR path:** `polyphony/docs/decisions/polyphony-verb-error-boundary.md`  
+**Status:** Accepted  
+**Priority:** P0 (blocks `on_error:` retrofit of polyphony verbs)
+
+Polyphony verbs adopt **Option C — hybrid exit codes**: exit 0 for all domain outcomes (both success and named domain failures); non-zero for infrastructure failures only (twig unavailable, git I/O failure, ADO unreachable, config missing). Infrastructure failures MUST also write a typed error envelope to `CONDUCTOR_ERROR_OUT`. Domain failures continue to signal via stdout JSON `error` field at exit 0. Exit code catalogue seeded in ADR (codes 0–6); Mozart owns per-verb assignments and maintains the catalogue in `docs/polyphony-architecture.md`. This policy enables conductor `on_error:` routing for polyphony verb failures without breaking any existing workflow that reads stdout JSON.
+
+---
+
+### Beethoven — PR #535 Gate Disposition Review — Questions Re-framed with Defaults
+
+**Date:** 2026-05-28
+
+**Question 1 (Seeder):** Keep the human gate on partial-seed failures (default) — silent failures are a > 0 risk; idempotent seeder is safe to retry; gate friction justified.
+
+**Question 2 (workflow_abandoned):** workflow_abandoned is conductor-state-only (default) — no ADO writes in the terminal itself; parent workflow owns any state transitions; abandoned workflows are reversible.
+
+**File:** `.squad/handoffs/beethoven-pr535-questions-restated.md` — ready for Daniel's one-click decisions.
+
+---
+
+### Mahler — Decision: Dogfood conductor pin to v0.1.17
+
+Dogfood conductor pinned at v0.1.17 indefinitely; PR #229 context.py reconciliation deferred to upstream.
+
+---
+
+### Wagner — Decision: emit / type:notification schema — dogfood reality vs M11 design
+
+**Date:** 2026-05-28  
+**Author:** Wagner  
+**Status:** Informational — no blocking decision required, but patterns in M11 and issues #543–#545 need a field-name correction.
+
+---
+
+## Context
+
+The dogfood conductor (branch `dogfood/on-error+notifications`, installed from `C:\Users\dangreen\projects\conductor-dogfood`) was smoke-tested today. The `type: notification` path works end-to-end.
+
+## Finding: Schema naming mismatch vs M11 pattern designs
+
+The task brief assumed the dogfood included PR #213 commit `27006af`, which **renames** the field from `notification:` → `emit:` and the type from `type: notification` → `type: emit`.
+
+**The dogfood cherry-picked an earlier commit. The actual schema in the dogfood is:**
+
+```yaml
+- name: my_step
+  type: notification          # NOT type: emit
+  notification: <type_name>   # NOT emit: <type_name>
+  payload:
+    field: value
+  routes:
+    - to: $end
+```
+
+## Impact
+
+- My M11 pattern designs (#543 `notify_then_route`, #544 `decision_point_notification`, #545 `progress_notification`) were written using `type: notification` / `notification:` — which is **correct for the dogfood as installed**.
+- If Mahler refreshes the dogfood to cherry-pick `27006af`, all three pattern YAML examples need a find-replace: `type: notification` → `type: emit`, `notification:` → `emit:`.
+- No polyphony workflow files are affected today (none reference `type: notification` yet).
+
+## Finding: Output file is `.notifications.jsonl`, not `.events.jsonl`
+
+Notification payloads land in a **dedicated `.notifications.jsonl`** file (separate from `.events.jsonl`). External tooling that needs to consume notifications must tail this file, not the main event log.
+
+The `.events.jsonl` does contain `notification_started` marker events, but without the payload.
+
+## Recommendation
+
+- **No action needed today.** The dogfood smoke test passes with the current field names.
+- **When PR #213's `27006af` rename is incorporated into the dogfood:** Mahler should notify Wagner so M11 pattern YAML is updated.
+- **For M11 pattern usage notes:** Add a caveat that `type: notification` / `notification:` are the current names and may be renamed to `type: emit` / `emit:` when 27006af is included.

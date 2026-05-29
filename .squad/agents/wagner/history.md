@@ -27,6 +27,25 @@
 - 📌 bounded_retry_loop (M10 + type:set + type:wait) is the only retry mechanism in Phase 1, but adds 5 nodes per gate and consumes significant max_iterations budget. Use sparingly; replace with retry: when RFC Phase 2 ships.
 - 📌 conductor dogfood combined branch is dogfood/on-error+notifications in C:\Users\dangreen\projects\conductor-notifications.
 
+## Learnings — 2026-05-28 (emit smoke test round)
+
+### Dogfood emit / type:notification smoke test
+
+**Status:** ✅ PASSED — 2026-05-28
+
+**Schema reality (vs M11 design assumptions):**
+- The dogfood (cherry-pick of PR #213) uses `type: notification` + `notification: <type_name>` — NOT `type: emit` / `emit: <type_name>`. The reviewer-cleaned commit `27006af` renames those fields, but that commit is NOT what the dogfood cherry-picked. My M11 patterns must use `type: notification` for now.
+- Notification payload lands in a **dedicated `.notifications.jsonl`** file, NOT in `.events.jsonl`. The task brief assumed `.events.jsonl` — this is a caveat to propagate. The `.events.jsonl` does contain `notification_started` markers (no payload), and the full payload object is in `.notifications.jsonl`.
+- The schema envelope includes: `schema_id` (`<namespace>.<type>@<version>`), `emission_id`, `run_id`, `source_agent`, `subworkflow_path`, `correlation`, `workflow_metadata`, `payload`. Very clean — richer than what I assumed in the pattern designs.
+- `correlation:` fields (from `workflow.notifications.correlation:`) are auto-merged onto every notification — zero config per-step.
+- `type: script` entry point works perfectly with no LLM; ideal for smoke tests. `pwsh -Command "Write-Output 'ping'"` exits cleanly.
+
+**For Mahler:** Nothing broken. Dogfood install at `C:\Users\dangreen\projects\conductor-dogfood` is at v0.1.17 (pip install -e .). PR #213 cherry-pick is the older naming — if 27006af is re-cherry-picked, the workflow `notification:` / `type: notification` fields would need updating to `emit:` / `type: emit`.
+
+**For Daniel:** Demo is ready. Run: `conductor run .squad\experiments\dogfood-smoke\emit-smoke.yaml` — no LLM budget needed. The proof lives at `.squad/experiments/dogfood-smoke/README.md`.
+
+---
+
 ## Learnings — 2026-05-28
 
 ### Wagner (Workflow Author)
@@ -46,3 +65,9 @@
 - Wait for conductor RFC Phase 2 to merge (blocks 14 gates)
 - Prototype gate compression in github-pr.yaml once patterns approved
 - Restore retry capability for 14 removed gates via on_error + counter scripts (Phase 2b)
+
+### 2026-05-28T23:43-14Z — Inbox round (Scribe merge)
+- ✅ Dogfood emit smoke test PASSED (`.squad/experiments/dogfood-smoke/`)
+- ✅ Schema naming finding: dogfood pre-dates PR #213 rename (`type: notification` vs `type: emit`)
+- ✅ Output file location finding: `.notifications.jsonl` (separate from `.events.jsonl`)
+- Ready for M11 pattern update when PR #213 lands in dogfood
