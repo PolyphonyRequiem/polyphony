@@ -21,9 +21,9 @@
 #      decides whether the implementer needs to revise:
 #        • has_negative_feedback=true  → approvals_policy → revise_counter
 #          → pr_fixer → push commits → back to poll_status.
-#        • has_negative_feedback=false → pending_poll_counter → either the
-#          pending throttle gate (poll cap not reached) or the stuck-review
-#          escalation (cap reached).
+#        • has_negative_feedback=false → notify_pr_pending (emit domain signal)
+#          → poll_pr_state_delta (blocks until reaction or timeout)
+#          → reaction_kind routing (merged, closed, timeout, new_review, ci_changed).
 #
 # revise_counter (AB#3236): increments unconditionally on every loop
 # iteration, AND separately tracks consecutive no-commit iterations by
@@ -51,12 +51,44 @@ workflow:
     single advisory bot review (marker-only — no native approval vote),
     then loops poll → analyze → fix → push until the operator merges, the
     operator closes the PR, or the revise cap fires.
-  version: "2.4.8"
-  entry_point: guidance_loader
+  version: "2.5.0"
   metadata:
     min_polyphony_version: "2.4.8"
   limits:
     max_iterations: 200
+
+  notifications:
+    namespace: polyphony.github_pr
+    correlation:
+      - work_item_id
+    types:
+      pr_review_required:
+        version: 1
+        description: PR awaiting human action (review, approval, merge, or close)
+        payload:
+          kind:           {type: string}
+          severity:       {type: string}
+          title:          {type: string}
+          message:        {type: string}
+          cta_url:        {type: string}
+          cta_kind:       {type: string}
+          correlation_id: {type: string}
+          expires_at:     {type: string}
+          disposition:    {type: string}
+          details:        {type: object}
+      pr_ci_attention_required:
+        version: 1
+        description: CI status on PR changed to FAILURE — operator should push a fix
+        payload:
+          kind:           {type: string}
+          severity:       {type: string}
+          title:          {type: string}
+          message:        {type: string}
+          cta_url:        {type: string}
+          cta_kind:       {type: string}
+          correlation_id: {type: string}
+          disposition:    {type: string}
+          details:        {type: object}
 
   input:
     pr_number:
@@ -84,6 +116,22 @@ workflow:
         type-refinement lookup and is part of the composite counter
         keys so the sentiment loop's pending-poll + revise counters
         don't collide across siblings.
+    poll_timeout_seconds:
+      type: integer
+      required: false
+      default: 86400
+      description: >-
+        Seconds before poll_pr_state_delta times out and escalates to
+        stuck_review_gate_policy_router. Default 24 h (86400 s). Set to
+        a smaller value (e.g. 3600) for short-lived CI environments.
+    poll_interval_seconds:
+      type: integer
+      required: false
+      default: 30
+      description: >-
+        Seconds between polls inside Poll-PrStateDelta.ps1. Default 30 s.
+        Increase to reduce API rate consumption; decrease for faster
+        reaction detection in test environments.
 
 tools:
   - gh
@@ -428,6 +476,37 @@ agents:
         value: abort
         route: abort_run
 
+  # ── PR review resolved signal ─────────────────────────────────────────
+  #
+  # Emits disposition:resolved on the pr_review_required notification type
+  # so platespinner closes the pending CTA that notify_pr_pending opened.
+  # Fires only on the poll_pr_state_delta pr_merged path. Routes to
+  # already_merged_emitter which emits the canonical merged=true terminal.
+  #
+  # See gate-compression-pattern ADR §"Resolved-Disposition Signal".
+  #
+  # TODO(post-upstream-merge): rename type: notification → type: emit,
+  #   and notification: → emit: when conductor PR #213 cherry-pick lands.
+  - name: notify_pr_review_resolved
+    type: notification
+    notification: pr_review_required
+    payload:
+      kind: pr_review_required
+      severity: info
+      title: "PR Merged"
+      message: >-
+        PR #{{ workflow.input.pr_number }} on `{{ workflow.input.branch_name }}`
+        was merged. Workflow continuing.
+      cta_url: "{{ poll_status.output.pr_url }}"
+      cta_kind: open_pr
+      correlation_id: "{{ workflow.input.work_item_id }}:pr-review:{{ workflow.input.pr_number }}"
+      disposition: resolved
+      details:
+        pr_number: "{{ workflow.input.pr_number }}"
+        branch_name: "{{ workflow.input.branch_name }}"
+    routes:
+      - to: already_merged_emitter
+
   # ── Already-merged emitter ────────────────────────────────────────────
   #
   # Operator-merged the PR through the GitHub UI. Emit the canonical
@@ -610,7 +689,7 @@ agents:
     routes:
       - to: approvals_policy
         when: "{{ pr_feedback_analyzer.output.has_negative_feedback == true }}"
-      - to: pending_poll_counter
+      - to: notify_pr_pending
 
   # ── Approvals policy resolver ─────────────────────────────────────────
   #
@@ -949,117 +1028,129 @@ agents:
     routes:
       - to: poll_status
 
-  # ── Pending poll counter (stuck-review timeout MVP) ───────────────────
+  # ── PR pending — emit domain signal ──────────────────────────────────
   #
-  # Increments each time pr_feedback_analyzer concludes there is no
-  # actionable negative feedback. Counter file is keyed by composite
-  # (pr_number + work_item_id) so siblings don't collide.
+  # Emits a pr_review_required domain signal once when the gate opens
+  # (pr_feedback_analyzer found no actionable negative feedback). The
+  # poll loop handles waiting silently until a reaction is detected.
   #
-  # When the count reaches POLL_CAP (60), routes to
-  # stuck_review_gate_policy_router so the operator can decide whether
-  # to keep waiting, override-approve, or abort. Below the cap, routes
-  # to pending_review_gate_policy_router (the throttle gate) for the
-  # unchanged operator UX in the common case.
-  - name: pending_poll_counter
+  # Replaces: pending_poll_counter + pending_review_gate_policy_router +
+  #           pending_review_gate (all three collapsed into emit + poll
+  #           per the gate-compression-pattern ADR).
+  #
+  # The old review_wait_mode=skip/wait/auto distinction is superseded:
+  #   wait (default) → emit notification + poll (the new behaviour)
+  #   skip           → same (poll script IS the "skip" — no human gate)
+  #   auto           → flagged in the ADR as deprecated; no longer needed
+  #
+  # TODO(post-upstream-merge): rename type: notification → type: emit,
+  #   and notification: → emit: when conductor PR #213 cherry-pick lands.
+  - name: notify_pr_pending
+    type: notification
+    notification: pr_review_required
+    payload:
+      kind: pr_review_required
+      severity: warning
+      title: "PR Review Required"
+      message: >-
+        PR #{{ workflow.input.pr_number }} on `{{ workflow.input.branch_name }}`
+        is open and awaiting action (approve, merge, comment, or close) before
+        the workflow continues.
+      cta_url: "{{ poll_status.output.pr_url }}"
+      cta_kind: review_pr
+      correlation_id: "{{ workflow.input.work_item_id }}:pr-review:{{ workflow.input.pr_number }}"
+      expires_at: ""
+      disposition: pending
+      details:
+        pr_number: "{{ workflow.input.pr_number }}"
+        branch_name: "{{ workflow.input.branch_name }}"
+        work_item_id: "{{ workflow.input.work_item_id }}"
+    routes:
+      - to: poll_pr_state_delta
+
+  # ── PR state delta poll ───────────────────────────────────────────────
+  #
+  # Calls Poll-PrStateDelta.ps1 which blocks internally (polling every
+  # PollIntervalSeconds) until a reaction is detected or TimeoutSeconds
+  # elapses. Script exits 0 for all normal domain outcomes; non-zero
+  # only for infrastructure failures (auth, network, invalid args).
+  #
+  # reaction_kind routing (Poll-PrStateDelta.ps1 enum values):
+  #   initial_observation   → poll_pr_state_delta (watermark just established; re-poll)
+  #   pr_merged             → notify_pr_review_resolved → already_merged_emitter
+  #   pr_closed             → closed_unmerged_emitter
+  #   timeout               → stuck_review_gate_policy_router (human escalation)
+  #   ci_status_changed     → notify_pr_ci_attention (if delta_details.new == FAILURE)
+  #                           poll_status (green/pending — re-read absolute state)
+  #   new_review_*, new_commit, new_comment, catch-all → poll_status
+  #
+  # TODO(AB#3257): add on_error: to: poll_error_gate once conductor RFC
+  #   Phase 2 (on_error: in routes) ships. Until then, infrastructure
+  #   failures exit non-zero and surface as conductor step errors.
+  - name: poll_pr_state_delta
     type: script
-    description: Track pending-review poll count (cap 60 — stuck-review timeout MVP)
+    description: Poll for GitHub PR state delta — blocks until reaction or timeout (Poll-PrStateDelta.ps1)
     command: pwsh
     args:
       - "-NoProfile"
-      - "-Command"
-      - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-github-pr-pending-poll-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}"
-        if (Test-Path $counterFile) {
-            $count = [int](Get-Content $counterFile -Raw) + 1
-        } else {
-            $count = 1
-        }
-        Set-Content $counterFile $count
-        $cap = 60
-        @{ count = $count; cap = $cap; cap_reached = ($count -ge $cap) } | ConvertTo-Json
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/Poll-PrStateDelta.ps1"
+      - "-Platform"
+      - "github"
+      - "-PrUrl"
+      - "{{ poll_status.output.pr_url }}"
+      - "-TimeoutSeconds"
+      - "{{ workflow.input.poll_timeout_seconds | default(86400) }}"
+      - "-PollIntervalSeconds"
+      - "{{ workflow.input.poll_interval_seconds | default(30) }}"
     routes:
+      # Watermark just established on first call — re-enter poll loop immediately.
+      - to: poll_pr_state_delta
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'initial_observation' }}"
+      - to: notify_pr_review_resolved
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'pr_merged' }}"
+      - to: closed_unmerged_emitter
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'pr_closed' }}"
       - to: stuck_review_gate_policy_router
-        when: "{{ pending_poll_counter.output.cap_reached == true }}"
-      - to: pending_review_gate_policy_router
-        when: "{{ pending_poll_counter.output.cap_reached == false }}"
-      # M10 defensive catch-all (#222): if cap_reached evaluates to
-      # anything other than true/false (counter script crash, malformed
-      # JSON, template eval edge case), fail safe to the stuck-review
-      # gate rather than re-entering the polling cycle via the policy
-      # router's skip-mode bypass.
-      - to: stuck_review_gate_policy_router
-
-  # ── Pending-review gate policy router ─────────────────────────────────
-  #
-  # Reads `policy.unattended.review_wait_mode`. Three modes:
-  #   • `wait` (default) → fall through to the human throttle gate.
-  #   • `skip`           → bypass the gate, route directly back to re-poll.
-  #   • `auto`           → REJECTED. The old `auto` mode self-approved via
-  #                        magic comments; that mechanism is gone in the
-  #                        sentiment-driven loop. Treated as a hard
-  #                        misconfiguration so it surfaces immediately
-  #                        instead of silently degrading to `skip` (which
-  #                        keeps polling forever with no human in the
-  #                        loop — an unattended operator might wait days
-  #                        for a PR they thought was being auto-merged).
-  - name: pending_review_gate_policy_router
-    type: script
-    description: Bypass pending_review_gate when policy.unattended.review_wait_mode is skip; reject auto.
-    command: polyphony
-    args:
-      - "policy"
-      - "load"
-    routes:
-      - to: abort_auto_mode_unsupported
-        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'timeout' }}"
+      # Q3 Option C: CI red → emit attention signal + re-poll.
+      - to: notify_pr_ci_attention
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'ci_status_changed' and poll_pr_state_delta.output.delta_details.new == 'FAILURE' }}"
+      # new_review_*, new_commit, new_comment, ci_status_changed (non-failure), catch-all:
+      # re-read absolute state via poll_status; routes to analyzer or merge path based on fresh data.
       - to: poll_status
-        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
-      - to: pending_review_gate
 
-  # ── Pending-review gate (throttle in the sentiment-driven loop) ───────
+  # ── CI attention notification ─────────────────────────────────────────
   #
-  # Reached when pr_feedback_analyzer found no actionable negative
-  # feedback this poll. The PR is open and awaiting an explicit positive
-  # signal (operator merges) or a negative one (operator closes the PR,
-  # or new comments that change the analyzer's verdict next poll).
-  - name: pending_review_gate
-    type: human_gate
-    prompt: |
-      ## ⏳ PR Awaiting Action — PR #{{ workflow.input.pr_number }}
-
-      The PR is open. The polyphony bot reviewer has posted (see the
-      marker comment on the PR) and the sentiment-driven analyzer did
-      NOT find actionable negative feedback this poll.
-
-      - **PR:** {{ poll_status.output.pr_url }}
-      - **Branch:** `{{ workflow.input.branch_name }}`
-
-      To proceed, take one of these actions on GitHub, then click
-      **Continue** to re-poll:
-
-      - **Merge the PR** — workflow detects merged state next poll.
-      - **Comment requesting changes** — the analyzer reads the comment
-        on the next poll and routes pr_fixer back to revise.
-      - **Close the PR** — workflow exits this PR leg as unmerged on the
-        next poll. The parent feature-pr.yaml decides whether to accept
-        the abandonment or run its remediation cycle.
-
-      _Note: GitHub blocks PR-author self-approval. If you opened this
-      PR yourself, the merge happens once a second reviewer approves —
-      or you can simply use the **Merge** button directly._
-
-      ---
-
-      Choose an action:
-      - **Continue** — re-poll the PR for the updated state
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔄 Continue"
-        value: continue
-        route: poll_status
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
+  # Emits pr_ci_attention_required when Poll-PrStateDelta detects CI has
+  # flipped to FAILURE (Q3 Option C). Routes back to poll_pr_state_delta
+  # to continue waiting — the operator is informed but the workflow does
+  # not stall. A subsequent new_commit reaction (after the fix push) will
+  # re-read absolute state via poll_status.
+  #
+  # TODO(post-upstream-merge): rename type: notification → type: emit.
+  - name: notify_pr_ci_attention
+    type: notification
+    notification: pr_ci_attention_required
+    payload:
+      kind: pr_ci_attention_required
+      severity: warning
+      title: "CI Failed on PR"
+      message: >-
+        CI status on PR #{{ workflow.input.pr_number }} changed to FAILURE.
+        Push a fix commit to restart CI; the workflow will detect the new
+        commit and re-evaluate.
+      cta_url: "{{ poll_status.output.pr_url }}"
+      cta_kind: open_pr
+      correlation_id: "{{ workflow.input.work_item_id }}:pr-ci:{{ workflow.input.pr_number }}"
+      disposition: pending
+      details:
+        pr_number: "{{ workflow.input.pr_number }}"
+        branch_name: "{{ workflow.input.branch_name }}"
+        old_ci_status: "{{ poll_pr_state_delta.output.delta_details.prev | default('unknown') }}"
+        new_ci_status: "{{ poll_pr_state_delta.output.delta_details.new | default('FAILURE') }}"
+    routes:
+      - to: poll_pr_state_delta
 
   # ── Stuck-review gate policy router ───────────────────────────────────
   #
@@ -1081,24 +1172,25 @@ agents:
         when: "{{ stuck_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
       - to: stuck_review_gate
 
-  # ── Stuck-review gate (poll-cap escalation) ───────────────────────────
+  # ── Stuck-review gate (timeout escalation) ───────────────────────────
   #
-  # Fires when pending_poll_counter hits POLL_CAP (60). The reviewer has
-  # gone silent — surface that fact rather than letting the operator keep
-  # clicking "Continue" on pending_review_gate forever.
+  # Fires when poll_pr_state_delta hits the TimeoutSeconds budget with no
+  # reaction. Reviewer / approver has gone silent — surface that fact so
+  # the operator can decide whether to keep waiting, override-approve, or
+  # abort. "Continue waiting" resets the poll loop via stuck_review_reset.
   - name: stuck_review_gate
     type: human_gate
-    description: PR review pending past poll cap — operator decides wait, override, or abort.
+    description: PR review pending past poll timeout — operator decides wait, override, or abort.
     prompt: |
-      ## ⏰ Stuck Review — Poll Cap Reached for PR #{{ workflow.input.pr_number }}
+      ## ⏰ Stuck Review — Poll Timeout for PR #{{ workflow.input.pr_number }}
 
-      The PR has been awaiting reviewer action for
-      **{{ pending_poll_counter.output.count }}** polls
-      (cap: **{{ pending_poll_counter.output.cap }}**).
+      The PR has been awaiting reviewer action for the full poll timeout
+      period ({{ workflow.input.poll_timeout_seconds | default(86400) }} s)
+      with no reaction detected.
 
       The reviewer may be unavailable or unblocked but silent. You can
-      keep waiting (the counter resets), bypass review and merge anyway,
-      or abort.
+      keep waiting (re-enters the poll loop), bypass review and merge
+      anyway, or abort.
 
       - **PR:** {{ poll_status.output.pr_url }}
       - **Branch:** `{{ workflow.input.branch_name }}`
@@ -1106,7 +1198,7 @@ agents:
       ---
 
       Choose an action:
-      - **Continue waiting** — reset the poll counter and return to the pending-review gate
+      - **Continue waiting** — re-enter the poll loop with a fresh budget
       - **Override approved** — treat the PR as approved and proceed to merge
       - **Abort** — halt the entire run (terminates the conductor process)
     options:
@@ -1122,23 +1214,20 @@ agents:
 
   # ── Stuck-review reset ────────────────────────────────────────────────
   #
-  # Zeros the pending poll counter file when the operator chose
-  # "Continue waiting" at stuck_review_gate, then routes back to
-  # pending_review_gate_policy_router so the operator gets the regular
-  # pending UX again with a fresh cap budget.
+  # Re-enters the poll loop after the operator chose "Continue waiting"
+  # at stuck_review_gate. Routes directly to poll_pr_state_delta
+  # (pending_review_gate_policy_router is gone post-compression).
   - name: stuck_review_reset
     type: script
-    description: Reset pending-poll counter after stuck-review continue-waiting choice
+    description: Re-enter poll loop after stuck-review continue-waiting choice
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
-      - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-github-pr-pending-poll-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}"
-        Set-Content $counterFile 0
-        @{ count = 0; reset = $true } | ConvertTo-Json
+      - >-
+        @{ reset = $true } | ConvertTo-Json -Compress
     routes:
-      - to: pending_review_gate_policy_router
+      - to: poll_pr_state_delta
 
   # ── Pre-merge policy router (AB#3184 + AB#3217 warning-stamp split) ───
   #
@@ -1213,7 +1302,7 @@ agents:
   # fallback). Operator decides whether to merge, defer, or abort.
   #
   #   - approve  → pr_merger (proceed with squash merge)
-  #   - defer    → pending_review_gate (wait for more input / re-poll)
+  #   - defer    → poll_pr_state_delta (re-enter poll loop; pending signal already live)
   #   - abort    → abort_run
   - name: pr_pre_merge_gate
     type: human_gate
@@ -1234,7 +1323,7 @@ agents:
 
       Choose:
         - **Approve merge** → squash merge proceeds (pr_merger fires `gh pr merge --squash --delete-branch`)
-        - **Defer** → back to pending_review_gate (operator can re-evaluate later)
+        - **Defer** → re-enter poll loop (poll signal already live; workflow waits for next reaction)
         - **Abort** → halt the run cleanly
     options:
       - label: "✅ Approve merge"
@@ -1242,7 +1331,7 @@ agents:
         route: pr_merger
       - label: "⏸️ Defer (back to pending)"
         value: defer
-        route: pending_review_gate
+        route: poll_pr_state_delta
       - label: "🛑 Abort"
         value: abort
         route: abort_run

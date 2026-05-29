@@ -23,9 +23,9 @@
 #      decides whether the implementer needs to revise:
 #        • has_negative_feedback=true  → approvals_policy → revise_counter
 #          → pr_fixer → push commits → back to poll_status.
-#        • has_negative_feedback=false → pending_poll_counter → either the
-#          pending throttle gate (poll cap not reached) or the stuck-review
-#          escalation (cap reached).
+#        • has_negative_feedback=false → notify_pr_pending (emit domain signal)
+#          → poll_pr_state_delta (blocks until reaction or timeout)
+#          → reaction_kind routing (pr_merged, pr_closed, timeout, new_review_*, etc.).
 #
 # ADO terminal signals (encoded in PrPollTerminalRoute.Classify):
 #   - status == "completed"             → already_merged
@@ -63,8 +63,7 @@ workflow:
     single advisory bot review (marker-only — no native approval vote),
     then loops poll → analyze → fix → push until the operator completes,
     abandons, votes -10, or the revise cap fires.
-  version: "2.4.8"
-  entry_point: ado_inputs_validator
+  version: "2.5.0"
   metadata:
     min_polyphony_version: "2.4.8"
   limits:
@@ -72,6 +71,39 @@ workflow:
     # stuck-review gates while human reviewers work; pr_fixer loops are
     # bounded by revise_counter cap, not max_iterations.
     max_iterations: 200
+
+  notifications:
+    namespace: polyphony.ado_pr
+    correlation:
+      - work_item_id
+    types:
+      pr_review_required:
+        version: 1
+        description: ADO PR awaiting human action (vote, complete, comment, or abandon)
+        payload:
+          kind:           {type: string}
+          severity:       {type: string}
+          title:          {type: string}
+          message:        {type: string}
+          cta_url:        {type: string}
+          cta_kind:       {type: string}
+          correlation_id: {type: string}
+          expires_at:     {type: string}
+          disposition:    {type: string}
+          details:        {type: object}
+      pr_ci_attention_required:
+        version: 1
+        description: CI build policy on ADO PR changed to failed — operator should push a fix
+        payload:
+          kind:           {type: string}
+          severity:       {type: string}
+          title:          {type: string}
+          message:        {type: string}
+          cta_url:        {type: string}
+          cta_kind:       {type: string}
+          correlation_id: {type: string}
+          disposition:    {type: string}
+          details:        {type: object}
 
   input:
     pr_number:
@@ -127,6 +159,19 @@ workflow:
         Root work-item id of the run's root. Used by `pr merge-feature-ado`
         to derive the head branch (`feature/{root_id}`). When zero,
         ado_inputs_validator routes to the inputs-missing gate.
+    poll_timeout_seconds:
+      type: integer
+      required: false
+      default: 86400
+      description: >-
+        Seconds before poll_pr_state_delta times out and escalates to
+        stuck_review_gate_policy_router. Default 24 h (86400 s).
+    poll_interval_seconds:
+      type: integer
+      required: false
+      default: 30
+      description: >-
+        Seconds between polls inside Poll-PrStateDelta.ps1. Default 30 s.
 
 tools:
   - filesystem
@@ -530,6 +575,33 @@ agents:
         value: abort
         route: abort_run
 
+  # ── PR review resolved signal ─────────────────────────────────────────
+  #
+  # Emits disposition:resolved on the pr_review_required notification type
+  # so platespinner closes the pending CTA opened by notify_pr_pending.
+  # Fires only on the poll_pr_state_delta pr_merged path.
+  #
+  # TODO(post-upstream-merge): rename type: notification → type: emit.
+  - name: notify_pr_review_resolved
+    type: notification
+    notification: pr_review_required
+    payload:
+      kind: pr_review_required
+      severity: info
+      title: "ADO PR Completed"
+      message: >-
+        ADO PR #{{ workflow.input.pr_number }} on `{{ workflow.input.branch_name }}`
+        was completed. Workflow continuing.
+      cta_url: "{{ poll_status.output.pr_url }}"
+      cta_kind: open_pr
+      correlation_id: "{{ workflow.input.work_item_id }}:pr-review:{{ workflow.input.pr_number }}"
+      disposition: resolved
+      details:
+        pr_number: "{{ workflow.input.pr_number }}"
+        branch_name: "{{ workflow.input.branch_name }}"
+    routes:
+      - to: already_merged_emitter
+
   # ── Already-merged emitter ────────────────────────────────────────────
   #
   # Operator completed the PR through the ADO UI (or it was completed via
@@ -740,7 +812,7 @@ agents:
     routes:
       - to: approvals_policy
         when: "{{ pr_feedback_analyzer.output.has_negative_feedback == true }}"
-      - to: pending_poll_counter
+      - to: notify_pr_pending
 
   # ── Approvals policy resolver ─────────────────────────────────────────
   #
@@ -1072,120 +1144,116 @@ agents:
     routes:
       - to: poll_status
 
-  # ── Pending poll counter (stuck-review timeout MVP) ───────────────────
+  # ── PR pending — emit domain signal ──────────────────────────────────
   #
-  # Increments each time pr_feedback_analyzer concludes there is no
-  # actionable negative feedback. Counter file is keyed by composite
-  # (pr_number + work_item_id) so siblings don't collide.
+  # Emits a pr_review_required domain signal once when the gate opens.
+  # ADO-specific payload includes organization and project.
   #
-  # When the count reaches POLL_CAP (60), routes to
-  # stuck_review_gate_policy_router so the operator can decide whether
-  # to keep waiting, override-approve, or abort. Below the cap, routes
-  # to pending_review_gate_policy_router (the throttle gate) for the
-  # unchanged operator UX in the common case.
-  - name: pending_poll_counter
+  # Replaces: pending_poll_counter + pending_review_gate_policy_router +
+  #           pending_review_gate (all three collapsed per the
+  #           gate-compression-pattern ADR).
+  #
+  # ADO vote mapping reference (for Liszt / Poll-PrStateDelta.ps1):
+  #   +10 Approved / +5 Approved with suggestions → new_review_approved
+  #   -10 Rejected / -5 Waiting for author        → new_review_changes_requested
+  #   PR Completed                                 → pr_merged
+  #   PR Abandoned                                 → pr_closed
+  #
+  # TODO(post-upstream-merge): rename type: notification → type: emit.
+  - name: notify_pr_pending
+    type: notification
+    notification: pr_review_required
+    payload:
+      kind: pr_review_required
+      severity: warning
+      title: "ADO PR Review Required"
+      message: >-
+        ADO PR #{{ workflow.input.pr_number }} on `{{ workflow.input.branch_name }}`
+        is open and awaiting action (vote +5/+10, complete, comment, or abandon)
+        before the workflow continues.
+      cta_url: "{{ poll_status.output.pr_url }}"
+      cta_kind: review_pr
+      correlation_id: "{{ workflow.input.work_item_id }}:pr-review:{{ workflow.input.pr_number }}"
+      expires_at: ""
+      disposition: pending
+      details:
+        pr_number: "{{ workflow.input.pr_number }}"
+        branch_name: "{{ workflow.input.branch_name }}"
+        work_item_id: "{{ workflow.input.work_item_id }}"
+        organization: "{{ workflow.input.organization }}"
+        project: "{{ workflow.input.project }}"
+    routes:
+      - to: poll_pr_state_delta
+
+  # ── PR state delta poll (ADO) ─────────────────────────────────────────
+  #
+  # ADO vote reaction mapping (handled by Poll-PrStateDelta.ps1):
+  #   +10 / +5  → new_review_approved
+  #   -10 / -5  → new_review_changes_requested (routes to pr_fixer via poll_status)
+  #   Completed → pr_merged
+  #   Abandoned → pr_closed
+  #
+  # TODO(AB#3257): add on_error: to: poll_error_gate once conductor RFC
+  #   Phase 2 ships.
+  - name: poll_pr_state_delta
     type: script
-    description: Track pending-review poll count (cap 60 — stuck-review timeout MVP)
+    description: Poll for ADO PR state delta — blocks until reaction or timeout (Poll-PrStateDelta.ps1)
     command: pwsh
     args:
       - "-NoProfile"
-      - "-Command"
-      - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-ado-pr-pending-poll-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}"
-        if (Test-Path $counterFile) {
-            $count = [int](Get-Content $counterFile -Raw) + 1
-        } else {
-            $count = 1
-        }
-        Set-Content $counterFile $count
-        $cap = 60
-        @{ count = $count; cap = $cap; cap_reached = ($count -ge $cap) } | ConvertTo-Json
+      - "-File"
+      - "{{ workflow.dir }}/../scripts/Poll-PrStateDelta.ps1"
+      - "-Platform"
+      - "ado"
+      - "-PrUrl"
+      - "{{ poll_status.output.pr_url }}"
+      - "-TimeoutSeconds"
+      - "{{ workflow.input.poll_timeout_seconds | default(86400) }}"
+      - "-PollIntervalSeconds"
+      - "{{ workflow.input.poll_interval_seconds | default(30) }}"
     routes:
+      - to: poll_pr_state_delta
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'initial_observation' }}"
+      - to: notify_pr_review_resolved
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'pr_merged' }}"
+      - to: closed_unmerged_emitter
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'pr_closed' }}"
       - to: stuck_review_gate_policy_router
-        when: "{{ pending_poll_counter.output.cap_reached == true }}"
-      - to: pending_review_gate_policy_router
-        when: "{{ pending_poll_counter.output.cap_reached == false }}"
-      # M10 defensive catch-all (#222): if cap_reached evaluates to
-      # anything other than true/false (counter script crash, malformed
-      # JSON, template eval edge case), fail safe to the stuck-review
-      # gate rather than re-entering the polling cycle via the policy
-      # router's skip-mode bypass.
-      - to: stuck_review_gate_policy_router
-
-  # ── Pending-review gate policy router ─────────────────────────────────
-  #
-  # Reads `policy.unattended.review_wait_mode`. Three modes:
-  #   • `wait` (default) → fall through to the human throttle gate.
-  #   • `skip`           → bypass the gate, route directly back to re-poll.
-  #   • `auto`           → REJECTED. The old `auto` mode self-approved via
-  #                        magic comments; that mechanism is gone in the
-  #                        sentiment-driven loop. Treated as a hard
-  #                        misconfiguration so it surfaces immediately
-  #                        instead of silently degrading to `skip`.
-  - name: pending_review_gate_policy_router
-    type: script
-    description: Bypass pending_review_gate when policy.unattended.review_wait_mode is skip; reject auto.
-    command: polyphony
-    args:
-      - "policy"
-      - "load"
-    routes:
-      - to: abort_auto_mode_unsupported
-        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'auto' }}"
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'timeout' }}"
+      # Q3 Option C: CI build policy failed → emit attention + re-poll.
+      - to: notify_pr_ci_attention
+        when: "{{ poll_pr_state_delta.output.reaction_kind == 'ci_status_changed' and poll_pr_state_delta.output.delta_details.new == 'failed' }}"
+      # new_review_*, new_commit, new_comment, ci_status_changed (non-failed), catch-all:
       - to: poll_status
-        when: "{{ pending_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
-      - to: pending_review_gate
 
-  # ── Pending-review gate (throttle in the sentiment-driven loop) ───────
+  # ── CI attention notification (ADO) ──────────────────────────────────
   #
-  # Reached when pr_feedback_analyzer found no actionable negative
-  # feedback this poll. The PR is open and awaiting an explicit positive
-  # signal (operator completes, +5 or +10 vote) or a negative one
-  # (operator abandons, -10 vote, or new comments that change the
-  # analyzer's verdict next poll).
-  - name: pending_review_gate
-    type: human_gate
-    prompt: |
-      ## ⏳ PR Awaiting Action — ADO PR #{{ workflow.input.pr_number }}
+  # Emits pr_ci_attention_required when Poll-PrStateDelta detects the ADO
+  # build policy has flipped to failed. Routes back to poll_pr_state_delta.
+  #
+  # TODO(post-upstream-merge): rename type: notification → type: emit.
+  - name: notify_pr_ci_attention
+    type: notification
+    notification: pr_ci_attention_required
+    payload:
+      kind: pr_ci_attention_required
+      severity: warning
+      title: "CI Build Policy Failed on ADO PR"
+      message: >-
+        CI build policy on ADO PR #{{ workflow.input.pr_number }} changed
+        to failed. Push a fix commit to restart the build policy.
+      cta_url: "{{ poll_status.output.pr_url }}"
+      cta_kind: open_pr
+      correlation_id: "{{ workflow.input.work_item_id }}:pr-ci:{{ workflow.input.pr_number }}"
+      disposition: pending
+      details:
+        pr_number: "{{ workflow.input.pr_number }}"
+        branch_name: "{{ workflow.input.branch_name }}"
+        old_ci_status: "{{ poll_pr_state_delta.output.delta_details.prev | default('unknown') }}"
+        new_ci_status: "{{ poll_pr_state_delta.output.delta_details.new | default('failed') }}"
+    routes:
+      - to: poll_pr_state_delta
 
-      The PR is open. The polyphony bot reviewer has posted (see the
-      marker comment thread on the PR) and the sentiment-driven analyzer
-      did NOT find actionable negative feedback this poll.
-
-      - **PR:** {{ poll_status.output.pr_url }}
-      - **Branch:** `{{ workflow.input.branch_name }}`
-
-      To proceed, take one of these actions in ADO, then click
-      **Continue** to re-poll:
-
-      - **Complete the PR** — workflow detects already_merged next poll.
-      - **Vote +5 or +10** — workflow detects merge_now next poll
-        (assuming no unresolved blocking threads or -5/-10 votes).
-      - **Vote -10 (reject)** — workflow exits this PR leg as unmerged
-        on the next poll. The parent feature-pr.yaml decides whether to
-        accept the abandonment or run its remediation cycle.
-      - **Add a comment requesting changes** — the analyzer reads the
-        comment on the next poll and routes pr_fixer back to revise.
-      - **Abandon the PR** — workflow exits this PR leg as unmerged on
-        the next poll.
-
-      ---
-
-      Choose an action:
-      - **Continue** — re-poll the PR for the updated state
-      - **I manually verified merge** — rare; covers PRs completed
-        externally between poll and decision. Emits merged=true.
-      - **Abort** — halt the entire run (terminates the conductor process)
-    options:
-      - label: "🔄 Continue"
-        value: continue
-        route: poll_status
-      - label: "✅ I manually verified merge"
-        value: verified_merge
-        route: treat_as_merged_emitter
-      - label: "🛑 Abort"
-        value: abort
-        route: abort_run
 
   # ── Stuck-review gate policy router ───────────────────────────────────
   #
@@ -1207,24 +1275,24 @@ agents:
         when: "{{ stuck_review_gate_policy_router.output.unattended.review_wait_mode == 'skip' }}"
       - to: stuck_review_gate
 
-  # ── Stuck-review gate (poll-cap escalation) ───────────────────────────
+  # ── Stuck-review gate (timeout escalation) ───────────────────────────
   #
-  # Fires when pending_poll_counter hits POLL_CAP (60). Reviewers have
-  # gone silent — surface that fact rather than letting the operator keep
-  # clicking "Continue" on pending_review_gate forever.
+  # Fires when poll_pr_state_delta hits the TimeoutSeconds budget with no
+  # reaction. Reviewers have gone silent — operator decides whether to
+  # keep waiting, override-approve, or abort.
   - name: stuck_review_gate
     type: human_gate
-    description: ADO PR review pending past poll cap — operator decides wait, override, or abort.
+    description: ADO PR review pending past poll timeout — operator decides wait, override, or abort.
     prompt: |
-      ## ⏰ Stuck Review — Poll Cap Reached for ADO PR #{{ workflow.input.pr_number }}
+      ## ⏰ Stuck Review — Poll Timeout for ADO PR #{{ workflow.input.pr_number }}
 
-      The PR has been awaiting reviewer action for
-      **{{ pending_poll_counter.output.count }}** polls
-      (cap: **{{ pending_poll_counter.output.cap }}**).
+      The PR has been awaiting reviewer action for the full poll timeout
+      period ({{ workflow.input.poll_timeout_seconds | default(86400) }} s)
+      with no reaction detected.
 
       Reviewers may be unavailable or unblocked but silent. You can keep
-      waiting (the counter resets), bypass review and merge anyway, or
-      abort.
+      waiting (re-enters the poll loop), bypass review and merge anyway,
+      or abort.
 
       - **PR:** {{ poll_status.output.pr_url }}
       - **Branch:** `{{ workflow.input.branch_name }}`
@@ -1232,7 +1300,7 @@ agents:
       ---
 
       Choose an action:
-      - **Continue waiting** — reset the poll counter and return to the pending-review gate
+      - **Continue waiting** — re-enter the poll loop with a fresh budget
       - **Override approved** — bypass review and proceed to merge via `pr merge-feature-ado`
       - **Abort** — halt the entire run (terminates the conductor process)
     options:
@@ -1248,23 +1316,20 @@ agents:
 
   # ── Stuck-review reset ────────────────────────────────────────────────
   #
-  # Zeros the pending poll counter file when the operator chose
-  # "Continue waiting" at stuck_review_gate, then routes back to
-  # pending_review_gate_policy_router so the operator gets the regular
-  # pending UX again with a fresh cap budget.
+  # Re-enters the poll loop after the operator chose "Continue waiting"
+  # at stuck_review_gate. Routes directly to poll_pr_state_delta
+  # (pending_review_gate_policy_router is gone post-compression).
   - name: stuck_review_reset
     type: script
-    description: Reset pending-poll counter after stuck-review continue-waiting choice
+    description: Re-enter poll loop after stuck-review continue-waiting choice
     command: pwsh
     args:
       - "-NoProfile"
       - "-Command"
-      - |
-        $counterFile = Join-Path ([System.IO.Path]::GetTempPath()) "conductor-ado-pr-pending-poll-{{ workflow.input.work_item_id }}-{{ workflow.input.pr_number }}"
-        Set-Content $counterFile 0
-        @{ count = 0; reset = $true } | ConvertTo-Json
+      - >-
+        @{ reset = $true } | ConvertTo-Json -Compress
     routes:
-      - to: pending_review_gate_policy_router
+      - to: poll_pr_state_delta
 
   # ── Pre-merge policy router (AB#3184 + AB#3217 warning-stamp split) ───
   #
@@ -1345,7 +1410,7 @@ agents:
   # fallback). Operator decides whether to merge, defer, or abort.
   #
   #   - approve  → pr_merger (proceed with noFastForward merge)
-  #   - defer    → pending_review_gate (wait for more input / re-poll)
+  #   - defer    → poll_pr_state_delta (re-enter poll loop; pending signal already live)
   #   - abort    → abort_run
   - name: pr_pre_merge_gate
     type: human_gate
@@ -1366,7 +1431,7 @@ agents:
 
       Choose:
         - **Approve merge** → pr_merger fires `polyphony pr merge-feature-ado`
-        - **Defer** → back to pending_review_gate (operator can re-evaluate later)
+        - **Defer** → re-enter poll loop (poll signal already live; workflow waits for next reaction)
         - **Abort** → halt the run cleanly
     options:
       - label: "✅ Approve merge"
@@ -1374,7 +1439,7 @@ agents:
         route: pr_merger
       - label: "⏸️ Defer (back to pending)"
         value: defer
-        route: pending_review_gate
+        route: poll_pr_state_delta
       - label: "🛑 Abort"
         value: abort
         route: abort_run
