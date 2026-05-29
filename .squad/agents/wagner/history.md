@@ -14,7 +14,9 @@
 
 ---
 
-### 2026-05-29T11:27:44-07:00 — Liszt patched 5 bugs on PR #547
+### 2026-05-29T13:41:04-07:00 — PR #547 merged to main (eab39cb)
+
+Gate compression PR merged with Liszt's Poll-PrStateDelta bug fixes.
 
 **Status:** ✅ FIXED — PR #547 Unblocked
 

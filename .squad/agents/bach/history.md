@@ -31,7 +31,7 @@
 **Status:** Completed comprehensive design review + 3 ADR proposals
 
 **Session round outcomes:**
-- ✅ Designed domain signal envelope schema (kind, severity, cta_*, correlation_id, expires_at, disposition, details)
+- ✅ **2026-05-29T13:41:04-07:00:** Seed-manifest ADR (PR #546) merged to polyphony main at 619ce7c.
 - ✅ Wrote gate-compression headline: `human_gate` → `(notification + script-poll-loop)` for observable conditions
 - ✅ Identified 3 critical seams (polyphony verb error emission, notifications→platespinner, conductor feature gaps)
 - ✅ Proposed 3 ADRs: polyphony-verb-error-boundary (P0), domain-signal-envelope (P1), gate-compression-pattern (P1)
@@ -51,6 +51,35 @@
 - ✅ Platespinner handoff doc captured
 - ✅ User vocabulary directive (domain signal + emit:) recorded
 - Ready for downstream implementation once Daniel approves
+
+## Learnings — 2026-05-29
+
+### Bach (Architect) — Seeding Plan Architecture (PR #535 Q1)
+
+- ✅ Responded to Daniel's Q1 directive on durable seed state across retries
+- ✅ Proposed "seed manifest" concept (NOT "seeding plan") — a frozen record of planner intent persisted at `.polyphony/state/{rootId}/seed-manifest.json`
+- ✅ Defined reconciliation primitive: type + parent linkage + title-normalized hash
+- ✅ Recommended new ADR (`seed-manifest-as-durable-state.md`), not extending existing ADRs
+- ✅ PR #535 survives as rebase — gate removal correct, manifest-aware seeder added
+- Key architectural stance: manifest is "desired state" (like Terraform plan), ADO is "actual state." Reconciliation is the diff. No new subsystem — just a verb output file.
+- Push-back delivered: the concept is valid but must stay thin (one file, 5 fields, replaced on replan). If it grows storage/versioning/queryability, it's over-engineered.
+
+### Bach (Architect) — ADR Delivery: seed-manifest-as-durable-state
+
+- ✅ ADR written to `polyphony/docs/decisions/seed-manifest-as-durable-state.md`
+- ✅ Synthesized four-lens debate: Bach (architecture), Mahler (conductor engine), Mozart (verb error circuit), Sibelius (platform reality), plus Beethoven's terminal semantics analysis
+- ✅ Key design decisions encoded as accepted:
+  - Reconciliation primitive: `polyphony:plan-child-id` marker (NOT title hash — Sibelius confirmed the marker embeds atomically with creation and `BuildIndexes` already uses it)
+  - `plan_generation` is a rich chain object (id + parent + cause + created_at), not a monotonic counter — tracks why a generation was created and enables orphan detection
+  - Items carry `introduced_in: "gen-N"` for orphan detection at renegotiation time
+  - Retry circuit lives INSIDE the seeding script (Mahler confirmed `max_attempts` not available for `type: script` nodes)
+  - 3 attempts on codes 3 (twig unavailable) and 5 (ADO unreachable including 401/403)
+  - Code 1 = unclassified crash = permanent, no retry
+  - New conductor terminal `seeding_blocked` (NOT `workflow_abandoned` — Beethoven's analysis confirmed all 4 routes into `workflow_abandoned` are operator-volitional; infra exhaustion is not)
+  - GitHub out of scope; no `platform` field on manifest
+  - PR #535 survives as rebase: gate removal correct, manifest + reconciliation added on top
+- Title hash approach (Bach's prior pass) superseded by Sibelius's stronger finding: the existing marker primitive handles cross-run reconciliation without a new comparison surface
+- 5 open questions documented for team follow-up: orphan disposition workflow, `seeding_blocked` re-trigger path (Wagner), manifest schema version field, seeder idempotency across renegotiation, `seeding_complete` kind vocabulary addition to domain-signal-envelope ADR
 
 ## Learnings — 2026-05-28 (Round 2)
 

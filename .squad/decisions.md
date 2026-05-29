@@ -3478,6 +3478,33 @@ The wildcard `repos/*/pulls/*` also matches the reviews sub-path (`pulls/42/revi
 ---
 
 ### 2026-05-29T11:27:44-07:00: Poll-PrStateDelta bugs — patched on PR #547 branch
+
+### 2026-05-29T13:41:04-07:00: PR #546 + #547 merged to PolyphonyRequiem/polyphony main
+**By:** Reich (Git/Worktree Seam)
+
+**PR #546 — seed-manifest ADR**
+- Style: squash (single conceptual change, clean scope)
+- Merge commit SHA: 619ce7c
+- Title: docs(adr): seed manifest as durable per-root state
+- Branch deleted: yes
+
+**PR #547 — PR-gate compression + helper script + bug fixes**
+- Style: merge (preserves Wagner's main refactor + Liszt's bug-fix commits as separate history)
+- Merge commit SHA: eab39cb
+- Title: Merge pull request #547 from PolyphonyRequiem/refactor/pr-gate-compression-v2
+- Included: d5b37d8 (Wagner's refactor) + b37d85f (Liszt's Poll-PrStateDelta fix)
+- Branch deleted: yes (remote only; local worktree constraint prevented cleanup)
+
+**Repo merge convention observed:**
+- Dominant pattern: **squash** for single-concept PRs (PRs #520, #519, #518)
+- Secondary pattern: **merge commit** for multi-commit history (PR #517 example)
+- Applied PR #546 as squash, PR #547 as merge to preserve multi-author attribution
+
+**Post-merge main HEAD:** eab39cb
+
+**Note:** PR #547 had CI status UNSTABLE (FAILURE in earlier build-and-test run), but Daniel explicitly authorized both merges. Post-merge CI check deferred to GitHub's workflow automation.
+
+**Follow-ups:** None required — both PRs merged cleanly, branches deleted (remote), local worktree cleanup skipped due to constraints but non-blocking.
 **By:** Liszt (PowerShell Expert)
 **Branch:** refactor/pr-gate-compression-v2
 **Commit SHA:** b37d85f5770713639f949f7febffeb68a6156f20
