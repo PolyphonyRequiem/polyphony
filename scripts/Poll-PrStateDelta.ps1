@@ -154,7 +154,7 @@ function Invoke-AssertCli {
     if ($Result.TimedOut) {
         throw "NETWORK:$Context timed out. $combined"
     }
-    if (-not $Result.Exe -and $Result.ExitCode -eq -1 -and $combined -match 'not found on PATH') {
+    if ($Result.ExitCode -eq -1 -and $combined -match 'not found on PATH') {
         throw "NETWORK:$Context — $combined"
     }
     if ($combined -match '(?i)(401|unauthorized|authentication|credentials|auth\s+fail|token.*invalid|invalid.*token)') {
@@ -460,7 +460,7 @@ function Find-AdoDeltas {
 }
 
 function Select-HighestPrecedenceDelta {
-    param([Parameter(Mandatory)][System.Collections.Generic.List[hashtable]]$Deltas)
+    param([Parameter(Mandatory)]$Deltas)
 
     $sorted = @($Deltas | Sort-Object -Property {
         $idx = [Array]::IndexOf($REACTION_PRECEDENCE, $_.kind)
@@ -641,11 +641,11 @@ try {
             Get-AdoSnapshot -Coords $coords
         }
 
-        $deltas = if ($Platform -eq 'github') {
+        $deltas = @(if ($Platform -eq 'github') {
             Find-GitHubDeltas -Watermark $watermark -Snapshot $snapshot
         } else {
             Find-AdoDeltas -Watermark $watermark -Snapshot $snapshot
-        }
+        })
 
         if ($deltas.Count -gt 0) {
             $primary = Select-HighestPrecedenceDelta -Deltas $deltas

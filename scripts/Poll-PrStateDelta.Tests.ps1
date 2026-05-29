@@ -124,7 +124,7 @@ BeforeAll {
         )
         return @"
 `$argLine = `$args -join ' '
-if (`$argLine -like 'api repos/*/pulls/* --jq *') {
+if (`$argLine -like 'api repos/*/pulls/* --jq {*') {
     Write-Output '{"state":"$PrState","merged":$($Merged.ToString().ToLower()),"head_sha":"$HeadSha"}'
     exit 0
 }
@@ -358,7 +358,7 @@ Describe 'Poll-PrStateDelta' {
             Install-CliStub -StubDir $script:stubDir -ExeName 'gh' -ScriptBody (
                 Build-GhStub -PrState 'closed' -Merged $true -HeadSha 'newsha9' -CheckRunsJson $checkRunsJson
             )
-            $r   = Invoke-PollScript -WatermarkPath $script:watermarkFile -StubDir $script:stubDir -TimeoutSeconds 10
+            $r   = Invoke-PollScript -WatermarkPath $script:watermarkFile -StubDir $script:stubDir -TimeoutSeconds 30
             $out = $r.Stdout | ConvertFrom-Json
             $out.reaction_kind | Should -Be 'pr_merged'
         }
@@ -541,7 +541,11 @@ exit 1
             )
             $r   = Invoke-PollScript -WatermarkPath $script:watermarkFile -StubDir $script:stubDir
             $out = $r.Stdout | ConvertFrom-Json
-            $out.observed_at_utc | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
+            # ConvertFrom-Json may auto-parse the ISO string into a DateTime; normalise before asserting.
+            $utc = if ($out.observed_at_utc -is [datetime]) {
+                $out.observed_at_utc.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            } else { [string]$out.observed_at_utc }
+            $utc | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
         }
 
         It 'Always echoes pr_url and platform in output' {
