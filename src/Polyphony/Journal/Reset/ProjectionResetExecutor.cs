@@ -9,7 +9,8 @@ public sealed class ProjectionResetExecutor(
     JournalDriftAnalyzer driftAnalyzer,
     ProjectionResetCoverageAnalyzer coverageAnalyzer,
     ProjectionResetPlanner planner,
-    IEnumerable<IResourceDeleter> deleters)
+    IEnumerable<IResourceDeleter> deleters,
+    IRunWatermarkStamper watermarkStamper)
 {
     private readonly IJournalStore _store = store;
     private readonly JournalDriftAnalyzer _driftAnalyzer = driftAnalyzer;
@@ -17,6 +18,7 @@ public sealed class ProjectionResetExecutor(
     private readonly ProjectionResetPlanner _planner = planner;
     private readonly IReadOnlyDictionary<string, IResourceDeleter> _deleters = deleters
         .ToDictionary(deleter => deleter.Kind, StringComparer.Ordinal);
+    private readonly IRunWatermarkStamper _watermarkStamper = watermarkStamper;
 
     public async Task<ResetRootResult> ExecuteAsync(
         int rootId,
@@ -102,6 +104,20 @@ public sealed class ProjectionResetExecutor(
                     if (string.Equals(phase.Name, "worktrees", StringComparison.Ordinal))
                     {
                         CleanupEmptyWorktreeRoots(phaseTargets.Select(target => target.Resource.Id));
+                    }
+
+                    // State phase: after deleting any journal-observed
+                    // watermark targets, stamp a fresh watermark so the
+                    // next dispatch's observers can discriminate prior-run
+                    // PRs from current-run PRs. See
+                    // docs/decisions/run-reset.md — reset is the sole
+                    // writer of polyphony:run-started-at. A failure here
+                    // propagates to the outer catch, which records "state"
+                    // in stepsFailed (state is the last phase, so the
+                    // post-loop dispatch finds it correctly).
+                    if (string.Equals(phase.Name, "state", StringComparison.Ordinal))
+                    {
+                        await _watermarkStamper.StampAsync(rootId, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
                     }
                 }
 

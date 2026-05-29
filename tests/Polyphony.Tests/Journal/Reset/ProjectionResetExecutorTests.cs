@@ -23,7 +23,8 @@ public sealed class ProjectionResetExecutorTests
             new JournalDriftAnalyzer([]),
             new ProjectionResetCoverageAnalyzer([], []),
             new ProjectionResetPlanner(),
-            []);
+            [],
+            new FakeRunWatermarkStamper());
 
         var result = await executor.ExecuteAsync(100, new ProjectionResetExecutionOptions { Execute = true }, CancellationToken.None);
 
@@ -58,7 +59,8 @@ public sealed class ProjectionResetExecutorTests
             new JournalDriftAnalyzer([observer]),
             new ProjectionResetCoverageAnalyzer([observer], [deleter]),
             new ProjectionResetPlanner(),
-            [deleter]);
+            [deleter],
+            new FakeRunWatermarkStamper());
 
         var result = await executor.ExecuteAsync(100, new ProjectionResetExecutionOptions { Execute = true }, CancellationToken.None);
 
@@ -94,7 +96,8 @@ public sealed class ProjectionResetExecutorTests
             new JournalDriftAnalyzer([observer]),
             new ProjectionResetCoverageAnalyzer([observer], [deleter]),
             new ProjectionResetPlanner(),
-            [deleter]);
+            [deleter],
+            new FakeRunWatermarkStamper());
 
         var result = await executor.ExecuteAsync(100, new ProjectionResetExecutionOptions { Execute = true }, CancellationToken.None);
 
@@ -105,6 +108,141 @@ public sealed class ProjectionResetExecutorTests
         result.RemainingResetTargets.ShouldBeEmpty();
         deleter.DeleteCount.ShouldBe(1);
         world.Exists.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ExecuteMode_StampsWatermarkExactlyOnce()
+    {
+        var world = new MutableBranchWorld(exists: true, matchesExpected: true, actualState: "abc123");
+        var observer = new MutableBranchObserver(world);
+        var deleter = new MutableBranchDeleter(world);
+        var stamper = new FakeRunWatermarkStamper();
+        JournalEntry[] entries =
+        [
+            Entry(
+                id: 1,
+                startedAt: 1_000,
+                action: "branch_ensure_feature",
+                effects:
+                [
+                    Effect(ResourceKind.GitBranch, "feature/100", ResourceIntent.EnsurePresent, ResourceMutation.CreatedNow),
+                ]),
+        ];
+        var executor = new ProjectionResetExecutor(
+            new FakeJournalStore(entries),
+            new JournalDriftAnalyzer([observer]),
+            new ProjectionResetCoverageAnalyzer([observer], [deleter]),
+            new ProjectionResetPlanner(),
+            [deleter],
+            stamper);
+
+        var result = await executor.ExecuteAsync(100, new ProjectionResetExecutionOptions { Execute = true }, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.StepsCompleted.ShouldContain("state");
+        stamper.StampCount.ShouldBe(1);
+        stamper.StampedRootIds.ShouldBe([100]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DryRun_DoesNotStampWatermark()
+    {
+        var world = new MutableBranchWorld(exists: true, matchesExpected: true, actualState: "abc123");
+        var observer = new MutableBranchObserver(world);
+        var deleter = new MutableBranchDeleter(world);
+        var stamper = new FakeRunWatermarkStamper();
+        JournalEntry[] entries =
+        [
+            Entry(
+                id: 1,
+                startedAt: 1_000,
+                action: "branch_ensure_feature",
+                effects:
+                [
+                    Effect(ResourceKind.GitBranch, "feature/100", ResourceIntent.EnsurePresent, ResourceMutation.CreatedNow),
+                ]),
+        ];
+        var executor = new ProjectionResetExecutor(
+            new FakeJournalStore(entries),
+            new JournalDriftAnalyzer([observer]),
+            new ProjectionResetCoverageAnalyzer([observer], [deleter]),
+            new ProjectionResetPlanner(),
+            [deleter],
+            stamper);
+
+        var result = await executor.ExecuteAsync(100, new ProjectionResetExecutionOptions { Execute = false }, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        stamper.StampCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SkipState_DoesNotStampWatermark()
+    {
+        var world = new MutableBranchWorld(exists: true, matchesExpected: true, actualState: "abc123");
+        var observer = new MutableBranchObserver(world);
+        var deleter = new MutableBranchDeleter(world);
+        var stamper = new FakeRunWatermarkStamper();
+        JournalEntry[] entries =
+        [
+            Entry(
+                id: 1,
+                startedAt: 1_000,
+                action: "branch_ensure_feature",
+                effects:
+                [
+                    Effect(ResourceKind.GitBranch, "feature/100", ResourceIntent.EnsurePresent, ResourceMutation.CreatedNow),
+                ]),
+        ];
+        var executor = new ProjectionResetExecutor(
+            new FakeJournalStore(entries),
+            new JournalDriftAnalyzer([observer]),
+            new ProjectionResetCoverageAnalyzer([observer], [deleter]),
+            new ProjectionResetPlanner(),
+            [deleter],
+            stamper);
+
+        var result = await executor.ExecuteAsync(100, new ProjectionResetExecutionOptions { Execute = true, SkipState = true }, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.StateSkipped.ShouldBeTrue();
+        result.StepsCompleted.ShouldNotContain("state");
+        stamper.StampCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StamperThrows_MarksStatePhaseFailed()
+    {
+        var world = new MutableBranchWorld(exists: true, matchesExpected: true, actualState: "abc123");
+        var observer = new MutableBranchObserver(world);
+        var deleter = new MutableBranchDeleter(world);
+        var stamper = new FakeRunWatermarkStamper { ThrowOnStamp = new InvalidOperationException("twig stamp boom") };
+        JournalEntry[] entries =
+        [
+            Entry(
+                id: 1,
+                startedAt: 1_000,
+                action: "branch_ensure_feature",
+                effects:
+                [
+                    Effect(ResourceKind.GitBranch, "feature/100", ResourceIntent.EnsurePresent, ResourceMutation.CreatedNow),
+                ]),
+        ];
+        var executor = new ProjectionResetExecutor(
+            new FakeJournalStore(entries),
+            new JournalDriftAnalyzer([observer]),
+            new ProjectionResetCoverageAnalyzer([observer], [deleter]),
+            new ProjectionResetPlanner(),
+            [deleter],
+            stamper);
+
+        var result = await executor.ExecuteAsync(100, new ProjectionResetExecutionOptions { Execute = true }, CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.StepsCompleted.ShouldNotContain("state");
+        result.StepsFailed.ShouldContain("state");
+        result.Error.ShouldNotBeNull();
+        result.Error.ShouldContain("twig stamp boom");
     }
 
     private static JournalEntry Entry(long id, long startedAt, string action, IReadOnlyList<JournalResourceEffect>? effects = null)
@@ -145,6 +283,24 @@ public sealed class ProjectionResetExecutorTests
         public Task RecordEndAsync(long actionId, JournalOutcome outcome, string? errorCode, string? errorMessage, string? payloadJson, IReadOnlyList<JournalResourceEffect>? effects, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<JournalEntry>> QueryAsync(JournalQuery query, CancellationToken ct) => Task.FromResult(entries);
         public Task ExportAsync(string destinationPath, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    private sealed class FakeRunWatermarkStamper : IRunWatermarkStamper
+    {
+        public int StampCount { get; private set; }
+        public List<int> StampedRootIds { get; } = [];
+        public Exception? ThrowOnStamp { get; set; }
+
+        public Task StampAsync(int rootId, DateTimeOffset utcNow, CancellationToken ct = default)
+        {
+            StampCount++;
+            StampedRootIds.Add(rootId);
+            if (ThrowOnStamp is not null)
+            {
+                throw ThrowOnStamp;
+            }
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class MutableBranchWorld(bool exists, bool matchesExpected, string actualState)

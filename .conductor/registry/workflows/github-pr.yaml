@@ -491,9 +491,14 @@ agents:
   #      marker → bot reviewer (probably pr_initial_reviewer). Only
   #      treat items under the `**Blocking concerns**` section as
   #      negative; ignore everything else in the bot's body.
-  #   2. Comment author matches the PR author → exclude (PR author
-  #      narrating their own work doesn't count as feedback to themselves).
-  #   3. Otherwise → human reviewer. Use natural-language judgement.
+  #   2. Otherwise → human reviewer. Use natural-language judgement,
+  #      regardless of whether the comment author matches the PR
+  #      author identity. Polyphony PRs are agent-authored under the
+  #      operator's PAT, so author-identity equality is NOT a valid
+  #      proxy for bot-vs-human — the marker is. Self-approval /
+  #      self-changes-requested is a platform branch-protection
+  #      concern, not the analyzer's. See
+  #      docs/decisions/pr-feedback-identity-classification.md.
   #
   # Output digest contract: `feedback_digest` is a stable hash of
   # (comment ids + thread ids + vote tuples + body sha) of everything
@@ -563,23 +568,25 @@ agents:
          marker-posting agent). Only treat items under the `**Blocking
          concerns**` section as negative; ignore everything else in
          the bot's body.
-      2. Else if `author == PR author identity` → **author self-comment**.
-         Exclude entirely (the PR author narrating their own work is
-         not feedback to themselves).
-      3. Else → **human reviewer**. Use natural-language judgement of
+      2. Else → **human reviewer**. Use natural-language judgement of
          the comment's sentiment and any embedded code-review concerns.
+         **Do NOT compare `author` against the PR author identity** —
+         polyphony PRs are agent-authored under the operator's PAT, so
+         the operator's own comments on the PR are valid human-in-the-
+         loop interventions and must be treated as feedback.
 
-      For reviewer **votes**: a `changes_requested` vote from a non-
-      author reviewer counts as negative feedback regardless of any
-      explanatory comment. An `approved` vote with no unresolved
-      threads was already terminated by the deterministic classifier —
-      if you see it here it means the classifier returned `none` due
-      to mixed signals (e.g. approved AND unresolved threads), so the
-      threads still win.
+      For reviewer **votes**: a `changes_requested` vote counts as
+      negative feedback regardless of who cast it (including the PR
+      author themselves — self-approval / self-changes-requested is
+      a platform branch-protection concern, not yours). An `approved`
+      vote with no unresolved threads was already terminated by the
+      deterministic classifier — if you see it here it means the
+      classifier returned `none` due to mixed signals (e.g. approved
+      AND unresolved threads), so the threads still win.
 
       Unresolved threads (`is_resolved == false && is_outdated != true`)
-      that contain at least one in-scope (non-author) comment count as
-      negative feedback even if the comment body is short.
+      that contain at least one non-bot comment count as negative
+      feedback even if the comment body is short.
 
       ## Output
 
