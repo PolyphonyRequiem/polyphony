@@ -3361,3 +3361,116 @@ and open the PR.
 | 3 | Run `Poll-PrStateDelta.Tests.ps1` in CI pipeline | Follow-up test PR |
 | 4 | Thread `poll_timeout_seconds`/`poll_interval_seconds` through `feature-pr.yaml` + `implement-merge-group.yaml` callers | Optional — defaults are functional |
 | 5 | Liszt to verify WatermarkPath optional-default patch matches intended behaviour | Small review task |
+
+---
+
+### 2026-05-29T11:27:44-07:00: AB#3257 collision check
+
+**By:** Sibelius (Twig/ADO Seam)
+
+**What:** No collision — AB#3257 is the on_error retrofit (Wagner correct); Beethoven's abandoned_on_error is a Phase 2 scoping note, not a claim on the same item.
+
+---
+
+## ADO Record
+
+**ID:** 3257  
+**Title:** Failure-mode gate elimination — migrate ~40 error-recovery gates to conductor on_error  
+**State:** To Do  
+**Parent:** #3253 (Polyphony structural rationalization)  
+**Assigned:** Daniel Green  
+**Tags:** twig
+
+**Short description:** Migrate ~40 human error-recovery gates (deterministic retry/abort routing) out of human_gate nodes and into conductor's `on_error:` declarations. Blocked on conductor on_error work; tracked for visibility.
+
+---
+
+## Wagner's usage (PR #547)
+
+**Context:** PR #547 implements gate-compression pattern. Two `pending_review_gate` nodes replaced with emit + script-poll pattern (`Poll-PrStateDelta.ps1`).
+
+**Quote:** "on_error: → poll_error_gate is deferred to **AB#3257** (conductor RFC Phase 2 — `on_error:` in routes not yet shipped in v0.1.18)."
+
+**Location:** PR body, under "Script: `Poll-PrStateDelta.ps1`" section, and in "Open follow-ups" checklist item.
+
+**Usage:** Flags that the new `poll_pr_state_delta` node's error handling should attach an `on_error: to: poll_error_gate` decorator once conductor Phase 2 ships. This is a **follow-up retrofit**, not part of the immediate PR merge.
+
+---
+
+## Beethoven's earlier usage
+
+**Context:** Mission Keeper reviewed gate dispositions (PR #535) and conducted workflow_abandoned analysis.
+
+**Quote 1:** "Deterministic error handling is wasting human attention... Fix: migrate all 19 gates to conductor on_error declarations per the AB#3257 brief" — this cites AB#3257 as the **migration brief** (same as Wagner).
+
+**Quote 2:** "**Recommendation:** When AB#3257 error-handling retrofit is planned, consider splitting Route D into separate `abandoned_on_error` terminal." — this is a **future scoping note** attached to AB#3257 planning, not a parallel claim on the same item.
+
+**Location:** `.squad/decisions.md` (multiple cites) and `.squad/agents/beethoven/history.md` (workflow_abandoned analysis section).
+
+**Usage:** Both quotes treat AB#3257 as the umbrella epic for error-gate refactoring. The "abandoned_on_error" recommendation is a **Phase 2 design option** within that epic (if the error-gate retrofit is approved, consider adding a new terminal state to distinguish "operator abandonment" from "error then no-retry"). Not a parallel work item.
+
+---
+
+## Verdict
+
+**(c) AB#3257 covers BOTH legitimately — no conflict.**
+
+Wagner's immediate follow-up (on_error retrofit for `poll_pr_state_delta`) and Beethoven's Phase 2 scoping note (abandoned_on_error terminal) are both aspects of the **same epic**. Wagner is planning the retrofit mechanics; Beethoven is planning one design option that might land later within that epic.
+
+The item is correctly scoped as a high-level tracker for the entire error-gate migration family. No collision detected.
+
+---
+
+## Recommended action for Daniel
+
+✅ **Merge PR #547 as drafted.** The AB#3257 follow-up (`on_error: auto-abort (AB#3257...)` comments in `poll_pr_state_delta`) is correctly deferred and flagged. Beethoven's Phase 2 scoping note (split abandoned_on_error terminal) remains a candidate decision for when the retrofit is planned — no action needed in this PR. Both uses of AB#3257 are aligned and non-blocking to the current merge.
+
+---
+
+### 2026-05-29T11:27:44-07:00: Poll-PrStateDelta.Tests.ps1 — local verification on PR #547 branch
+
+**By:** Liszt (PowerShell Expert)
+
+**Branch tested:** refactor/pr-gate-compression-v2
+
+**Polyphony commit SHA at test:** d5b37d89113b79965e6e8f803bdd301bbc1f4bbd
+
+**Result:** FAIL — 31 tests discovered, 8 passed, 22 failed, 1 skipped
+
+**Tests summary:**
+
+| Context | Pass | Fail |
+|---|---|---|
+| Initial observation (watermark missing) | 1 (vacuous) | 2 |
+| Reaction kinds — GitHub | 1 (vacuous) | 8 |
+| Precedence | 0 | 3 |
+| Timeout path | 1 (vacuous) | 1 |
+| Bad input — exit 2 | 4 | 0 |
+| Auth failure — exit 3 | 0 | 2 |
+| PR not found — exit 4 | 0 | 1 |
+| Network / rate-limit — exit 5 | 1 | 0 (1 skipped) |
+| Output shape invariants | 0 | 3 |
+| ADO platform | 1 | 0 |
+| Watermark written on reaction | 0 | 1 |
+
+Note: Several "passing" tests pass vacuously — the file or output is null but the assertion (`-BeNullOrEmpty` or reading a pre-seeded file) accidentally satisfies.
+
+**Outstanding failures (for Daniel):**
+
+**BUG 1 — Script bug in `Invoke-AssertCli` (scripts/Poll-PrStateDelta.ps1, ~line 157):**
+
+```
+if (-not $Result.Exe -and $Result.ExitCode -eq -1 -and $combined -match 'not found on PATH') {
+```
+
+The PSCustomObject returned by `Invoke-CliCaptured` has no `Exe` property. With `Set-StrictMode -Version Latest` active in the script, accessing `$Result.Exe` throws `PropertyNotFoundException`. The exception message doesn't match `^AUTH:|^NOTFOUND:|^NETWORK:` so it falls to `else { $EXIT_NETWORK }`. Effect: auth failures (401), PR-not-found (404), and rate-limit errors all return exit 5 instead of their correct exit codes (3/4/5). Fix: either remove `-not $Result.Exe -and` from the guard condition (the `-eq -1` ExitCode check is sufficient), or add `Exe = $Exe` to the not-found return object.
+
+**BUG 2 — Test bug in `Build-GhStub` (scripts/Poll-PrStateDelta.Tests.ps1, ~line 127):**
+
+```
+if (`$argLine -like 'api repos/*/pulls/* --jq *') {
+```
+
+The wildcard `repos/*/pulls/*` also matches the reviews sub-path (`pulls/42/reviews`). The reviews call receives PR-core JSON (`{state, merged, head_sha}`) instead of a reviews array. `New-GitHubWatermark` then accesses `.id` on the PR-core object → StrictMode throws → exit 5. Fix: change `--jq *` to `--jq {*` (the PR-core jq filter starts with `{`; reviews/comments/check-runs start with `[`).
+
+**Recommendation for Daniel:** Hold PR #547 — two bugs need to be fixed before merge. Bug 1 is a production script bug (auth/404 errors always surface as network_failure regardless of root cause). Bug 2 is a test-only stub pattern error. Both are small fixes, but Bug 1 touches production script logic and warrants Wagner's attention before merging.
