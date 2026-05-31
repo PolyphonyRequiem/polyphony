@@ -3712,3 +3712,26 @@ Six items listed in conductor-gaps-full-report-20260531.md §7:
 **Polyphony workaround embedding:** 50 verbs now carry routing-style envelopes; `compose_addendum` is in 3 workflows; `aggregate_renegotiation` is in the critical path. Each week, retiring these becomes harder.
 
 ---
+
+
+## 2026-05-31 — Error-handling deep dive consolidated
+
+Eight Opus-4.7-high handoffs (Mahler-2, Wagner-2, Bach-2, Liszt-2, Stravinsky-2, Beethoven-2, Brahms-2, plus the holographic-viability side investigation) synthesized into `.squad/handoffs/error-handling-deep-dive-consolidated-20260531.md`.
+
+**Top 5 actions (ranked by impact × confidence / effort):**
+
+1. Fix `actionable.yaml` silent-loss bug (Wagner-2 §3.0) — 5-line `output:` block change; zero conductor dependency.
+2. Resolve PR #229's 7 conflicts using Mahler-2's `_MISSING` sentinel patch (§1.3) — unblocks every Phase 2 design.
+3. Adopt the 5-class script exit-code contract `0/2/3/4/5 = success/usage/permanent/transient/corruption` (Liszt-2 §1.2) — single decision that makes `on_error:` safe across the script fleet.
+4. Ship `polyphony run diagnose` 3-tier verdict (Beethoven-2 §5) — smallest mission-recentering wedge that operationalizes "don't resume into corrupt state."
+5. Adopt receipts on routing agents + `verify_receipts.ps1` (Stravinsky-2 §2) — only mechanical defence against hallucinated success.
+
+**Key convergent finding:** 3-retries-on-network/auth is **already implemented** at `AdoClientPolicy.cs:115` + `GhClientPolicy.cs:63` (Bach-2 §0). No new transport-layer work needed.
+
+**Locked invariant proposal (Beethoven-2 §2):** *engine-initiated abandonment does not exist* — all abandonment is operator-mediated. Awaiting Daniel.
+
+**Top 3 decision asks awaiting Daniel (defaults all = yes):** D-EXIT-CODE-CLASS (5-class contract), D-PR229-PUSH (Mahler-2 resolves context.py + 5 mechanical; defers `workflow.py`), D-DIAGNOSE (greenlight `polyphony run diagnose` as P1 polyphony work).
+
+**Explicit rejections preserved:** saga compensation (Wagner-2 walks back), GH Issues integration (Daniel locked), `node_error_routed` / `node_retry_attempt` new events (Brahms-2 enriches existing), Liszt-1's `type: store` (Liszt-2 retracts in favour of Bach-2's artifact framing), engine transient-fault auto-classification.
+
+Full report and §6 decision asks (~12 grouped items, each with default + cost of waiting): `.squad/handoffs/error-handling-deep-dive-consolidated-20260531.md`.
