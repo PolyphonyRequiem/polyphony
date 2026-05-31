@@ -14,6 +14,24 @@
 
 ---
 
+### 2026-05-31T10:51:14-07:00 — Conductor gaps report delivered
+
+Produced `wagner-conductor-gaps-20260531.md` at Daniel's request (offline ~1 hour). Post-PR #547 debrief and workflow-author angle on conductor's top gaps.
+
+**Top 5 Gaps identified:**
+
+1. **`on_error:` routing absent** (Impact 1/5) — every script must exit 0 and fold errors into JSON envelope; 19 trivial human gates exist solely to compensate. Blocked on AB#3257 / RFC Phase 2. Active TODOs at `github-pr.yaml:1087` and `ado-pr.yaml:1196`.
+2. **Re-entry has no mid-graph anchor** (Impact 2/5) — `entry_point:` is static; every workflow must be idempotent from scratch. State-detector pattern (`plan-level.yaml:457`) is the manual workaround.
+3. **Sub-workflow data can't cross boundaries natively** (Impact 3/5) — arrays must be JSON-encoded strings (`root-batch-dispatch.yaml:83`); output passthrough requires explicit field threading up every layer.
+4. **`notification` / `emit` name instability** (Impact 4/5) — six nodes in `github-pr.yaml` + `ado-pr.yaml` carry `TODO(post-upstream-merge)` rename markers; conductor PR #213 not yet cherry-picked.
+5. **No `else:` keyword; catch-all routes are implicit** (Impact 5/5) — M4 catch-all is enforced by convention not schema; policy-router nodes (4+ per major workflow) exist to avoid compound `when:` expressions.
+
+**PR-platform abstraction verdict:** Interface is clean at the sub-workflow boundary (symmetric inputs/outputs). Leaks in two places: (a) ADO-specific inputs (`organization`, `project`, `repository`, `root_id`) bleed into `feature-pr.yaml`'s `input_mapping:`; (b) remediation cycle in `feature-pr.yaml` branches on `workflow.input.platform` inline rather than delegating entirely to platform-specific sub-workflows.
+
+**Output file:** `.squad/handoffs/wagner-conductor-gaps-20260531.md`
+
+---
+
 ### 2026-05-29T13:41:04-07:00 — PR #547 merged to main (eab39cb)
 
 Gate compression PR merged with Liszt's Poll-PrStateDelta bug fixes.

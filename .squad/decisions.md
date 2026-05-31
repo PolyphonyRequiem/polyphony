@@ -3520,3 +3520,195 @@ The wildcard `repos/*/pulls/*` also matches the reviews sub-path (`pulls/42/revi
 **Pester result after fix:** 30/30 PASS, 1 intentional skip (82.41s)
 
 **PR #547 status:** unblocked for Daniel's review.
+
+---
+
+### 2026-05-31T10:39:08-07:00: Status — PR gate → notification+poll migration
+
+**By:** Wagner (Workflow Author)  
+**polyphony main HEAD:** eab39cb (Merge pull request #547 from PolyphonyRequiem/refactor/pr-gate-compression-v2)
+
+**One-line answer:** YES, partially migrated — 2 PR-lifecycle gates remain (intentionally judgment-bearing); 2 error gates are still gates pending conductor `on_error:` Phase 2.
+
+---
+
+## Per-workflow inventory
+
+### github-pr.yaml
+
+**✅ MIGRATED (gate → notify+poll):**
+- `poll_status` (line 409) – type: script – single-shot poll of GitHub PR review state; 4-way deterministic router
+- `notify_pr_review_resolved` (line 490) – type: notification – disposition:resolved signal on pr_merged path
+- `already_merged_emitter` (line 516) – type: script – idempotent handler for operator-merged PRs
+- `closed_unmerged_emitter` (line 540) – type: script – handler for closed unmerged PRs
+- `poll_pr_state_delta` (line 1090) – type: script – calls `Poll-PrStateDelta.ps1`; blocks until reaction or timeout
+- `notify_pr_ci_attention` (line 1132) – type: notification – notifies when CI flips to FAILURE
+- `stuck_review_reset` (line 1220) – type: script – re-enters poll loop on "continue waiting" choice
+
+**🟡 PARTIAL (error gate, should be on_error):**
+- `poll_error_gate` (line 455) – type: human_gate – retry/abort gate when poll_status fails; marked `# on_error: auto-abort (AB#3257 — trivial gate removed)` in decisions.md; **OUTSTANDING** until conductor Phase 2 ships `on_error:` syntax (currently NOT available in v0.1.18)
+
+**⚪ INTENTIONALLY GATE (human judgment required):**
+- `stuck_review_gate` (line 1181) – type: human_gate – timeout escalation; operator decides wait/override/abort when poll expires
+- `pr_pre_merge_gate` (line 1307) – type: human_gate – final merge decision (policy.pr.defaults.mode routing; manual gate interposition)
+
+### ado-pr.yaml
+
+**✅ MIGRATED (gate → notify+poll):**
+- `poll_status` (line 516) – type: script – single-shot poll of ADO PR review state
+- `notify_pr_review_resolved` (line 585) – type: notification – disposition:resolved signal
+- `already_merged_emitter` (line 611) – type: script – idempotent handler for completed PRs
+- `treat_as_merged_emitter` (line 635) – type: script – handles ADO-specific "completed but not merged" state
+- `closed_unmerged_emitter` (line 660) – type: script – handler for abandoned PRs
+- `poll_pr_state_delta` (line 1198) – type: script – calls `Poll-PrStateDelta.ps1`
+- `notify_pr_ci_attention` (line 1235) – type: notification – notifies when build policy fails
+- `stuck_review_reset` (line 1322) – type: script – re-enters poll loop
+
+**🟡 PARTIAL (error gate, should be on_error):**
+- `poll_error_gate` (line 551) – type: human_gate – retry/abort gate; same AB#3257 status as github-pr.yaml
+
+**⚪ INTENTIONALLY GATE (human judgment required):**
+- `stuck_review_gate` (line 1283) – type: human_gate – timeout escalation
+- `pr_pre_merge_gate` (line 1415) – type: human_gate – final merge decision
+- `merge_failed_gate` (line 1510) – type: human_gate – ADO-specific merge failure escalation (retry or abort)
+
+### feature-pr.yaml
+
+No PR-lifecycle steps defined directly. Delegates entirely to github-pr.yaml and ado-pr.yaml workflow nodes.
+
+### implement-merge-group.yaml
+
+MG PRs are **NOT feature PRs** — they skip review (auto-merge). No Poll-PrStateDelta usage here.
+
+**🟡 PARTIAL (error gate, should be on_error):**
+- `mg_pr_failed_gate_ado` (line 2320) – type: human_gate – fires on mg_pr_open_ado or mg_pr_merge_ado error/failed; marked with AB#3257 TODO expectation but gate remains active
+
+## Summary assessment
+
+### Migration Status
+- **Core migration complete:** Replaced 2 `pending_review_gate` nodes (github-pr, ado-pr) with notify+poll pattern per gate-compression ADR.
+- **Notification foundation wired:** 4 notification nodes emit disposition signals + alerts; 2 poll_pr_state_delta nodes call Poll-PrStateDelta.ps1; watermark handling validated.
+- **Human-judgment gates preserved:** stuck_review_gate (timeout escalation), pr_pre_merge_gate (merge approval), merge_failed_gate (ADO-specific) remain as intentional gates — these require operator judgment and are correctly preserved.
+
+### What's shipped
+✅ Poll-PrStateDelta.ps1 implementation (Liszt, b37d85f) — 5 strict-mode bugs fixed, script fully functional  
+✅ Notification node payloads (all 4 nodes correctly configured)  
+✅ WatermarkPath optional handling (auto-derives from PR coordinates)  
+✅ Timeout/interval parametrization in github-pr.yaml & ado-pr.yaml  
+✅ Test coverage local (Poll-PrStateDelta.Tests.ps1, 30/30 green)
+
+### What's outstanding (no-blocker deferred)
+⏳ on_error: migration (2 error gates) — blocked on conductor Phase 2 RFC; trivial gate removal once syntax lands  
+⏳ type: notification → type: emit rename (4 nodes) — blocked on conductor PR #213 cherry-pick; cosmetic only  
+⏳ Pester test CI wiring — low friction; test artifact exists locally  
+⏳ poll_*_seconds threading in feature-pr.yaml — small follow-up pass-through
+
+### Recommendation
+
+**This IS "done enough" to call shipped.** The core mission ("replace pending_review_gate with notify+poll") is complete and wired end-to-end. Outstanding items are backward-compat friendly, non-blocking, and low-friction to complete.
+
+**Highest-leverage next bite:** Retrofit on_error: once conductor RFC Phase 2 lands, closing AB#3257. This unlocks the mission goal: "human gates ONLY for judgment, not logistics." Today, operators must click through 2 trivial error gates per PR lifecycle; Phase 2 retrofit will eliminate that friction entirely.
+
+---
+
+### 2026-05-31T11:30:00-07:00: Conductor gaps fan-out (7 agents) + on_error retrofit verdict
+
+**By:** Mahler (Conductor Expert), Bach (Architect), Wagner-1 (Workflow Author), Liszt (PowerShell Expert), Stravinsky (AI Agents), Beethoven (Mission Keeper), Brahms (Testability Expert)
+
+**Requested by:** Daniel Green (Three asks: (1) Is on_error retrofit the "huge cleanup" we hoped? (2) Install "holographic" for memory. (3) Full team report on conductor gaps with HUGE impact.)
+
+---
+
+## Executive Summary
+
+**on_error verdict — 4/5.** Real cleanup (~830 YAML lines, 27 error-gate nodes eliminated), but gated on two upstream blockers: PR #229 merge (not yet in upstream conductor) and a not-yet-designed `retry:` route action for Phase 2 (required for 14 of the 19 idempotent-retry gates to be truly silent).
+
+**Highest-leverage conductor gap — universal 6/7 convergence:** Six of seven agents independently named `on_error:` + `retry:` for `type: script` nodes as their #1 gap (Mahler, Bach, Wagner-1, Liszt, Beethoven, Brahms). Stravinsky's #1 was output-schema enforcement instead. This cross-agent signal is the strongest in the entire fan-out.
+
+**Fork verdict — NOT YET; contribute upstream.** Bach, Beethoven, Mahler all independently said do not fork. Risk is not architectural incompatibility — it's contribution delay. Every week these gaps remain open, polyphony embeds deeper workarounds. When conductor ships, retiring those workarounds becomes active work.
+
+**"Holographic" status — UNRESOLVED.** Searched `~/.copilot/skills/`, `~/.copilot/agents/`, mcp-config, npm, GitHub, projects, PATH. No match found. Coordinator flagged back to Daniel in §6 (candidates and best-guess questions).
+
+---
+
+## Gap A — on_error + retry for script nodes (6/7 agents)
+
+- **Mahler:** 27 gates, 830 lines; Phase 2 `retry:` action not yet designed. 4/5 score.
+- **Bach:** Verb-error-boundary ADR exists only because of this gap leaking into polyphony domain code.
+- **Wagner-1:** Invisible global "exit 0 always" contract; no linter for it; new contributors learn by breaking it.
+- **Liszt:** Poll-PrStateDelta.ps1 proves blocking pollers cannot fold errors into exit 0.
+- **Beethoven:** 19 gates burning human attention for deterministic decisions — direct violation of gate-philosophy.
+- **Brahms:** Error paths are untestable (harness has no exit_code:1 simulation); blocks detection of ~20% of failure modes.
+
+---
+
+## Gap B — Output schema declared but not enforced (3/7 agents)
+
+**Impact: 4/5.** Capitalization drift on agent output field names silently falls through to catch-all → coder retry loop. At max_iterations: 200 and 30-80K tokens per invocation, this is the **highest token-cost gap**.
+
+- **Stravinsky:** Conductor validates none of the `output:` schema declarations.
+- **Bach:** Verb-output-schema-registry ADR exists as "Proposed."
+- **Brahms:** Sub-workflow output schemas also unvalidated.
+
+**Mitigation underway:** Mozart's `[VerbResult(typeof(X))]` backfill is ~4h of mechanical work; unblocks Jinja path lint.
+
+---
+
+## Gap C — Sub-workflow error envelope propagation (3/7 agents)
+
+**Impact: 4/5.** When a sub-workflow hits UnhandledWorkflowError, parent sees only generic ExecutionError. Typed envelope (kind/message/details) is swallowed.
+
+- **Mahler:** Conductor explicitly defers to Phase 2.
+- **Beethoven:** Polyphony's ~100-line `aggregate_renegotiation` script manually parses for_each error shape. Silent failure = missed surrender gate.
+- **Brahms:** Parents must trust child JSON contract with no schema validation at sub-workflow boundaries.
+
+---
+
+## Additional gaps (1-2 agents each, still real)
+
+**Gap D — Agent context injection (2/7):** `compose_addendum` is orchestration behavior leaking into polyphony.  
+**Gap E — Dynamic workflow path templating (2/7):** Branch table hand-maintenance for each new lifecycle.  
+**Wagner-1 unique — Declarative mid-graph re-entry anchor:** Static entry_point; resume means restart + pray every node is idempotent.  
+**Stravinsky unique — Agent compatibility schema at workflow-definition time:** Skills are injected as names; agent must extra filesystem tool call to read SKILL.md; conflicting tool lists (conductor's vs addendum's).
+
+---
+
+## Artifacts created
+
+| File | Agent/Role | Purpose |
+|---|---|---|
+| `.squad/handoffs/bach-conductor-gaps-20260531.md` | Bach (Architect) | Seam analysis; verb-error boundary; output schema enforcement |
+| `.squad/handoffs/beethoven-conductor-gaps-20260531.md` | Beethoven (Mission Keeper) | Mission-alignment gaps; gate philosophy; error-disposition signal loss |
+| `.squad/handoffs/brahms-conductor-gaps-20260531.md` | Brahms (Testability) | Test coverage gaps; fixture lifecycle; harness scenario validator |
+| `.squad/handoffs/liszt-conductor-gaps-20260531.md` | Liszt (PowerShell Expert) | Script-error handling; exit 0 contract; Poll-PrStateDelta architecture |
+| `.squad/handoffs/mahler-conductor-gaps-20260531.md` | Mahler (Conductor Expert) | on_error retrofit deep-dive; 830-line cleanup; 4/5 verdict; Phase 1/2a/2b sequencing |
+| `.squad/handoffs/stravinsky-conductor-gaps-20260531.md` | Stravinsky (AI Agents) | Agent schema enforcement; prompt-output misalignment; skills injection |
+| `.squad/handoffs/wagner-conductor-gaps-20260531.md` | Wagner-1 (Workflow Author) | YAML authoring friction; global "exit 0" contract; re-entry anchor design |
+| `.squad/handoffs/conductor-gaps-full-report-20260531.md` | Coordinator | Consolidated 166KB analysis: TL;DR, per-gap deep-dive, §6 "holographic" candidates, §7 Daniel decision asks |
+
+**Per-agent history updates:** All 7 agents appended to `.squad/agents/{bach,beethoven,brahms,liszt,mahler,stravinsky,wagner-1}/history.md` with session artifacts and convergence signals.
+
+---
+
+## Decision asks awaiting Daniel (§7 of consolidated report)
+
+Six items listed in conductor-gaps-full-report-20260531.md §7:
+
+1. **Approve on_error Phase 1 (PR #229) despite not-yet-shipped retry:**** Go live with Phase 1a (5 gates), deferring Phase 2b (14 gates with retry) explicitly?
+2. **Contrib schedule for retry: action:** When does conductor team estimate Phase 2 `retry:` design + review + land? (Blocks 14 gates; affects polyphony Phase 2 roadmap.)
+3. **Verb exit-0 handling:** Option A (verbs also emit to CONDUCTOR_ERROR_OUT), B (PowerShell wrappers detect and re-emit), or C (keep verbs on success-path routing, use on_error for infrastructure only)?
+4. **Orchestration in polyphony (compose_addendum):** Temporary workaround for agent context injection, or design-level problem that blocks polyphony-self-contained-orchestration?
+5. **Fork-or-wait trade-off:** Given contribution-delay risk (every week, polyphony embeds deeper workarounds), what's your go/no-go threshold for forking conductor?
+6. **"Holographic" memory clarification:** Name/concept/link the feature you want; Coordinator will locate or create it.
+
+---
+
+## History and cross-seam notes
+
+**Convergence signals:** Gap A (on_error + retry) is the single strongest signal in any squad fan-out to date — six independent experts, completely different seats, same gap named first.
+
+**Fork philosophy confirmed:** All three agents asked (Bach, Beethoven, Mahler) said no independent fork. But Beethoven emphasized the runway is shorter than it looks — contribution delay is the real risk, not absence of a path.
+
+**Polyphony workaround embedding:** 50 verbs now carry routing-style envelopes; `compose_addendum` is in 3 workflows; `aggregate_renegotiation` is in the critical path. Each week, retiring these becomes harder.
+
+---

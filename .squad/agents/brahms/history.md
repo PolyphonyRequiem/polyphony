@@ -20,3 +20,12 @@
 - 📌 `VerbSchemaGenerator` is a Roslyn source generator (compile-time only) — NOT callable in-process at test runtime. "In-process" freshness test = compare `VerbOutputSchemaCatalog.Json` (compile-time constant) against on-disk artifact.
 - 📌 Local build blocked by SDK mismatch: repo requires `11.0.100-preview.3.26207.106` (`rollForward: disable`), but .NET 11 preview.4 introduces a breaking `IUnion` symbol collision in `TransitionValidatorTests.cs`. CI is the authoritative gate.
 - 📌 2026-05-28: Participated in implementation round 1 — shipped PR #532 on issue #527 (short-term win).
+- 📌 2026-05-31: Conducted deep testability gap analysis for conductor → polyphony seams. Identified 5 critical gaps (reported in `.squad/handoffs/brahms-conductor-gaps-20260531.md`):
+  1. **Workflow-level integration testing** — harness is Python-only; no conductor .NET SDK; .NET test suite has zero workflow tests.
+  2. **Error paths untestable** — 19 trivial error gates should be on_error declarations; harness lacks error-simulation support; all 6 workflows have untestable error routing.
+  3. **Resume / checkpoint untestable** — no way to verify workflows skip already-completed steps on re-entry; requires conductor checkpoint model.
+  4. **Notifications untestable** — harness doesn't capture notification payloads; workflows emit but we cannot assert correctness or ordering.
+  5. **Sub-workflow output schema untestable** — no contract registry for workflow outputs; output drift silently breaks parents at runtime; missing schema validation + linting.
+- 📌 Gap prioritization: #2 (on_error, 1–2 weeks) and #5 (output schema, 2–3 weeks) are must-have for v1 release. #4 (notifications, 1–2 weeks) and #1 (workflow .NET SDK, 3–4 weeks) are should-have for Phase 4. #3 (resume checkpoint, 2–3 months) deferred to Phase 5.
+- 📌 Harness infrastructure strength: real conductor + FakeProvider + .NET shim is gold. Weakness: Python-only, no error simulation, no resume checkpointing, no notification capture. Coverage map shows 13 scenarios covering 6 of 15 workflows; 9 workflows untested (feature-pr, implement-merge-group, polyphony are critical).
+- 📌 Root cause for all gaps: conductor is not designed for testing (no test mode, no deterministic seeding, no event replay). Upstream conductor PRs needed: test-mode SDK, error-event exposure, checkpoint API, notification-payload exposure.

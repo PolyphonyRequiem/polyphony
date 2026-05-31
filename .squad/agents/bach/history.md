@@ -126,3 +126,35 @@
   should build against the envelope format (transparent to rename), not the YAML syntax.
 - The `polyphony/docs/decisions/` path EXISTS in the separate polyphony clone at
   `C:\Users\dangreen\projects\polyphony\docs\decisions\`. ADRs were written there directly.
+
+## Learnings — 2026-05-31
+
+### Bach (Architect) — Conductor Seam Audit (offline for Daniel)
+
+**Deliverables shipped:**
+- ✅ Handoff report: `.squad/handoffs/bach-conductor-gaps-20260531.md`
+- ✅ Inbox ask: `.squad/decisions/inbox/bach-conductor-seam-ask.md`
+
+**Top 5 seam-level conductor gaps (ranked by impact):**
+
+1. **Gap 1 (5/5):** No `on_error:` for `type: script` nodes → polyphony absorbs retry/escalation routing. Evidence: 19 error gates in Beethoven's inventory; verb-error-boundary ADR written because the circuit doesn't close without it; seeder carries script-internal retry loop. Fixes when conductor PR #229 lands.
+
+2. **Gap 5 (4/5):** `CONDUCTOR_OUTPUT` schema contract is implicit → field-name drift between C# JSON and YAML Jinja paths produces silent runtime regressions. Verb-output-schema-registry ADR is "Proposed" not "Accepted"; lint (#175 companion) blocked on `[VerbResult]` attribute backfill (~4h mechanical work for Mozart).
+
+3. **Gap 2 (4/5):** No dynamic sub-workflow dispatch → root-item-dispatch.yaml carries a manually maintained N:1 dispatch table (plan_level / actionable / implement-merge-group / feature-pr). Each new lifecycle requires a surgical touch to the dispatch workflow. Conductor does not support templated `workflow:` paths.
+
+4. **Gap 3 (3/5):** No cross-run artifact persistence → seed manifest at `.polyphony/state/{rootId}/seed-manifest.json` is a polyphony-owned filesystem store with atomic write discipline. Engine concern absorbed because conductor CheckpointManager is single-run only.
+
+5. **Gap 4 (3/5):** `run_id` not exposed to workflow templates → `correlation_id` in domain signal envelope threads `workflow.input.run_id` explicitly, duplicating engine-internal state. Conductor already tracks `run_id` in `.notifications.jsonl` data envelope but doesn't expose it in Jinja context.
+
+**Gate-compression ADR evolution on `on_error:` landing:**
+- Pattern is NOT replaced — it gains a clean fourth step: `on_error:` on `poll_pr_approved` for infrastructure failures.
+- Ask 4 (conductor-level timeout vs poll counter) resolves in favor of C (conductor timeout confirmed).
+- ADR gets amended with `on_error:` block added to canonical YAML; compression rule and gate catalogue unchanged.
+
+**2-system architecture health verdict:**
+- Fundamentally sound; S1 invariants being observed (no conductor types in engine packages).
+- Four stress fractures all point the same way: conductor missing features force polyphony to paper over with domain code.
+- Risk accumulates if seed manifest grows, dispatch table keeps inflating, or verb schema gap produces a visible production regression before lint ships.
+
+**Inbox ask filed:** `min_conductor_version` field in workflow YAML. Bach recommendation: defer until `on_error:` ships and we have a concrete version to put in the field. Yes/no required from Daniel.

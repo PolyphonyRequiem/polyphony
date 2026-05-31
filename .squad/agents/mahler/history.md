@@ -76,3 +76,24 @@
 - ✅ ADR `seed-manifest-as-durable-state.md` shipped with all ten design decisions encoded
 - Your key findings embedded: no new engine primitives, no durable checkpoint state, `max_attempts` script limitation, `seeding_blocked` terminal recommendation
 - When implementing seeding-plan verb + script, reference ADR "Mahler — Conductor Engine Stance" section for design constraints (especially: script-internal retry circuit, error-to-terminal routing via tagged error kinds, atomic `.tmp`+rename writes)
+
+## Learnings — 2026-05-31
+
+### 2026-05-31T10:51-07:00 — on_error retrofit assessment + conductor gaps report
+
+- 📌 **PR #229 (`on_error:` routing) has NOT merged to `origin/main` as of 2026-05-31.** `origin/main` is at v0.1.18 (`085b7a5`). The `on_error:` feature lives exclusively in `dogfood/on-error+notifications`. Polyphony CI installs from `@main` with no pin — polyphony currently gets v0.1.18 (no on_error support). All AB#3257 work remains blocked on upstream merge.
+
+- 📌 **`internal.script_error` only fires when node opts in via `raises:` OR any `on_error:` route present.** Without opt-in, non-zero script exit is legacy behavior (no envelope, no error routing). Documented in `engine/errors.py` docstring. Adding an `on_error: true` route to a node that exits non-zero on real failures WILL change behavior — audit required before Phase 2 retrofit.
+
+- 📌 **Sub-workflow error envelope propagation is explicitly deferred to Phase 2.** `workflow.py` lines 1207–1217: `UnhandledWorkflowError` from a child is caught and re-raised as generic `ExecutionError`. Typed kind is lost. Parent's `on_error:` can only match `internal.script_error`. The three-tier polyphony dispatch stack (polyphony → root-batch → root-item → lifecycle) amplifies this: typed errors from plan-level or actionable are completely opaque to the outer loop.
+
+- 📌 **plan-level.yaml error-gate overhead: 581 lines (18% of file).** 13 error-gate node definitions, lines measured: root_resolver_error_gate (23), type_loader_error_gate (27), ancestor_chain_error_gate (46), state_detector_error_gate (25), write_plan_error_gate (35), ensure_plan_branch_error_gate (35), commit_and_push_error_gate (39), open_plan_pr_error_gate (70), poll_error_gate (53), merge_error_gate (110), seeder_error_gate (49), open_plan_pr_ado_error_gate (39), merge_plan_pr_ado_error_gate (30).
+
+- 📌 **Polyphony verb exit-0 contract means on_error won't fire for verb semantic errors without C# changes.** All verbs exit 0 and write `{"error": "..."}` to stdout JSON. The `internal.script_error` synthetic kind only fires on non-zero exit. Wagner's Phase 2 recommendation (Option C): use `on_error:` for infrastructure scripts (git, HTTP) that genuinely exit non-zero; keep success-path routing for polyphony verb calls. The 87 `output.error` checks in `when:` conditions will NOT be eliminated by Phase 1+2.
+
+- 📌 **`retry:` route action does not exist in conductor (Phase 1 or upstream).** Phase 1 adds catch-and-route. It cannot retry the current node. The existing `RetryPolicy` is agent-node-only. 14 of 19 AB#3257 gates need retry+abort — they are blocked until RFC Phase 2 designs the `retry:` route action. These 14 gates currently abort silently (operators must re-trigger manually).
+
+- 📌 **Conductor does NOT support dynamic `workflow:` paths.** `workflow: "./{{ classify.output.lifecycle }}.yaml"` is invalid. Branch-on-router with N explicit `type: workflow` nodes is the canonical workaround. root-item-dispatch.yaml has 4+1 lifecycle dispatch nodes as a result. Documented explicitly in root-item-dispatch.yaml header comment.
+
+- ✅ Filed handoff: `.squad/handoffs/mahler-conductor-gaps-20260531.md`
+- ✅ Filed decision: `.squad/decisions/inbox/mahler-on-error-greenlight-ask.md`
