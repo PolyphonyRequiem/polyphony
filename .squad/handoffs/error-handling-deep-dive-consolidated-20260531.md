@@ -80,6 +80,8 @@ Where they differ: Bach-2 wants a `.polyphony/state/{rootId}/run-budget.json` *s
 
 ### 2.3 Domain-signal vocabulary *(Beethoven-2 §3, with consumers from every seat)*
 
+> **Boulez review (2026-05-31) — vocabulary flag:** Beethoven-2 conceded under grilling that the "closed enum" framing contradicts `docs/decisions/domain-signal-envelope.md` (Accepted 2026-05-28), whose Evolution Policy item 2 is explicitly open-by-default. Re-frame as a **20-signal seed catalogue** (signal #20 `mission_drift_observed` withdrawn — covered by lint). Scribe to apply edits per `boulez-review-error-deep-20260531.md` § 5 E1.
+
 Beethoven-2 owns the 21-signal closed enum, but every seat produces or consumes signals. The producer/consumer map:
 
 | Signal | Producer | Consumer |
@@ -189,7 +191,7 @@ Ranked roughly by (impact × confidence) / effort.
 | R17 | Compaction event + agent `limits:` (Stravinsky §4–6) | Stravinsky + Mahler | conductor RFC | Medium | MEDIUM | provider SDK hooks |
 | R18 | `PrCommentMarker`-keyed dedup on `post-comment-ado` (Bach #9) | Mozart | ~30 LOC | Low (today); HIGH (after `on_error: retry:`) | HIGH | nothing |
 | R19 | `polyphony reconcile --root N` umbrella verb (Bach #4) | Mozart + Bach | ~150 LOC | High (Type 2 corruption recovery) | MEDIUM | after diagnose |
-| R20 | `run-budget.json` sliding-window circuit breaker (Bach §4) | **DEFER** | ~200 LOC | TBD | LOW | wait for evidence |
+| R20 | ~~`run-budget.json` sliding-window circuit breaker (Bach §4)~~ **WITHDRAWN** under Boulez review — Bach-2 conceded the journal already holds the data; no new durable surface. See `boulez-review-error-deep-20260531.md` § 5 E2. | — | — | — | — | — |
 
 ---
 
