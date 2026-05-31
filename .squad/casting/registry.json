@@ -1,0 +1,92 @@
+{
+  "agents": {
+    "bach": {
+      "persistent_name": "Bach",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "beethoven": {
+      "persistent_name": "Beethoven",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "brahms": {
+      "persistent_name": "Brahms",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "mahler": {
+      "persistent_name": "Mahler",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "stravinsky": {
+      "persistent_name": "Stravinsky",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "mozart": {
+      "persistent_name": "Mozart",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "liszt": {
+      "persistent_name": "Liszt",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "wagner": {
+      "persistent_name": "Wagner",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "sibelius": {
+      "persistent_name": "Sibelius",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "reich": {
+      "persistent_name": "Reich",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-28T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "boulez": {
+      "persistent_name": "Boulez",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-31T00:00:00Z",
+      "legacy_named": false,
+      "status": "active",
+      "role": "antagonistic_reviewer",
+      "review_domain": "architecture_design_readability"
+    },
+    "ravel": {
+      "persistent_name": "Ravel",
+      "universe": "Classical Composers",
+      "created_at": "2026-05-31T00:00:00Z",
+      "legacy_named": false,
+      "status": "active",
+      "role": "antagonistic_reviewer",
+      "review_domain": "code_implementation_accuracy"
+    }
+  }
+}
