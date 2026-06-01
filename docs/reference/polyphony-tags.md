@@ -1,8 +1,15 @@
+---
+doc_type: reference
+status: active
+diataxis: reference
+synopsis: The `polyphony:*` tag namespace stamped on every work item the polyphony pipeline owns.
+---
+
 # Polyphony Tag Mechanism
 
 > Status: Phase 1 design (PR-lifecycle overhaul).
 > Authoritative source for the `polyphony:*` tag namespace.
-> Companion to `docs/glossary.md` (terms) and `docs/polyphony-cli-reference.md` (verbs).
+> Companion to `docs/glossary.md` (terms) and `docs/reference/polyphony-cli-reference.md` (verbs).
 
 ## Why
 

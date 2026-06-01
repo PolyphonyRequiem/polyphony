@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: draft
+synopsis: Lint that validates `{{ step.output.path }}` Jinja references against verb-output schemas at workflow-author time.
+---
+
 # Jinja2 Resolver Lint for Workflow YAML Output References
 
 > **Status:** Proposed. Implements [`#175`](https://github.com/PolyphonyRequiem/polyphony/issues/175)

@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Implementation-realist critique of compiler-lite — verdict SHIP-WITH-SCOPE-CUT; Phase 1 = typed contract catalog + one real YAML lint, period.
+---
+
 # D3 — Implementation Realist Critique: Is Phase 1 Actually Shippable?
 
 **Verdict: SHIP-WITH-SCOPE-CUT** — compiler-lite is buildable, but only if Phase 1 is reduced to "typed contract catalog consumed by one real YAML lint" and not Roslyn analyzers, DSL, or generated workflow pilots.

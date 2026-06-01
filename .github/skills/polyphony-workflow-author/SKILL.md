@@ -65,7 +65,7 @@ A canonical, correct example: `scripts/scope-closer.ps1:53-72`.
 | Create a child work item                                         | `twig new --parent <id> --type <T> --title "…"`   | twig CLI                        |
 
 Rule of thumb: if you find yourself wanting to invent a new polyphony verb, re-read
-`polyphony-cli-reference.md`. The existing read verbs cover every read concern. Writes
+`docs/reference/polyphony-cli-reference.md`. The existing read verbs cover every read concern. Writes
 all go through `twig`.
 
 > **The Phase 6 + 7 additions** (`edges check`, `branch ensure-evidence-branch`,

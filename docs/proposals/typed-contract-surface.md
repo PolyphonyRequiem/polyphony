@@ -1,3 +1,9 @@
+---
+doc_type: proposal
+status: draft
+synopsis: Publish a typed contract surface + schemas for polyphony verbs and workflow nodes (AB#3255; load-bearing for sibling proposals).
+---
+
 # Typed Contract Surface + Schema Publication
 
 **Status:** Draft

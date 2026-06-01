@@ -4,7 +4,7 @@
 .SYNOPSIS
     [DEPRECATED — see banner at top of script] Migrate the operator's polyphony
     clone to the bare-repo + per-run worktree layout described in
-    docs/per-run-worktree-layout.md (AB#3085).
+    docs/concepts/per-run-worktree-layout.md (AB#3085).
 
 .DESCRIPTION
     Converts ~/projects/polyphony (a normal clone with embedded .git) into the
@@ -87,7 +87,7 @@ supports vanilla (non-bare) clones as first-class — there is nothing to
 migrate to. This script remains functional for operators who still want the
 bare-repo + per-run worktree layout, but the bare-repo requirement has been
 dropped from preflight and the launcher. New onboarding should use a plain
-``git clone`` instead. See docs/onboarding-guide.md.
+``git clone`` instead. See docs/guides/onboarding-guide.md.
 "@
 
 # ── Exit code constants ──────────────────────────────────────────────────────
@@ -586,7 +586,7 @@ function Invoke-Migration {
     if ($migState.Status -eq 'partial') {
         Write-Host "ERROR: Partial migration state detected. Manual cleanup required:" -ForegroundColor Red
         foreach ($r in $migState.Reasons) { Write-Host "  - $r" -ForegroundColor Red }
-        Write-Host "See docs/per-run-worktree-layout.md for the canonical layout." -ForegroundColor Red
+        Write-Host "See docs/concepts/per-run-worktree-layout.md for the canonical layout." -ForegroundColor Red
         return $script:EXIT_PATH_CONFLICT
     }
 

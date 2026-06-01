@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: draft
+synopsis: Feature-trunk + plan/merge-group/task tree branch grammar with `_`-delimited mg_path encoding (Rev 4.2).
+---
+
 # Polyphony Branch Model — Feature Trunk + Plan / Merge-Group / Task Tree
 
 > **Status:** Proposed, **Rev 4.2** (2026-05). Awaiting sign-off as part of

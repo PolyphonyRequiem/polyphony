@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Type-correctness review of compiler-lite — qualified endorsement; C# gives build-time authority, not end-to-end correctness proof.
+---
+
 # R1 — Type Correctness / Provable Modeling
 
 **Verdict:** Qualify, not reject: I endorse a **compiler-lite / build-time C# authority** direction, but I reject any implication that C# will give Polyphony end-to-end proof of workflow correctness, agent honesty, or resource ownership closure.

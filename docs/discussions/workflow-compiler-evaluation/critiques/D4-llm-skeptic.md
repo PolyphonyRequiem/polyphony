@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: LLM-skeptic critique of compiler-lite — verdict NARROW-SCOPE; C# cannot guarantee agent reliability, only lintable choreography.
+---
+
 # D4 — LLM Skeptic Critique: Agent Contracts Are Not Contracts Unless Runtime Failure Is First-Class
 
 **Verdict: NARROW-SCOPE** — route vocabularies, bindings, malformed-output handling, and typed harness fixtures are worth compiling, but "typing the agent contract boundary" overstates what C# can guarantee about stochastic agents. The synthesis is directionally right to attack duplicate prompt/YAML/route/CLI contracts, but wrong if the phrase "agent contract" implies reliability rather than lintable choreography plus runtime verification.

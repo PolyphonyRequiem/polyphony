@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: Bundled SemVer where one tag drives both the CLI binary version and every workflow `version:` declaration in the registry.
+---
+
 # Versioning Strategy — Bundled SemVer for CLI + Workflow Registry
 
 > **Status:** Accepted (2026-05).

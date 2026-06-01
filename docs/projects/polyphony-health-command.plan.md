@@ -1,4 +1,12 @@
+---
+doc_type: plan
+status: done
+synopsis: Plan for the `polyphony health` CLI command — environment and configuration diagnostics emitting structured JSON. Shipped.
+---
+
 # Polyphony Health Command Plan
+
+> **Status:** ✅ Done — shipped as `src/Polyphony/Commands/HealthCommand.cs`. This doc is retained as the design record.
 
 ## Overview
 

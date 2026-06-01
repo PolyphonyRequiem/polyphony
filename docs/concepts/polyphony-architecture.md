@@ -1,3 +1,10 @@
+---
+doc_type: concept
+status: active
+diataxis: explanation
+synopsis: Layering, three-vocabulary contract, platform-abstraction seam, and end-to-end data flow for a typical operation.
+---
+
 # Polyphony Architecture
 
 This document describes the layering, the platform-abstraction seam, the three vocabularies
@@ -35,7 +42,7 @@ From orchestration down to backing store:
 │           check-deps, close-scope}                                        │
 │   pr {create-feature-pr}                                                  │
 │   src/Polyphony/Commands/*.cs                                             │
-│   ↳ For per-verb depth, see docs/polyphony-cli-reference.md               │
+│   ↳ For per-verb depth, see docs/reference/polyphony-cli-reference.md               │
 └──────────────────────────────────────────────────────────────────────────┘
                                      │
                                      ▼
@@ -260,7 +267,7 @@ table, so `polyphony validate` returns `is_valid: true, target_state: "Removed"`
 It will be a twig-side runtime failure when the state change is applied. The current
 repo config gets away with this because no current workflow actually emits
 `scope_removed` — but the line is a latent bug. See
-`polyphony-process-config-schema.md` for a corrected per-template config.
+`../reference/polyphony-process-config-schema.md` for a corrected per-template config.
 
 ---
 

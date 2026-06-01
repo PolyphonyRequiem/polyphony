@@ -1,3 +1,9 @@
+---
+doc_type: proposal
+status: draft
+synopsis: Collapse the PR/branch verb matrix into a smaller, typed surface (AB#3256; depends on AB#3255 typed contract surface).
+---
+
 # PR/branch verb matrix collapse
 
 **Status:** Draft  

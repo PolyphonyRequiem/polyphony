@@ -1,3 +1,10 @@
+---
+doc_type: decision
+status: accepted
+scope: twig
+synopsis: Recommend DU adoption for three Twig.Domain types; defer implementation to the Twig repository.
+---
+
 # Decision: DU Adoption in Twig.Domain
 
 **Task:** #2809 — Implement DU refactoring in Twig.Domain or document decision not to adopt  

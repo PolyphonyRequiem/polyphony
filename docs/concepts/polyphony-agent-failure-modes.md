@@ -1,3 +1,10 @@
+---
+doc_type: concept
+status: active
+diataxis: explanation
+synopsis: Postmortem of six concrete AI-agent failure modes when working on polyphony, each linked to the doc that would have prevented it.
+---
+
 # Failure Modes I Just Caused
 
 A short postmortem. Six concrete failure modes I (a Copilot CLI agent) hit while working
@@ -20,7 +27,7 @@ The four registered verbs are `route`, `validate`, `validate-config`, `hierarchy
 needs to pass to `twig state`. The reference consumer is
 `scripts/scope-closer.ps1:54-60`.
 
-**What doc would have prevented it:** `polyphony-cli-reference.md`. The "verbs at a
+**What doc would have prevented it:** `../reference/polyphony-cli-reference.md`. The "verbs at a
 glance" table is exactly four rows; the `validate` section opens with "Answer two
 questions in one call: is this event legal? what state name should we transition to?"
 Reading that page first would have made the new verb obviously redundant.
@@ -72,7 +79,7 @@ if ($validateResult.is_valid) {
 That's the entire change. The infrastructure I was about to invent already exists — it
 *is* `polyphony validate`.
 
-**What docs would have prevented it:** `polyphony-cli-reference.md` (the `validate`
+**What docs would have prevented it:** `../reference/polyphony-cli-reference.md` (the `validate`
 section's "use when" + the literal scope-closer snippet) and
 `polyphony-workflow-author.skill.md` (the right-pattern / wrong-pattern code blocks
 side-by-side).
@@ -159,7 +166,7 @@ will pass the config, and `polyphony validate --event scope_removed` will return
 error: *"Unknown state 'Removed'. Valid states: To Do, Doing, Done"*
 (`twig2/src/Twig.Domain/ValueObjects/StateResolver.cs:58-59`).
 
-**What doc would have prevented it:** `polyphony-process-config-schema.md`, "Anti-pattern
+**What doc would have prevented it:** `../reference/polyphony-process-config-schema.md`, "Anti-pattern
 callout" + the per-template state-set tables.
 
 **What it would have said:** *"Validation V-1..V-14 do not cross-reference state names

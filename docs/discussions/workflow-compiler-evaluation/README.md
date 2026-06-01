@@ -1,3 +1,9 @@
+---
+doc_type: index
+status: exploratory
+synopsis: Archive index for the May 2026 multi-agent investigation of compiler-lite (declaring workflows in C# and generating workflow YAML).
+---
+
 # Workflow Compiler-Lite Evaluation — Archive
 
 Archived discussion materials from the May 2026 multi-agent investigation of the question:

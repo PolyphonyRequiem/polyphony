@@ -1,7 +1,7 @@
 namespace Polyphony;
 
 /// <summary>
-/// JSON contract for <c>polyphony scope list</c>. See <c>docs/polyphony-tags.md</c>.
+/// JSON contract for <c>polyphony scope list</c>. See <c>docs/reference/polyphony-tags.md</c>.
 /// </summary>
 public sealed record ScopeListResult
 {

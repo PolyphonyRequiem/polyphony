@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Journal-integrator critique of compiler-lite — verdict NEEDS-EXPLICIT-WIRING; compiler-lite must not claim ownership-closure proofs the journal already owns.
+---
+
 # D5 — Journal Integrator Critique
 
 **Verdict: NEEDS-EXPLICIT-WIRING** — compiler-lite is not redundant with the D13 journal effect model, but the synthesis currently treats journal integration as a side note rather than a load-bearing boundary. The right relationship is layered: journal owns verb-level truth and runtime effects; compiler-lite may own workflow-level static shape, route contracts, and kind-level resource capability checks — but only if the deck explicitly forbids compiler-lite from pretending it can prove concrete ownership closure.

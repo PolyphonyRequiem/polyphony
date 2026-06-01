@@ -1,3 +1,9 @@
+---
+doc_type: reference
+status: active
+synopsis: Canonical vocabulary for polyphony across workflows, code, scripts, and docs. Forbidden synonyms are gated by lint-vocabulary.ps1.
+---
+
 # Polyphony PR/Branch Lifecycle — Ubiquitous Language
 
 > **Status: authoritative** (AB#3259). This glossary defines the canonical vocabulary for polyphony across workflows, code, scripts, and docs. New terms and renames update this file **first** — code changes follow. Use of terms not present here, or use of explicitly forbidden terms, is a lint failure (`lint-vocabulary.ps1`).
@@ -62,7 +68,7 @@ A **facet** is a kind of work an item needs done. An item carries a SET of facet
 
 | Term | Definition |
 |---|---|
-| **Polyphony tag** | The `polyphony:*` namespace stamped on every work item the polyphony pipeline owns. The bare `polyphony` tag marks an in-scope descendant; `polyphony:root` marks a root; `polyphony:planned` is a status sub-tag set by the planner. Authoritative spec: `docs/polyphony-tags.md`. |
+| **Polyphony tag** | The `polyphony:*` namespace stamped on every work item the polyphony pipeline owns. The bare `polyphony` tag marks an in-scope descendant; `polyphony:root` marks a root; `polyphony:planned` is a status sub-tag set by the planner. Authoritative spec: `docs/reference/polyphony-tags.md`. |
 | **In-scope** | An item is in-scope for this run iff it carries `polyphony:root` (it IS the root) OR it carries the bare `polyphony` tag (it is a tagged descendant). |
 | **Out-of-scope** | A descendant of the root that does NOT carry the polyphony tag. NOT operated on. Reported in close-out. Does NOT block close-out or the feature PR. |
 | **Scope renegotiation** | Mechanism for child planning to surface a request for parent-plan changes (e.g., "this child can't fit the parent's plan; please revise the parent"). The parent plan is not complete until consensus is reached with all child plans that requested changes. Mechanically, the child PR carries a [renegotiation flag](#renegotiation-flag); the workflow decides what to do based on the flag and the [out-of-scope files](#out-of-scope-files) the PR touches. |

@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Agentic-engineering review of compiler-lite — qualified endorsement; declare workflow structure in C#, do not over-claim agent determinism.
+---
+
 # R2 — Agentic Engineering Review
 
 **Verdict:** I **qualify** the direction: use C# to declare workflow structure and the smallest reliable agent-contract surface, but do **not** let the compiler pretend prompts, schemas, or capability declarations are more deterministic than production LLM systems really are.

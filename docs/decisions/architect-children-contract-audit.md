@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: Audit (no code changes) of the architect-children contract; supports F2/AB#3065 strict seed-children work.
+---
+
 # Architect children-contract audit (F2 / AB#3065)
 
 **Status:** Accepted (audit-only — no code changes).

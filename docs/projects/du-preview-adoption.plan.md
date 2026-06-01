@@ -1,3 +1,10 @@
+---
+doc_type: plan
+status: in-progress
+work_item_id: 2585
+synopsis: Adopt the .NET 9 DU preview language feature across polyphony domain types; carries through into Twig.Domain via AB#2794.
+---
+
 # Phase 5: DU Preview Adoption — Solution Design
 
 **Epic:** #2585 — Phase 5: DU Preview Adoption  

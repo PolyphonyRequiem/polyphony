@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: state-to-category mapping moves from agent-guidance into process-config.yaml as a per-template required field.
+---
+
 # Decision: state→category mapping lives in process-config.yaml
 
 **Date:** 2026-05-10
@@ -108,8 +114,8 @@ when items fail to route days later.
 
 ## See also
 
-- `docs/polyphony-process-config-schema.md` — V-21 row and `states:` schema
-- `docs/polyphony-agent-failure-modes.md` § 6 — historical failure mode (now
+- `docs/reference/polyphony-process-config-schema.md` — V-21 row and `states:` schema
+- `docs/concepts/polyphony-agent-failure-modes.md` § 6 — historical failure mode (now
   structurally closed by V-21)
 - `src/Polyphony/Configuration/ProcessConfig.cs` — `States`, `GetCategory`,
   `ParseCategory`

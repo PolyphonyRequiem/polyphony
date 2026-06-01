@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Compiler-lite investigation — roadmap, cost, and sequencing across the 15 workflow YAMLs + 12 helper scripts.
+---
+
 # Workflow compiler investigation — roadmap / cost / sequencing
 
 ## Executive summary

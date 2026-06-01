@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Long-term-architecture review of compiler-lite — qualified endorsement; pursue compiler-lite if it stays transparent, narrow, and reversible.
+---
+
 # Verdict
 
 I **qualify** the direction: Polyphony should pursue **compiler-lite and perhaps build-time compilation to conductor artifacts**, but a full C#-first workflow-authoring regime is defensible long-term only if it stays operationally transparent, narrowly scoped, and reversible.

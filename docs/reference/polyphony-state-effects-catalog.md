@@ -1,3 +1,10 @@
+---
+doc_type: reference
+status: active
+diataxis: reference
+synopsis: Living catalog of what each polyphony verb writes (tags, fields, state). Bootstrapping — not a completeness guarantee.
+---
+
 # Polyphony State-Effects Catalog (Living)
 
 > **Status: Bootstrapping.** This catalog is grown incrementally as we
@@ -103,7 +110,7 @@ introduce new dependencies.
 - **Idempotent**: yes (`changed: false` if tag already present).
 - **History**: had a DI registration bug (`ScopeCommands` not registered)
   that made the verb NPE on every call until PR #160 fixed it.
-- **Workflow integration**: documented at `docs/polyphony-tags.md:169`
+- **Workflow integration**: documented at `docs/reference/polyphony-tags.md:172`
   as part of worklist-driver entry. Wired into polyphony in PR #161.
 
 ### `polyphony root resolve --work-item <N>`

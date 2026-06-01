@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: Hard-coded poll cap on pending-PR-review gates promotes silent reviewers to an escalation surface (MVP).
+---
+
 # Stuck-Review Timeout — Hard-Coded Poll Cap (MVP)
 
 > **Status:** Accepted. Stuck-review timeout MVP.

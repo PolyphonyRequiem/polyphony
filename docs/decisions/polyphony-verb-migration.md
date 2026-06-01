@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: accepted
+synopsis: Locked design contract for the script-to-verb migration driving Epic 2978 (polyphony self-contained orchestration).
+---
+
 # Polyphony Verb Migration — Locked Decisions
 
 > **Context:** Driving Epic 2978 (Polyphony Self-Contained Orchestration). Source plan:

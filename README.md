@@ -85,8 +85,8 @@ same conductor workflow runs against any ADO process template that declares
 its types in `.polyphony-config/process-config.yaml`.
 
 For the deeper "why split it this way?" — see
-[`docs/polyphony-architecture.md`](docs/polyphony-architecture.md) and §12 of
-[`docs/polyphony-cli-reference.md`](docs/polyphony-cli-reference.md)
+[`docs/concepts/polyphony-architecture.md`](docs/concepts/polyphony-architecture.md) and §12 of
+[`docs/reference/polyphony-cli-reference.md`](docs/reference/polyphony-cli-reference.md)
 (*"How much value is the CLI actually adding?"*).
 
 ---
@@ -256,7 +256,7 @@ the following layout. Polyphony's own `.polyphony-config/` is the dogfood exampl
 
 The full step-by-step walkthrough — including a fictitious **kyber** worked
 example using a custom `KyberAgile` process template — is in
-[`docs/onboarding-guide.md`](docs/onboarding-guide.md). Activate the
+[`docs/guides/onboarding-guide.md`](docs/guides/onboarding-guide.md). Activate the
 `polyphony-bootstrap` skill in your agent for an interactive bootstrap.
 
 A short tour of each file:
@@ -266,7 +266,7 @@ A short tour of each file:
   (`plannable` / `implementable`), nesting depth, decomposition guidance, and
   the state transitions for SDLC events (`begin_planning`,
   `implementation_complete`, etc.). Schema lives at
-  [`docs/polyphony-process-config-schema.md`](docs/polyphony-process-config-schema.md).
+  [`docs/reference/polyphony-process-config-schema.md`](docs/reference/polyphony-process-config-schema.md).
 - **`policy.yaml`** — optional. Declares implementation **modes**
   (e.g. `loose` / `strict`) and per-scope caps (review thresholds, dependency
   rules). Resolved by `polyphony policy resolve`. Surface documented in
@@ -280,7 +280,7 @@ A short tour of each file:
   repo-specific conventions.
 
 For everything that lives in `.polyphony-config/` *outside* `process-config.yaml`,
-see [`docs/polyphony-conductor-directory.md`](docs/polyphony-conductor-directory.md).
+see [`docs/reference/polyphony-conductor-directory.md`](docs/reference/polyphony-conductor-directory.md).
 
 ---
 
@@ -288,7 +288,7 @@ see [`docs/polyphony-conductor-directory.md`](docs/polyphony-conductor-directory
 
 For per-verb depth — synopsis, flags, JSON shape, exit codes, when-to-use,
 when-NOT-to-use, and source-of-truth pointers — read
-[**`docs/polyphony-cli-reference.md`**](docs/polyphony-cli-reference.md).
+[**`docs/reference/polyphony-cli-reference.md`**](docs/reference/polyphony-cli-reference.md).
 The tables below are the quick-reference index.
 
 ### Top-level
@@ -384,13 +384,13 @@ For agent rosters, recursion budgets, and the platform-abstraction model
 | Doc                                                                                       | Topic                                                                  |
 |-------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
 | [`docs/glossary.md`](docs/glossary.md)                                                    | Ubiquitous-language reference. Start here when in doubt about a term.  |
-| [`docs/polyphony-cli-reference.md`](docs/polyphony-cli-reference.md)                      | Per-verb deep-dive, conceptual primers, and value assessment.          |
-| [`docs/polyphony-architecture.md`](docs/polyphony-architecture.md)                        | Layering diagram, three-vocabularies rule, Polyphony-vs-twig boundary. |
-| [`docs/polyphony-process-config-schema.md`](docs/polyphony-process-config-schema.md)      | Full schema for `process-config.yaml`.                                 |
-| [`docs/polyphony-conductor-directory.md`](docs/polyphony-conductor-directory.md)          | Everything in `.polyphony-config/` outside `process-config.yaml`.             |
-| [`docs/onboarding-guide.md`](docs/onboarding-guide.md)                                    | Step-by-step new-repo onboarding, with worked example.                 |
-| [`docs/polyphony-skills-index.md`](docs/polyphony-skills-index.md)                        | Index of the agent skills shipped under `.github/skills/`.             |
-| [`docs/polyphony-agent-failure-modes.md`](docs/polyphony-agent-failure-modes.md)          | Known failure modes and remediation patterns.                          |
+| [`docs/reference/polyphony-cli-reference.md`](docs/reference/polyphony-cli-reference.md)                      | Per-verb deep-dive, conceptual primers, and value assessment.          |
+| [`docs/concepts/polyphony-architecture.md`](docs/concepts/polyphony-architecture.md)                        | Layering diagram, three-vocabularies rule, Polyphony-vs-twig boundary. |
+| [`docs/reference/polyphony-process-config-schema.md`](docs/reference/polyphony-process-config-schema.md)      | Full schema for `process-config.yaml`.                                 |
+| [`docs/reference/polyphony-conductor-directory.md`](docs/reference/polyphony-conductor-directory.md)          | Everything in `.polyphony-config/` outside `process-config.yaml`.             |
+| [`docs/guides/onboarding-guide.md`](docs/guides/onboarding-guide.md)                                    | Step-by-step new-repo onboarding, with worked example.                 |
+| [`.github/skills/`](.github/skills/)                                                      | Agent skills (auto-loadable). Includes `polyphony-bootstrap`, `polyphony-cli-developer`, `polyphony-workflow-author`, etc. |
+| [`docs/concepts/polyphony-agent-failure-modes.md`](docs/concepts/polyphony-agent-failure-modes.md)          | Known failure modes and remediation patterns.                          |
 | [`docs/decisions/`](docs/decisions/)                                                      | ADRs (verb-migration rationale, DU adoption, etc.).                    |
 
 Agent skills (loaded by Copilot CLI and Claude Code when in this repo):
@@ -465,6 +465,6 @@ non-determinism. AI lives in the *agent* layer of the workflow suite (the
 architect, coder, reviewer roles); polyphony is the calm rules engine
 underneath that gives those agents a stable contract surface to route on.
 
-For more, see [`docs/polyphony-architecture.md`](docs/polyphony-architecture.md).
+For more, see [`docs/concepts/polyphony-architecture.md`](docs/concepts/polyphony-architecture.md).
 
 

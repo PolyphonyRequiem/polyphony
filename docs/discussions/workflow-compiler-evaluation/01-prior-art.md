@@ -1,3 +1,9 @@
+---
+doc_type: discussion
+status: exploratory
+synopsis: Industry survey of typed-orchestration systems that emit runtime config (AWS CDK, cdk8s, CDKTF, Flyte). Companion to the compiler-lite evaluation.
+---
+
 # Prior art / industry survey: typed orchestration that emits runtime config
 
 ## Executive summary

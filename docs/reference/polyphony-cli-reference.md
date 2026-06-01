@@ -1,3 +1,10 @@
+---
+doc_type: reference
+status: active
+diataxis: reference
+synopsis: Every polyphony CLI verb — JSON shapes, exit codes, worked examples — across all nine command groups.
+---
+
 # Polyphony CLI Reference
 
 The Polyphony CLI is a single .NET 11 binary that exposes ~24 verbs
@@ -961,14 +968,14 @@ home. Otherwise, the script registry is where it belongs.
 
 - **Workflow suite documentation:** `.github/skills/polyphony-sdlc/SKILL.md`
   (which YAML calls which verb, recursion budget, agent roster).
-- **Architecture and three-vocabulary rule:** `docs/polyphony-architecture.md`
+- **Architecture and three-vocabulary rule:** `docs/concepts/polyphony-architecture.md`
   (event names vs. state names vs. state categories — the rule that
   underpins `validate`).
-- **`process-config.yaml` schema:** `docs/polyphony-process-config-schema.md`
+- **`process-config.yaml` schema:** `docs/reference/polyphony-process-config-schema.md`
   (validated by `validate-config`).
-- **`.polyphony-config/` directory layout:** `docs/polyphony-conductor-directory.md`
+- **`.polyphony-config/` directory layout:** `docs/reference/polyphony-conductor-directory.md`
   (consumed by `plan load-type` and `plan load-guidance`).
-- **Onboarding a fresh repo:** `docs/onboarding-guide.md` (which verbs to
+- **Onboarding a fresh repo:** `docs/guides/onboarding-guide.md` (which verbs to
   call when, with worked examples).
 - **CLI authoring conventions:** `.github/skills/polyphony-cli-developer/SKILL.md`
   (when adding a new verb).

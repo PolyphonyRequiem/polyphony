@@ -1,3 +1,9 @@
+---
+doc_type: decision
+status: draft
+synopsis: Generates a verb output schema registry from source verb classes; powers the jinja-resolver lint and downstream validation.
+---
+
 # Verb Output Schema Registry — Generation, Mapping, Distribution
 
 > **Status:** Proposed. Implements [`#173`](https://github.com/PolyphonyRequiem/polyphony/issues/173)
