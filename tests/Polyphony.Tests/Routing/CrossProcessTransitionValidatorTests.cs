@@ -655,30 +655,33 @@ public sealed class CrossProcessTransitionValidatorTests
     }
 
     private static ValidTransition AssertValid(TransitionOutcome outcome) =>
-        ((IUnion)outcome).Value.ShouldBeOfType<ValidTransition>();
+        outcome is ValidTransition v ? v
+            : throw new Shouldly.ShouldAssertException(
+                $"Expected ValidTransition but got a different case of TransitionOutcome");
 
     private static InvalidTransition AssertInvalid(TransitionOutcome outcome) =>
-        ((IUnion)outcome).Value.ShouldBeOfType<InvalidTransition>();
+        outcome is InvalidTransition iv ? iv
+            : throw new Shouldly.ShouldAssertException(
+                $"Expected InvalidTransition but got a different case of TransitionOutcome");
 
     private static NoOpTransition AssertNoOp(TransitionOutcome outcome) =>
-        ((IUnion)outcome).Value.ShouldBeOfType<NoOpTransition>();
+        outcome is NoOpTransition n ? n
+            : throw new Shouldly.ShouldAssertException(
+                $"Expected NoOpTransition but got a different case of TransitionOutcome");
 
     /// <summary>
     /// Asserts the transition was accepted (either ValidTransition or NoOpTransition,
     /// AB#3170) and returns the target state. Used for theory tests where some data
     /// rows produce a genuine transition and others are at-target idempotent re-fires.
     /// </summary>
-    private static string AssertAccepted(TransitionOutcome outcome)
-    {
-        var inner = ((IUnion)outcome).Value;
-        return inner switch
+    private static string AssertAccepted(TransitionOutcome outcome) =>
+        outcome switch
         {
             ValidTransition v => v.TargetState,
             NoOpTransition n => n.TargetState,
             InvalidTransition iv => throw new Shouldly.ShouldAssertException(
                 $"Expected accepted transition (Valid or NoOp), got Invalid: {iv.Message}"),
-            _ => throw new InvalidOperationException($"Unexpected outcome type: {inner?.GetType().Name ?? "null"}"),
+            _ => throw new InvalidOperationException($"Unexpected outcome type: {outcome}"),
         };
-    }
 }
 

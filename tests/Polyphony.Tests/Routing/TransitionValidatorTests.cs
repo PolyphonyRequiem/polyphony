@@ -422,15 +422,21 @@ public sealed class TransitionValidatorTests
 
         var result = CreateValidator().Validate(item, "item_satisfied", []);
 
-        ((IUnion)result).Value.ShouldBeOfType<NoOpTransition>();
+        AssertNoOp(result);
     }
 
     private static ValidTransition AssertValid(TransitionOutcome outcome) =>
-        ((IUnion)outcome).Value.ShouldBeOfType<ValidTransition>();
+        outcome is ValidTransition v ? v
+            : throw new ShouldAssertException(
+                $"Expected ValidTransition but got a different case of TransitionOutcome");
 
     private static InvalidTransition AssertInvalid(TransitionOutcome outcome) =>
-        ((IUnion)outcome).Value.ShouldBeOfType<InvalidTransition>();
+        outcome is InvalidTransition iv ? iv
+            : throw new ShouldAssertException(
+                $"Expected InvalidTransition but got a different case of TransitionOutcome");
 
     private static NoOpTransition AssertNoOp(TransitionOutcome outcome) =>
-        ((IUnion)outcome).Value.ShouldBeOfType<NoOpTransition>();
+        outcome is NoOpTransition n ? n
+            : throw new ShouldAssertException(
+                $"Expected NoOpTransition but got a different case of TransitionOutcome");
 }
